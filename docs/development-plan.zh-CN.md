@@ -98,7 +98,7 @@ dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=RuntimePat
 
 2026-08-04 验证记录：在 Linux 开发容器（.NET 10 SDK）中完成 `RuntimePaths|Architecture` 专项测试 53 项、RuntimeAdapter 测试程序集全量 79 项（其中 FixtureContract 26 项）；覆盖生产 `TimeProviderRuntimeClock` deadline smoke test、手动时钟 deadline 累计 elapsed，以及 `sav/` 嵌套目录的创建、读取、写入、元数据和枚举一致性。架构测试直接检查程序集引用，禁止 `System.Drawing`、`System.Drawing.Common`、NAudio 和 `CloudEmuera.Application`，并检查公共 API 的字段、事件、构造函数和继承关系。`scripts/check.sh` 通过（Release 构建 0 警告/0 错误，后端与 Web 检查通过），`scripts/verify-runtime-fixtures.sh`、`scripts/verify-third-party.sh` 和 `git diff --check` 均通过。符号链接与 FIFO 逃逸用例在 Linux 上实际创建并拒绝；Windows/其他平台仍覆盖词法、规范路径和程序集架构约束，实际重解析点发布门保留给 Linux CI。
 
-### P0-03 — 结构化 Console 与输入端口（NEXT）
+### P0-03 — 结构化 Console 与输入端口（DONE）
 
 需求映射：PLAY-001～003、PLAY-007～010。
 
@@ -112,7 +112,9 @@ dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=ConsoleCon
 
 通过条件：固定运行时调用生成稳定 transcript；sequence 严格递增；未知/危险 HTML 不能产生脚本或任意 URL；历史超过上限后仍能生成一致快照；过期 prompt 被拒绝。
 
-### P0-04 — 无 UI Runtime 运行到 INPUT（TODO）
+2026-08-04 验证记录：在 Linux 开发容器（.NET 10 SDK）中完成 `ConsoleContract` 专项 36 项、RuntimeAdapter 全量 115 项、Domain 4 项；覆盖并发 Emit 精确 `1..N`、估算字节与 receipt cache 上限、generator 分配和调用者 ID 拒绝、旧 ID 淘汰后的复用/迟到输入回归、rollover 后 snapshot+deltas 归约、HTML 注入 limits 与属性/URL 攻击、invalid/valid 输入并发、取消/超时/有效输入竞态及 timeout 后迟到输入。`./scripts/check.sh` 通过（Release 构建 0 警告/0 错误，Web typecheck、测试和 production build 通过），`./scripts/verify-third-party.sh` 与 `git diff --check` 通过。
+
+### P0-04 — 无 UI Runtime 运行到 INPUT（NEXT）
 
 需求映射：COMP、SESS-003/004、PLAY-001、AC-008/009。
 
@@ -367,9 +369,7 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P0-02，先以端口和路径测试固定边界；
-2. 执行 P0-03，建立结构化 Console 契约；
-3. 执行 P0-04/P0-05，证明无 UI 输入和两种原生存档；
-4. 执行 P0-06，形成首个跨进程端到端切片。
+1. 执行 P0-04/P0-05，证明无 UI 输入和两种原生存档；
+2. 执行 P0-06，形成首个跨进程端到端切片。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

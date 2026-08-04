@@ -12,6 +12,17 @@ internal sealed class ManualRuntimeClock : IRuntimeClock
 
     public IReadOnlyList<long> LastCompletedOrders { get; private set; } = Array.Empty<long>();
 
+    public int PendingWaiterCount
+    {
+        get
+        {
+            lock (sync)
+            {
+                return waiters.Count;
+            }
+        }
+    }
+
     public DateTimeOffset UtcNow
     {
         get

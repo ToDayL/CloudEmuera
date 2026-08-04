@@ -1,56 +1,43 @@
 namespace CloudEmuera.RuntimeAdapter;
 
 /// <summary>
-/// Minimal platform-neutral console operation envelope. The final structured
-/// event and snapshot semantics belong to P0-03.
+/// Typed input returned to the fixed upstream runtime. Value is kept in its
+/// original textual form so adapters can apply the upstream's exact parsing
+/// rules without losing what the client submitted.
 /// </summary>
-public sealed record GameConsoleOperation
-{
-    public GameConsoleOperation(string kind, string? text = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(kind);
-        Kind = kind;
-        Text = text;
-    }
-
-    public string Kind { get; }
-
-    public string? Text { get; }
-}
-
-/// <summary>
-/// Minimal platform-neutral input prompt envelope. It is not the final P0-03
-/// promptId/sequence contract.
-/// </summary>
-public sealed record GameConsolePrompt
-{
-    public GameConsolePrompt(string kind, string? text = null, string? promptId = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(kind);
-        Kind = kind;
-        Text = text;
-        PromptId = promptId;
-    }
-
-    public string Kind { get; }
-
-    public string? Text { get; }
-
-    public string? PromptId { get; }
-}
-
 public sealed record GameConsoleInput
 {
-    public GameConsoleInput(string value, string? kind = null)
+    public GameConsoleInput(
+        string promptId,
+        ConsoleInputType inputType,
+        string value,
+        bool isDefaultValue = false)
     {
+        ConsoleContractValidation.ValidateIdentifier(
+            promptId,
+            nameof(promptId),
+            ConsoleContractLimits.Default.MaxPromptIdLength);
         ArgumentNullException.ThrowIfNull(value);
+        if (inputType is not ConsoleInputType.Text and not ConsoleInputType.Integer)
+        {
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Unknown input type.", nameof(inputType));
+        }
+
+        PromptId = promptId;
+        InputType = inputType;
         Value = value;
-        Kind = kind;
+        IsDefaultValue = isDefaultValue;
     }
+
+    public string PromptId { get; }
+
+    public ConsoleInputType InputType { get; }
 
     public string Value { get; }
 
-    public string? Kind { get; }
+    public string RawValue => Value;
+
+    public bool IsDefaultValue { get; }
 }
 
 /// <summary>
@@ -59,7 +46,7 @@ public sealed record GameConsoleInput
 /// </summary>
 public interface IGameConsole
 {
-    void Emit(GameConsoleOperation operation);
+    void Emit(ConsoleOperation operation);
 
-    GameConsoleInput Read(GameConsolePrompt prompt, CancellationToken cancellationToken = default);
+    GameConsoleInput Read(ConsolePrompt prompt, CancellationToken cancellationToken = default);
 }

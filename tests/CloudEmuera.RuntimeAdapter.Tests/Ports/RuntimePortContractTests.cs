@@ -1,3 +1,4 @@
+using System.Reflection;
 using CloudEmuera.RuntimeAdapter;
 using Xunit;
 
@@ -32,6 +33,27 @@ public sealed class RuntimePortContractTests
             IsDesktopType(method.ReturnType));
     }
 
+    [Fact]
+    [Trait("Category", "ConsoleContract")]
+    public void StructuredConsolePublicApiDoesNotLeakUrisOrMutableCollections()
+    {
+        Type[] publicTypes = typeof(IGameConsole).Assembly.GetExportedTypes();
+
+        Assert.DoesNotContain(publicTypes, type =>
+            type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
+                .OfType<PropertyInfo>()
+                .Any(property => ContainsForbiddenContractType(property.PropertyType)));
+        Assert.DoesNotContain(publicTypes, type =>
+            type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
+                .OfType<MethodInfo>()
+                .Any(method =>
+                    ContainsForbiddenContractType(method.ReturnType) ||
+                    method.GetParameters().Any(parameter => ContainsForbiddenContractType(parameter.ParameterType))));
+        Assert.DoesNotContain(
+            publicTypes.SelectMany(type => type.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)),
+            property => property.PropertyType == typeof(string) && property.Name == "Kind");
+    }
+
     private static bool IsDesktopType(Type type)
     {
         while (type.IsArray || type.IsByRef || type.IsPointer)
@@ -42,5 +64,34 @@ public sealed class RuntimePortContractTests
         return type.Namespace?.StartsWith("System.Drawing", StringComparison.Ordinal) == true ||
             type.Namespace?.StartsWith("System.Windows.Forms", StringComparison.Ordinal) == true ||
             type.Namespace?.StartsWith("System.Windows", StringComparison.Ordinal) == true;
+    }
+
+    private static bool ContainsForbiddenContractType(Type type)
+    {
+        while (type.IsArray || type.IsByRef || type.IsPointer)
+        {
+            type = type.GetElementType()!;
+        }
+
+        if (type == typeof(Uri))
+        {
+            return true;
+        }
+
+        if (type.IsGenericType)
+        {
+            Type definition = type.GetGenericTypeDefinition();
+            if (definition == typeof(ICollection<>) ||
+                definition == typeof(IList<>) ||
+                definition == typeof(IDictionary<,>) ||
+                definition == typeof(List<>))
+            {
+                return true;
+            }
+
+            return type.GetGenericArguments().Any(ContainsForbiddenContractType);
+        }
+
+        return false;
     }
 }
