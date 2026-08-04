@@ -13,6 +13,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CloudEmuera.Domain.Tests/CloudEmuera.Domain.Tests.csproj" />
+    <Project Path="tests/CloudEmuera.RuntimeAdapter.Tests/CloudEmuera.RuntimeAdapter.Tests.csproj" />
   </Folder>
 </Solution>
-

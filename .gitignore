@@ -26,6 +26,7 @@ artifacts/
 *.db
 *.db-shm
 *.db-wal
+tests/fixtures/runtime-local/
 
 # IDE and OS
 .idea/

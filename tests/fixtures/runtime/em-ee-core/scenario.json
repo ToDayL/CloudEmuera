@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "em-ee-core",
+  "resources": [
+    "em-ee-core/resources/sprites.csv",
+    "em-ee-core/resources/cloudemuera-em-ee.png"
+  ],
+  "steps": [
+    { "type": "expectOutput", "text": "EMEE-START" },
+    { "type": "expectOutput", "text": "EMEE-INPUT" },
+    { "type": "submitInput", "inputKind": "integer", "value": "4" },
+    { "type": "expectOutput", "text": "EMEE-EXISTFUNCTION" },
+    { "type": "expectOutput", "text": "EMEE-PROBE" },
+    { "type": "expectVariable", "name": "score", "value": "3" },
+    { "type": "expectOutput", "text": "EMEE-HTML" },
+    { "type": "expectOutput", "text": "EMEE-IMAGE" },
+    { "type": "expectOutput", "text": "EMEE-SPRITE" },
+    { "type": "expectSavePath", "path": "sav/save00.sav" },
+    { "type": "expectSavePath", "path": "sav/global.sav" }
+  ]
+}

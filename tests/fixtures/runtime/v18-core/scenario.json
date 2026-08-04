@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "v18-core",
+  "resources": [
+    "v18-core/resources/sprites.csv",
+    "v18-core/resources/cloudemuera-v18.png"
+  ],
+  "steps": [
+    { "type": "expectOutput", "text": "V18-START" },
+    { "type": "expectOutput", "text": "V18-READY" },
+    { "type": "expectOutput", "text": "V18-INPUT" },
+    { "type": "submitInput", "inputKind": "integer", "value": "7" },
+    { "type": "expectOutput", "text": "V18-BRANCH-HIGH" },
+    { "type": "expectVariable", "name": "score", "value": "3" },
+    { "type": "expectOutput", "text": "V18-HTML" },
+    { "type": "expectOutput", "text": "V18-IMAGE" },
+    { "type": "expectOutput", "text": "V18-SPRITE" },
+    { "type": "expectSavePath", "path": "save00.sav" },
+    { "type": "expectSavePath", "path": "global.sav" }
+  ]
+}

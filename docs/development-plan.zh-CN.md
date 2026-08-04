@@ -59,7 +59,7 @@ curl --fail http://localhost:5173/
 
 通过条件：后端 Release 构建零警告零错误；4 个领域测试和前端测试通过；API/Web 容器与 bind mount 文件均为宿主 UID/GID；上游提交与固定值一致；两个 HTTP 端点返回成功。
 
-### P0-01 — 兼容测试资产与运行时基线（NEXT）
+### P0-01 — 兼容测试资产与运行时基线（DONE）
 
 需求映射：COMP 兼容性、AC-008、AC-009、ADR-006。
 
@@ -75,11 +75,14 @@ curl --fail http://localhost:5173/
 ```bash
 ./scripts/verify-runtime-fixtures.sh
 dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=FixtureContract'
+./scripts/check.sh
+./scripts/verify-third-party.sh
+git diff --check
 ```
 
-通过条件：资产清单与磁盘内容校验一致；测试无网络运行；至少一个 v18 风格和一个当前 EM+EE 风格合成游戏被发现；缺失、被篡改或许可证信息不完整时验证必定失败。
+通过条件：资产清单与磁盘内容校验一致；测试无网络运行；至少一个 v18 风格和一个当前 EM+EE 风格合成游戏被发现；缺失、被篡改或许可证信息不完整时验证必定失败。2026-08-04 已在开发容器中完成上述命令，fixture validator 报告 2 个 profile、14 个 payload 文件，`FixtureContract` 26 项测试通过。
 
-### P0-02 — 平台端口与 RuntimePaths（TODO）
+### P0-02 — 平台端口与 RuntimePaths（NEXT）
 
 需求映射：SAVE-002、SAVE-011～014、Phase 0 运行时要求。
 
@@ -362,10 +365,9 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P0-01，完成 ADR-006 和合法合成兼容资产；
-2. 执行 P0-02，先以端口和路径测试固定边界；
-3. 执行 P0-03，建立结构化 Console 契约；
-4. 执行 P0-04/P0-05，证明无 UI 输入和两种原生存档；
-5. 执行 P0-06，形成首个跨进程端到端切片。
+1. 执行 P0-02，先以端口和路径测试固定边界；
+2. 执行 P0-03，建立结构化 Console 契约；
+3. 执行 P0-04/P0-05，证明无 UI 输入和两种原生存档；
+4. 执行 P0-06，形成首个跨进程端到端切片。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。
