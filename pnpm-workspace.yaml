@@ -1,0 +1,4 @@
+packages:
+  - src/CloudEmuera.Web
+  - e2e
+

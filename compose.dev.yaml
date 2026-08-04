@@ -1,0 +1,72 @@
+name: cloudemuera-dev
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.dev
+      target: dotnet-dev
+      args:
+        DEV_UID: "${CLOUDEMUERA_UID:-1000}"
+        DEV_GID: "${CLOUDEMUERA_GID:-1000}"
+    image: cloudemuera/dotnet-dev:${CLOUDEMUERA_UID:-1000}-${CLOUDEMUERA_GID:-1000}
+    user: "${CLOUDEMUERA_UID:-1000}:${CLOUDEMUERA_GID:-1000}"
+    working_dir: /workspace
+    command:
+      - dotnet
+      - watch
+      - --project
+      - src/CloudEmuera.Api/CloudEmuera.Api.csproj
+      - run
+      - --no-launch-profile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://0.0.0.0:8080
+      NUGET_PACKAGES: /var/cache/nuget
+      CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
+      CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
+      CloudEmuera__DataPath: /data
+    ports:
+      - "${CLOUDEMUERA_HTTP_PORT:-8080}:8080"
+    volumes:
+      - .:/workspace
+      - ${CLOUDEMUERA_DATA_PATH:-./data}:/data
+      - nuget-cache-v2:/var/cache/nuget
+    init: true
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.dev
+      target: web-dev
+      args:
+        DEV_UID: "${CLOUDEMUERA_UID:-1000}"
+        DEV_GID: "${CLOUDEMUERA_GID:-1000}"
+        PNPM_VERSION: "11.20.0"
+    image: cloudemuera/web-dev:${CLOUDEMUERA_UID:-1000}-${CLOUDEMUERA_GID:-1000}
+    user: "${CLOUDEMUERA_UID:-1000}:${CLOUDEMUERA_GID:-1000}"
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web dev
+    environment:
+      COREPACK_HOME: /var/cache/corepack
+      PNPM_HOME: /var/cache/pnpm
+      pnpm_config_store_dir: /var/cache/pnpm/store
+      CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
+      CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
+    ports:
+      - "${CLOUDEMUERA_WEB_PORT:-5173}:5173"
+    volumes:
+      - .:/workspace
+      - pnpm-store-v2:/var/cache/pnpm
+      - corepack-cache-v2:/var/cache/corepack
+    depends_on:
+      - api
+    init: true
+
+volumes:
+  nuget-cache-v2:
+  pnpm-store-v2:
+  corepack-cache-v2:

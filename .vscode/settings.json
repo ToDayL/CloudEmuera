@@ -1,0 +1,7 @@
+{
+  "editor.formatOnSave": true,
+  "files.eol": "\n",
+  "dotnet.defaultSolution": "CloudEmuera.slnx",
+  "typescript.tsdk": "src/CloudEmuera.Web/node_modules/typescript/lib"
+}
+

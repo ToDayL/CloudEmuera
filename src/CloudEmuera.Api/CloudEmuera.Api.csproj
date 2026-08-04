@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../CloudEmuera.Application/CloudEmuera.Application.csproj" />
+    <ProjectReference Include="../CloudEmuera.Contracts/CloudEmuera.Contracts.csproj" />
+    <ProjectReference Include="../CloudEmuera.Infrastructure/CloudEmuera.Infrastructure.csproj" />
+    <ProjectReference Include="../CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+  </ItemGroup>
+</Project>
+

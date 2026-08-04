@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CloudEmuera.Api/CloudEmuera.Api.csproj" />
+    <Project Path="src/CloudEmuera.Application/CloudEmuera.Application.csproj" />
+    <Project Path="src/CloudEmuera.Contracts/CloudEmuera.Contracts.csproj" />
+    <Project Path="src/CloudEmuera.Domain/CloudEmuera.Domain.csproj" />
+    <Project Path="src/CloudEmuera.Infrastructure/CloudEmuera.Infrastructure.csproj" />
+    <Project Path="src/CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
+    <Project Path="src/CloudEmuera.Migrator/CloudEmuera.Migrator.csproj" />
+    <Project Path="src/CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
+    <Project Path="src/CloudEmuera.Supervisor/CloudEmuera.Supervisor.csproj" />
+    <Project Path="src/CloudEmuera.Worker/CloudEmuera.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CloudEmuera.Domain.Tests/CloudEmuera.Domain.Tests.csproj" />
+  </Folder>
+</Solution>
+

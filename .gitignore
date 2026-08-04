@@ -1,0 +1,36 @@
+# .NET
+**/bin/
+**/obj/
+**/*.docker-stale*
+*.user
+*.suo
+*.nupkg
+TestResults/
+coverage/
+
+# Frontend
+node_modules/
+node_modules.docker-stale/
+.pnpm-store/
+dist/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# Runtime data and secrets
+.env
+!.env.example
+data/*
+!data/.gitkeep
+artifacts/
+*.db
+*.db-shm
+*.db-wal
+
+# IDE and OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db

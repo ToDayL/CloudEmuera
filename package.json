@@ -1,0 +1,11 @@
+{
+  "name": "cloudemuera-workspace",
+  "private": true,
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "build:web": "pnpm --dir src/CloudEmuera.Web build",
+    "test:web": "pnpm --dir src/CloudEmuera.Web test",
+    "typecheck:web": "pnpm --dir src/CloudEmuera.Web typecheck"
+  }
+}

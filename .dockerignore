@@ -1,0 +1,14 @@
+.git
+.agents
+.codex
+**/bin
+**/obj
+**/node_modules
+**/dist
+data
+artifacts
+TestResults
+playwright-report
+test-results
+.env
+

@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+option csharp_namespace = "CloudEmuera.Ipc.V1";
+
+package cloudemuera.ipc.v1;
+
+service WorkerControl {
+  rpc Connect(stream WorkerEnvelope) returns (stream SupervisorEnvelope);
+}
+
+message WorkerEnvelope {
+  uint32 protocol_version = 1;
+  string message_id = 2;
+  string session_id = 3;
+  string worker_id = 4;
+  uint64 worker_epoch = 5;
+  oneof payload {
+    WorkerRegistration registration = 10;
+    WorkerHeartbeat heartbeat = 11;
+  }
+}
+
+message WorkerRegistration {
+  string startup_token = 1;
+  string runtime_version = 2;
+}
+
+message WorkerHeartbeat {
+  int64 output_sequence = 1;
+  bool waiting_for_input = 2;
+  int64 resident_memory_bytes = 3;
+}
+
+message SupervisorEnvelope {
+  uint32 protocol_version = 1;
+  string message_id = 2;
+  string correlation_id = 3;
+  string session_id = 4;
+  uint64 worker_epoch = 5;
+  oneof payload {
+    RegistrationResult registration_result = 10;
+    StopWorker stop = 11;
+  }
+}
+
+message RegistrationResult {
+  bool accepted = 1;
+  string reason_code = 2;
+}
+
+message StopWorker {
+  int64 deadline_unix_milliseconds = 1;
+  string reason_code = 2;
+}
+
