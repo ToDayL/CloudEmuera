@@ -12,7 +12,7 @@
 
 P0-04 将把固定上游 Emuera 接到这些端口并首次真实执行 ERB。若在接线上游时才决定 Console 契约，解释器调用映射、HTML 安全策略、重连状态和输入唤醒会相互纠缠，难以区分“上游兼容错误”和“Console 模型错误”。因此 P0-03 必须先用合成调用固定一个完全独立于 WinForms、浏览器和 IPC 的内存模型。
 
-本步骤完成后，仍不能宣称仓库已经能执行 ERB。真实解释器启动、上游补丁、fixture transcript 对比属于 P0-04；本步骤只提供 P0-04 可以接入的稳定 Console 与输入边界。
+本步骤完成后，仍不能宣称仓库已经能执行 ERB。真实解释器启动、内置源码接线、fixture transcript 对比属于 P0-04；本步骤只提供 P0-04 可以接入的稳定 Console 与输入边界。
 
 ## 2. 目标与验收摘要
 
@@ -67,7 +67,7 @@ git diff --check
 
 ### 3.3 明确非目标
 
-- 不修改 `third_party/emuera-em`，不创建或应用上游 patch；
+- 不修改固定上游源码；依据 ADR-0005，源码后来迁入 `src/CloudEmuera.EmueraRuntime/Upstream`，接线仍属于 P0-04；
 - 不启动解释器，不读取 ERB/CSV，不声称 fixture transcript 已由 runtime 产生；
 - 不修改 `src/CloudEmuera.Ipc/Protos/worker.proto`，不定义 WebSocket JSON schema、`sessionId` 或 `workerEpoch`；
 - 不实现 API、Supervisor、Worker 进程、Web renderer 或浏览器 DOM；
@@ -444,8 +444,7 @@ P0-03 的 transcript 是结构化调用的规范化测试表示，不是新的�
 
 ### 12.2 原则上不修改
 
-- `third_party/emuera-em/**`；
-- `patches/emuera/**`（P0-04 才建立真实 patch queue）；
+- `src/CloudEmuera.EmueraRuntime/Upstream/**`（P0-04 才开始真实解释器接线）；
 - `src/CloudEmuera.Ipc/**`；
 - Web、API、Domain、Application、Infrastructure 项目；
 - P0-01 fixture payload 和 expected transcript，除非发现资产本身错误并单独说明。

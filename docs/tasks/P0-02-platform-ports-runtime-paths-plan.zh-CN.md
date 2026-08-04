@@ -61,7 +61,7 @@ git diff --check
 
 ### 3.2 本步骤不包含
 
-- 不修改 `third_party/emuera-em`，不建立 CloudEmuera patch-set；上游的可重放补丁属于 P0-04；
+- 不修改固定上游基线源码；依据 ADR-0005，源码后来迁入 `src/CloudEmuera.EmueraRuntime/Upstream`，真实调用点接线属于 P0-04；
 - 不启动解释器，不运行 ERB，不比较真实 transcript；
 - 不定义 P0-03 的最终 Console event、sequence、promptId、HTML allowlist 或 Snapshot；
 - 不实现 SaveArtifact、原生存档序列化、原子提交或导入/导出；这些属于 P0-05 及后续任务；
@@ -78,7 +78,7 @@ git diff --check
 - 原生变量代码把 `global.sav` 和 `save*.sav` 写到 `Config.SavDir`；
 - 固定上游大量直接调用 `File`、`Directory`、`Stopwatch`、`System.Drawing`、WinForms 和系统音频。
 
-这些事实意味着 P0-02 的接口不能只提供一个新的工作目录字符串；它必须把“引擎可见逻辑路径”“当前 Session 的物理私有路径”和“访问能力”分开表示。另一方面，本步骤也不应大规模复制或改写上游代码，真实调用点迁移留给 P0-04 的可重放补丁。
+这些事实意味着 P0-02 的接口不能只提供一个新的工作目录字符串；它必须把“引擎可见逻辑路径”“当前 Session 的物理私有路径”和“访问能力”分开表示。另一方面，本步骤也不应提前大规模改写上游代码，内置源码的真实调用点迁移留给 P0-04。
 
 ## 5. 核心设计
 
@@ -470,7 +470,7 @@ tests/CloudEmuera.RuntimeAdapter.Tests/
 - Layout builder 幂等且不覆盖/删除未知或其他 Session 内容；
 - fake clock 可无真实等待地确定推进 timeout；
 - 架构测试检查编译程序集和 RuntimeAdapter 公共 API；
-- 不修改第三方 submodule，不引入未登记 Runtime patch；
+- 不修改本步骤当时的固定上游源码，不引入未登记的 Runtime integration 变更；
 - P0-01 fixture 验证仍通过；
 - 专项测试、全局检查、第三方校验和 diff 检查全部成功；
 - 只有在上述条件满足后，开发计划推进到 P0-03。
@@ -492,7 +492,7 @@ tests/CloudEmuera.RuntimeAdapter.Tests/
 
 P0-03 应在 `IGameConsole` 边界内定义结构化输出、输入 prompt、sequence 和 Snapshot，不修改路径安全规则。
 
-P0-04 应维护一份绑定 `RuntimeBaseline.UpstreamCommit` 的最小可重放补丁，把上游静态路径、文件、时钟、图像、音频和 Console 调用接到本 task 的端口；不得为赶通 ERB 而重新直接调用宿主 API。
+P0-04 应在绑定 `RuntimeBaseline.UpstreamCommit` 的内置源码项目中，把上游静态路径、文件、时钟、图像、音频和 Console 调用直接接到本 task 的端口，并在 `MODIFICATIONS.md` 登记；不得为赶通 ERB 而重新直接调用宿主 API。
 
 P0-05 应复用 `RuntimePaths` 的两种 save 映射运行 P0-01 fixture，通过 Emuera 原生逻辑证明 save/load，并在此基础上实现临时文件加原子替换和 SaveArtifact 提交。若真实上游行为暴露 P0-02 契约缺口，应以新增失败测试和最小兼容扩展修正，不能在 Worker 中加入绕过路径守卫的特殊分支。
 

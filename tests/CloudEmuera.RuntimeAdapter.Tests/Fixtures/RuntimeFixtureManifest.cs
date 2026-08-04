@@ -23,8 +23,8 @@ public sealed class RuntimeFixtureRuntimeBaseline
     [JsonPropertyName("upstreamCommit")]
     public string? UpstreamCommit { get; set; }
 
-    [JsonPropertyName("cloudEmueraPatchVersion")]
-    public string? CloudEmueraPatchVersion { get; set; }
+    [JsonPropertyName("cloudEmueraIntegrationVersion")]
+    public string? CloudEmueraIntegrationVersion { get; set; }
 }
 
 public sealed class RuntimeFixtureDefinition

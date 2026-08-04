@@ -12,7 +12,7 @@
 
 `docs/development-plan.zh-CN.md` 已将 P0-00 标为 `DONE`，并将 P0-01 标为唯一的 `NEXT`。仓库现状也与该状态一致：
 
-- `third_party/emuera-em` 已固定到提交 `2175f8a629257efb08214e093704b3a3d3d06d05`；
+- Emuera.EM+EE 基线已固定到提交 `2175f8a629257efb08214e093704b3a3d3d06d05`；源码后来依据 ADR-0005 迁入 `src/CloudEmuera.EmueraRuntime/Upstream`；
 - `CloudEmuera.RuntimeAdapter` 目前只有上游仓库和提交号基线，没有兼容测试资产；
 - 尚不存在 `tests/CloudEmuera.RuntimeAdapter.Tests`、Runtime fixture 清单或 `scripts/verify-runtime-fixtures.sh`；
 - P0-02 的路径端口、P0-03 的 Console 契约、P0-04 的无 UI harness 和 P0-05 的双存档布局都需要一套稳定、可合法分发、可校验的输入与预期结果。
@@ -45,7 +45,7 @@ git diff --check
 - 编写并接受 ADR-006；
 - 建立 fixture 目录规范与版本化 manifest schema；
 - 手工编写两套最小 ERB/CSV/config/媒体资产及场景文件；
-- 固定当前 Runtime commit 和“尚无 CloudEmuera Runtime 补丁”的版本表示；
+- 固定当前 Runtime commit 和“尚无 CloudEmuera Runtime 修改”的集成版本表示；
 - 添加 fixture 契约验证器、失败分支测试和 shell 验证入口；
 - 把 fixture 验证接入仓库全局检查；
 - 将开发计划中 P0-01 更新为 `DONE`，并把 P0-02 更新为 `NEXT`（仅在全部验收命令通过后）。
@@ -80,7 +80,7 @@ ADR 至少记录：
 
 ### 4.2 Fixture 目录与文件布局
 
-采用以下布局，避免把测试资产混入上游 submodule：
+采用以下布局，避免把测试资产混入内置上游源码：
 
 ```text
 tests/fixtures/runtime/
@@ -117,7 +117,7 @@ tests/fixtures/runtime/
   "runtimeBaseline": {
     "upstreamRepository": "https://gitlab.com/EvilMask/emuera.em.git",
     "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
-    "cloudEmueraPatchVersion": "0"
+    "cloudEmueraIntegrationVersion": "source-v1"
   },
   "fixtures": [
     {
@@ -153,7 +153,7 @@ tests/fixtures/runtime/
 - 文本文件显式声明 `utf-8`、`utf-8-bom` 或 `shift_jis`，二进制文件不允许伪装成文本；
 - `source` 和 SPDX `license` 在 fixture 与逐文件级均非空；本 task 只允许 `authored-for-cloudemuera` + `Apache-2.0`；
 - 每个 fixture 引用且只引用自己的 scenario 和 transcript；fixture ID、profile 和文件路径全局唯一；
-- manifest 的 Runtime 仓库/提交/补丁版本必须与 `RuntimeBaseline` 常量一致。
+- manifest 的 Runtime 仓库/提交/源码集成版本必须与 `RuntimeBaseline` 常量一致。
 
 不要手写哈希。实现一个明确的维护命令（例如验证脚本的 `--update` 模式，或一个只在显式参数下运行的测试工具）按路径序排序后重算哈希。默认模式只能验证，绝不能悄悄改写 manifest。
 
@@ -184,7 +184,7 @@ tests/fixtures/runtime/
 修改 `src/CloudEmuera.RuntimeAdapter/RuntimeBaseline.cs`：
 
 - 保留现有 `UpstreamRepository` 和 `UpstreamCommit`；
-- 添加显式的 CloudEmuera patch-set 版本常量，初值为 `"0"`，含义是“尚无运行时补丁”；
+- 添加显式的 CloudEmuera 源码集成版本常量；最初无运行时修改，ADR-0005 迁移后使用 `"source-v1"` 表示首个直接源码集成基线；
 - 如测试需要，可添加稳定的 profile 名常量，但不要把 fixture 路径放入生产代码。
 
 该类仍然不读取文件、不依赖测试项目，也不引入新的 NuGet 包。
@@ -289,7 +289,7 @@ set -euo pipefail
 9. 使用大写/错误长度 SHA-256，失败；
 10. manifest 声明编码与 BOM/字节不一致，失败；
 11. scenario 引用另一个 fixture 的文件或包含未知必需步骤，失败；
-12. Runtime commit 或 patch version 与 `RuntimeBaseline` 不一致，失败；
+12. Runtime commit 或 integration version 与 `RuntimeBaseline` 不一致，失败；
 13. `scripts/verify-runtime-fixtures.sh --root <tampered-copy>` 对缺失、篡改和许可证不完整三种副本分别返回非零。
 
 符号链接测试在当前平台无法创建链接时不能静默通过；应明确标记平台原因，Linux CI 必须执行该用例。

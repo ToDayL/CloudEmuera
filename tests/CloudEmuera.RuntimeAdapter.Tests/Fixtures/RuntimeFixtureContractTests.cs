@@ -33,7 +33,7 @@ public sealed class RuntimeFixtureContractTests
         Assert.Equal("v18-compatible", v18.CompatibilityProfile);
         Assert.Equal("em-ee-current", emEe.CompatibilityProfile);
         Assert.Equal(RuntimeBaseline.UpstreamCommit, result.Manifest.RuntimeBaseline!.UpstreamCommit);
-        Assert.Equal(RuntimeBaseline.CloudEmueraPatchVersion, result.Manifest.RuntimeBaseline.CloudEmueraPatchVersion);
+        Assert.Equal(RuntimeBaseline.CloudEmueraIntegrationVersion, result.Manifest.RuntimeBaseline.CloudEmueraIntegrationVersion);
     }
 
     [Fact]

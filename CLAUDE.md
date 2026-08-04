@@ -6,7 +6,7 @@
 
 CloudEmuera 将 Emuera.EM+EE 文字游戏运行时部署到远程服务器，让玩家通过桌面或移动浏览器管理游戏包、运行相互隔离且可重连的 Session，并管理 Emuera 原生存档。
 
-当前处于“开发环境完成、Phase 0 运行时切分尚未开始”的阶段。已有内容包括：
+当前处于 Phase 0 运行时切分阶段。已有内容包括：
 
 - Git 仓库、解决方案和前后端工程骨架；
 - API 健康检查和版本端点；
@@ -14,7 +14,8 @@ CloudEmuera 将 Emuera.EM+EE 文字游戏运行时部署到远程服务器，让
 - Session 状态机的最小领域实现和测试；
 - React 占位应用、单元测试和 Playwright 骨架；
 - Docker Compose 开发环境及宿主 UID/GID 映射；
-- 固定版本的 Emuera.EM+EE submodule；
+- 固定版本、直接纳入仓库的 Emuera.EM+EE 源码；
+- Runtime fixture、平台端口和结构化 Console/Input；
 - Apache-2.0 项目许可证和第三方许可声明。
 
 身份、游戏包、运行时适配、Worker 管理、实时协议、存档和正式 UI 仍待实现。仓库目前不能安全运行不受信任的游戏包。
@@ -49,14 +50,12 @@ CloudEmuera 将 Emuera.EM+EE 文字游戏运行时部署到远程服务器，让
 ## 仓库结构
 
 ```text
-src/                  产品代码
+src/                  产品代码及固定版本的 Emuera 内置源码
 tests/                .NET 单元与集成测试
 e2e/                  Playwright 端到端测试
 docs/                 需求、设计、ADR 和开发计划
 deploy/               容器与部署配置
-scripts/              开发、验证和三方源码维护脚本
-third_party/          固定提交的上游源码 submodule
-patches/emuera/        对上游源码的可审查补丁
+scripts/              开发、验证和内置源码维护脚本
 data/                 本地运行数据，不提交 Git
 ```
 
@@ -67,14 +66,15 @@ data/                 本地运行数据，不提交 Git
 - `CloudEmuera.Contracts`：HTTP、WebSocket 和共享版本契约；
 - `CloudEmuera.Infrastructure`：EF Core、文件系统和外部实现；
 - `CloudEmuera.Ipc`：API/Supervisor/Worker 的 protobuf/gRPC 契约；
-- `CloudEmuera.RuntimeAdapter`：上游 Emuera 与无头 Worker 的薄适配层；
+- `CloudEmuera.RuntimeAdapter`：平台无关的 Console/Input/File/Clock/Media 契约；
+- `CloudEmuera.EmueraRuntime`：内置 Emuera 源码、headless host 与平台接线（P0-04 建立可构建项目）；
 - `CloudEmuera.Api`：HTTP/WebSocket 宿主；
 - `CloudEmuera.Supervisor`：Worker 生命周期、租约和资源治理；
 - `CloudEmuera.Worker`：单 Session 运行时宿主；
 - `CloudEmuera.Migrator`：数据库和数据布局迁移；
 - `CloudEmuera.Web`：浏览器客户端。
 
-依赖方向应保持 Domain → Application → 外部实现的整洁边界。Domain 不得引用 EF Core、ASP.NET Core、文件系统或上游 UI 类型。
+依赖方向应保持 `Domain ← Application ← 外部实现` 的整洁边界，以及 `RuntimeAdapter ← EmueraRuntime ← Worker` 的单向依赖关系。Domain 不得引用 EF Core、ASP.NET Core、文件系统或上游 UI 类型。
 
 ## 开发环境与强制命令
 
@@ -99,16 +99,16 @@ NuGet 和 pnpm 依赖必须锁定。修改依赖后更新并提交 `packages.loc
 
 ## 上游源码规则
 
-Emuera.EM+EE 位于 `third_party/emuera-em`，固定提交为：
+Emuera.EM+EE 以普通 Git 文件位于 `src/CloudEmuera.EmueraRuntime/Upstream`，来源提交为：
 
 ```text
 2175f8a629257efb08214e093704b3a3d3d06d05
 ```
 
-- 不直接在 submodule 中留下未记录修改；
-- 优先在 `CloudEmuera.RuntimeAdapter` 建立薄适配层；
-- 必须修改上游时，把可重放补丁放入 `patches/emuera/` 并记录原因、提交基线和验证结果；
-- 更新上游提交时同步修改 `RuntimeBaseline`、验证脚本、第三方声明和兼容性报告；
+- 首次导入和每次上游升级使用独立提交，禁止跟踪浮动分支；
+- 优先在 `CloudEmuera.RuntimeAdapter` 建立稳定平台契约，在 `CloudEmuera.EmueraRuntime` 完成真实解释器接线；
+- 修改 `Upstream/` 时必须在 `MODIFICATIONS.md` 记录原因、范围和验证结果，并在修改文件保留显著变更说明；
+- 更新上游时同步修改 `UPSTREAM.md`、`RuntimeBaseline`、验证脚本、第三方声明和兼容性报告；
 - 保留上游 zlib/libpng 及其捆绑组件的原始版权和许可证声明。
 
 ## 测试与完成定义

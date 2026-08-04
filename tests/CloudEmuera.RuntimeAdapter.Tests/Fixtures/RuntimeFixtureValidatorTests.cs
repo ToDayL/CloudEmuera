@@ -188,18 +188,18 @@ public sealed class RuntimeFixtureValidatorTests
     }
 
     [Fact]
-    public void RuntimeBaselineCommitAndPatchVersionMustMatch()
+    public void RuntimeBaselineCommitAndIntegrationVersionMustMatch()
     {
         using var copy = new TemporaryFixtureCopy();
         JsonObject manifest = copy.ReadManifest();
         JsonObject baseline = manifest["runtimeBaseline"]!.AsObject();
         baseline["upstreamCommit"] = "wrong";
-        baseline["cloudEmueraPatchVersion"] = "1";
+        baseline["cloudEmueraIntegrationVersion"] = "wrong";
         copy.WriteManifest(manifest);
 
         RuntimeFixtureValidationResult result = Validate(copy.Root);
         Assert.Contains(result.Errors, error => error.Contains("upstreamCommit does not match", StringComparison.Ordinal));
-        Assert.Contains(result.Errors, error => error.Contains("cloudEmueraPatchVersion does not match", StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains("cloudEmueraIntegrationVersion does not match", StringComparison.Ordinal));
     }
 
     [Fact]

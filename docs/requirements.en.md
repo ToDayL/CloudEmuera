@@ -21,7 +21,7 @@ Traditional Emuera is a single-user desktop application with substantial couplin
 
 ### 2.2 Version baseline
 
-CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit compatibility target for games built for `Emuera 1824+v18`. The initial research baseline is `Emuera.NET 1824+v24+EMv18+EEv56`. Production builds must record the exact upstream commit, patch set, and CloudEmuera compatibility-layer version in a runtime manifest instead of recording only the moving term “latest.”
+CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit compatibility target for games built for `Emuera 1824+v18`. The initial research baseline is `Emuera.NET 1824+v24+EMv18+EEv56`. Production builds must record the exact upstream commit, vendored-source revision, and CloudEmuera integration-layer version in a runtime manifest instead of recording only the moving term “latest.”
 
 ## 3. Goals and Non-Goals
 
@@ -188,7 +188,7 @@ The system uses the following compatibility classifications:
 
 ### 7.2 Runtime requirements
 
-- **COMP-001**: The runtime must be pinned to a recorded Emuera.EM+EE upstream commit and CloudEmuera patch version.
+- **COMP-001**: The runtime must be pinned to a recorded Emuera.EM+EE upstream commit and CloudEmuera source-integration version.
 - **COMP-002**: A `1824+v18` compatibility suite must cover parsing, variables, function calls, input, saves, HTML, images, and sprites.
 - **COMP-003**: A current EM+EE feature suite must be maintained, with unimplemented commands and display capabilities explicitly listed.
 - **COMP-004**: Game loading must produce a compatibility report that distinguishes errors, warnings, restricted capabilities, and unknown commands.

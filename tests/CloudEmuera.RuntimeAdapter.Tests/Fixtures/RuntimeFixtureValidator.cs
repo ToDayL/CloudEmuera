@@ -193,9 +193,9 @@ public sealed class RuntimeFixtureValidator
                 result.AddError("manifest.json: runtimeBaseline.upstreamCommit does not match RuntimeBaseline");
             }
 
-            if (!string.Equals(baseline.CloudEmueraPatchVersion, RuntimeBaseline.CloudEmueraPatchVersion, StringComparison.Ordinal))
+            if (!string.Equals(baseline.CloudEmueraIntegrationVersion, RuntimeBaseline.CloudEmueraIntegrationVersion, StringComparison.Ordinal))
             {
-                result.AddError("manifest.json: runtimeBaseline.cloudEmueraPatchVersion does not match RuntimeBaseline");
+                result.AddError("manifest.json: runtimeBaseline.cloudEmueraIntegrationVersion does not match RuntimeBaseline");
             }
         }
 

@@ -43,7 +43,7 @@ git diff --check
 
 需求映射：OPS-003、NFR 可维护性基线。
 
-交付物：.NET/React 工程骨架、锁文件、开发镜像、宿主 UID/GID 映射、固定上游 submodule、Apache-2.0 许可证。
+交付物：.NET/React 工程骨架、锁文件、开发镜像、宿主 UID/GID 映射、固定上游源码基线、Apache-2.0 许可证。上游源码最初以 submodule 固定，P0-04 前迁移为仓库内普通源码文件，commit 不变。
 
 验证：
 
@@ -118,7 +118,7 @@ dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=ConsoleCon
 
 需求映射：COMP、SESS-003/004、PLAY-001、AC-008/009。
 
-交付物：上游解释器与 RuntimeAdapter 的最小可重放补丁；无 UI runtime harness；从测试 GameVersion 启动、输出、停在 INPUT、接受输入并继续执行的流程。
+交付物：直接集成的固定上游解释器源码、CloudEmuera headless integration project、来源/修改记录；无 UI runtime harness；从测试 GameVersion 启动、输出、停在 INPUT、接受输入并继续执行的流程。
 
 验证：
 

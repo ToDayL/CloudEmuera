@@ -70,7 +70,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | 数据访问 | EF Core SQLite Provider；关键 CAS 使用参数化原生 SQL | EF Core 10.x | 普通 CRUD、关系和迁移成本低；状态机、配额预留和 epoch 更新用显式 SQL 保证条件更新可审查 |
 | 数据库迁移 | 独立 `CloudEmuera.Migrator` 控制台程序 | 与应用同版本 | 容器初始化阶段执行并持有独占迁移锁；API/Supervisor 不在运行时自动迁移 |
 | 后台任务 | ASP.NET Core `BackgroundService` + SQLite 持久任务表 | .NET 10 | 上传验证、孤儿清理等任务需要重启可恢复；不引入外部消息队列 |
-| Runtime Host | C# Console Worker + Emuera.EM+EE 固定源码快照/补丁 | 清单锁定 commit | 保持原生解释器和存档格式；通过适配层替换 WinForms/GDI+、路径、输入和显示 |
+| Runtime Host | C# Console Worker + 仓库内 Emuera.EM+EE 固定源码快照 | 清单锁定 commit 与 integration version | 保持原生解释器和存档格式；直接修改内置源码并通过适配层替换 WinForms/GDI+、路径、输入和显示 |
 | 图像与字体兼容层 | SkiaSharp + HarfBuzzSharp | 按 Runtime manifest 锁定 | 替代仅限 Windows 的 GDI+ 测量和解码路径，提供 Linux 上可重复的字体 shaping、测量与图片元数据处理 |
 | 游戏包格式 | MVP 仅接受 ZIP；使用 `System.IO.Compression` 安全逐项解包 | .NET 10 | 收窄攻击面且不增加原生解压依赖；7z/RAR 等格式需另行评审和协议声明 |
 | 文本编码 | `System.Text.Encoding` + `System.Text.Encoding.CodePages` 严格解码器 | .NET 10 | 明确支持 UTF-8 BOM/无 BOM 与 Shift-JIS，并禁用依赖系统 locale 的隐式回退 |
@@ -143,7 +143,8 @@ src/
 ├── CloudEmuera.Ipc/               # .proto 与 gRPC 生成代码
 ├── CloudEmuera.Supervisor/        # Worker 生命周期、沙箱、对账
 ├── CloudEmuera.Worker/            # 单 Session Runtime Host
-├── CloudEmuera.RuntimeAdapter/    # Emuera 平台抽象和补丁边界
+├── CloudEmuera.RuntimeAdapter/    # 平台无关的 Console/Input/File/Clock/Media 契约
+├── CloudEmuera.EmueraRuntime/     # 内置 Emuera 源码、headless host 与接线
 ├── CloudEmuera.Migrator/          # 独立数据库迁移程序
 └── CloudEmuera.Web/               # React/TypeScript/Vite SPA
 tests/
@@ -154,7 +155,7 @@ tests/
 └── e2e/
 ```
 
-依赖方向必须保持：`Domain ← Application ← adapters`。`RuntimeAdapter` 不引用 Web/API；`Worker` 不引用 EF Core；`Supervisor` 不加载 Emuera 解释器；前端只依赖生成的公开契约。
+依赖方向必须保持：`Domain ← Application ← adapters`，以及 `RuntimeAdapter ← EmueraRuntime ← Worker`。`RuntimeAdapter` 不引用真实解释器、Worker 或 Web/API；`Worker` 不引用 EF Core；`Supervisor` 不加载 Emuera 解释器；前端只依赖生成的公开契约。
 
 ### 2.8 选型依据
 
@@ -562,7 +563,7 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
   "schemaVersion": 1,
   "contentDigest": "sha256:...",
   "upstreamRuntimeCommit": "...",
-  "cloudEmueraPatchVersion": "...",
+  "cloudEmueraIntegrationVersion": "...",
   "compatibilityProfile": "v18-compatible",
   "textEncodings": { "ERB/A.ERB": "shift_jis" },
   "capabilities": ["text", "button", "image"],
@@ -900,7 +901,7 @@ API 请求、Session 创建/连接/关闭、Worker 注册/崩溃、游戏发布�
 - liveness：当前 API 事件循环可响应；
 - readiness：数据库可读写、`/data` 可写且空间高于安全阈值、Supervisor 协议兼容、迁移完成；
 - Supervisor 健康：本地 IPC 可用、对账循环在运行；
-- version：Web/API、Supervisor、Worker 协议、上游 Runtime commit、补丁版本、schema 版本。
+- version：Web/API、Supervisor、Worker 协议、上游 Runtime commit、源码集成版本、schema 版本。
 
 单个 Worker 崩溃不应使整个 API liveness 失败，但会影响 Session 指标和管理员告警。
 
@@ -1021,7 +1022,7 @@ pending clientMessageId → result
 
 ### 18.1 Phase 0：运行时切分
 
-1. 固定上游 Runtime commit 和补丁清单；
+1. 固定上游 Runtime commit，直接导入源码并维护来源/修改记录；
 2. 提取 `IGameConsole`、`RuntimePaths`、时钟、文件、图像和音频抽象；
 3. 建立无 UI Worker，可运行到 INPUT 并接受输入；
 4. 支持根目录和 `sav/` 两种原生存档；

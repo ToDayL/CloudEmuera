@@ -6,4 +6,5 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 
 - [ADR-0003：ConsoleSnapshot 有界内存与恢复语义](0003-console-snapshot-bounds.md)
 - [ADR-0004：Runtime 富内容最小 allowlist](0004-runtime-rich-content-allowlist.md)
+- [ADR-0005：Emuera 固定源码直接集成](0005-vendored-emuera-source.md)
 - [ADR-0006：CI runtime compatibility fixtures](0006-ci-runtime-compatibility-fixtures.md)

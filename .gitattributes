@@ -10,3 +10,6 @@
 *.dll binary
 *.sav binary
 
+# Preserve the pinned upstream snapshot byte-for-byte. Its historical source
+# contains whitespace that must not be normalized during the import commit.
+src/CloudEmuera.EmueraRuntime/Upstream/** -text -whitespace

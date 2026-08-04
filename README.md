@@ -68,30 +68,24 @@ corepack pnpm --dir src/CloudEmuera.Web build
 ## 仓库结构
 
 ```text
-src/                  产品代码
+src/                  产品代码及固定版本的 Emuera 内置源码
 tests/                .NET 单元与集成测试
 e2e/                  Playwright 端到端测试
 docs/                 需求、设计和 ADR
 deploy/               容器与部署配置
-scripts/              开发、检查和三方源码维护脚本
-third_party/          固定版本的上游源码 submodule
-patches/              CloudEmuera 针对上游的可审查补丁
+scripts/              开发、检查和内置源码维护脚本
 data/                 本地运行数据，不提交 Git
 ```
 
 ## 三方源码
 
-Emuera.EM+EE 以 Git submodule 检出到 `third_party/emuera-em`，固定提交和更新流程见 [third_party/README.md](third_party/README.md)。首次克隆后运行：
+Emuera.EM+EE 以普通 Git 文件形式固定在 `src/CloudEmuera.EmueraRuntime/Upstream`，不使用 submodule。来源仓库、固定提交、原始 tree ID、许可证和更新流程见 [UPSTREAM.md](src/CloudEmuera.EmueraRuntime/UPSTREAM.md)。
 
-```bash
-git submodule update --init --recursive
-```
-
-不得直接把未记录来源的上游文件复制进 `src/`。CloudEmuera 修改应保存在适配层或 `patches/emuera/`，并在运行时清单中记录上游提交。
+首次克隆无需额外初始化。对内置源码的修改必须保留上游声明，并登记在 `MODIFICATIONS.md`；运行时清单同时记录上游提交和 CloudEmuera integration version。上游升级必须以独立导入提交进行，不能跟踪浮动的“最新版”。
 
 ## 项目状态
 
-当前骨架只提供健康检查、版本端点、进程入口和前端占位页。开发环境和工程基线 P0-00 已通过验证；下一步是 P0-01 兼容测试资产与运行时基线。Session、运行时适配、身份、存档和实时协议按 [开发计划](docs/development-plan.zh-CN.md) 分阶段实现。
+开发环境、运行时 fixture、平台端口和结构化 Console 已通过验证；当前下一步是 P0-04 无 UI Runtime 接线。Session、身份、存档和实时协议按 [开发计划](docs/development-plan.zh-CN.md) 分阶段实现。
 
 ## 贡献与安全
 
