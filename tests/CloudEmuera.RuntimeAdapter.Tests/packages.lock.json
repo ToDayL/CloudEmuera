@@ -87,6 +87,15 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
+      "cloudemuera.application": {
+        "type": "Project",
+        "dependencies": {
+          "CloudEmuera.Domain": "[1.0.0, )"
+        }
+      },
+      "cloudemuera.domain": {
+        "type": "Project"
+      },
       "cloudemuera.runtimeadapter": {
         "type": "Project"
       }

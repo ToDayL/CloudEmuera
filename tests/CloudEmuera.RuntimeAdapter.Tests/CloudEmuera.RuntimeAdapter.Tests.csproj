@@ -7,6 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.Domain/CloudEmuera.Domain.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.Application/CloudEmuera.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
