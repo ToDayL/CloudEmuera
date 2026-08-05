@@ -55,7 +55,7 @@ git diff --check
 - 不提取 `IGameConsole`、`RuntimePaths` 或其他平台端口（P0-02）；
 - 不定义最终结构化 Console event schema（P0-03）；
 - 不让 Emuera 在 Linux/headless 环境实际运行，也不生成真实运行 transcript（P0-04）；
-- 不提交预制的原生 `.sav` 二进制，不实现保存、加载、重定向或原子提交（P0-05）；
+- 不提交预制的原生 `.sav` 二进制，不实现保存、加载或持久 SessionRoot 直写（P0-05）；
 - 不复制、裁剪或再分发任何第三方游戏、字体、图片或音频；
 - 不把“v18-core”描述成在旧版二进制上验证过；它表示受控的 v18 兼容语法画像，真正的执行兼容性由 P0-04/P0-05 证明。
 

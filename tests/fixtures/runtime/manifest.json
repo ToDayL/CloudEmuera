@@ -3,7 +3,7 @@
   "runtimeBaseline": {
     "upstreamRepository": "https://gitlab.com/EvilMask/emuera.em.git",
     "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
-    "cloudEmueraIntegrationVersion": "headless-p0.4.1"
+    "cloudEmueraIntegrationVersion": "headless-p0.5.1"
   },
   "fixtures": [
     {
@@ -14,6 +14,7 @@
       "gameRoot": "v18-core",
       "scenario": "v18-core/scenario.json",
       "expectedTranscript": "v18-core/expected-transcript.txt",
+      "saveScenario": "v18-core/save-scenario.json",
       "coverage": [
         "startup",
         "print",
@@ -37,15 +38,23 @@
         },
         {
           "path": "v18-core/ERB/START.ERB",
-          "sha256": "3e3f1520b7893b8e576f0f2f8ddef3a9a51981f3e2a4ec7c5d108b1e709406ce",
+          "sha256": "1d3a1b24043cf7988905f1352b36810a2037c84441981016c41d077db4617ab6",
           "mediaType": "text/x-emuera-erb",
           "encoding": "shift_jis",
           "source": "authored-for-cloudemuera",
           "license": "Apache-2.0"
         },
         {
+          "path": "v18-core/ERB/SAVE.ERH",
+          "sha256": "4e214ae88021cdd6b865ea49ecf8bd9fd664ba8b289dc23f5936ae14de6eb96f",
+          "mediaType": "text/x-emuera-erh",
+          "encoding": "shift_jis",
+          "source": "authored-for-cloudemuera",
+          "license": "Apache-2.0"
+        },
+        {
           "path": "v18-core/emuera.config",
-          "sha256": "d149105c587329264f549f1e5fa0d3b696d2a38d2c9a24607e89d0a788db84a7",
+          "sha256": "ef5baf88c6b22799a9b25e323a1c590120936d254e1dc54f1fdf79c17eedd869",
           "mediaType": "text/plain",
           "encoding": "shift_jis",
           "source": "authored-for-cloudemuera",
@@ -81,6 +90,14 @@
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
           "license": "Apache-2.0"
+        },
+        {
+          "path": "v18-core/save-scenario.json",
+          "sha256": "dc47dc513ece9df2c93fb9465b87bc3564da8f163e508b8fc66f99f7b5729290",
+          "mediaType": "application/json",
+          "encoding": "utf-8",
+          "source": "authored-for-cloudemuera",
+          "license": "Apache-2.0"
         }
       ]
     },
@@ -92,6 +109,7 @@
       "gameRoot": "em-ee-core",
       "scenario": "em-ee-core/scenario.json",
       "expectedTranscript": "em-ee-core/expected-transcript.txt",
+      "saveScenario": "em-ee-core/save-scenario.json",
       "coverage": [
         "startup",
         "print",
@@ -115,15 +133,23 @@
         },
         {
           "path": "em-ee-core/ERB/START.ERB",
-          "sha256": "624f2e8bf5c5906d34d238a3f5fcf353b687f0923dae3330706fb89a0595fbc8",
+          "sha256": "41e83d439c2f5242606dfcc82481a97f58c0b9adacc8f9d5db9f2509d9b57e68",
           "mediaType": "text/x-emuera-erb",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
           "license": "Apache-2.0"
         },
         {
+          "path": "em-ee-core/ERB/SAVE.ERH",
+          "sha256": "4e214ae88021cdd6b865ea49ecf8bd9fd664ba8b289dc23f5936ae14de6eb96f",
+          "mediaType": "text/x-emuera-erh",
+          "encoding": "utf-8",
+          "source": "authored-for-cloudemuera",
+          "license": "Apache-2.0"
+        },
+        {
           "path": "em-ee-core/emuera.config",
-          "sha256": "cd12204bdfc89f19c4c98bac2f3d2b0f4fc1f1070c0b5e1376da5d46d3d51f54",
+          "sha256": "7f03e253d6f4c7be34cc44b4ee48ca38df5909d5ebca86cd15ea262307bd4218",
           "mediaType": "text/plain",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
@@ -156,6 +182,14 @@
           "path": "em-ee-core/expected-transcript.txt",
           "sha256": "938541cd8f285aafe1500208d71a7125dea410ada9333869ca91da96382a62a9",
           "mediaType": "text/plain",
+          "encoding": "utf-8",
+          "source": "authored-for-cloudemuera",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "em-ee-core/save-scenario.json",
+          "sha256": "1fdbd336ce861e00cf78caf8eb96ff8d01c1b09cdd1652890f6343f00839e7ce",
+          "mediaType": "application/json",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
           "license": "Apache-2.0"

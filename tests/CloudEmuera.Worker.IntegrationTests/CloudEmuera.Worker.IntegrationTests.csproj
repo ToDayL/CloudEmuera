@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.Supervisor/CloudEmuera.Supervisor.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.Worker/CloudEmuera.Worker.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="All" />
+  </ItemGroup>
+</Project>

@@ -74,3 +74,21 @@ requirements/ADR references, and verification commands.
   passes 18 assertions per fixture; RuntimeBridge 16, RuntimeCompatibility 19,
   RuntimeAdapter 116, Domain 4 and Web 1 tests pass. `./scripts/check.sh`,
   source/fixture verification and `git diff --check` pass.
+
+## 2026-08-05 — P0-05 persistent SessionRoot native saves
+
+- Modified upstream file:
+  - `Upstream/Emuera/Runtime/Config/Config.cs`: under
+    `CLOUDEMUERA_HEADLESS`, creation of a missing `sav/` directory no longer
+    invokes the desktop migration dialog or moves root-level native saves.
+    The SessionRoot builder owns creation of the private directory and the
+    runtime rejects a conflicting root-level save layout before loading ERB.
+- Headless glue change: `UpstreamRuntimeSession` now receives the actual
+  `RuntimePaths`, points `Program.ExeDir` at the persistent SessionRoot, and
+  verifies `Config.UseSaveFolder` after the pinned upstream config loader has
+  populated its static state.
+- Scope: ADR-0007 and P0-05 SAVE-011/012/013/015. The upstream save/load
+  writer and reader methods remain unchanged.
+- Verification: the NativeSave compatibility scenario uses two fully
+  released hosts and checks root and `sav/` layouts, while SessionRoot tests
+  cover copy isolation and headless migration fail-closed behavior.

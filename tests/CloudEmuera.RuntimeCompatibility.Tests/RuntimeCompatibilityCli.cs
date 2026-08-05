@@ -24,9 +24,9 @@ internal static class RuntimeCompatibilityCli
             }
         }
 
-        if (scenario != "input-roundtrip")
+        if (scenario is not ("input-roundtrip" or "save-root" or "save-directory"))
         {
-            Console.Error.WriteLine("Unsupported scenario. Supported value: input-roundtrip");
+            Console.Error.WriteLine("Unsupported scenario. Supported values: input-roundtrip, save-root, save-directory");
             return 2;
         }
 
@@ -36,12 +36,26 @@ internal static class RuntimeCompatibilityCli
             return 2;
         }
 
+        if ((scenario == "save-root" && fixture is not null && fixture != "v18-core") ||
+            (scenario == "save-directory" && fixture is not null && fixture != "em-ee-core"))
+        {
+            Console.Error.WriteLine($"Scenario {scenario} only supports its matching fixture.");
+            return 2;
+        }
+
         string repositoryRoot = FindRepositoryRoot();
-        IReadOnlyList<string> fixtures = fixture is null ? RuntimeScenarioRunner.FixtureIds : [fixture];
+        IReadOnlyList<string> fixtures = scenario switch
+        {
+            "save-root" => ["v18-core"],
+            "save-directory" => ["em-ee-core"],
+            _ => fixture is null ? RuntimeScenarioRunner.FixtureIds : [fixture]
+        };
         var reports = new List<RuntimeScenarioReport>();
         foreach (string fixtureId in fixtures)
         {
-            RuntimeScenarioReport report = await RuntimeScenarioRunner.RunAsync(repositoryRoot, fixtureId).ConfigureAwait(false);
+            RuntimeScenarioReport report = scenario == "input-roundtrip"
+                ? await RuntimeScenarioRunner.RunAsync(repositoryRoot, fixtureId).ConfigureAwait(false)
+                : await RuntimeScenarioRunner.RunSaveAsync(repositoryRoot, fixtureId).ConfigureAwait(false);
             reports.Add(report);
             Console.WriteLine(JsonSerializer.Serialize(report));
         }

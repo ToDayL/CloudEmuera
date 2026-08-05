@@ -1,7 +1,7 @@
 # CloudEmuera 可验证开发计划
 
 状态：Draft v0.1  
-更新日期：2026-08-04  
+更新日期：2026-08-05
 依据：`requirements.zh-CN.md`、`design.zh-CN.md`
 
 ## 1. 计划目标
@@ -94,7 +94,7 @@ git diff --check
 dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=RuntimePaths|Category=Architecture'
 ```
 
-通过条件：根目录与 `sav/` 两种布局映射测试通过；绝对路径、`..`、符号链接逃逸和跨 Session 路径被拒绝；架构测试证明 Domain/Application/RuntimeAdapter 核心不引用 WinForms；伪时钟可确定性推进超时输入。
+通过条件：根目录与 `sav/` 两种布局映射测试通过；绝对路径、`..`、符号链接逃逸和跨 Session 路径被拒绝；架构测试证明 Domain/Application/RuntimeAdapter 核心不引用 WinForms；伪时钟可确定性推进超时输入。P0-05 依据 ADR-0007 把发布内容完整复制到持久 SessionRoot，不增加链接例外。
 
 2026-08-04 验证记录：在 Linux 开发容器（.NET 10 SDK）中完成 `RuntimePaths|Architecture` 专项测试 53 项、RuntimeAdapter 测试程序集全量 79 项（其中 FixtureContract 26 项）；覆盖生产 `TimeProviderRuntimeClock` deadline smoke test、手动时钟 deadline 累计 elapsed，以及 `sav/` 嵌套目录的创建、读取、写入、元数据和枚举一致性。架构测试直接检查程序集引用，禁止 `System.Drawing`、`System.Drawing.Common`、NAudio 和 `CloudEmuera.Application`，并检查公共 API 的字段、事件、构造函数和继承关系。`scripts/check.sh` 通过（Release 构建 0 警告/0 错误，后端与 Web 检查通过），`scripts/verify-runtime-fixtures.sh`、`scripts/verify-third-party.sh` 和 `git diff --check` 均通过。符号链接与 FIFO 逃逸用例在 Linux 上实际创建并拒绝；Windows/其他平台仍覆盖词法、规范路径和程序集架构约束，实际重解析点发布门保留给 Linux CI。
 
@@ -150,44 +150,78 @@ System.IO 调用点审计见 `docs/runtime-system-io-audit.zh-CN.md`。
 session 与私有 file view；回归测试确认超时后第二个 host 可以立即成功初始化，
 静态 runtime gate 不泄漏。
 
-### P0-05 — Emuera 原生存档双布局（NEXT）
+### P0-05 — Emuera 原生存档双布局（DONE）
 
-需求映射：SAVE-004、SAVE-010～015、AC-013/014。
+需求映射：SAVE-001/002、SAVE-004/005、SAVE-010～015、AC-013/014。
 
-交付物：根目录 `save*.sav/global.sav` 与 `sav/` 布局适配；Session 私有物化目录；临时文件加原子替换；原生保存/加载兼容 harness。
+详细设计：[`tasks/P0-05-native-save-session-root-plan.zh-CN.md`](tasks/P0-05-native-save-session-root-plan.zh-CN.md)，架构决策见 [`ADR-0007`](adr/0007-session-root-native-save-ownership.md)。
+
+交付物：Session 管理方构造的持久私有运行目录；GameVersion 完整合法普通文件树的独立副本；由游戏配置决定的根目录 `save*.sav/global.sav` 与 `sav/` 布局；Worker/Emuera 对 SessionRoot 的原生直接保存/加载 harness。
 
 验证：
 
 ```bash
 ./scripts/test-runtime-compat.sh --scenario save-root
 ./scripts/test-runtime-compat.sh --scenario save-directory
-dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=SaveIsolation|Category=CrashConsistency'
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore \
+  --configuration Release --filter 'Category=SessionRoot|Category=SaveIsolation'
 ```
 
-通过条件：两种布局均能保存、退出、重新启动并加载原值；两个用户和同一用户两个 Session 的物理路径及内容互不影响；中途终止提交后旧 generation 完整可读且不存在半写目标文件。
+通过条件：两种布局均由复制后的 `emuera.config` 自动决定，能保存、退出、用同一 SessionRoot 重新启动并加载原值；未知合法目录和文件完整保留；存档只出现在对应 SessionRoot；两个用户和同一用户两个 Session 不共享可写 inode，路径、文件与 Global 值互不影响；原始 GameVersion 未被修改；不存在 SaveArtifact、generation 或退出时复制/提交步骤。
 
-### P0-06 — 单 Session Worker 与 IPC 冒烟链路（TODO）
+2026-08-05 完成记录：实现 ADR-0007 的完整普通文件树复制和持久 SessionRoot 直写模型。
+Session 管理方/harness 负责 SessionRoot 分配、GameVersion 绑定、manifest/配额输入和授权
+前置条件；RuntimeAdapter builder 只执行安全物化与原子发布，不管理 Session 生命周期。
+固定上游配置文件键为 `Use sav folder`，由复制后的 `emuera.config` 决定根目录或
+`sav/` 存档布局，并由 Runtime 二次校验 `Config.UseSaveFolder`。两个真实 fixture 均完成
+跨 Host 原生普通/Global 存档往返、Session/源版本隔离和未知合法条目完整复制。
+`save-root` 与 `save-directory` 各 20 项断言通过；RuntimeAdapter 全量 137 项、
+RuntimeCompatibility 全量 26 项、Domain 4 项通过；新增 `前`/`後` 日文配置交叉验证、
+双 Session 原生 Global/inode 隔离及取消/模拟终止保留测试。`./scripts/check.sh` 及 Web
+构建质量门通过，integration version 为 `headless-p0.5.1`。
+
+### P0-06 — 单 Session Worker 与 IPC 冒烟链路（DONE）
 
 需求映射：SESS-002/010、OPS-004、Phase 0 进程隔离。
+
+详细设计：[`tasks/P0-06-single-session-worker-ipc-plan.zh-CN.md`](tasks/P0-06-single-session-worker-ipc-plan.zh-CN.md)。
 
 交付物：Worker 启动配置、版本握手、启动/输入/输出/关闭 gRPC 消息、Unix Domain Socket 权限、每进程单 Session 强制约束。
 
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Ipc.ContractTests
-dotnet test tests/CloudEmuera.Worker.IntegrationTests --filter 'Category=ProcessIsolation'
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Ipc.ContractTests --no-restore --configuration Release
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore \
+  --configuration Release --filter 'Category=ProcessIsolation'
 ```
 
 通过条件：契约序列化和未知字段测试通过；错误协议版本被明确拒绝；第二个 Session 不能进入同一 Worker；API 测试进程退出不导致 Worker 立即退出；关闭请求后 Worker 在限定时间内退出。
 
+2026-08-05 完成记录：冻结 IPC protocol v1 与 `worker.proto` 字段号/保留字段，Supervisor
+仅监听权限为 `0600` 的 Unix domain socket，Worker bootstrap 父目录/文件分别为
+`0700`/`0600`，启动令牌为 256-bit CSPRNG base64url 且不进入 argv、环境变量或日志。
+stale socket 清理验证 Unix socket 类型、服务账户 owner、单链接和 `0700` 父目录后，使用
+父目录句柄 `unlinkat`；Supervisor/Worker 生命周期日志包含 session/worker/epoch 关联字段并
+脱敏 token、路径和输入。真实 `CloudEmuera.Worker` 子进程直接消费 P0-05 SessionRoot，完成
+v18 与 EM+EE 两套 fixture 的注册、版本握手、ready、结构化 DisplayBatch、INPUT、重复输入、
+completed、stopped 和退出；另覆盖错误 token、独立控制客户端进程退出、stop 等待输入、同
+Worker 第二次 start、错误 binding、Supervisor stream 短断重连、两个 Worker 并行隔离和 UDS
+恶意路径。IPC 契约测试 9 项、ProcessIsolation 测试 18 项，均在 Linux dev Docker 中通过；
+P1-05 的持久 WorkerLease、epoch 分配、Supervisor 重启对账和沙箱限制仍未实现。
+
 ## 4. Phase 1：端到端单机 MVP
 
-### P1-01 — SQLite 首版 schema 与迁移（TODO）
+### P1-01 — SQLite 首版 schema 与迁移（NEXT）
 
 需求映射：核心领域模型、GAME-004/010、SESS-005/007、SAVE-005、OPS-005。
 
-交付物：users、games、game_versions、sessions、worker_leases、save_artifacts、idempotency_records、audit_events migration；并发 token、唯一索引和 UTC 时间约定。
+交付物：users、games、game_versions、sessions、worker_leases、idempotency_records、audit_events migration；SessionRoot 路径、并发 token、唯一索引和 UTC 时间约定。
 
 验证：
 
@@ -297,11 +331,11 @@ dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Reconnect|Catego
 
 通过条件：断开后从最后 ack 恢复且无丢失窗口；重复消息只执行一次并返回同一结果；两个客户端并发回答只有一个 ACCEPTED；API 重启后可重新发现 Worker 并恢复连接；越权恢复失败。
 
-### P1-09 — SaveArtifact 管理与隔离 API（TODO）
+### P1-09 — Session 原生存档文件 API（TODO）
 
 需求映射：SAVE-001～009、SAVE-015、AC-004/007/013/014。
 
-交付物：启动物化、原子提交、列出、上传、下载、重命名、复制和软删除 API；校验和与 generation；用户/游戏/Session 隔离。
+交付物：按 Session 列出和下载原生存档；在 Session 无活动 Worker 时上传、替换、重命名、复制和删除；路径/大小/基本格式校验；用户、游戏和 Session 隔离。文件直接位于 SessionRoot，不建立 SaveArtifact 表或 generation 存储。
 
 验证：
 
@@ -309,7 +343,7 @@ dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Reconnect|Catego
 dotnet test tests/CloudEmuera.Saves.IntegrationTests
 ```
 
-通过条件：跨用户和跨 Session 访问失败；上传校验大小、路径和版本；并发提交不会覆盖较新 generation；Worker 提交中止后旧存档可下载；显式复制产生独立物理文件。
+通过条件：跨用户和跨 Session 访问失败；上传校验大小、路径和版本；活动 Worker 存在时所有修改操作被拒绝；操作与 Worker 启动竞争时只有一方成功；显式复制产生独立物理文件；API 不解析或改写 Emuera 原生内容。
 
 ### P1-10 — 浏览器游戏库、Session 控制台和存档界面（TODO）
 
@@ -391,7 +425,6 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P0-05，在已完成的无 UI 输入链路上证明两种原生存档；
-2. 执行 P0-06，形成首个跨进程端到端切片。
+1. 执行 P0-06，形成首个跨进程端到端切片。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

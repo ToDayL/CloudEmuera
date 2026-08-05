@@ -19,10 +19,157 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Empty(report.Errors);
         Assert.True(report.AssertionCount >= 14);
         Assert.Equal(RuntimeBaseline.UpstreamCommit, report.UpstreamCommit);
-        Assert.Equal("headless-p0.4.1", report.IntegrationVersion);
+        Assert.Equal("headless-p0.5.1", report.IntegrationVersion);
         Assert.Contains(
             report.AssertionEvidence,
             evidence => evidence.Name == "score=3" && evidence.Passed && evidence.VerifiedByVisibleOutput);
+    }
+
+    [Theory]
+    [InlineData("v18-core")]
+    [InlineData("em-ee-core")]
+    [Trait("Category", "NativeSave")]
+    public async Task NativeSaveRoundTripsAcrossTwoHosts(string fixtureId)
+    {
+        RuntimeScenarioReport report = await RuntimeScenarioRunner.RunSaveAsync(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            fixtureId);
+
+        Assert.Equal("Completed", report.Status);
+        Assert.Empty(report.Errors);
+        Assert.Contains(
+            report.AssertionEvidence,
+            evidence => evidence.Name == "native-save-values" && evidence.Passed && evidence.VerifiedByVisibleOutput);
+    }
+
+    [Fact]
+    [Trait("Category", "NativeSave")]
+    public async Task SaveLayoutMismatchFailsBeforeErbExecution()
+    {
+        using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nPRINTL SHOULD-NOT-RUN\nQUIT\n");
+        File.WriteAllText(Path.Combine(fixture.Paths.SessionRoot, "emuera.config"), "Use sav folder:YES\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+
+        EmueraRuntimeResult result = await host.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.InitializationFailed, result.Status);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "save_layout_mismatch" && diagnostic.IsFatal);
+        Assert.DoesNotContain("SHOULD-NOT-RUN", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("前", RuntimeSaveLayout.SavDirectory)]
+    [InlineData("後", RuntimeSaveLayout.Root)]
+    [Trait("Category", "NativeSave")]
+    public async Task JapaneseSaveBooleanValuesMatchPinnedUpstream(string value, RuntimeSaveLayout expectedLayout)
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTL JAPANESE-CONFIG-OK\nQUIT\n",
+            expectedLayout,
+            $"セーブデータをsavフォルダ内に作成する:{value}\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+        Assert.Equal(expectedLayout, fixture.Paths.SaveLayout);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+        Assert.Contains(
+            "JAPANESE-CONFIG-OK",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "NativeSave")]
+    public async Task TwoSessionsKeepNativeGlobalValuesIndependent()
+    {
+        using var first = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTL ISOLATION-START\nINPUT\n" +
+            "IF RESULT == 1\n" +
+            "    savedValue = 101\n" +
+            "    globalValue = 1001\n" +
+            "    SAVEDATA 0, \"SESSION-A\"\n" +
+            "    SAVEGLOBAL\n" +
+            "    PRINTL ISOLATION-SAVE-A\n" +
+            "    QUIT\n" +
+            "ELSEIF RESULT == 2\n" +
+            "    savedValue = 202\n" +
+            "    globalValue = 2002\n" +
+            "    SAVEDATA 0, \"SESSION-B\"\n" +
+            "    SAVEGLOBAL\n" +
+            "    PRINTL ISOLATION-SAVE-B\n" +
+            "    QUIT\n" +
+            "ELSEIF RESULT == 3\n" +
+            "    savedValue = -1\n" +
+            "    globalValue = -1\n" +
+            "    LOADGLOBAL\n" +
+            "    LOADDATA 0\n" +
+            "ENDIF\n" +
+            "@EVENTLOAD\n" +
+            "PRINTFORML LOADED-SAVE={savedValue}\n" +
+            "PRINTFORML LOADED-GLOBAL={globalValue}\n" +
+            "QUIT\n",
+            RuntimeSaveLayout.Root,
+            "Use sav folder:NO\n",
+            "#DIM SAVEDATA savedValue\n#DIM GLOBAL SAVEDATA globalValue\n");
+        using RuntimeHostFixture second = first.CreateAdditionalSession();
+
+        string saveA = await RunWithInputAsync(first, "1");
+        string saveB = await RunWithInputAsync(second, "2");
+        string loadA = await RunWithInputAsync(first, "3");
+        string loadB = await RunWithInputAsync(second, "3");
+
+        Assert.Contains("ISOLATION-SAVE-A", saveA, StringComparison.Ordinal);
+        Assert.Contains("ISOLATION-SAVE-B", saveB, StringComparison.Ordinal);
+        Assert.Contains("LOADED-SAVE=101", loadA, StringComparison.Ordinal);
+        Assert.Contains("LOADED-GLOBAL=1001", loadA, StringComparison.Ordinal);
+        Assert.Contains("LOADED-SAVE=202", loadB, StringComparison.Ordinal);
+        Assert.Contains("LOADED-GLOBAL=2002", loadB, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(first.Paths.SessionRoot, "save00.sav")));
+        Assert.True(File.Exists(Path.Combine(second.Paths.SessionRoot, "save00.sav")));
+        Assert.True(File.Exists(Path.Combine(first.Paths.SessionRoot, "global.sav")));
+        Assert.True(File.Exists(Path.Combine(second.Paths.SessionRoot, "global.sav")));
+    }
+
+    [Fact]
+    [Trait("Category", "NativeSave")]
+    public async Task CancellationPreservesPersistentSessionRoot()
+    {
+        using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nINPUT\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        File.WriteAllText(Path.Combine(fixture.Paths.SessionRoot, "save00.sav"), "cancel-survivor");
+
+        using var cancellation = new CancellationTokenSource();
+        Task<EmueraRuntimeResult> run = host.RunAsync(cancellation.Token);
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        cancellation.Cancel();
+
+        Assert.Equal(EmueraRuntimeStatus.Cancelled, (await run).Status);
+        Assert.True(Directory.Exists(fixture.Paths.SessionRoot));
+        Assert.Equal("cancel-survivor", File.ReadAllText(Path.Combine(fixture.Paths.SessionRoot, "save00.sav")));
+        host.Dispose();
+        Assert.True(Directory.Exists(fixture.Paths.SessionRoot));
+        Assert.True(File.Exists(Path.Combine(fixture.Paths.SessionRoot, "emuera.config")));
+    }
+
+    [Fact]
+    [Trait("Category", "NativeSave")]
+    public async Task DisposingInitializedHostPreservesRootForSimulatedWorkerTermination()
+    {
+        using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        File.WriteAllText(Path.Combine(fixture.Paths.SessionRoot, "global.sav"), "termination-survivor");
+
+        host.Dispose();
+
+        Assert.True(Directory.Exists(fixture.Paths.SessionRoot));
+        Assert.Equal(
+            "termination-survivor",
+            File.ReadAllText(Path.Combine(fixture.Paths.SessionRoot, "global.sav")));
+        Assert.True(File.Exists(Path.Combine(fixture.Paths.SessionRoot, "emuera.config")));
     }
 
     [Fact]
@@ -170,7 +317,7 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public async Task InitializationDeadlineReleasesGateAndPrivateViewForNextHost()
+    public async Task InitializationDeadlineReleasesGateAndPreservesSessionRootForNextHost()
     {
         using var timedOutFixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
         using var gateAcquired = new ManualResetEventSlim();
@@ -183,7 +330,8 @@ public sealed class HeadlessRuntimeFixtureTests
         EmueraRuntimeResult timedOut = await timedOutHost.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(4));
 
         Assert.Equal(EmueraRuntimeStatus.DeadlineExceeded, timedOut.Status);
-        Assert.Empty(Directory.EnumerateDirectories(timedOutFixture.Paths.TemporaryRoot, "upstream-view-*"));
+        Assert.True(Directory.Exists(timedOutFixture.Paths.SessionRoot));
+        Assert.True(File.Exists(Path.Combine(timedOutFixture.Paths.SessionRoot, "emuera.config")));
 
         using var recoveryFixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
         await using EmueraRuntimeHost recoveryHost = recoveryFixture.CreateHost();
@@ -273,58 +421,6 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Fact]
-    [Trait("Category", "RuntimeBridge")]
-    public async Task UpstreamLoaderConsumesGameContentFromFilePortOnly()
-    {
-        string root = Path.Combine(Path.GetTempPath(), "cloudemuera-port-only", Guid.NewGuid().ToString("N"));
-        string game = Path.Combine(root, "empty-game-root");
-        string session = Path.Combine(root, "session");
-        string workspace = Path.Combine(root, "workspace");
-        Directory.CreateDirectory(game);
-        Directory.CreateDirectory(session);
-        Directory.CreateDirectory(workspace);
-        try
-        {
-            var paths = new RuntimePaths(session, game, workspace, RuntimeSaveLayout.Root);
-            Directory.CreateDirectory(paths.ConfigurationRoot);
-            Directory.CreateDirectory(paths.TemporaryRoot);
-            Directory.CreateDirectory(paths.RootSaveRoot);
-            Directory.CreateDirectory(paths.SavDirectoryRoot);
-            File.WriteAllText(Path.Combine(paths.ConfigurationRoot, "emuera.config"), "UseSaveFolder:YES\n");
-            var local = new LocalRuntimeFileSystem(paths);
-            var fileSystem = new PortOnlyGameFileSystem(local, new Dictionary<string, string>
-            {
-                ["CSV/GAMEBASE.CSV"] = "タイトル,port-only\n",
-                ["ERB/START.ERB"] = "@SYSTEM_TITLE\nPRINTL PORT-ONLY\nQUIT\n"
-            });
-            var console = new StructuredGameConsole();
-            var options = new EmueraRuntimeOptions(
-                paths,
-                console,
-                fileSystem,
-                console.Clock,
-                new RuntimeImageMetadataPort(fileSystem),
-                new RecordingRuntimeAudioPort(),
-                EmueraCompatibilityProfiles.EmEeCurrent,
-                TimeSpan.FromSeconds(5),
-                TimeSpan.FromSeconds(5));
-
-            await using EmueraRuntimeHost host = EmueraRuntimeHost.Create(options);
-            EmueraRuntimeResult initialized = await host.InitializeAsync();
-            Assert.True(
-                initialized.Status == EmueraRuntimeStatus.Completed,
-                string.Join(" | ", initialized.Diagnostics.Select(item => $"{item.Code}: {item.Message}")));
-            Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
-            Assert.Equal("PORT-ONLY", RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes));
-            Assert.Empty(Directory.EnumerateFileSystemEntries(game));
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
     public void HeadlessAssemblyDoesNotReferenceDesktopFrameworks()
     {
         var runtimeAssembly = typeof(EmueraRuntimeHost).Assembly;
@@ -346,25 +442,39 @@ public sealed class HeadlessRuntimeFixtureTests
     {
         private RuntimeHostFixture(
             string root,
+            string gameVersionRoot,
+            SessionRootPublishedManifest manifest,
             RuntimePaths paths,
             LocalRuntimeFileSystem fileSystem,
             StructuredGameConsole console,
-            RecordingRuntimeAudioPort audioPort)
+            RecordingRuntimeAudioPort audioPort,
+            bool ownsRoot)
         {
             Root = root;
+            GameVersionRoot = gameVersionRoot;
+            Manifest = manifest;
             Paths = paths;
             FileSystem = fileSystem;
             Console = console;
             AudioPort = audioPort;
+            this.ownsRoot = ownsRoot;
         }
 
+        private readonly bool ownsRoot;
+
         public string Root { get; }
+        public string GameVersionRoot { get; }
+        public SessionRootPublishedManifest Manifest { get; }
         public RuntimePaths Paths { get; }
         public LocalRuntimeFileSystem FileSystem { get; }
         public StructuredGameConsole Console { get; }
         public RecordingRuntimeAudioPort AudioPort { get; }
 
-        public static RuntimeHostFixture Create(string erb)
+        public static RuntimeHostFixture Create(
+            string erb,
+            RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root,
+            string? configuration = null,
+            string? saveDeclarations = null)
         {
             string root = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-bridge", Guid.NewGuid().ToString("N"));
             string game = Path.Combine(root, "game");
@@ -373,19 +483,55 @@ public sealed class HeadlessRuntimeFixtureTests
             Directory.CreateDirectory(Path.Combine(game, "CSV"));
             Directory.CreateDirectory(Path.Combine(game, "ERB"));
             Directory.CreateDirectory(Path.Combine(game, "resources"));
-            Directory.CreateDirectory(session);
             Directory.CreateDirectory(workspace);
             File.WriteAllText(Path.Combine(game, "CSV", "GAMEBASE.CSV"), "title,bridge-test\n");
             File.WriteAllText(Path.Combine(game, "ERB", "START.ERB"), erb);
-            var paths = new RuntimePaths(session, game, workspace, RuntimeSaveLayout.Root);
-            Directory.CreateDirectory(paths.ConfigurationRoot);
-            Directory.CreateDirectory(paths.TemporaryRoot);
-            Directory.CreateDirectory(paths.RootSaveRoot);
-            Directory.CreateDirectory(paths.SavDirectoryRoot);
-            File.WriteAllText(Path.Combine(paths.ConfigurationRoot, "emuera.config"), "UseSaveFolder:NO\n");
+            if (saveDeclarations is not null)
+            {
+                File.WriteAllText(Path.Combine(game, "ERB", "SAVE.ERH"), saveDeclarations);
+            }
+
+            File.WriteAllText(Path.Combine(game, "emuera.config"), configuration ?? "Use sav folder:NO\n");
+            SessionRootLayout layout = new SessionRootLayoutBuilder(
+                game,
+                session,
+                workspace,
+                saveLayout).Build();
+            SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(game, "runtime-bridge");
+            RuntimePaths paths = layout.RuntimePaths;
             var fileSystem = new LocalRuntimeFileSystem(paths);
             var console = new StructuredGameConsole();
-            return new RuntimeHostFixture(root, paths, fileSystem, console, new RecordingRuntimeAudioPort());
+            return new RuntimeHostFixture(
+                root,
+                game,
+                manifest,
+                paths,
+                fileSystem,
+                console,
+                new RecordingRuntimeAudioPort(),
+                ownsRoot: true);
+        }
+
+        public RuntimeHostFixture CreateAdditionalSession()
+        {
+            string sessionRoot = Path.Combine(Root, "session-b");
+            string sessionWorkspace = Path.Combine(Root, "session-b-workspace");
+            SessionRootLayout layout = new SessionRootLayoutBuilder(
+                GameVersionRoot,
+                sessionRoot,
+                sessionWorkspace,
+                [Paths.SessionRoot])
+                .Build(Manifest, new SessionRootCopyLimits());
+            var fileSystem = new LocalRuntimeFileSystem(layout.RuntimePaths);
+            return new RuntimeHostFixture(
+                Root,
+                GameVersionRoot,
+                Manifest,
+                layout.RuntimePaths,
+                fileSystem,
+                new StructuredGameConsole(),
+                new RecordingRuntimeAudioPort(),
+                ownsRoot: false);
         }
 
         public EmueraRuntimeHost CreateHost(
@@ -393,13 +539,27 @@ public sealed class HeadlessRuntimeFixtureTests
             TimeSpan? initializationDeadline = null,
             TimeSpan? runDeadline = null,
             Action? upstreamGateAcquired = null)
+            => CreateHost(
+                Console,
+                runtimeClock,
+                initializationDeadline,
+                runDeadline,
+                upstreamGateAcquired);
+
+        public EmueraRuntimeHost CreateHost(
+            StructuredGameConsole console,
+            IRuntimeClock? runtimeClock = null,
+            TimeSpan? initializationDeadline = null,
+            TimeSpan? runDeadline = null,
+            Action? upstreamGateAcquired = null)
         {
+            var fileSystem = new LocalRuntimeFileSystem(Paths);
             var options = new EmueraRuntimeOptions(
                 Paths,
-                Console,
-                FileSystem,
-                runtimeClock ?? Console.Clock,
-                new RuntimeImageMetadataPort(FileSystem),
+                console,
+                fileSystem,
+                runtimeClock ?? console.Clock,
+                new RuntimeImageMetadataPort(fileSystem),
                 AudioPort,
                 EmueraCompatibilityProfiles.V18Compatible,
                 initializationDeadline ?? TimeSpan.FromSeconds(5),
@@ -409,6 +569,11 @@ public sealed class HeadlessRuntimeFixtureTests
 
         public void Dispose()
         {
+            if (!ownsRoot)
+            {
+                return;
+            }
+
             try
             {
                 Directory.Delete(Root, true);
@@ -417,6 +582,21 @@ public sealed class HeadlessRuntimeFixtureTests
             {
             }
         }
+    }
+
+    private static async Task<string> RunWithInputAsync(RuntimeHostFixture fixture, string input)
+    {
+        var console = new StructuredGameConsole();
+        await using EmueraRuntimeHost host = fixture.CreateHost(console);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(console.CurrentPrompt);
+        Assert.Equal(ConsoleInputResultKind.Accepted, console.SubmitInput(
+            new ConsoleInputCommand(prompt.PromptId, $"isolation-{input}", input)).Kind);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
+        return RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes);
     }
 
     private sealed class RecordingRuntimeClock : IRuntimeClock
@@ -461,81 +641,4 @@ public sealed class HeadlessRuntimeFixtureTests
             new(Task.Run(() => gateAcquired.Wait(cancellationToken), cancellationToken));
     }
 
-    private sealed class PortOnlyGameFileSystem(
-        IRuntimeFileSystem writableFileSystem,
-        IReadOnlyDictionary<string, string> gameFiles) : IRuntimeFileSystem
-    {
-        public bool FileExists(RuntimeFilePath path, CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return path.Area == RuntimeFileArea.GameContent
-                ? gameFiles.ContainsKey(path.RelativePath.Value)
-                : writableFileSystem.FileExists(path, cancellationToken);
-        }
-
-        public bool DirectoryExists(RuntimeFilePath path, CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (path.Area != RuntimeFileArea.GameContent)
-                return writableFileSystem.DirectoryExists(path, cancellationToken);
-            string prefix = path.RelativePath.Value.TrimEnd('/') + "/";
-            return gameFiles.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal));
-        }
-
-        public Stream OpenRead(RuntimeFilePath path, CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (path.Area != RuntimeFileArea.GameContent)
-                return writableFileSystem.OpenRead(path, cancellationToken);
-            if (!gameFiles.TryGetValue(path.RelativePath.Value, out string? content))
-                throw new FileNotFoundException("The logical fixture file was not declared.");
-            return new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content), writable: false);
-        }
-
-        public Stream OpenWrite(RuntimeFilePath path, RuntimeFileOpenMode mode, CancellationToken cancellationToken = default) =>
-            path.Area == RuntimeFileArea.GameContent
-                ? throw new RuntimeFileAccessException(RuntimePathReasonCodes.ReadOnlyArea, "GameContent is read-only.", path.LogicalPath, path.Area)
-                : writableFileSystem.OpenWrite(path, mode, cancellationToken);
-
-        public void CreateDirectory(RuntimeFilePath path, CancellationToken cancellationToken = default)
-        {
-            if (path.Area == RuntimeFileArea.GameContent)
-                throw new RuntimeFileAccessException(RuntimePathReasonCodes.ReadOnlyArea, "GameContent is read-only.", path.LogicalPath, path.Area);
-            writableFileSystem.CreateDirectory(path, cancellationToken);
-        }
-
-        public IReadOnlyList<RuntimeFileEntry> Enumerate(RuntimeFilePath directory, CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (directory.Area != RuntimeFileArea.GameContent)
-                return writableFileSystem.Enumerate(directory, cancellationToken);
-            string prefix = directory.RelativePath.Value.TrimEnd('/') + "/";
-            return gameFiles
-                .Where(pair => pair.Key.StartsWith(prefix, StringComparison.Ordinal) && !pair.Key[prefix.Length..].Contains('/'))
-                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
-                .Select(pair => new RuntimeFileEntry(
-                    new RuntimeFilePath(RuntimeFileArea.GameContent, pair.Key),
-                    RuntimeFileEntryKind.File,
-                    System.Text.Encoding.UTF8.GetByteCount(pair.Value),
-                    DateTimeOffset.UnixEpoch))
-                .ToArray();
-        }
-
-        public IReadOnlyList<RuntimeFileEntry> Enumerate(RuntimeFileArea area, CancellationToken cancellationToken = default) =>
-            area == RuntimeFileArea.GameContent
-                ? Array.Empty<RuntimeFileEntry>()
-                : writableFileSystem.Enumerate(area, cancellationToken);
-
-        public RuntimeFileMetadata GetMetadata(RuntimeFilePath path, CancellationToken cancellationToken = default) =>
-            path.Area == RuntimeFileArea.GameContent && gameFiles.TryGetValue(path.RelativePath.Value, out string? content)
-                ? new RuntimeFileMetadata(RuntimeFileEntryKind.File, System.Text.Encoding.UTF8.GetByteCount(content), DateTimeOffset.UnixEpoch)
-                : writableFileSystem.GetMetadata(path, cancellationToken);
-
-        public void Move(RuntimeFilePath source, RuntimeFilePath destination, bool overwrite = false, CancellationToken cancellationToken = default) =>
-            writableFileSystem.Move(source, destination, overwrite, cancellationToken);
-        public void Replace(RuntimeFilePath source, RuntimeFilePath destination, RuntimeFilePath? backupPath = null, CancellationToken cancellationToken = default) =>
-            writableFileSystem.Replace(source, destination, backupPath, cancellationToken);
-        public void Delete(RuntimeFilePath path, bool recursive = false, CancellationToken cancellationToken = default) =>
-            writableFileSystem.Delete(path, recursive, cancellationToken);
-    }
 }

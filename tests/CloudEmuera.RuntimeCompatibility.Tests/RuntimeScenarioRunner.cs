@@ -16,7 +16,10 @@ internal sealed record RuntimeScenarioReport(
     string UpstreamCommit,
     string IntegrationVersion,
     IReadOnlyList<RuntimeScenarioAssertionEvidence> AssertionEvidence,
-    IReadOnlyList<string> Errors);
+    IReadOnlyList<string> Errors,
+    string Scenario,
+    string Layout,
+    string RunPhase);
 
 internal sealed record RuntimeScenarioAssertionEvidence(
     string Name,
@@ -38,28 +41,32 @@ internal static class RuntimeScenarioRunner
         string profile = fixtureId == "v18-core"
             ? EmueraCompatibilityProfiles.V18Compatible
             : EmueraCompatibilityProfiles.EmEeCurrent;
-        RuntimeSaveLayout saveLayout = fixtureId == "v18-core"
-            ? RuntimeSaveLayout.Root
-            : RuntimeSaveLayout.SavDirectory;
-        string beforeDigest = DigestDirectory(fixtureRoot);
         var stopwatch = Stopwatch.StartNew();
         var errors = new List<string>();
         var assertionEvidence = new List<RuntimeScenarioAssertionEvidence>();
         int assertions = 0;
+        string reportLayout = "unknown";
         string scratch = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-compat", Guid.NewGuid().ToString("N"));
-        string sessionRoot = Path.Combine(scratch, "interpreter");
-        string workspaceRoot = Path.Combine(scratch, "workspace");
-        Directory.CreateDirectory(sessionRoot);
-        Directory.CreateDirectory(workspaceRoot);
+        string publishedGameRoot = Path.Combine(scratch, "published-game");
+        string sessionRoot = Path.Combine(scratch, "session-root");
+        string workspaceRoot = Path.Combine(scratch, "session-workspace");
 
         try
         {
-            var paths = new RuntimePaths(sessionRoot, fixtureRoot, workspaceRoot, saveLayout);
-            Directory.CreateDirectory(paths.ConfigurationRoot);
-            Directory.CreateDirectory(paths.TemporaryRoot);
-            Directory.CreateDirectory(paths.RootSaveRoot);
-            Directory.CreateDirectory(paths.SavDirectoryRoot);
-            File.Copy(Path.Combine(fixtureRoot, "emuera.config"), Path.Combine(paths.ConfigurationRoot, "emuera.config"));
+            Directory.CreateDirectory(workspaceRoot);
+            CopyPublishedGameVersion(fixtureRoot, publishedGameRoot);
+            SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
+                publishedGameRoot,
+                fixtureId);
+            string beforeDigest = DigestDirectory(publishedGameRoot);
+            SessionRootLayout layout = new SessionRootLayoutBuilder(
+                publishedGameRoot,
+                sessionRoot,
+                workspaceRoot)
+                .WithPublishedManifest(manifest)
+                .Build();
+            RuntimePaths paths = layout.RuntimePaths;
+            reportLayout = paths.SaveLayout.ToString();
 
             var fileSystem = new LocalRuntimeFileSystem(paths);
             var clock = new TimeProviderRuntimeClock();
@@ -129,7 +136,7 @@ internal static class RuntimeScenarioRunner
             Check(!fileSystem.FileExists(new RuntimeFilePath(RuntimeFileArea.Save, "global.sav")), "P0-04 created global.sav.", errors, ref assertions);
             IReadOnlyList<SequencedConsoleEvent> history = console.StateStore.History;
             Check(history.Select(item => item.Sequence).SequenceEqual(Enumerable.Range(1, history.Count).Select(value => (long)value)), "Console event sequence was not continuous.", errors, ref assertions);
-            Check(string.Equals(beforeDigest, DigestDirectory(fixtureRoot), StringComparison.Ordinal), "Fixture GameContent changed during execution.", errors, ref assertions);
+            Check(string.Equals(beforeDigest, DigestDirectory(publishedGameRoot), StringComparison.Ordinal), "Published GameVersion changed during execution.", errors, ref assertions);
             return Report(result.Status.ToString());
         }
         catch (Exception exception)
@@ -157,8 +164,259 @@ internal static class RuntimeScenarioRunner
             RuntimeBaseline.UpstreamCommit,
             RuntimeBaseline.CloudEmueraIntegrationVersion,
             assertionEvidence,
-            errors);
+            errors,
+            "input-roundtrip",
+            reportLayout,
+            "input");
     }
+
+    public static async Task<RuntimeScenarioReport> RunSaveAsync(
+        string repositoryRoot,
+        string fixtureId)
+    {
+        string fixtureRoot = Path.Combine(repositoryRoot, "tests", "fixtures", "runtime", fixtureId);
+        if (!FixtureIds.Contains(fixtureId, StringComparer.Ordinal))
+        {
+            return FailedSave(fixtureId, "unknown", "Fixture is not listed in the runtime manifest.");
+        }
+
+        string profile = fixtureId == "v18-core"
+            ? EmueraCompatibilityProfiles.V18Compatible
+            : EmueraCompatibilityProfiles.EmEeCurrent;
+        var stopwatch = Stopwatch.StartNew();
+        var errors = new List<string>();
+        var evidence = new List<RuntimeScenarioAssertionEvidence>();
+        int assertions = 0;
+        string reportLayout = "unknown";
+        string scratch = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-save", Guid.NewGuid().ToString("N"));
+        string publishedGameRoot = Path.Combine(scratch, "published-game");
+        string workspaceRoot = Path.Combine(scratch, "session-workspace");
+        string sessionRoot = Path.Combine(workspaceRoot, "session-root");
+
+        try
+        {
+            Directory.CreateDirectory(workspaceRoot);
+            CopyPublishedGameVersion(fixtureRoot, publishedGameRoot);
+            SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(publishedGameRoot, fixtureId);
+            string beforeDigest = DigestDirectory(publishedGameRoot);
+            NativeSaveScenario scenario = ReadNativeSaveScenario(Path.Combine(fixtureRoot, "save-scenario.json"));
+            SessionRootLayout layout = SessionRootLayoutBuilder.Build(
+                publishedGameRoot,
+                sessionRoot,
+                manifest,
+                new SessionRootCopyLimits());
+            RuntimePaths paths = layout.RuntimePaths;
+            reportLayout = paths.SaveLayout.ToString();
+            Check(
+                paths.SaveLayout == (fixtureId == "v18-core" ? RuntimeSaveLayout.Root : RuntimeSaveLayout.SavDirectory),
+                "Save layout was not selected from emuera.config.",
+                errors,
+                ref assertions);
+
+            var consoleA = new StructuredGameConsole();
+            var fileSystemA = new LocalRuntimeFileSystem(paths);
+            await using (EmueraRuntimeHost hostA = CreateHost(paths, fileSystemA, consoleA, profile))
+            {
+                EmueraRuntimeResult initialized = await hostA.InitializeAsync().ConfigureAwait(false);
+                Check(initialized.Status == EmueraRuntimeStatus.Completed, "Save host initialization failed.", errors, ref assertions);
+                if (initialized.Status != EmueraRuntimeStatus.Completed)
+                {
+                    errors.AddRange(initialized.Diagnostics.Select(diagnostic => $"{diagnostic.Code}: {diagnostic.Message}"));
+                    return Report("Failed", "save");
+                }
+
+                Task<EmueraRuntimeResult> run = hostA.RunAsync();
+                Check(
+                    SpinWait.SpinUntil(() => consoleA.CurrentPrompt is not null || run.IsCompleted, TimeSpan.FromSeconds(5)),
+                    "Save host did not reach INPUT.",
+                    errors,
+                    ref assertions);
+                ConsolePrompt? prompt = consoleA.CurrentPrompt;
+                Check(prompt is not null, "Save host completed before opening a prompt.", errors, ref assertions);
+                if (prompt is not null)
+                {
+                    Check(
+                        consoleA.SubmitInput(new ConsoleInputCommand(prompt.PromptId, $"save-{fixtureId}", scenario.SaveInput)).Kind ==
+                        ConsoleInputResultKind.Accepted,
+                        "Save input was not accepted.",
+                        errors,
+                        ref assertions);
+                }
+
+                EmueraRuntimeResult result = await run.ConfigureAwait(false);
+                Check(result.Status == EmueraRuntimeStatus.Completed, "Save host did not complete.", errors, ref assertions);
+                AddDiagnostics(result, "Save host", errors);
+                string saveTranscript = RuntimeTranscriptProjector.Project(consoleA.Snapshot.VisibleNodes);
+                Check(
+                    saveTranscript.Contains(scenario.SaveOutput, StringComparison.Ordinal),
+                    "Save completion was not visible in the runtime output.",
+                    errors,
+                    ref assertions);
+            }
+
+            string selectedSave = paths.SaveLayout == RuntimeSaveLayout.Root
+                ? Path.Combine(paths.SessionRoot, "save00.sav")
+                : Path.Combine(paths.SavDirectoryRoot, "save00.sav");
+            string selectedGlobal = paths.SaveLayout == RuntimeSaveLayout.Root
+                ? Path.Combine(paths.SessionRoot, "global.sav")
+                : Path.Combine(paths.SavDirectoryRoot, "global.sav");
+            string unselectedSave = paths.SaveLayout == RuntimeSaveLayout.Root
+                ? Path.Combine(paths.SavDirectoryRoot, "save00.sav")
+                : Path.Combine(paths.SessionRoot, "save00.sav");
+            string unselectedGlobal = paths.SaveLayout == RuntimeSaveLayout.Root
+                ? Path.Combine(paths.SavDirectoryRoot, "global.sav")
+                : Path.Combine(paths.SessionRoot, "global.sav");
+            Check(IsNonEmptyRegularFile(selectedSave), "The selected native save file was not created.", errors, ref assertions);
+            Check(IsNonEmptyRegularFile(selectedGlobal), "The selected native global file was not created.", errors, ref assertions);
+            Check(!File.Exists(unselectedSave), "The unselected save layout contains a slot file.", errors, ref assertions);
+            Check(!File.Exists(unselectedGlobal), "The unselected save layout contains a global file.", errors, ref assertions);
+
+            var consoleB = new StructuredGameConsole();
+            var fileSystemB = new LocalRuntimeFileSystem(paths);
+            await using (EmueraRuntimeHost hostB = CreateHost(paths, fileSystemB, consoleB, profile))
+            {
+                EmueraRuntimeResult initialized = await hostB.InitializeAsync().ConfigureAwait(false);
+                Check(initialized.Status == EmueraRuntimeStatus.Completed, "Load host initialization failed.", errors, ref assertions);
+                if (initialized.Status != EmueraRuntimeStatus.Completed)
+                {
+                    errors.AddRange(initialized.Diagnostics.Select(diagnostic => $"{diagnostic.Code}: {diagnostic.Message}"));
+                    return Report("Failed", "load");
+                }
+
+                Task<EmueraRuntimeResult> run = hostB.RunAsync();
+                Check(
+                    SpinWait.SpinUntil(() => consoleB.CurrentPrompt is not null || run.IsCompleted, TimeSpan.FromSeconds(5)),
+                    "Load host did not reach INPUT.",
+                    errors,
+                    ref assertions);
+                ConsolePrompt? prompt = consoleB.CurrentPrompt;
+                Check(prompt is not null, "Load host completed before opening a prompt.", errors, ref assertions);
+                if (prompt is not null)
+                {
+                    Check(
+                        consoleB.SubmitInput(new ConsoleInputCommand(prompt.PromptId, $"load-{fixtureId}", scenario.LoadInput)).Kind ==
+                        ConsoleInputResultKind.Accepted,
+                        "Load input was not accepted.",
+                        errors,
+                        ref assertions);
+                }
+
+                EmueraRuntimeResult result = await run.ConfigureAwait(false);
+                Check(result.Status == EmueraRuntimeStatus.Completed, "Load host did not complete.", errors, ref assertions);
+                AddDiagnostics(result, "Load host", errors);
+                string transcript = RuntimeTranscriptProjector.Project(consoleB.Snapshot.VisibleNodes);
+                string startupPrefix = fixtureId == "v18-core"
+                    ? "V18-START\nV18-READY\nV18-INPUT"
+                    : "EMEE-START\nEMEE-INPUT";
+                string expected = $"{startupPrefix}\n{string.Join('\n', scenario.LoadOutputs)}";
+                bool loaded = string.Equals(transcript, expected, StringComparison.Ordinal);
+                Check(loaded, $"Loaded values were not visible as expected. Actual: {transcript}", errors, ref assertions);
+                evidence.Add(new RuntimeScenarioAssertionEvidence("native-save-values", loaded, VerifiedByVisibleOutput: true));
+            }
+
+            Check(IsNonEmptyRegularFile(selectedSave), "The native save disappeared after Host disposal.", errors, ref assertions);
+            Check(IsNonEmptyRegularFile(selectedGlobal), "The native global save disappeared after Host disposal.", errors, ref assertions);
+            Check(
+                string.Equals(beforeDigest, DigestDirectory(publishedGameRoot), StringComparison.Ordinal),
+                "Published GameVersion changed during native save/load.",
+                errors,
+                ref assertions);
+            return Report("Completed", "save-and-restart-load");
+        }
+        catch (Exception exception)
+        {
+            errors.Add(exception.Message);
+            return Report("Failed", "initialization");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(scratch, recursive: true);
+            }
+            catch (DirectoryNotFoundException)
+            {
+            }
+        }
+
+        RuntimeScenarioReport Report(string status, string phase) => new(
+            fixtureId,
+            profile,
+            errors.Count == 0 ? status : "Failed",
+            assertions,
+            stopwatch.ElapsedMilliseconds,
+            RuntimeBaseline.UpstreamCommit,
+            RuntimeBaseline.CloudEmueraIntegrationVersion,
+            evidence,
+            errors,
+            reportLayout == RuntimeSaveLayout.Root.ToString() ? "save-root" :
+            reportLayout == RuntimeSaveLayout.SavDirectory.ToString() ? "save-directory" : "unknown",
+            reportLayout,
+            phase);
+    }
+
+    private static RuntimeScenarioReport FailedSave(string fixtureId, string profile, string error) => new(
+        fixtureId,
+        profile,
+        "Failed",
+        0,
+        0,
+        RuntimeBaseline.UpstreamCommit,
+        RuntimeBaseline.CloudEmueraIntegrationVersion,
+        [],
+        [error],
+        fixtureId == "v18-core" ? "save-root" : "save-directory",
+        "unknown",
+        "initialization");
+
+    private static void AddDiagnostics(
+        EmueraRuntimeResult result,
+        string context,
+        List<string> errors)
+    {
+        foreach (EmueraRuntimeDiagnostic diagnostic in result.Diagnostics.Where(item => item.IsFatal))
+        {
+            errors.Add($"{context} {diagnostic.Code}: {diagnostic.Message}");
+        }
+    }
+
+    private static EmueraRuntimeHost CreateHost(
+        RuntimePaths paths,
+        LocalRuntimeFileSystem fileSystem,
+        StructuredGameConsole console,
+        string profile) =>
+        EmueraRuntimeHost.Create(new EmueraRuntimeOptions(
+            paths,
+            console,
+            fileSystem,
+            console.Clock,
+            new RuntimeImageMetadataPort(fileSystem),
+            new RecordingRuntimeAudioPort(),
+            profile,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(10)));
+
+    private static NativeSaveScenario ReadNativeSaveScenario(string path)
+    {
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+        JsonElement root = document.RootElement;
+        return new NativeSaveScenario(
+            root.GetProperty("saveInput").GetString() ?? throw new InvalidDataException("saveInput is missing."),
+            root.GetProperty("loadInput").GetString() ?? throw new InvalidDataException("loadInput is missing."),
+            root.GetProperty("saveOutput").GetString() ?? throw new InvalidDataException("saveOutput is missing."),
+            root.GetProperty("loadOutputs").EnumerateArray().Select(item => item.GetString() ?? string.Empty).ToArray());
+    }
+
+    private static bool IsNonEmptyRegularFile(string path) =>
+        File.Exists(path) &&
+        (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0 &&
+        new FileInfo(path).Length > 0;
+
+    private sealed record NativeSaveScenario(
+        string SaveInput,
+        string LoadInput,
+        string SaveOutput,
+        IReadOnlyList<string> LoadOutputs);
 
     private static RuntimeScenarioReport Failed(string fixtureId, string profile, string error) => new(
         fixtureId,
@@ -169,7 +427,10 @@ internal static class RuntimeScenarioRunner
         RuntimeBaseline.UpstreamCommit,
         RuntimeBaseline.CloudEmueraIntegrationVersion,
         [],
-        [error]);
+        [error],
+        "input-roundtrip",
+        "unknown",
+        "initialization");
 
     private static string ReadScenarioInput(string path)
     {
@@ -230,6 +491,45 @@ internal static class RuntimeScenarioRunner
         }
 
         return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    private static void CopyPublishedGameVersion(string fixtureRoot, string publishedRoot)
+    {
+        Directory.CreateDirectory(publishedRoot);
+        foreach (FileSystemInfo entry in new DirectoryInfo(fixtureRoot).EnumerateFileSystemInfos())
+        {
+            if (entry.Name is "scenario.json" or "save-scenario.json" or "expected-transcript.txt")
+            {
+                continue;
+            }
+
+            string target = Path.Combine(publishedRoot, entry.Name);
+            if (entry is DirectoryInfo)
+            {
+                CopyDirectory(entry.FullName, target);
+            }
+            else if (entry is FileInfo)
+            {
+                File.Copy(entry.FullName, target);
+            }
+        }
+    }
+
+    private static void CopyDirectory(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        foreach (FileSystemInfo entry in new DirectoryInfo(source).EnumerateFileSystemInfos())
+        {
+            string destination = Path.Combine(target, entry.Name);
+            if (entry is DirectoryInfo)
+            {
+                CopyDirectory(entry.FullName, destination);
+            }
+            else if (entry is FileInfo)
+            {
+                File.Copy(entry.FullName, destination);
+            }
+        }
     }
 
     private static void Check(bool condition, string error, List<string> errors, ref int assertions)

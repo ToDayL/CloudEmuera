@@ -1,20 +1,63 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using System.Runtime.InteropServices;
+using CloudEmuera.Supervisor;
 
-var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddHostedService<SupervisorService>();
+return await SupervisorProcess.RunAsync(args).ConfigureAwait(false);
 
-await builder.Build().RunAsync();
-
-internal sealed partial class SupervisorService(ILogger<SupervisorService> logger) : BackgroundService
+internal static class SupervisorProcess
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public static async Task<int> RunAsync(string[] args)
     {
-        LogStarted(logger);
-        await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
-    }
+        string runtimeDirectory = Path.Combine(Path.GetTempPath(), "cloudemuera-supervisor");
+        string workerAssembly = Path.Combine(AppContext.BaseDirectory, "CloudEmuera.Worker.dll");
+        for (int index = 0; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--runtime-directory" when index + 1 < args.Length:
+                    runtimeDirectory = args[++index];
+                    break;
+                case "--worker-assembly" when index + 1 < args.Length:
+                    workerAssembly = args[++index];
+                    break;
+                default:
+                    Console.Error.WriteLine("supervisor_error code=invalid_arguments");
+                    return 2;
+            }
+        }
 
-    [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "CloudEmuera Worker Supervisor started")]
-    private static partial void LogStarted(ILogger logger);
+        using var cancellation = new CancellationTokenSource();
+        using PosixSignalRegistration sigterm = PosixSignalRegistration.Create(
+            PosixSignal.SIGTERM,
+            context =>
+            {
+                context.Cancel = true;
+                cancellation.Cancel();
+            });
+        using PosixSignalRegistration sigint = PosixSignalRegistration.Create(
+            PosixSignal.SIGINT,
+            context =>
+            {
+                context.Cancel = true;
+                cancellation.Cancel();
+            });
+
+        try
+        {
+            await using SupervisorHost host = await SupervisorHost.StartAsync(
+                    new SupervisorOptions(runtimeDirectory, workerAssembly),
+                    cancellation.Token)
+                .ConfigureAwait(false);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellation.Token).ConfigureAwait(false);
+            return 0;
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            return 0;
+        }
+        catch (Exception)
+        {
+            Console.Error.WriteLine("supervisor_error code=start_failed");
+            return 1;
+        }
+    }
 }

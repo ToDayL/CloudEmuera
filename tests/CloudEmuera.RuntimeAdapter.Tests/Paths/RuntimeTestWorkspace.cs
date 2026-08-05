@@ -14,7 +14,7 @@ internal sealed class RuntimeTestWorkspace : IDisposable
         Directory.CreateDirectory(Path.Combine(GameVersionRoot, "resources"));
         File.WriteAllText(Path.Combine(GameVersionRoot, "CSV", "GAMEBASE.CSV"), "; test\n");
         File.WriteAllText(Path.Combine(GameVersionRoot, "ERB", "START.ERB"), "@SYSTEM_TITLE\n");
-        File.WriteAllText(Path.Combine(GameVersionRoot, "emuera.config"), "UseSaveFolder=false\n");
+        File.WriteAllText(Path.Combine(GameVersionRoot, "emuera.config"), "Use sav folder:NO\n");
     }
 
     public string Root { get; }
@@ -25,6 +25,11 @@ internal sealed class RuntimeTestWorkspace : IDisposable
 
     public RuntimePaths BuildPaths(RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root)
     {
+        if (saveLayout == RuntimeSaveLayout.SavDirectory)
+        {
+            File.WriteAllText(Path.Combine(GameVersionRoot, "emuera.config"), "Use sav folder:YES\n");
+        }
+
         SessionRootLayout layout = new SessionRootLayoutBuilder(
             GameVersionRoot,
             SessionWorkspaceRoot,

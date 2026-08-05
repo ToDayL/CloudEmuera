@@ -7,7 +7,7 @@ namespace CloudEmuera.RuntimeAdapter.Tests.Paths;
 public sealed class RuntimePathsTests
 {
     [Fact]
-    public void RootAndSavDirectoryLayoutsUseDifferentPrivateRoots()
+    public void RootAndSavDirectoryLayoutsUseDifferentSessionRoots()
     {
         using var rootLayout = new RuntimeTestWorkspace();
         RuntimePaths rootPaths = rootLayout.BuildPaths(RuntimeSaveLayout.Root);

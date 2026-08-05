@@ -46,7 +46,8 @@ public sealed class RuntimeFixtureValidator
         "application/json",
         "text/csv",
         "text/plain",
-        "text/x-emuera-erb"
+        "text/x-emuera-erb",
+        "text/x-emuera-erh"
     ];
 
     private static readonly HashSet<string> AllowedBinaryMediaTypes =
@@ -397,8 +398,10 @@ public sealed class RuntimeFixtureValidator
     {
         string? scenarioPath = fixture.Scenario;
         string? transcriptPath = fixture.ExpectedTranscript;
+        string? saveScenarioPath = fixture.SaveScenario;
         bool scenarioPathValid = ValidateFixtureReferencePath(scenarioPath, "scenario", fixtureLabel, fixturePrefix, filesByPath, result);
         bool transcriptPathValid = ValidateFixtureReferencePath(transcriptPath, "expectedTranscript", fixtureLabel, fixturePrefix, filesByPath, result);
+        bool saveScenarioPathValid = ValidateFixtureReferencePath(saveScenarioPath, "saveScenario", fixtureLabel, fixturePrefix, filesByPath, result);
 
         if (scenarioPathValid && transcriptPathValid && string.Equals(scenarioPath, transcriptPath, StringComparison.OrdinalIgnoreCase))
         {
@@ -442,6 +445,26 @@ public sealed class RuntimeFixtureValidator
             else
             {
                 result.AddError($"{fixtureLabel}.expectedTranscript: {transcriptError}");
+            }
+        }
+
+        if (saveScenarioPathValid)
+        {
+            RuntimeFixtureFile saveScenarioFile = filesByPath[saveScenarioPath!];
+            if (!string.Equals(saveScenarioFile.MediaType, "application/json", StringComparison.Ordinal) ||
+                !string.Equals(saveScenarioFile.Encoding, "utf-8", StringComparison.Ordinal))
+            {
+                result.AddError($"{fixtureLabel}: saveScenario must be application/json encoded as utf-8");
+            }
+
+            string saveScenarioAbsolutePath = ResolvePath(root, saveScenarioPath!);
+            if (TryReadText(saveScenarioAbsolutePath, saveScenarioFile.Encoding, out string? saveScenarioText, out string? saveScenarioError))
+            {
+                ValidateSaveScenario(saveScenarioText!, fixture, fixtureLabel, result);
+            }
+            else
+            {
+                result.AddError($"{fixtureLabel}.saveScenario: {saveScenarioError}");
             }
         }
     }
@@ -642,6 +665,82 @@ public sealed class RuntimeFixtureValidator
         if (!observableAfterInput)
         {
             result.AddError($"{fixtureLabel}.scenario: an observable output, variable, save path or diagnostic is required after input");
+        }
+    }
+
+    private static void ValidateSaveScenario(
+        string saveScenarioText,
+        RuntimeFixtureDefinition fixture,
+        string fixtureLabel,
+        RuntimeFixtureValidationResult result)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(saveScenarioText);
+        if (!JsonDuplicatePropertyDetector.TryValidate(bytes, out string? duplicateError))
+        {
+            result.AddError($"{fixtureLabel}.saveScenario: {duplicateError}");
+            return;
+        }
+
+        RuntimeFixtureSaveScenario? scenario;
+        try
+        {
+            scenario = JsonSerializer.Deserialize<RuntimeFixtureSaveScenario>(
+                saveScenarioText,
+                RuntimeFixtureJson.SerializerOptions);
+        }
+        catch (JsonException exception)
+        {
+            result.AddError($"{fixtureLabel}.saveScenario: invalid JSON: {exception.Message}");
+            return;
+        }
+
+        if (scenario is null)
+        {
+            result.AddError($"{fixtureLabel}.saveScenario: root object is required");
+            return;
+        }
+
+        if (scenario.SchemaVersion != SupportedSchemaVersion)
+        {
+            result.AddError($"{fixtureLabel}.saveScenario: schemaVersion must be {SupportedSchemaVersion}");
+        }
+
+        if (!string.Equals(scenario.FixtureId, fixture.Id, StringComparison.Ordinal))
+        {
+            result.AddError($"{fixtureLabel}.saveScenario: fixtureId must equal fixture id");
+        }
+
+        if (string.IsNullOrWhiteSpace(scenario.SaveInput) ||
+            !long.TryParse(
+                scenario.SaveInput,
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out _))
+        {
+            result.AddError($"{fixtureLabel}.saveScenario: saveInput must be an integer string");
+        }
+
+        if (string.IsNullOrWhiteSpace(scenario.LoadInput) ||
+            !long.TryParse(
+                scenario.LoadInput,
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out _))
+        {
+            result.AddError($"{fixtureLabel}.saveScenario: loadInput must be an integer string");
+        }
+
+        ValidateStableText(scenario.SaveOutput, $"{fixtureLabel}.saveScenario.saveOutput", result);
+        if (scenario.LoadOutputs is null || scenario.LoadOutputs.Count == 0)
+        {
+            result.AddError($"{fixtureLabel}.saveScenario: loadOutputs must contain at least one value");
+        }
+        else
+        {
+            foreach (string? output in scenario.LoadOutputs)
+            {
+                ValidateStableText(output, $"{fixtureLabel}.saveScenario.loadOutputs", result);
+            }
         }
     }
 

@@ -83,7 +83,6 @@ CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit comp
 | GameVersion | Immutable ERB/CSV/asset snapshot and runtime requirements |
 | Session | A reconnectable game instance created by a user for one GameVersion |
 | WorkerLease | Routing, lease, and fencing epoch for the Session's current Worker |
-| SaveArtifact | A concrete save artifact scoped to a user, game, and Session |
 | ConsoleSnapshot | Current bounded display tree, input prompt, and output sequence |
 | OutputEvent | An ordered delta applied to a ConsoleSnapshot |
 
@@ -92,7 +91,7 @@ Relationship constraints:
 ```text
 User 1 ── N Session N ── 1 GameVersion N ── 1 Game
 Session 1 ── 0..1 Active WorkerLease
-Session 1 ── N SaveArtifact N ── 1 Game
+Session 1 ── 1 private SessionRoot
 ```
 
 ## 6. Functional Requirements
@@ -150,19 +149,19 @@ Session 1 ── N SaveArtifact N ── 1 Game
 
 - **SAVE-001**: Saves must be isolated by user, game, and Session. Every Session must have its own save workspace, and physical save files must not be shared with another Session.
 - **SAVE-002**: Relative paths supplied by a game must not escape the assigned save or temporary directory.
-- **SAVE-003**: Users must be able to list, download, upload, rename, and delete their own saves by Session.
-- **SAVE-004**: Save writes must use a temporary file followed by atomic replacement to avoid partial files after process termination.
-- **SAVE-005**: Each SaveArtifact must record the game version, runtime version, encoding/format, size, checksum, creation time, and source Session.
-- **SAVE-006**: Save import must validate file size, paths, format, and permission for the target GameVersion and Session.
+- **SAVE-003**: Users must be able to list and download their native saves by Session, and upload, rename, or delete them only while the Session has no active Worker.
+- **SAVE-004**: Emuera must write saves directly in the current SessionRoot using its native behavior. CloudEmuera must not add generations, a commit queue, or a second authoritative save copy to the runtime path.
+- **SAVE-005**: Session metadata must record its GameVersion, Runtime version, and private SessionRoot. Native save files are managed as opaque contents of that Session, without per-save generations.
+- **SAVE-006**: Save import must validate file size, paths, format, permission for the target GameVersion and Session, and re-confirm that the target Session has no active Worker.
 - **SAVE-007**: Copying a save from one Session to another must be explicit. Multiple active Workers must not write the same physical file concurrently.
-- **SAVE-008**: The system should support configurable autosave and retention policies but must not overwrite manual saves without a version or backup.
-- **SAVE-009**: Save deletion must require confirmation and should support an administrator-configured soft-delete retention period.
+- **SAVE-008**: Autosave and overwrite behavior follows native game and Emuera semantics. System-level history retention is provided by external backup of the whole SessionRoot, not by intercepting each runtime save.
+- **SAVE-009**: Save deletion must require confirmation. While a Session is active, no process other than its Worker may modify its saves concurrently.
 - **SAVE-010**: Save-content serialization and deserialization must use the native Emuera Runtime implementation. CloudEmuera must not introduce an incompatible game-save format merely to support Web-based save management.
 - **SAVE-011**: Every Session must provide Emuera with an independent actual SessionRoot while preserving the engine-visible `CSV/`, `ERB/`, asset, configuration, and save directory structure.
-- **SAVE-012**: SessionRoot must mount immutable GameVersion files read-only and map Session configuration, temporary files, and saves to private writable areas. The runtime root path must be injectable and must not be fixed to an API or another Session's directory.
-- **SAVE-013**: The compatibility layer must support both native Emuera save layouts: `save*.sav`/`global.sav` under GameRoot and the configured `sav/` directory under GameRoot. Both layouts must redirect to private storage belonging to the current Session.
+- **SAVE-012**: Before the first Worker starts, Session management must copy the complete validated regular-file tree of the immutable GameVersion into a private SessionRoot. The Worker reads and writes only that copy; the original GameVersion must not be mounted into the runtime directory or share writable inodes with a Session.
+- **SAVE-013**: The compatibility layer must support both native Emuera save layouts: `save*.sav`/`global.sav` under GameRoot and the `sav/` directory when `UseSaveFolder:YES`. The game's `emuera.config` is the sole layout authority, and files remain directly in the corresponding location of the current SessionRoot.
 - **SAVE-014**: Global saves in native Emuera semantics must be isolated by `User + Game + Session` and must never become server-global or cross-Session shared files.
-- **SAVE-015**: When a Session starts, required saves must be materialized into that Session's local workspace. After a successful save, they must be atomically committed as SaveArtifacts in the mounted data directory.
+- **SAVE-015**: From creation onward, SessionRoot is the Session's persistent runtime directory under the mounted data directory. Worker restarts must reuse it, without copying saves to a separate commit store on startup or shutdown.
 
 ### 6.6 Administration and operations
 
@@ -251,17 +250,18 @@ The Worker layer should distinguish:
 
 A Session Worker must continue running during an API-process restart or temporary local-IPC interruption and retain bounded output. It should re-register with `sessionId + workerEpoch` after the control channel recovers.
 
-Every Session Worker must use an actual `SessionRoot` as its process working directory and Emuera GameRoot. GameVersion files are mounted read-only from the game directory in the mounted data directory, while Session configuration, saves, and temporary files are written to the Session's own physical directory:
+Every Session Worker must use an actual `SessionRoot` as its process working directory and Emuera GameRoot. At creation, Session management copies the complete validated regular-file tree of the published GameVersion; configuration, game-defined directories, saves, and temporary files all live directly in the Session's physical directory:
 
 ```text
 SessionRoot/
-├── CSV/              → /data/games/{game}/{version}/CSV, read-only mount
-├── ERB/              → /data/games/{game}/{version}/ERB, read-only mount
-├── resources/        → /data/games/{game}/{version}/resources, read-only mount
-├── sav/              → /data/sessions/{session}/sav, writable
+├── CSV/              ← Session-private copy from GameVersion
+├── ERB/              ← Session-private copy from GameVersion
+├── resources/        ← Session-private copy from GameVersion
+├── any-game-dir/     ← every other valid directory is copied too
+├── sav/              ← Session-private directory, writable
 ├── save*.sav         → Session-private save files, writable
 ├── global.sav        → Session-private save files, writable
-└── emuera.config     → /data/sessions/{session}/emuera.config, writable
+└── emuera.config     ← Session-private copy, writable
 ```
 
 For legacy games that write `save*.sav` and `global.sav` at the GameRoot level, the SessionRoot must provide the corresponding Session-private writable paths. Every Session Worker must run in its own process; an Emuera Runtime must never run inside the API process or another Session Worker process.
@@ -364,10 +364,10 @@ Stores:
 - Users, roles, and quotas
 - Game and immutable GameVersion metadata
 - Session state and the current WorkerLease
-- SaveArtifact indexes and audit data
+- SessionRoot paths, Session lifecycle state, and save-management audit data
 - Administrative policy and compatibility-report summaries
 
-The database file must be backed up together with game files, Session directories, and saves. Container restarts must not change committed data.
+The database file must be backed up together with game files and complete Session directories. Container restarts must not clean or reconstruct existing SessionRoots.
 
 ### 11.2 Local physical file system
 
@@ -376,22 +376,21 @@ The container must mount one host data directory at `/data`. All games, Sessions
 ```text
 /data/
 ├── cloudemuera.db
-├── games/{gameId}/{version}/       ← GameVersion tree and mount source
+├── games/{gameId}/{version}/       ← immutable GameVersion tree and Session copy source
 ├── sessions/{sessionId}/
 │   ├── root/                       ← actual SessionRoot
-│   ├── saves/                      ← SaveArtifact content
 │   └── metadata/
 ├── logs/
 └── backups/
 ```
 
-GameVersion directories must be mounted read-only into the corresponding SessionRoot. SessionRoot, Session temporary directories, and SaveArtifact working copies must be writable and mutually isolated. Object storage, remote file systems, and external file services must not be runtime or persistence dependencies. Backups must use host-file-system snapshots, directory copies, or equivalent local backup tools.
+Session management must copy every valid regular file and directory in the published manifest and must not discard unknown content through a known-directory allowlist. Symbolic links, hard links, and special files supplied by a game package remain forbidden. A normal byte copy is the baseline; where supported, a reflink preserving copy-on-write semantics may be used with fallback to a normal copy. Hard links are forbidden. Each SessionRoot must be private, persistent, and isolated; Emuera directly reads and writes its complete game copy, configuration, temporary files, and native saves there. Object storage, remote file systems, and external file services must not be runtime or persistence dependencies. Backups must use host-file-system snapshots, directory copies, or equivalent local backup tools.
 
 ## 12. Security Requirements
 
 - **SEC-001**: Every game package must be treated as untrusted input.
 - **SEC-002**: By default, a Session Worker must not access the public network, host secrets, other users' files, or the container-management interface.
-- **SEC-003**: Game versions must be provided to Workers read-only. Only the assigned Session temporary and save directories may be writable.
+- **SEC-003**: The original GameVersion must not be exposed to a Worker. A Worker may access and write only its assigned complete SessionRoot copy and must not access another GameVersion or SessionRoot.
 - **SEC-004**: CPU, memory, process count, open file count, disk, and output-rate limits must be enforced for Workers.
 - **SEC-005**: Archive path traversal, symbolic-link escape, case collisions, and decompression overrun must be prevented.
 - **SEC-006**: Browser rendering must encode text and attributes. Emuera HTML must be converted to supported structured nodes.
@@ -407,8 +406,8 @@ GameVersion directories must be mounted read-only into the corresponding Session
 - **NFR-001**: Under normal load, reconnecting to a running Session and displaying its initial snapshot should complete within 2 seconds at P95, excluding abnormal external user-network conditions.
 - **NFR-002**: Restarting the API process must not actively terminate healthy Session Workers; the Worker Supervisor must continue managing them.
 - **NFR-003**: During a temporary local-IPC interruption, a Session Worker must continue running and attempt to re-register. If its output buffer reaches the limit, it must retain the latest ConsoleSnapshot.
-- **NFR-004**: A Worker crash must not corrupt successfully committed saves, and the Session must be clearly marked `CRASHED`.
-- **NFR-005**: Arbitrary execution-point recovery is not an initial-phase SLA. Only durable save recovery and diagnostic availability are guaranteed.
+- **NFR-004**: A Worker crash must preserve the SessionRoot as found and must not affect the GameVersion or another Session; the Session must be clearly marked `CRASHED`. A file being overwritten by the native writer is not guaranteed to remain valid.
+- **NFR-005**: Arbitrary execution-point recovery and transactional recovery of every save are not initial-phase SLAs. Only persistence of SessionRoot and diagnostic availability are guaranteed.
 
 ### 13.2 Performance and capacity
 
@@ -438,8 +437,8 @@ GameVersion directories must be mounted read-only into the corresponding Session
 | Browser refresh/network loss | Session transitions to or remains DETACHED; reconnection restores the snapshot and current prompt |
 | API-process restart | Worker Supervisor and Session Workers remain alive; the API locates Sessions through durable metadata |
 | Short API–Worker local-IPC interruption | Worker buffers within bounds and reconnects; epoch and sequence are reconciled afterward |
-| Worker crash | Session becomes CRASHED; committed saves remain; exact instruction recovery is not promised |
-| Docker-container or host restart | Active Workers are treated as failed; committed games and saves in the mounted data directory remain |
+| Worker crash | Session becomes CRASHED; SessionRoot is preserved as found; an in-progress native write and exact instruction state are not recoverable guarantees |
+| Docker-container or host restart | Active Workers are treated as failed; GameVersions and SessionRoots in the mounted data directory remain |
 | Mounted data directory unavailable | New Sessions and save writes are rejected, with an explicit persistence failure |
 | Duplicate client input | Deduplicated using promptId and clientMessageId |
 | Old Worker reconnects | Fenced by an older epoch and unable to produce valid new state |
@@ -452,7 +451,7 @@ GameVersion directories must be mounted read-only into the corresponding Session
 - **AC-004**: Two users running the same GameVersion cannot access or overwrite each other's Sessions or saves.
 - **AC-005**: Repeating the same input message executes it only once.
 - **AC-006**: After the user explicitly closes a Session, its Worker exits within the configured bound, the Session becomes CLOSED, and later input is rejected.
-- **AC-007**: After a Worker is force-killed, its Session becomes CRASHED within the heartbeat window and committed saves remain downloadable.
+- **AC-007**: After a Worker is force-killed, its Session becomes CRASHED within the heartbeat window, SessionRoot is not cleaned up, and native save files present there remain inspectable or downloadable.
 - **AC-008**: A representative `1824+v18` test game completes loading, input, save, load, and primary display scenarios.
 - **AC-009**: A representative current EM+EE test game runs all declared Supported features, while unsupported features produce explicit diagnostics.
 - **AC-010**: A game package containing path traversal, symbolic-link escape, or archive-bomb characteristics is rejected without writing outside the sandbox.
@@ -506,11 +505,11 @@ GameVersion directories must be mounted read-only into the corresponding Session
 | --- | --- | --- |
 | EM+EE coupling to UI/platform code | Higher headless-Worker effort | Extract platform interfaces first and build differential tests |
 | Global static Emuera state | Cross-Session contamination in one process | Use one process per Session initially |
-| Coupled game-root and save paths | Shared resources may become writable or saves may cross user boundaries | Per-Session actual SessionRoot, read-only game-directory mounts, and isolated writable save directories |
+| Coupled game-root and save paths | Shared resources may become writable or saves may cross user boundaries | Complete per-Session copies, no shared writable inode, and isolated SessionRoots |
 | Complex display semantics | Games run but UI is misaligned | Structured display model and visual regression tests |
 | Malicious uploaded packages | File escape or resource exhaustion | Sandbox, read-only mounts, quotas, and upload validation |
 | Permanently resident Sessions | Memory cost grows with abandoned Sessions | Active runtime quotas, admin controls, and future suspension snapshots |
-| No exact recovery after Worker crash | Unsaved progress is lost | Atomic saves, autosave, explicit failure semantics, and safe-point snapshot research |
+| No exact recovery after Worker crash | Unsaved progress is lost and a natively overwritten file may be invalid | Whole-directory backups, game-native autosave, explicit failure semantics, and safe-point snapshot research |
 | Continued upstream evolution | Difficult merges or regressions | Pinned commits, thin adapter layer, and dual compatibility suites |
 | Unclear game and font licensing | Illegal hosting or redistribution | Preserve ownership metadata, require deployment authorization, and avoid public exposure by default |
 

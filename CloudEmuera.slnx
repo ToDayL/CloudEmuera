@@ -15,7 +15,9 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CloudEmuera.Domain.Tests/CloudEmuera.Domain.Tests.csproj" />
+    <Project Path="tests/CloudEmuera.Ipc.ContractTests/CloudEmuera.Ipc.ContractTests.csproj" />
     <Project Path="tests/CloudEmuera.RuntimeCompatibility.Tests/CloudEmuera.RuntimeCompatibility.Tests.csproj" />
     <Project Path="tests/CloudEmuera.RuntimeAdapter.Tests/CloudEmuera.RuntimeAdapter.Tests.csproj" />
+    <Project Path="tests/CloudEmuera.Worker.IntegrationTests/CloudEmuera.Worker.IntegrationTests.csproj" />
   </Folder>
 </Solution>

@@ -1,39 +1,50 @@
 using System.Collections.ObjectModel;
-using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace CloudEmuera.RuntimeAdapter;
 
 /// <summary>
-/// Builds the directory portion of a session layout without applying mounts.
-/// The caller supplies trusted, session-assigned roots; game content cannot
-/// supply or redefine them. Build is idempotent and never removes unknown data.
+/// Materializes one published GameVersion into a persistent SessionRoot.
+/// Session management remains the caller's responsibility: this component
+/// only applies the supplied manifest, limits and already-authorized roots.
 /// </summary>
 public sealed class SessionRootLayoutBuilder
 {
+    public const string BindingMetadataFileName = ".cloudemuera-binding.json";
+
     private readonly string gameVersionRootInput;
     private readonly string sessionRootInput;
-    private readonly string sessionWorkspaceRootInput;
+    private readonly string? sessionWorkspaceRootInput;
     private readonly bool deriveSessionRoot;
-    private readonly List<string> otherSessionWorkspaceRoots = [];
+    private readonly RuntimeSaveLayout? expectedSaveLayout;
+    private readonly List<string> otherSessionRoots = [];
+    private SessionRootPublishedManifest? publishedManifest;
+    private SessionRootCopyLimits copyLimits = new();
 
-    public SessionRootLayoutBuilder(
-        string gameVersionRoot,
-        string sessionWorkspaceRoot,
-        RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root)
+    public SessionRootLayoutBuilder(string gameVersionRoot, string sessionWorkspaceRoot)
     {
         gameVersionRootInput = gameVersionRoot;
         sessionWorkspaceRootInput = sessionWorkspaceRoot;
         sessionRootInput = string.Empty;
         deriveSessionRoot = true;
-        SaveLayout = saveLayout;
     }
 
     public SessionRootLayoutBuilder(
         string gameVersionRoot,
         string sessionWorkspaceRoot,
-        IEnumerable<string> otherSessionWorkspaceRoots,
-        RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root)
-        : this(gameVersionRoot, sessionWorkspaceRoot, saveLayout)
+        RuntimeSaveLayout saveLayout)
+        : this(gameVersionRoot, sessionWorkspaceRoot)
+    {
+        expectedSaveLayout = saveLayout;
+    }
+
+    public SessionRootLayoutBuilder(
+        string gameVersionRoot,
+        string sessionWorkspaceRoot,
+        IEnumerable<string> otherSessionWorkspaceRoots)
+        : this(gameVersionRoot, sessionWorkspaceRoot)
     {
         WithOtherSessionWorkspaceRoots(otherSessionWorkspaceRoots);
     }
@@ -41,182 +52,116 @@ public sealed class SessionRootLayoutBuilder
     public SessionRootLayoutBuilder(
         string gameVersionRoot,
         string sessionRoot,
-        string sessionWorkspaceRoot,
-        RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root)
+        string sessionWorkspaceRoot)
     {
         gameVersionRootInput = gameVersionRoot;
         sessionRootInput = sessionRoot;
         sessionWorkspaceRootInput = sessionWorkspaceRoot;
         deriveSessionRoot = false;
-        SaveLayout = saveLayout;
     }
 
     public SessionRootLayoutBuilder(
         string gameVersionRoot,
         string sessionRoot,
         string sessionWorkspaceRoot,
-        IEnumerable<string> otherSessionWorkspaceRoots,
-        RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root)
-        : this(gameVersionRoot, sessionRoot, sessionWorkspaceRoot, saveLayout)
+        RuntimeSaveLayout saveLayout)
+        : this(gameVersionRoot, sessionRoot, sessionWorkspaceRoot)
+    {
+        expectedSaveLayout = saveLayout;
+    }
+
+    public SessionRootLayoutBuilder(
+        string gameVersionRoot,
+        string sessionRoot,
+        string sessionWorkspaceRoot,
+        IEnumerable<string> otherSessionWorkspaceRoots)
+        : this(gameVersionRoot, sessionRoot, sessionWorkspaceRoot)
     {
         WithOtherSessionWorkspaceRoots(otherSessionWorkspaceRoots);
     }
 
-    public RuntimeSaveLayout SaveLayout { get; }
+    public static SessionRootLayoutBuilder ForSessionRoot(
+        string gameVersionRoot,
+        string sessionRoot,
+        IEnumerable<string>? allocatedOtherSessionRoots = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionRoot);
+        string fullSessionRoot = Path.GetFullPath(sessionRoot);
+        string workspace = Directory.GetParent(fullSessionRoot)?.FullName
+            ?? throw new RuntimePathException(
+                RuntimePathReasonCodes.LayoutConflict,
+                "A SessionRoot must have a workspace parent.");
+        var builder = new SessionRootLayoutBuilder(gameVersionRoot, fullSessionRoot, workspace);
+        if (allocatedOtherSessionRoots is not null)
+        {
+            builder.WithOtherSessionWorkspaceRoots(allocatedOtherSessionRoots);
+        }
+
+        return builder;
+    }
+
+    public RuntimeSaveLayout SaveLayout => expectedSaveLayout ?? RuntimeSaveLayout.Root;
+
+    public RuntimeSaveLayout? ExpectedSaveLayout => expectedSaveLayout;
 
     public IReadOnlyList<string> OtherSessionWorkspaceRoots =>
-        new ReadOnlyCollection<string>(otherSessionWorkspaceRoots);
+        new ReadOnlyCollection<string>(otherSessionRoots);
+
+    public SessionRootPublishedManifest? PublishedManifest => publishedManifest;
+
+    public SessionRootCopyLimits CopyLimits => copyLimits;
 
     public SessionRootLayoutBuilder WithOtherSessionWorkspaceRoots(IEnumerable<string> roots)
     {
         ArgumentNullException.ThrowIfNull(roots);
-        otherSessionWorkspaceRoots.Clear();
-        otherSessionWorkspaceRoots.AddRange(roots);
+        otherSessionRoots.Clear();
+        otherSessionRoots.AddRange(roots);
         return this;
     }
 
     public SessionRootLayoutBuilder WithAllocatedSessionWorkspaceRoots(IEnumerable<string> roots) =>
         WithOtherSessionWorkspaceRoots(roots);
 
-    public SessionRootLayout Build()
+    public SessionRootLayoutBuilder WithPublishedManifest(SessionRootPublishedManifest manifest)
     {
-        if (!Enum.IsDefined(SaveLayout))
-        {
-            throw new RuntimePathException(
-                RuntimePathReasonCodes.LayoutConflict,
-                "The runtime save layout is invalid.");
-        }
+        publishedManifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
+        return this;
+    }
 
-        string gameVersionRoot = RuntimePathUtilities.NormalizeAbsolutePath(
-            gameVersionRootInput,
-            nameof(gameVersionRootInput));
-        string sessionWorkspaceRoot = RuntimePathUtilities.NormalizeAbsolutePath(
-            sessionWorkspaceRootInput,
-            nameof(sessionWorkspaceRootInput));
-        string sessionRoot = deriveSessionRoot
-            ? Path.Combine(sessionWorkspaceRoot, "root")
-            : RuntimePathUtilities.NormalizeAbsolutePath(sessionRootInput, nameof(sessionRootInput));
+    public SessionRootLayoutBuilder WithCopyLimits(SessionRootCopyLimits limits)
+    {
+        copyLimits = limits ?? throw new ArgumentNullException(nameof(limits));
+        return this;
+    }
 
-        GameVersionSources sources = ValidateGameVersion(gameVersionRoot);
+    public SessionRootLayout Build() => BuildInternal(publishedManifest ??
+        SessionRootPublishedManifest.FromDirectory(gameVersionRootInput));
 
-        // Validate before creating anything so a bad source cannot leave a
-        // partially initialized session tree behind.
-        var preliminaryPaths = new RuntimePaths(
-            sessionRoot,
-            gameVersionRoot,
-            sessionWorkspaceRoot,
-            SaveLayout,
-            sources.CsvRoot,
-            sources.ErbRoot,
-            sources.ResourceRoot,
-            sources.SoundRoot,
-            sources.FontRoot,
-            configurationRoot: null,
-            temporaryRoot: null,
-            rootSaveRoot: null,
-            savDirectoryRoot: null,
-            otherSessionWorkspaceRoots: otherSessionWorkspaceRoots);
+    public SessionRootLayout Build(
+        SessionRootPublishedManifest manifest,
+        SessionRootCopyLimits? limits = null)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        return BuildInternal(manifest, limits ?? copyLimits);
+    }
 
-        EnsureDirectory(preliminaryPaths.SessionWorkspaceRoot, "<session-workspace>");
-        EnsureDirectory(preliminaryPaths.SessionRoot, "<session-root>");
-        EnsureDirectory(preliminaryPaths.WritableRoot, "writable");
-        EnsureDirectory(preliminaryPaths.ConfigurationRoot, "configuration");
-        EnsureDirectory(preliminaryPaths.TemporaryRoot, "temporary");
-        EnsureDirectory(preliminaryPaths.RootSaveRoot, "root-saves");
-        EnsureDirectory(preliminaryPaths.SavDirectoryRoot, "sav");
-        EnsureWritableDirectory(preliminaryPaths.ConfigurationRoot, "configuration");
-        EnsureWritableDirectory(preliminaryPaths.TemporaryRoot, "temporary");
-        EnsureWritableDirectory(preliminaryPaths.RootSaveRoot, "root-saves");
-        EnsureWritableDirectory(preliminaryPaths.SavDirectoryRoot, "sav");
-
-        // The target directories are placeholders for the future supervisor's
-        // read-only bind mappings. They are never populated from game content.
-        EnsureDirectory(Path.Combine(preliminaryPaths.SessionRoot, "CSV"), "CSV target");
-        EnsureDirectory(Path.Combine(preliminaryPaths.SessionRoot, "ERB"), "ERB target");
-        if (sources.ResourceRoot is not null)
-        {
-            EnsureDirectory(Path.Combine(preliminaryPaths.SessionRoot, "resources"), "resources target");
-        }
-
-        if (sources.SoundRoot is not null)
-        {
-            EnsureDirectory(Path.Combine(preliminaryPaths.SessionRoot, "sound"), "sound target");
-        }
-
-        if (sources.FontRoot is not null)
-        {
-            EnsureDirectory(Path.Combine(preliminaryPaths.SessionRoot, "font"), "font target");
-        }
-
-        EnsureDirectory(Path.Combine(preliminaryPaths.SessionRoot, "sav"), "sav target");
-
-        string privateConfig = Path.Combine(preliminaryPaths.ConfigurationRoot, "emuera.config");
-        EnsurePrivateConfigCopy(sources.ConfigurationFile, privateConfig);
-
-        // Recreate the immutable object after directory creation. This is the
-        // second physical validation pass required by the layout contract.
-        var runtimePaths = new RuntimePaths(
-            preliminaryPaths.SessionRoot,
-            preliminaryPaths.GameVersionRoot,
-            preliminaryPaths.SessionWorkspaceRoot,
-            SaveLayout,
-            sources.CsvRoot,
-            sources.ErbRoot,
-            sources.ResourceRoot,
-            sources.SoundRoot,
-            sources.FontRoot,
-            preliminaryPaths.ConfigurationRoot,
-            preliminaryPaths.TemporaryRoot,
-            preliminaryPaths.RootSaveRoot,
-            preliminaryPaths.SavDirectoryRoot,
-            otherSessionWorkspaceRoots);
-
-        var mappings = new List<RuntimePathMapping>
-        {
-            Mapping("root/CSV", sources.CsvRoot, Path.Combine(runtimePaths.SessionRoot, "CSV"), RuntimeAccessMode.ReadOnly, RuntimeFileArea.GameContent),
-            Mapping("root/ERB", sources.ErbRoot, Path.Combine(runtimePaths.SessionRoot, "ERB"), RuntimeAccessMode.ReadOnly, RuntimeFileArea.GameContent),
-            Mapping("root/sav", runtimePaths.SavDirectoryRoot, Path.Combine(runtimePaths.SessionRoot, "sav"), RuntimeAccessMode.ReadWrite, RuntimeFileArea.Save),
-            Mapping("root/emuera.config", privateConfig, Path.Combine(runtimePaths.SessionRoot, "emuera.config"), RuntimeAccessMode.ReadWrite, RuntimeFileArea.Configuration),
-            Mapping("writable/config", null, runtimePaths.ConfigurationRoot, RuntimeAccessMode.ReadWrite, RuntimeFileArea.Configuration),
-            Mapping("writable/tmp", null, runtimePaths.TemporaryRoot, RuntimeAccessMode.ReadWrite, RuntimeFileArea.Temporary),
-            Mapping("writable/root-saves", null, runtimePaths.RootSaveRoot, RuntimeAccessMode.ReadWrite, RuntimeFileArea.Save),
-            Mapping("writable/sav", null, runtimePaths.SavDirectoryRoot, RuntimeAccessMode.ReadWrite, RuntimeFileArea.Save)
-        };
-
-        if (sources.ResourceRoot is not null)
-        {
-            mappings.Add(Mapping(
-                "root/resources",
-                sources.ResourceRoot,
-                Path.Combine(runtimePaths.SessionRoot, "resources"),
-                RuntimeAccessMode.ReadOnly,
-                RuntimeFileArea.GameContent));
-        }
-
-        if (sources.SoundRoot is not null)
-        {
-            mappings.Add(Mapping(
-                "root/sound",
-                sources.SoundRoot,
-                Path.Combine(runtimePaths.SessionRoot, "sound"),
-                RuntimeAccessMode.ReadOnly,
-                RuntimeFileArea.GameContent));
-        }
-
-        if (sources.FontRoot is not null)
-        {
-            mappings.Add(Mapping(
-                "root/font",
-                sources.FontRoot,
-                Path.Combine(runtimePaths.SessionRoot, "font"),
-                RuntimeAccessMode.ReadOnly,
-                RuntimeFileArea.GameContent));
-        }
-
-        return new SessionRootLayout(
-            runtimePaths,
-            new ReadOnlyCollection<RuntimePathMapping>(mappings),
-            $"saveLayout={SaveLayout}; content=read-only; configuration/save/temp=session-private; mountPlan=not-applied");
+    /// <summary>
+    /// Explicit production-style entry point. The caller supplies the
+    /// published manifest and limits; no Session manager state is inferred.
+    /// </summary>
+    public static SessionRootLayout Build(
+        string gameVersionRoot,
+        string sessionRoot,
+        SessionRootPublishedManifest publishedManifest,
+        SessionRootCopyLimits copyLimits,
+        IEnumerable<string>? allocatedOtherSessionRoots = null)
+    {
+        ArgumentNullException.ThrowIfNull(publishedManifest);
+        ArgumentNullException.ThrowIfNull(copyLimits);
+        return ForSessionRoot(gameVersionRoot, sessionRoot, allocatedOtherSessionRoots)
+            .WithPublishedManifest(publishedManifest)
+            .WithCopyLimits(copyLimits)
+            .Build();
     }
 
     public SessionRootLayout BuildLayout() => Build();
@@ -227,152 +172,551 @@ public sealed class SessionRootLayoutBuilder
         RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root) =>
         new SessionRootLayoutBuilder(gameVersionRoot, sessionWorkspaceRoot, saveLayout).Build();
 
-    private static RuntimePathMapping Mapping(
-        string logicalTarget,
-        string? source,
-        string target,
-        RuntimeAccessMode accessMode,
-        RuntimeFileArea area) =>
-        new(logicalTarget, source, target, accessMode, area);
+    public static SessionRootLayout CreateForSessionRoot(
+        string gameVersionRoot,
+        string sessionRoot,
+        IEnumerable<string>? allocatedOtherSessionRoots = null) =>
+        ForSessionRoot(gameVersionRoot, sessionRoot, allocatedOtherSessionRoots).Build();
 
-    private static GameVersionSources ValidateGameVersion(string gameVersionRoot)
+    private SessionRootLayout BuildInternal(
+        SessionRootPublishedManifest manifest,
+        SessionRootCopyLimits? requestedLimits = null)
     {
-        if (!Directory.Exists(gameVersionRoot))
+        SessionRootCopyLimits limits = requestedLimits ?? copyLimits;
+        string gameVersionRoot = RuntimePathUtilities.NormalizeAbsolutePath(
+            gameVersionRootInput,
+            nameof(gameVersionRootInput));
+        string sessionRoot = deriveSessionRoot
+            ? Path.Combine(
+                RuntimePathUtilities.NormalizeAbsolutePath(
+                    sessionWorkspaceRootInput!,
+                    nameof(sessionWorkspaceRootInput)),
+                "root")
+            : RuntimePathUtilities.NormalizeAbsolutePath(sessionRootInput, nameof(sessionRootInput));
+        string sessionWorkspaceRoot = RuntimePathUtilities.NormalizeAbsolutePath(
+            sessionWorkspaceRootInput ?? Directory.GetParent(sessionRoot)!.FullName,
+            nameof(sessionWorkspaceRootInput));
+
+        ValidatePublishedGameVersion(gameVersionRoot, manifest);
+        RuntimeSaveLayout saveLayout = InspectSaveLayout(Path.Combine(gameVersionRoot, "emuera.config"));
+        if (expectedSaveLayout is RuntimeSaveLayout expected && expected != saveLayout)
         {
             throw new RuntimePathException(
                 RuntimePathReasonCodes.LayoutConflict,
-                "The game version root does not exist.");
+                "The requested runtime save layout conflicts with emuera.config.",
+                "emuera.config",
+                RuntimeFileArea.Configuration);
         }
 
+        var paths = new RuntimePaths(
+            sessionRoot,
+            gameVersionRoot,
+            sessionWorkspaceRoot,
+            saveLayout,
+            csvRoot: Path.Combine(sessionRoot, "CSV"),
+            erbRoot: Path.Combine(sessionRoot, "ERB"),
+            resourceRoot: Path.Combine(sessionRoot, "resources"),
+            soundRoot: Path.Combine(sessionRoot, "sound"),
+            fontRoot: Path.Combine(sessionRoot, "font"),
+            configurationRoot: sessionRoot,
+            temporaryRoot: Path.Combine(sessionRoot, "tmp"),
+            rootSaveRoot: sessionRoot,
+            savDirectoryRoot: Path.Combine(sessionRoot, "sav"),
+            otherSessionWorkspaceRoots: otherSessionRoots);
+
+        EnsureDirectory(sessionWorkspaceRoot, "<session-workspace>");
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(sessionRoot, "<session-root>");
+
+        if (Directory.Exists(sessionRoot) || File.Exists(sessionRoot) || RuntimePathUtilities.IsReparsePoint(sessionRoot))
+        {
+            return BuildExisting(paths, manifest, saveLayout);
+        }
+
+        return BuildFresh(paths, manifest, limits);
+    }
+
+    private static SessionRootLayout BuildExisting(
+        RuntimePaths paths,
+        SessionRootPublishedManifest manifest,
+        RuntimeSaveLayout saveLayout)
+    {
+        RuntimePathUtilities.ThrowIfReparsePoint(paths.SessionRoot, "<session-root>", missingIsAllowed: false);
+        if (!Directory.Exists(paths.SessionRoot))
+        {
+            throw LayoutConflict("An existing SessionRoot is not a directory.", "<session-root>");
+        }
+
+        string metadataPath = Path.Combine(paths.SessionRoot, BindingMetadataFileName);
+        RuntimePathUtilities.ThrowIfReparsePoint(metadataPath, BindingMetadataFileName, missingIsAllowed: true);
+        if (!File.Exists(metadataPath))
+        {
+            throw LayoutConflict(
+                "An existing SessionRoot is missing its binding metadata.",
+                BindingMetadataFileName);
+        }
+
+        RuntimePathUtilities.ThrowIfHardLink(metadataPath, BindingMetadataFileName);
+
+        SessionRootBindingMetadata metadata = ReadBindingMetadata(metadataPath);
+        if (metadata.SchemaVersion != 1 ||
+            !string.Equals(metadata.GameVersionIdentity, manifest.GameVersionIdentity, StringComparison.Ordinal) ||
+            !string.Equals(metadata.ManifestDigest, manifest.ManifestDigest, StringComparison.Ordinal) ||
+            metadata.SaveLayout != saveLayout)
+        {
+            throw LayoutConflict(
+                "The existing SessionRoot is bound to a different GameVersion or manifest.",
+                BindingMetadataFileName);
+        }
+
+        paths.ValidateSessionRoot();
+        ValidateManifestEntries(paths.SessionRoot, manifest, verifyHashes: false);
+        RuntimeSaveLayout currentLayout = InspectSaveLayout(Path.Combine(paths.SessionRoot, "emuera.config"));
+        if (currentLayout != saveLayout)
+        {
+            throw LayoutConflict(
+                "The existing SessionRoot configuration no longer matches its binding.",
+                "emuera.config");
+        }
+
+        return CreateLayout(paths, manifest, saveLayout);
+    }
+
+    private static SessionRootLayout BuildFresh(
+        RuntimePaths paths,
+        SessionRootPublishedManifest manifest,
+        SessionRootCopyLimits limits)
+    {
+        string parent = Directory.GetParent(paths.SessionRoot)?.FullName
+            ?? throw LayoutConflict("A SessionRoot must have a parent directory.", "<session-root>");
+        EnsureDirectory(parent, "<session-parent>");
+        string staging = Path.Combine(parent, $".cloudemuera-staging-{Guid.NewGuid():N}");
+        EnsureStagingPath(staging, parent);
+        var state = new CopyState(limits);
+
+        try
+        {
+            Directory.CreateDirectory(staging);
+            RuntimePathUtilities.ThrowIfReparsePoint(staging, "<staging-root>", missingIsAllowed: false);
+
+            foreach (SessionRootManifestEntry entry in manifest.Entries
+                         .Where(item => item.Kind == SessionRootManifestEntryKind.Directory)
+                         .OrderBy(item => item.RelativePath.Count(static character => character == '/'))
+                         .ThenBy(item => item.RelativePath, StringComparer.Ordinal))
+            {
+                state.AddDirectory();
+                string target = CombineRelative(staging, entry.RelativePath);
+                EnsureDirectory(target, entry.RelativePath);
+            }
+
+            foreach (SessionRootManifestEntry entry in manifest.Entries
+                         .Where(item => item.Kind == SessionRootManifestEntryKind.File)
+                         .OrderBy(item => item.RelativePath, StringComparer.Ordinal))
+            {
+                CopyFile(
+                    paths.GameVersionRoot,
+                    staging,
+                    entry,
+                    state);
+            }
+
+            EnsureDirectory(Path.Combine(staging, "tmp"), "tmp");
+            if (paths.SaveLayout == RuntimeSaveLayout.SavDirectory)
+            {
+                EnsureDirectory(Path.Combine(staging, "sav"), "sav");
+            }
+
+            var stagingPaths = new RuntimePaths(
+                staging,
+                paths.GameVersionRoot,
+                paths.SessionWorkspaceRoot,
+                paths.SaveLayout,
+                csvRoot: Path.Combine(staging, "CSV"),
+                erbRoot: Path.Combine(staging, "ERB"),
+                resourceRoot: Path.Combine(staging, "resources"),
+                soundRoot: Path.Combine(staging, "sound"),
+                fontRoot: Path.Combine(staging, "font"),
+                configurationRoot: staging,
+                temporaryRoot: Path.Combine(staging, "tmp"),
+                rootSaveRoot: staging,
+                savDirectoryRoot: Path.Combine(staging, "sav"),
+                otherSessionWorkspaceRoots: null);
+            stagingPaths.ValidateSessionRoot();
+            ValidateManifestEntries(staging, manifest, verifyHashes: true);
+            WriteBindingMetadata(staging, manifest, paths.SaveLayout);
+            stagingPaths.ValidateSessionRoot();
+
+            if (Directory.Exists(paths.SessionRoot) || File.Exists(paths.SessionRoot) || RuntimePathUtilities.IsReparsePoint(paths.SessionRoot))
+            {
+                throw LayoutConflict(
+                    "The final SessionRoot appeared while the copy was in progress.",
+                    "<session-root>");
+            }
+
+            Directory.Move(staging, paths.SessionRoot);
+            return CreateLayout(paths, manifest, paths.SaveLayout);
+        }
+        catch
+        {
+            CleanupStaging(staging, parent);
+            throw;
+        }
+    }
+
+    private static void CopyFile(
+        string sourceRoot,
+        string stagingRoot,
+        SessionRootManifestEntry manifestEntry,
+        CopyState state)
+    {
+        string source = CombineRelative(sourceRoot, manifestEntry.RelativePath);
+        string target = CombineRelative(stagingRoot, manifestEntry.RelativePath);
+        RuntimePathUtilities.ThrowIfReparsePoint(source, manifestEntry.RelativePath, RuntimeFileArea.GameContent, false);
+        RuntimePathUtilities.ThrowIfHardLink(source, manifestEntry.RelativePath, RuntimeFileArea.GameContent);
+        if (!File.Exists(source))
+        {
+            throw LayoutConflict("A manifest file is missing from the GameVersion.", manifestEntry.RelativePath);
+        }
+
+        var sourceInfo = new FileInfo(source);
+        if (sourceInfo.Length != manifestEntry.Length)
+        {
+            throw LayoutConflict("A manifest file changed size before copying.", manifestEntry.RelativePath);
+        }
+
+        state.AddFile(sourceInfo.Length, manifestEntry.RelativePath);
+        string? parent = Directory.GetParent(target)?.FullName;
+        if (parent is null)
+        {
+            throw LayoutConflict("A manifest file has no target parent.", manifestEntry.RelativePath);
+        }
+
+        EnsureDirectory(parent, Path.GetRelativePath(stagingRoot, parent).Replace('\\', '/'));
+        byte[] buffer = new byte[64 * 1024];
+        using var sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length, FileOptions.SequentialScan);
+        using var targetStream = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length, FileOptions.SequentialScan);
+        using IncrementalHash copiedHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long copiedLength = 0;
+        int read;
+        while ((read = sourceStream.Read(buffer, 0, buffer.Length)) != 0)
+        {
+            copiedLength = checked(copiedLength + read);
+            if (copiedLength > manifestEntry.Length || copiedLength > state.Limits.MaxSingleFileBytes)
+            {
+                throw LayoutConflict("A manifest file exceeded its reserved copy limit.", manifestEntry.RelativePath);
+            }
+
+            targetStream.Write(buffer, 0, read);
+            copiedHash.AppendData(buffer, 0, read);
+        }
+
+        targetStream.Flush(flushToDisk: true);
+        if (copiedLength != manifestEntry.Length ||
+            !string.Equals(Convert.ToHexString(copiedHash.GetHashAndReset()), manifestEntry.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw LayoutConflict("A copied file did not match its manifest digest.", manifestEntry.RelativePath);
+        }
+
+        RuntimePathUtilities.ThrowIfReparsePoint(target, manifestEntry.RelativePath, RuntimeFileArea.GameContent, false);
+        RuntimePathUtilities.ThrowIfHardLink(target, manifestEntry.RelativePath, RuntimeFileArea.GameContent);
+        FileInfo targetInfo = new(target);
+        if (targetInfo.Length != manifestEntry.Length)
+        {
+            throw LayoutConflict("A copied file did not retain its manifest length.", manifestEntry.RelativePath);
+        }
+
+        (long sourceLength, string sourceDigest) = HashFile(source, manifestEntry.RelativePath);
+        if (sourceLength != manifestEntry.Length ||
+            !string.Equals(sourceDigest, manifestEntry.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw LayoutConflict("The GameVersion changed while it was being copied.", manifestEntry.RelativePath);
+        }
+
+        SetSafeFileMode(target);
+    }
+
+    private static SessionRootLayout CreateLayout(
+        RuntimePaths paths,
+        SessionRootPublishedManifest manifest,
+        RuntimeSaveLayout saveLayout)
+    {
+        var mappings = new List<RuntimePathMapping>
+        {
+            new(
+                "root",
+                null,
+                paths.SessionRoot,
+                RuntimeAccessMode.ReadWrite,
+                RuntimeFileArea.GameContent),
+            new(
+                "root/emuera.config",
+                null,
+                Path.Combine(paths.SessionRoot, "emuera.config"),
+                RuntimeAccessMode.ReadWrite,
+                RuntimeFileArea.Configuration),
+            new(
+                "root/tmp",
+                null,
+                paths.TemporaryRoot,
+                RuntimeAccessMode.ReadWrite,
+                RuntimeFileArea.Temporary),
+            new(
+                saveLayout == RuntimeSaveLayout.Root ? "root/saves" : "root/sav",
+                null,
+                saveLayout == RuntimeSaveLayout.Root ? paths.RootSaveRoot : paths.SavDirectoryRoot,
+                RuntimeAccessMode.ReadWrite,
+                RuntimeFileArea.Save)
+        };
+
+        return new SessionRootLayout(
+            paths,
+            new ReadOnlyCollection<RuntimePathMapping>(mappings),
+            manifest.ManifestDigest,
+            manifest.Entries,
+            $"saveLayout={saveLayout}; content=complete-copy; manifest={manifest.ManifestDigest}; atomicPublish=true");
+    }
+
+    private static void ValidatePublishedGameVersion(
+        string gameVersionRoot,
+        SessionRootPublishedManifest manifest)
+    {
         RuntimePathUtilities.ThrowIfReparsePoint(
             gameVersionRoot,
             "<game-version-root>",
             RuntimeFileArea.GameContent,
             missingIsAllowed: false);
-        ValidateTree(gameVersionRoot, "<game-version-root>");
-
-        string csvRoot = FindRequiredDirectory(gameVersionRoot, "CSV", "csv");
-        string erbRoot = FindRequiredDirectory(gameVersionRoot, "ERB", "erb");
-        string? resourceRoot = FindOptionalDirectory(gameVersionRoot, "resources", "RESOURCES");
-        string? soundRoot = FindOptionalDirectory(gameVersionRoot, "sound", "SOUND");
-        string? fontRoot = FindOptionalDirectory(gameVersionRoot, "font", "FONT");
-
-        string configurationFile = FindRequiredFile(gameVersionRoot, "emuera.config");
-        return new GameVersionSources(csvRoot, erbRoot, resourceRoot, soundRoot, fontRoot, configurationFile);
-    }
-
-    private static string FindRequiredDirectory(string root, params string[] names)
-    {
-        string? path = FindEntry(root, names, expectDirectory: true);
-        if (path is null)
+        if (!Directory.Exists(gameVersionRoot))
         {
-            throw new RuntimePathException(
-                RuntimePathReasonCodes.LayoutConflict,
-                "A required game version directory is missing.",
-                names[0],
-                RuntimeFileArea.GameContent);
+            throw LayoutConflict("The GameVersion root does not exist.", "<game-version-root>");
         }
 
-        return path;
-    }
-
-    private static string? FindOptionalDirectory(string root, params string[] names) =>
-        FindEntry(root, names, expectDirectory: true);
-
-    private static string FindRequiredFile(string root, params string[] names)
-    {
-        string? path = FindEntry(root, names, expectDirectory: false);
-        if (path is null)
+        Dictionary<string, SessionRootManifestEntry> actual = ScanTree(gameVersionRoot);
+        var expected = manifest.Entries.ToDictionary(entry => entry.RelativePath, StringComparer.Ordinal);
+        if (actual.Count != expected.Count || actual.Keys.Except(expected.Keys, StringComparer.Ordinal).Any() ||
+            expected.Keys.Except(actual.Keys, StringComparer.Ordinal).Any())
         {
-            throw new RuntimePathException(
-                RuntimePathReasonCodes.LayoutConflict,
-                "The game version configuration source is missing.",
-                names[0],
-                RuntimeFileArea.GameContent);
+            throw LayoutConflict("The GameVersion entries do not exactly match the published manifest.", "<game-version-root>");
         }
 
-        return path;
-    }
-
-    private static string? FindEntry(string root, IReadOnlyList<string> names, bool expectDirectory)
-    {
-        string? found = null;
-        foreach (FileSystemInfo entry in new DirectoryInfo(root).EnumerateFileSystemInfos())
+        foreach ((string path, SessionRootManifestEntry expectedEntry) in expected)
         {
-            if (!names.Any(name => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)))
+            SessionRootManifestEntry actualEntry = actual[path];
+            if (actualEntry.Kind != expectedEntry.Kind ||
+                actualEntry.Length != expectedEntry.Length ||
+                !string.Equals(actualEntry.Sha256, expectedEntry.Sha256, StringComparison.OrdinalIgnoreCase))
             {
-                continue;
+                throw LayoutConflict("A GameVersion entry does not match the published manifest.", path);
             }
+        }
 
+        ValidateRequiredSourceEntry(gameVersionRoot, "CSV", directory: true);
+        ValidateRequiredSourceEntry(gameVersionRoot, "ERB", directory: true);
+        ValidateRequiredSourceEntry(gameVersionRoot, "emuera.config", directory: false);
+    }
+
+    private static Dictionary<string, SessionRootManifestEntry> ScanTree(string root)
+    {
+        var result = new Dictionary<string, SessionRootManifestEntry>(StringComparer.Ordinal);
+        ScanDirectory(root, root, result);
+        return result;
+    }
+
+    private static void ScanDirectory(
+        string root,
+        string current,
+        IDictionary<string, SessionRootManifestEntry> result)
+    {
+        foreach (FileSystemInfo entry in new DirectoryInfo(current).EnumerateFileSystemInfos()
+                     .OrderBy(item => item.Name, StringComparer.Ordinal))
+        {
+            string relative = Path.GetRelativePath(root, entry.FullName).Replace('\\', '/');
             RuntimePathUtilities.ThrowIfReparsePoint(
                 entry.FullName,
-                entry.Name,
+                relative,
                 RuntimeFileArea.GameContent,
                 missingIsAllowed: false);
-
-            bool isExpectedType = expectDirectory ? entry is DirectoryInfo : entry is FileInfo;
-            if (!isExpectedType)
-            {
-                throw new RuntimePathException(
-                    RuntimePathReasonCodes.LayoutConflict,
-                    "A game version entry has the wrong type.",
-                    entry.Name,
-                    RuntimeFileArea.GameContent);
-            }
-
-            if (found is not null)
-            {
-                throw new RuntimePathException(
-                    RuntimePathReasonCodes.LayoutConflict,
-                    "The game version contains colliding case variants.",
-                    entry.Name,
-                    RuntimeFileArea.GameContent);
-            }
-
-            found = entry.FullName;
-        }
-
-        return found;
-    }
-
-    private static void ValidateTree(string root, string logicalPath)
-    {
-        foreach (FileSystemInfo entry in new DirectoryInfo(root).EnumerateFileSystemInfos())
-        {
-            RuntimePathUtilities.ThrowIfReparsePoint(entry.FullName, logicalPath, RuntimeFileArea.GameContent);
             if (entry is DirectoryInfo)
             {
-                ValidateTree(entry.FullName, logicalPath);
+                result.Add(relative, new SessionRootManifestEntry(
+                    relative,
+                    SessionRootManifestEntryKind.Directory,
+                    0,
+                    string.Empty));
+                ScanDirectory(root, entry.FullName, result);
             }
             else if (entry is FileInfo file)
             {
-                try
+                RuntimePathUtilities.ThrowIfHardLink(file.FullName, relative, RuntimeFileArea.GameContent);
+                (long length, string digest) = HashFile(file.FullName, relative);
+                result.Add(relative, new SessionRootManifestEntry(
+                    relative,
+                    SessionRootManifestEntryKind.File,
+                    length,
+                    digest));
+            }
+            else
+            {
+                throw new RuntimeFileAccessException(
+                    RuntimePathReasonCodes.UnsupportedRuntimeFile,
+                    "The GameVersion contains a non-regular filesystem entry.",
+                    relative,
+                    RuntimeFileArea.GameContent);
+            }
+        }
+    }
+
+    private static void ValidateRequiredSourceEntry(string root, string name, bool directory)
+    {
+        string path = Path.Combine(root, name);
+        RuntimePathUtilities.ThrowIfReparsePoint(path, name, RuntimeFileArea.GameContent, missingIsAllowed: false);
+        bool exists = directory ? Directory.Exists(path) : File.Exists(path);
+        if (!exists)
+        {
+            throw LayoutConflict(
+                directory ? "A required GameVersion directory is missing." : "The GameVersion configuration is missing.",
+                name);
+        }
+    }
+
+    private static RuntimeSaveLayout InspectSaveLayout(string configurationFile)
+    {
+        try
+        {
+            return EmueraSaveLayoutInspector.InspectFile(configurationFile);
+        }
+        catch (RuntimeSaveLayoutInspectionException exception)
+        {
+            throw new RuntimePathException(
+                RuntimePathReasonCodes.LayoutConflict,
+                "The GameVersion emuera.config does not contain a valid save layout.",
+                "emuera.config",
+                RuntimeFileArea.Configuration,
+                exception);
+        }
+    }
+
+    private static void ValidateManifestEntries(
+        string root,
+        SessionRootPublishedManifest manifest,
+        bool verifyHashes)
+    {
+        foreach (SessionRootManifestEntry entry in manifest.Entries)
+        {
+            string path = CombineRelative(root, entry.RelativePath);
+            RuntimePathUtilities.ThrowIfReparsePoint(path, entry.RelativePath, missingIsAllowed: false);
+            if (entry.Kind == SessionRootManifestEntryKind.Directory)
+            {
+                if (!Directory.Exists(path))
                 {
-                    _ = file.Length;
+                    throw LayoutConflict("A copied manifest directory is missing.", entry.RelativePath);
                 }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+
+                continue;
+            }
+
+            if (!File.Exists(path))
+            {
+                throw LayoutConflict("A copied manifest file is missing.", entry.RelativePath);
+            }
+
+            RuntimePathUtilities.ThrowIfHardLink(path, entry.RelativePath, RuntimeFileArea.GameContent);
+            FileInfo file = new(path);
+            if (verifyHashes && file.Length != entry.Length)
+            {
+                throw LayoutConflict("A copied manifest file has an unexpected length.", entry.RelativePath);
+            }
+
+            if (verifyHashes)
+            {
+                (_, string digest) = HashFile(path, entry.RelativePath);
+                if (!string.Equals(digest, entry.Sha256, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new RuntimePathException(
-                        RuntimePathReasonCodes.UnsupportedRuntimeFile,
-                        "The game version contains an unsupported non-regular entry.",
-                        logicalPath,
-                        RuntimeFileArea.GameContent,
-                        exception);
+                    throw LayoutConflict("A copied manifest file has an unexpected digest.", entry.RelativePath);
                 }
             }
         }
+    }
+
+    private static SessionRootBindingMetadata ReadBindingMetadata(string path)
+    {
+        try
+        {
+            string json = File.ReadAllText(path, Encoding.UTF8);
+            SessionRootBindingMetadata? metadata = JsonSerializer.Deserialize<SessionRootBindingMetadata>(json);
+            return metadata ?? throw new InvalidDataException("Binding metadata is empty.");
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            throw new RuntimePathException(
+                RuntimePathReasonCodes.LayoutConflict,
+                "The SessionRoot binding metadata is damaged.",
+                BindingMetadataFileName,
+                innerException: exception);
+        }
+    }
+
+    private static void WriteBindingMetadata(
+        string root,
+        SessionRootPublishedManifest manifest,
+        RuntimeSaveLayout saveLayout)
+    {
+        var metadata = new SessionRootBindingMetadata
+        {
+            SchemaVersion = 1,
+            GameVersionIdentity = manifest.GameVersionIdentity,
+            ManifestDigest = manifest.ManifestDigest,
+            SaveLayout = saveLayout
+        };
+        string path = Path.Combine(root, BindingMetadataFileName);
+        string json = JsonSerializer.Serialize(metadata) + "\n";
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using var writer = new StreamWriter(stream, new UTF8Encoding(false), 1024, leaveOpen: true);
+        writer.Write(json);
+        writer.Flush();
+        stream.Flush(flushToDisk: true);
+        SetSafeFileMode(path);
+    }
+
+    private static (long Length, string Digest) HashFile(string path, string logicalPath)
+    {
+        try
+        {
+            using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
+            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            byte[] buffer = new byte[64 * 1024];
+            long length = 0;
+            int read;
+            while ((read = stream.Read(buffer, 0, buffer.Length)) != 0)
+            {
+                length = checked(length + read);
+                hash.AppendData(buffer, 0, read);
+            }
+
+            return (length, Convert.ToHexString(hash.GetHashAndReset()));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new RuntimePathException(
+                RuntimePathReasonCodes.UnsupportedRuntimeFile,
+                "A manifest file could not be read as a regular file.",
+                logicalPath,
+                RuntimeFileArea.GameContent,
+                exception);
+        }
+    }
+
+    private static string CombineRelative(string root, string relativePath)
+    {
+        RuntimeRelativePath logical = RuntimeRelativePath.Parse(relativePath);
+        return RuntimePathUtilities.Combine(root, logical);
     }
 
     private static void EnsureDirectory(string path, string logicalPath)
     {
         RuntimePathUtilities.ValidateNoReparsePointsAlongPath(path, logicalPath);
-        if (File.Exists(path) ||
-            RuntimePathUtilities.IsReparsePoint(path) && !Directory.Exists(path))
+        RuntimePathUtilities.ThrowIfReparsePoint(path, logicalPath, missingIsAllowed: true);
+        if (File.Exists(path))
         {
-            throw new RuntimePathException(
-                RuntimePathReasonCodes.LayoutConflict,
-                "A layout directory conflicts with an existing non-directory entry.",
-                logicalPath);
+            throw LayoutConflict("A directory target is occupied by a file.", logicalPath);
         }
 
         try
@@ -383,113 +727,118 @@ public sealed class SessionRootLayoutBuilder
         {
             throw new RuntimePathException(
                 RuntimePathReasonCodes.LayoutConflict,
-                "A layout directory could not be created.",
+                "A runtime directory could not be created.",
                 logicalPath,
                 innerException: exception);
         }
 
-        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(path, logicalPath);
+        RuntimePathUtilities.ThrowIfReparsePoint(path, logicalPath, missingIsAllowed: false);
         if (!Directory.Exists(path))
         {
-            throw new RuntimePathException(
-                RuntimePathReasonCodes.LayoutConflict,
-                "A layout directory is not available after creation.",
-                logicalPath);
+            throw LayoutConflict("A runtime directory is not available after creation.", logicalPath);
         }
     }
 
-    private static void EnsureWritableDirectory(string path, string logicalPath)
+    private static void EnsureStagingPath(string staging, string parent)
     {
-        string probe = Path.Combine(path, $".cloudemuera-layout-probe-{Guid.NewGuid():N}");
-        Exception? operationFailure = null;
+        string normalizedParent = RuntimePathUtilities.NormalizeForComparison(parent);
+        string normalizedStaging = RuntimePathUtilities.NormalizeForComparison(staging);
+        if (!RuntimePathUtilities.IsStrictlyWithin(normalizedStaging, normalizedParent) ||
+            !Path.GetFileName(normalizedStaging).StartsWith(".cloudemuera-staging-", StringComparison.Ordinal))
+        {
+            throw LayoutConflict("The staging path is outside its assigned parent.", "<staging-root>");
+        }
+
+        if (File.Exists(staging) || Directory.Exists(staging) || RuntimePathUtilities.IsReparsePoint(staging))
+        {
+            throw LayoutConflict("The random staging path is already occupied.", "<staging-root>");
+        }
+    }
+
+    private static void CleanupStaging(string staging, string parent)
+    {
         try
         {
-            RuntimePathUtilities.ValidateNoReparsePointsAlongPath(probe, logicalPath);
-            using (FileStream stream = new(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            string normalizedParent = RuntimePathUtilities.NormalizeForComparison(parent);
+            string normalizedStaging = RuntimePathUtilities.NormalizeForComparison(staging);
+            if (!RuntimePathUtilities.IsStrictlyWithin(normalizedStaging, normalizedParent) ||
+                !Path.GetFileName(normalizedStaging).StartsWith(".cloudemuera-staging-", StringComparison.Ordinal))
             {
-                stream.WriteByte(0);
+                return;
             }
 
-            RuntimePathUtilities.ValidateNoReparsePointsAlongPath(probe, logicalPath);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or RuntimePathException)
-        {
-            operationFailure = exception is RuntimePathException
-                ? exception
-                : new RuntimePathException(
-                    RuntimePathReasonCodes.LayoutConflict,
-                    "A writable runtime directory does not have the required access.",
-                    logicalPath,
-                    innerException: exception);
-        }
-
-        RuntimePathException? cleanupFailure = null;
-        try
-        {
-            if (File.Exists(probe))
+            if (Directory.Exists(staging))
             {
-                File.Delete(probe);
+                Directory.Delete(staging, recursive: true);
+            }
+            else if (File.Exists(staging))
+            {
+                File.Delete(staging);
             }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch
         {
-            cleanupFailure = new RuntimePathException(
-                RuntimePathReasonCodes.LayoutConflict,
-                "A writable runtime directory probe could not be removed.",
-                logicalPath,
-                innerException: exception);
-        }
-
-        if (operationFailure is not null)
-        {
-            ExceptionDispatchInfo.Capture(operationFailure).Throw();
-        }
-
-        if (cleanupFailure is not null)
-        {
-            throw cleanupFailure;
+            // The original validation/copy failure is the useful diagnostic.
         }
     }
 
-    private static void EnsurePrivateConfigCopy(string source, string target)
+    private static void SetSafeFileMode(string path)
     {
-        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(source, "game-configuration");
-        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(target, "private-configuration");
-
-        if (Directory.Exists(target))
+        if (!OperatingSystem.IsWindows())
         {
-            throw new RuntimePathException(
-                RuntimePathReasonCodes.LayoutConflict,
-                "The private configuration target is a directory.",
-                "emuera.config",
-                RuntimeFileArea.Configuration);
+            File.SetUnixFileMode(
+                path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                UnixFileMode.GroupRead | UnixFileMode.OtherRead);
         }
-
-        if (!File.Exists(target))
-        {
-            try
-            {
-                File.Copy(source, target, overwrite: false);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                throw new RuntimePathException(
-                    RuntimePathReasonCodes.LayoutConflict,
-                    "The private configuration copy could not be created.",
-                    "emuera.config",
-                    RuntimeFileArea.Configuration,
-                    exception);
-            }
-        }
-
-        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(target, "private-configuration");
     }
 
-    private sealed record GameVersionSources(
-        string CsvRoot,
-        string ErbRoot,
-        string? ResourceRoot,
-        string? SoundRoot,
-        string? FontRoot,
-        string ConfigurationFile);
+    private static RuntimePathException LayoutConflict(string message, string logicalPath) =>
+        new(RuntimePathReasonCodes.LayoutConflict, message, logicalPath);
+
+    private sealed class CopyState(SessionRootCopyLimits limits)
+    {
+        public SessionRootCopyLimits Limits { get; } = limits;
+
+        public long FileCount { get; private set; }
+
+        public long DirectoryCount { get; private set; }
+
+        public long TotalBytes { get; private set; }
+
+        public void AddDirectory()
+        {
+            DirectoryCount++;
+            if (DirectoryCount > Limits.MaxDirectoryCount)
+            {
+                throw LayoutConflict("The GameVersion exceeds the directory-count copy limit.", "<manifest>");
+            }
+        }
+
+        public void AddFile(long length, string logicalPath)
+        {
+            FileCount++;
+            if (FileCount > Limits.MaxFileCount || length > Limits.MaxSingleFileBytes)
+            {
+                throw LayoutConflict("The GameVersion exceeds the file-count or single-file copy limit.", logicalPath);
+            }
+
+            TotalBytes = checked(TotalBytes + length);
+            if (TotalBytes > Limits.MaxTotalBytes)
+            {
+                throw LayoutConflict("The GameVersion exceeds the total-byte copy limit.", logicalPath);
+            }
+        }
+    }
+
+    private sealed class SessionRootBindingMetadata
+    {
+        public int SchemaVersion { get; set; }
+
+        public string? GameVersionIdentity { get; set; }
+
+        public string? ManifestDigest { get; set; }
+
+        public RuntimeSaveLayout SaveLayout { get; set; }
+    }
 }

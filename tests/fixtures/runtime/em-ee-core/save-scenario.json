@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "em-ee-core",
+  "saveInput": "5",
+  "loadInput": "6",
+  "saveOutput": "EMEE-SAVE-COMPLETE",
+  "loadOutputs": [
+    "EMEE-LOADED-SAVE=505",
+    "EMEE-LOADED-GLOBAL=1505"
+  ]
+}

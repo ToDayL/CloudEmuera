@@ -40,6 +40,26 @@
           "Grpc.Core.Api": "2.83.0"
         }
       },
+      "Microsoft.Win32.SystemEvents": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "bYdnhuD0XxcVTrxc8RyBjXo+AXYWJPnda3clhGz2Kakleyun1PyrzYV8RezT7ZYmR9OBSOgvpFQcvHo/K8Y90w=="
+      },
+      "cloudemuera.emueraruntime": {
+        "type": "Project",
+        "dependencies": {
+          "CloudEmuera.EmueraRuntime.UpstreamHeadless": "[1.0.0, )",
+          "CloudEmuera.RuntimeAdapter": "[1.0.0, )"
+        }
+      },
+      "cloudemuera.emueraruntime.upstreamheadless": {
+        "type": "Project",
+        "dependencies": {
+          "CloudEmuera.RuntimeAdapter": "[1.0.0, )",
+          "Enums.NET": "[4.0.2, )",
+          "System.Drawing.Common": "[10.0.0, )"
+        }
+      },
       "cloudemuera.ipc": {
         "type": "Project",
         "dependencies": {
@@ -50,6 +70,12 @@
       },
       "cloudemuera.runtimeadapter": {
         "type": "Project"
+      },
+      "Enums.NET": {
+        "type": "CentralTransitive",
+        "requested": "[4.0.2, )",
+        "resolved": "4.0.2",
+        "contentHash": "Nwa4XxZ7fsuh9SpMiLUXmFT+NntALGXEvufLaQT+A0bQUH5ToNTtG0QDCoCiChdhp+4F/rtwyxpoJSgDmObIXg=="
       },
       "Google.Protobuf": {
         "type": "CentralTransitive",
@@ -75,6 +101,15 @@
         "contentHash": "dHYtx7hW4muttsCrWNG4/Ysb1iAIhNPEq28eo7vF166CdXn/RXOr3SGvSreIGIjvmdrADrBNJ2cUeJBto/T0XA==",
         "dependencies": {
           "Grpc.Net.Common": "2.83.0"
+        }
+      },
+      "System.Drawing.Common": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.0, )",
+        "resolved": "10.0.0",
+        "contentHash": "kohT9ZZlkB5R5ifihCBnPJLdIUQGiTj1ZI6z4LKatr+F4MmIJJu7qQpBkqt9280ivtnSvlTx9qZEY+CpJ0zMkA==",
+        "dependencies": {
+          "Microsoft.Win32.SystemEvents": "10.0.0"
         }
       }
     }

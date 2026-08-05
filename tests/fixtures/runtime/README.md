@@ -39,7 +39,7 @@ callback; the scenario input is the custom title flow.
 em-ee-core is bound to the current EM+EE commit in RuntimeBaseline. Its
 UTF-8 payloads include one BOM-bearing CSV and BOM-free text files. It uses
 the EXISTFUNCTION extension documented by the pinned upstream
-Readme/EmueraEE_readme (English).txt, and declares UseSaveFolder:YES, which
+Readme/EmueraEE_readme (English).txt, and declares the upstream `Use sav folder:YES` setting, which
 is the upstream configuration key that maps native saves into sav/.
 
 Both fixture Sprite CSVs point to an original 2x2 PNG. The fixed upstream

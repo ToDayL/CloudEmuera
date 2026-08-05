@@ -65,7 +65,6 @@ public sealed class PhysicalPathGuard
         RuntimePathUtilities.ThrowIfOutside(candidate, areaRoot, path.LogicalPath, path.Area);
         RuntimePathUtilities.ValidateNoReparsePointsAlongPath(areaRoot, path.LogicalPath, path.Area);
         RuntimePathUtilities.ValidateNoReparsePointsAlongPath(candidate, path.LogicalPath, path.Area);
-
         if (requireExisting)
         {
             RuntimePathUtilities.ThrowIfReparsePoint(

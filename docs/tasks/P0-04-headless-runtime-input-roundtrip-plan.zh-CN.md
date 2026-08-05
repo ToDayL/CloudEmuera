@@ -82,7 +82,7 @@ git diff --check
 
 - 不实现 Supervisor、Worker IPC、WebSocket、API、数据库或浏览器 renderer；
 - 不实现 Session 进程隔离、namespace/cgroup/seccomp；P0-04 只要求无 UI 的进程内 runtime host；
-- 不实现 `save*.sav`、`global.sav`、`sav/` 的原生写入、原子提交或重载；
+- 不实现 `save*.sav`、`global.sav`、`sav/` 在持久 SessionRoot 中的原生写入或重载；
 - 不通过解析 ERB 文本、逐行模拟指令或直接回放 expected transcript 冒充解释器执行；
 - 不把 `System.IO` 绝对路径、WinForms/GDI+ 对象、原始 HTML 或上游内部可变对象暴露到 RuntimeAdapter 公共 API；
 - 不修改 P0-01 fixture 来绕过解释器问题，除非能够证明 fixture 语法与固定上游不一致，并同步更新 manifest 哈希、README 和原因记录；
@@ -439,6 +439,9 @@ fixture 中 Sprite CSV 与 2x2 PNG 必须真实由上游资源流程发现，但
 
 脚本顺序：fixture contract → vendored source provenance → locked restore → Release build → compatibility CLI。默认输出每个 fixture 的阶段、耗时、结果、runtime commit/integration version 和断言数；不能输出用户输入全文或 host 私有绝对路径。
 
+从宿主机执行时，脚本通过 `scripts/lib/dev-env.sh` 自动在 UID/GID 映射的 dev Docker
+中执行上述 .NET 命令；在 dev 容器内执行时直接复用当前容器，避免依赖宿主机 SDK。
+
 所有子进程必须有有界超时和终止清理，失败时保留最近有限诊断，而不是无限 dump。
 
 ## 12. 具体文件变更清单
@@ -460,7 +463,7 @@ fixture 中 Sprite CSV 与 2x2 PNG 必须真实由上游资源流程发现，但
 - `UPSTREAM.md` 中的原始 commit/tree（除非另立上游升级任务）；
 - P0-01 fixture payload、scenario、expected transcript 和 manifest；
 - API、Application、Infrastructure、Supervisor、IPC、Web；
-- P0-05 的存档提交逻辑；
+- P0-05 的持久 SessionRoot 和原生存档直写逻辑；
 - P0-03 已决定的 prompt ID 所有权、HTML allowlist 和 snapshot 上限。
 
 ## 13. 推荐实现顺序
@@ -529,7 +532,7 @@ git diff --check
 
 ## 16. 交给 P0-05 的明确接口
 
-P0-04 应向 P0-05 交付一个可配置 `RuntimePaths`、可运行到 `QUIT` 的 `EmueraRuntimeHost`。P0-05 只在此基础上扩展原生 save/global 流程、两种目录布局和原子提交，不能重新引入桌面路径或另写解释器 runner。
+P0-04 应向 P0-05 交付一个可配置 `RuntimePaths`、可运行到 `QUIT` 的 `EmueraRuntimeHost`。P0-05 只在此基础上把可销毁兼容视图替换为持久 SessionRoot，扩展原生 save/global 流程和两种配置驱动布局；不能重新引入桌面路径、另写解释器 runner 或增加 SaveArtifact 提交层。
 
 P0-04 的 file bridge 需要保留 P0-05 所需的 create/write/move/replace 能力，但本步骤不提前宣称原生存档兼容。兼容 report 中 `expectSavePath` 应明确标为 `deferredToP0-05` 或 `semanticMarkerObserved`，绝不能标为 `passed`。
 

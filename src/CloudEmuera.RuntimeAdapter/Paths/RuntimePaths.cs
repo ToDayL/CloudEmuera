@@ -2,12 +2,48 @@ namespace CloudEmuera.RuntimeAdapter;
 
 /// <summary>
 /// Immutable, session-scoped physical roots used by the runtime adapter.
-/// Game-provided paths are resolved by logical area and never by the current
-/// process directory. The roots are trusted host inputs and are normalized at
-/// construction; file operations still need to run through a physical guard.
+///
+/// A SessionRoot is a complete, private copy of one published GameVersion. It
+/// is the actual Emuera GameRoot: configuration, game files, temporary data
+/// and native saves all live below this one ordinary directory. The
+/// GameVersionRoot property is retained for supervisor/diagnostic binding and
+/// is never used as a runtime content fallback.
 /// </summary>
 public sealed class RuntimePaths
 {
+    /// <summary>
+    /// Creates the adapter view for a SessionRoot that was materialized by a
+    /// supervisor before the Worker process started. The source GameVersion is
+    /// deliberately represented by a non-existent sibling sentinel; no
+    /// source path is supplied to the Worker and no content fallback exists.
+    /// </summary>
+    public static RuntimePaths ForExistingSessionRoot(
+        string sessionRoot,
+        RuntimeSaveLayout saveLayout)
+    {
+        string normalizedSessionRoot = RuntimePathUtilities.NormalizeAbsolutePath(sessionRoot, nameof(sessionRoot));
+        string parent = Directory.GetParent(normalizedSessionRoot)?.FullName
+            ?? throw new RuntimePathException(
+                RuntimePathReasonCodes.LayoutConflict,
+                "An existing SessionRoot must have a parent directory.");
+        if (string.Equals(normalizedSessionRoot, Path.GetPathRoot(normalizedSessionRoot), RuntimePathUtilities.PathComparison))
+        {
+            throw new RuntimePathException(
+                RuntimePathReasonCodes.LayoutConflict,
+                "The filesystem root cannot be used as a SessionRoot.");
+        }
+
+        string suffix = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(normalizedSessionRoot)))
+            [..16]
+            .ToLowerInvariant();
+        return new RuntimePaths(
+            normalizedSessionRoot,
+            Path.Combine(parent, $".cloudemuera-unavailable-game-version-{suffix}"),
+            Path.Combine(parent, $".cloudemuera-worker-workspace-{suffix}"),
+            saveLayout);
+    }
+
     public RuntimePaths(
         string sessionRoot,
         string gameVersionRoot,
@@ -31,11 +67,6 @@ public sealed class RuntimePaths
     {
     }
 
-    /// <summary>
-    /// Creates paths with explicitly selected content and writable roots. The
-    /// optional roots remain trusted host paths and must satisfy the same
-    /// containment rules as the derived roots.
-    /// </summary>
     public RuntimePaths(
         string sessionRoot,
         string gameVersionRoot,
@@ -68,10 +99,6 @@ public sealed class RuntimePaths
     {
     }
 
-    /// <summary>
-    /// Creates paths and rejects overlap with workspace roots already allocated
-    /// to other sessions.
-    /// </summary>
     public RuntimePaths(
         string sessionRoot,
         string gameVersionRoot,
@@ -92,7 +119,7 @@ public sealed class RuntimePaths
             temporaryRoot: null,
             rootSaveRoot: null,
             savDirectoryRoot: null,
-            otherSessionWorkspaceRoots)
+            otherSessionWorkspaceRoots: otherSessionWorkspaceRoots)
     {
     }
 
@@ -124,37 +151,48 @@ public sealed class RuntimePaths
         SessionWorkspaceRoot = RuntimePathUtilities.NormalizeAbsolutePath(
             sessionWorkspaceRoot,
             nameof(sessionWorkspaceRoot));
-
         SaveLayout = saveLayout;
 
         ValidateRootRelationship();
         ValidateOtherSessionRoots(otherSessionWorkspaceRoots);
 
-        CsvRoot = ResolveContentRoot(csvRoot, "CSV", "csv");
-        ErbRoot = ResolveContentRoot(erbRoot, "ERB", "erb");
-        ResourceRoot = ResolveContentRoot(resourceRoot, "resources");
-        SoundRoot = ResolveOptionalContentRoot(soundRoot, "sound");
-        FontRoot = ResolveOptionalContentRoot(fontRoot, "font");
+        CsvRoot = ResolveCanonicalContentRoot(csvRoot, "CSV");
+        ErbRoot = ResolveCanonicalContentRoot(erbRoot, "ERB");
+        ResourceRoot = ResolveCanonicalContentRoot(resourceRoot, "resources");
+        SoundRoot = ResolveOptionalCanonicalContentRoot(soundRoot, "sound");
+        FontRoot = ResolveOptionalCanonicalContentRoot(fontRoot, "font");
 
-        WritableRoot = Path.Combine(SessionWorkspaceRoot, "writable");
-        ConfigurationRoot = NormalizeWritableRoot(
-            configurationRoot ?? Path.Combine(WritableRoot, "config"),
+        WritableRoot = SessionRoot;
+        ConfigurationRoot = NormalizeSessionRootPath(
+            configurationRoot ?? SessionRoot,
+            SessionRoot,
             nameof(ConfigurationRoot));
-        TemporaryRoot = NormalizeWritableRoot(
-            temporaryRoot ?? Path.Combine(WritableRoot, "tmp"),
+        TemporaryRoot = NormalizeSessionRootPath(
+            temporaryRoot ?? Path.Combine(SessionRoot, "tmp"),
+            Path.Combine(SessionRoot, "tmp"),
             nameof(TemporaryRoot));
-        RootSaveRoot = NormalizeWritableRoot(
-            rootSaveRoot ?? Path.Combine(WritableRoot, "root-saves"),
+        RootSaveRoot = NormalizeSessionRootPath(
+            rootSaveRoot ?? SessionRoot,
+            SessionRoot,
             nameof(RootSaveRoot));
-        SavDirectoryRoot = NormalizeWritableRoot(
-            savDirectoryRoot ?? Path.Combine(WritableRoot, "sav"),
+        SavDirectoryRoot = NormalizeSessionRootPath(
+            savDirectoryRoot ?? Path.Combine(SessionRoot, "sav"),
+            Path.Combine(SessionRoot, "sav"),
             nameof(SavDirectoryRoot));
     }
 
     public string SessionRoot { get; }
 
+    /// <summary>
+    /// The immutable source root used to construct this SessionRoot. The
+    /// runtime itself must not be given access to this path.
+    /// </summary>
     public string GameVersionRoot { get; }
 
+    /// <summary>
+    /// Metadata/workspace parent used for overlap checks. It is not an
+    /// independent writable runtime root.
+    /// </summary>
     public string SessionWorkspaceRoot { get; }
 
     public string WritableRoot { get; }
@@ -169,21 +207,22 @@ public sealed class RuntimePaths
 
     public string? FontRoot { get; }
 
+    /// <summary>The SessionRoot directory containing the private config file.</summary>
     public string ConfigurationRoot { get; }
 
     public string TemporaryRoot { get; }
 
+    /// <summary>Exactly SessionRoot; retained as a P0-02 compatibility property.</summary>
     public string RootSaveRoot { get; }
 
+    /// <summary>Exactly SessionRoot/sav; retained as a P0-02 compatibility property.</summary>
     public string SavDirectoryRoot { get; }
 
     public RuntimeSaveLayout SaveLayout { get; }
 
     public string ResolveSavePath(RuntimeRelativePath logicalPath)
     {
-        string value = logicalPath.Value;
         string[] segments = logicalPath.Segments.ToArray();
-
         if (segments.Length == 0 || (SaveLayout == RuntimeSaveLayout.Root && segments.Length != 1))
         {
             throw SavePathError(logicalPath);
@@ -194,7 +233,7 @@ public sealed class RuntimePaths
             throw new RuntimeFileAccessException(
                 RuntimePathReasonCodes.UnsupportedRuntimeFile,
                 "The save file name is not part of the fixed runtime save contract.",
-                value,
+                logicalPath.Value,
                 RuntimeFileArea.Save);
         }
 
@@ -203,16 +242,13 @@ public sealed class RuntimePaths
             ValidateSaveDirectorySegments(segments[..^1], logicalPath);
         }
 
-        return ResolveSaveEntryCandidate(logicalPath, SaveLayout == RuntimeSaveLayout.Root ? RootSaveRoot : SavDirectoryRoot);
+        return ResolveSaveEntryCandidate(
+            logicalPath,
+            SaveLayout == RuntimeSaveLayout.Root ? RootSaveRoot : SavDirectoryRoot);
     }
 
     public string ResolveSavePath(string logicalPath) => ResolveSavePath(RuntimeRelativePath.Parse(logicalPath));
 
-    /// <summary>
-    /// Resolves a directory in the nested <c>sav/</c> layout. Directory names
-    /// have their own conservative contract; save-file names are not accepted
-    /// as directory segments so a path cannot be ambiguous at the boundary.
-    /// </summary>
     public string ResolveSaveDirectoryPath(RuntimeRelativePath logicalPath)
     {
         if (SaveLayout != RuntimeSaveLayout.SavDirectory || logicalPath.Segments.Count == 0)
@@ -227,11 +263,6 @@ public sealed class RuntimePaths
     public string ResolveSaveDirectoryPath(string logicalPath) =>
         ResolveSaveDirectoryPath(RuntimeRelativePath.Parse(logicalPath));
 
-    /// <summary>
-    /// Resolves either a file or a directory in the nested <c>sav/</c> layout.
-    /// Callers must validate the entry kind and, for files, the save filename
-    /// before performing the corresponding operation.
-    /// </summary>
     internal string ResolveSaveEntryPath(RuntimeRelativePath logicalPath)
     {
         if (logicalPath.Segments.Count == 0)
@@ -259,9 +290,8 @@ public sealed class RuntimePaths
     }
 
     /// <summary>
-    /// Resolves a controlled logical path lexically. Actual I/O must use
-    /// <see cref="PhysicalPathGuard"/> so that link and reparse-point checks are
-    /// repeated immediately before the operation.
+    /// Resolves a logical path under the selected SessionRoot area. The
+    /// physical guard repeats the no-reparse check immediately before I/O.
     /// </summary>
     public string ResolvePhysicalPath(RuntimeFilePath path)
     {
@@ -270,38 +300,10 @@ public sealed class RuntimePaths
             return ResolveSavePath(path.RelativePath);
         }
 
-        string root;
-        string candidate;
-        if (path.Area == RuntimeFileArea.GameContent)
-        {
-            string[] segments = path.RelativePath.Segments.ToArray();
-            string? contentRoot = segments.Length == 0 ? null : ResolveContentName(segments[0]);
-            root = contentRoot ?? GameVersionRoot;
-            candidate = root;
-            int firstChild = contentRoot is null ? 0 : 1;
-            for (int index = firstChild; index < segments.Length; index++)
-            {
-                candidate = Path.Combine(candidate, segments[index]);
-            }
-
-            if (!RuntimePathUtilities.IsSameOrWithin(candidate, root))
-            {
-                throw new RuntimeFileAccessException(
-                    RuntimePathReasonCodes.PathOutsideArea,
-                    "The logical path is outside its runtime area.",
-                    path.LogicalPath,
-                    path.Area);
-            }
-
-            RuntimePathUtilities.ThrowIfOutside(candidate, GameVersionRoot, path.LogicalPath, path.Area);
-        }
-        else
-        {
-            root = GetAreaRoot(path.Area);
-            candidate = RuntimePathUtilities.Combine(root, path.RelativePath);
-            RuntimePathUtilities.ThrowIfOutside(candidate, root, path.LogicalPath, path.Area);
-        }
-
+        string root = GetAreaRoot(path.Area);
+        string candidate = RuntimePathUtilities.Combine(root, path.RelativePath);
+        RuntimePathUtilities.ThrowIfOutside(candidate, root, path.LogicalPath, path.Area);
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(candidate, path.LogicalPath, path.Area);
         return candidate;
     }
 
@@ -309,7 +311,7 @@ public sealed class RuntimePaths
 
     internal string GetAreaRoot(RuntimeFileArea area) => area switch
     {
-        RuntimeFileArea.GameContent => GameVersionRoot,
+        RuntimeFileArea.GameContent => SessionRoot,
         RuntimeFileArea.Configuration => ConfigurationRoot,
         RuntimeFileArea.Save => SaveLayout == RuntimeSaveLayout.Root ? RootSaveRoot : SavDirectoryRoot,
         RuntimeFileArea.Temporary => TemporaryRoot,
@@ -318,6 +320,27 @@ public sealed class RuntimePaths
             "The runtime file area is invalid.",
             area: area)
     };
+
+    /// <summary>
+    /// Revalidates the actual directory before it is handed to the fixed
+    /// upstream interpreter. Every entry must remain an ordinary file or
+    /// directory; there is no content-link exception.
+    /// </summary>
+    public void ValidateSessionRoot()
+    {
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(SessionRoot, "<session-root>");
+        ValidateDirectory(SessionRoot, "<session-root>", required: true);
+        ValidateDirectory(CsvRoot, "CSV", required: true);
+        ValidateDirectory(ErbRoot, "ERB", required: true);
+        ValidateRegularFile(Path.Combine(SessionRoot, "emuera.config"), "emuera.config", required: true);
+        ValidateDirectory(TemporaryRoot, "tmp", required: true);
+        if (SaveLayout == RuntimeSaveLayout.SavDirectory)
+        {
+            ValidateDirectory(SavDirectoryRoot, "sav", required: true);
+        }
+
+        ValidateTree(SessionRoot, "<session-root>");
+    }
 
     internal static bool IsAllowedSaveFileName(string filename)
     {
@@ -348,9 +371,6 @@ public sealed class RuntimePaths
         }
 
         int digitsLength = value.Length - prefix.Length - suffix.Length;
-        // The fixed upstream formats an integer with a minimum width of two;
-        // accepting up to Int32's decimal width preserves that contract without
-        // turning a save area into an arbitrary filename sink.
         if (digitsLength is < 1 or > 10)
         {
             return false;
@@ -368,7 +388,7 @@ public sealed class RuntimePaths
     }
 
     private RuntimeFileAccessException SavePathError(RuntimeRelativePath logicalPath) =>
-        new RuntimeFileAccessException(
+        new(
             RuntimePathReasonCodes.PathOutsideArea,
             SaveLayout == RuntimeSaveLayout.Root
                 ? "Root-layout save paths must not contain a directory segment."
@@ -407,48 +427,37 @@ public sealed class RuntimePaths
         return candidate;
     }
 
-    private string ResolveContentRoot(string? explicitRoot, params string[] names)
+    private string ResolveCanonicalContentRoot(string? explicitRoot, string name)
     {
-        string? existingRoot = explicitRoot is null
-            ? FindExistingContentRoot(GameVersionRoot, names)
-            : null;
-        string root = explicitRoot is null
-            ? existingRoot ?? Path.Combine(GameVersionRoot, names[0])
-            : RuntimePathUtilities.NormalizeAbsolutePath(explicitRoot, nameof(explicitRoot));
-        EnsureContentRoot(root, names[0], required: explicitRoot is not null || existingRoot is not null);
-        RuntimePathUtilities.ThrowIfOutside(root, GameVersionRoot, names[0], RuntimeFileArea.GameContent);
-        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(root, names[0], RuntimeFileArea.GameContent);
-        return root;
-    }
-
-    private string? ResolveOptionalContentRoot(string? explicitRoot, params string[] names)
-    {
+        string canonical = Path.Combine(SessionRoot, name);
         if (explicitRoot is null)
         {
-            string? existing = FindExistingContentRoot(GameVersionRoot, names);
-            if (existing is null)
-            {
-                return null;
-            }
-
-            RuntimePathUtilities.ValidateNoReparsePointsAlongPath(existing, names[0], RuntimeFileArea.GameContent);
-            return existing;
+            return canonical;
         }
 
-        string root = RuntimePathUtilities.NormalizeAbsolutePath(explicitRoot, nameof(explicitRoot));
-        EnsureContentRoot(root, names[0], required: true);
-        RuntimePathUtilities.ThrowIfOutside(root, GameVersionRoot, names[0], RuntimeFileArea.GameContent);
-        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(root, names[0], RuntimeFileArea.GameContent);
-        return root;
+        string normalized = RuntimePathUtilities.NormalizeAbsolutePath(explicitRoot, name);
+        if (!string.Equals(normalized, RuntimePathUtilities.NormalizeForComparison(canonical), RuntimePathUtilities.PathComparison))
+        {
+            throw new RuntimePathException(
+                RuntimePathReasonCodes.CrossSessionPath,
+                "A content root must be an entry in the bound SessionRoot.",
+                name,
+                RuntimeFileArea.GameContent);
+        }
+
+        return canonical;
     }
 
-    private string? ResolveContentName(string name) =>
-        name.Equals("CSV", StringComparison.OrdinalIgnoreCase) ? CsvRoot :
-        name.Equals("ERB", StringComparison.OrdinalIgnoreCase) ? ErbRoot :
-        name.Equals("resources", StringComparison.OrdinalIgnoreCase) ? ResourceRoot :
-        name.Equals("sound", StringComparison.OrdinalIgnoreCase) ? SoundRoot :
-        name.Equals("font", StringComparison.OrdinalIgnoreCase) ? FontRoot :
-        null;
+    private string? ResolveOptionalCanonicalContentRoot(string? explicitRoot, string name)
+    {
+        string canonical = Path.Combine(SessionRoot, name);
+        if (explicitRoot is null)
+        {
+            return Directory.Exists(canonical) ? canonical : null;
+        }
+
+        return ResolveCanonicalContentRoot(explicitRoot, name);
+    }
 
     private void ValidateRootRelationship()
     {
@@ -488,74 +497,107 @@ public sealed class RuntimePaths
 
         foreach (string otherRoot in otherSessionWorkspaceRoots)
         {
-            string normalized = RuntimePathUtilities.NormalizeAbsolutePath(otherRoot, "other session workspace");
-            if (RuntimePathUtilities.PathsOverlap(SessionWorkspaceRoot, normalized))
+            string normalized = RuntimePathUtilities.NormalizeAbsolutePath(otherRoot, "other session root");
+            if (RuntimePathUtilities.PathsOverlap(SessionRoot, normalized) ||
+                RuntimePathUtilities.PathsOverlap(SessionWorkspaceRoot, normalized))
             {
                 throw new RuntimePathException(
                     RuntimePathReasonCodes.CrossSessionPath,
-                    "The session workspace overlaps another session workspace.");
+                    "The SessionRoot overlaps another allocated session root.");
             }
+
+            RuntimePathUtilities.ValidateNoReparsePointsAlongPath(
+                normalized,
+                "<other-session-root>");
         }
     }
 
-    private string NormalizeWritableRoot(string root, string name)
+    private static string NormalizeSessionRootPath(string candidate, string expected, string name)
     {
-        string normalized = RuntimePathUtilities.NormalizeAbsolutePath(root, name);
-        if (!RuntimePathUtilities.IsStrictlyWithin(normalized, SessionWorkspaceRoot))
+        string normalized = RuntimePathUtilities.NormalizeAbsolutePath(candidate, name);
+        if (!string.Equals(normalized, RuntimePathUtilities.NormalizeForComparison(expected), RuntimePathUtilities.PathComparison))
         {
             throw new RuntimePathException(
                 RuntimePathReasonCodes.CrossSessionPath,
-                "A writable runtime root must be strictly inside SessionWorkspaceRoot.");
+                "A runtime private root must be inside the bound SessionRoot.",
+                name);
         }
 
-        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(normalized, name);
         return normalized;
     }
 
-    private static string? FindExistingContentRoot(string root, IReadOnlyList<string> names)
+    private static void ValidateDirectory(string path, string logicalPath, bool required)
     {
-        if (!Directory.Exists(root))
+        RuntimePathUtilities.ThrowIfReparsePoint(path, logicalPath, missingIsAllowed: !required);
+        if (required && !Directory.Exists(path))
         {
-            return null;
+            throw new RuntimePathException(
+                RuntimePathReasonCodes.EntryNotFound,
+                "A required SessionRoot directory is missing.",
+                logicalPath);
         }
 
-        string? found = null;
-        foreach (FileSystemInfo entry in new DirectoryInfo(root).EnumerateFileSystemInfos())
+        if (File.Exists(path))
         {
-            if (!names.Any(name => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)))
-            {
-                continue;
-            }
-
-            if (found is not null)
-            {
-                throw new RuntimePathException(
-                    RuntimePathReasonCodes.LayoutConflict,
-                    "The game version contains colliding content directory names.");
-            }
-
-            found = entry.FullName;
-        }
-
-        return found;
-    }
-
-    private static void EnsureContentRoot(string root, string logicalName, bool required)
-    {
-        if (!Directory.Exists(root))
-        {
-            if (!required && !File.Exists(root))
-            {
-                return;
-            }
-
             throw new RuntimePathException(
                 RuntimePathReasonCodes.LayoutConflict,
-                "A required game content directory is missing.",
-                logicalName,
-                RuntimeFileArea.GameContent);
+                "A SessionRoot directory is occupied by a file.",
+                logicalPath);
+        }
+    }
+
+    private static void ValidateRegularFile(string path, string logicalPath, bool required)
+    {
+        RuntimePathUtilities.ThrowIfReparsePoint(path, logicalPath, missingIsAllowed: !required);
+        if (required && !File.Exists(path))
+        {
+            throw new RuntimePathException(
+                RuntimePathReasonCodes.EntryNotFound,
+                "A required SessionRoot file is missing.",
+                logicalPath);
         }
 
-        RuntimePathUtilities.ThrowIfReparsePoint(root, logicalName, RuntimeFileArea.GameContent, missingIsAllowed: false);
+        if (Directory.Exists(path))
+        {
+            throw new RuntimePathException(
+                RuntimePathReasonCodes.LayoutConflict,
+                "A SessionRoot file is occupied by a directory.",
+                logicalPath);
+        }
+
+        if (File.Exists(path))
+        {
+            RuntimePathUtilities.ThrowIfHardLink(path, logicalPath);
+        }
+    }
+
+    private static void ValidateTree(string root, string logicalPath)
+    {
+        foreach (FileSystemInfo entry in new DirectoryInfo(root).EnumerateFileSystemInfos())
+        {
+            string childLogicalPath = logicalPath == "<session-root>"
+                ? entry.Name
+                : $"{logicalPath}/{entry.Name}";
+            RuntimePathUtilities.ThrowIfReparsePoint(
+                entry.FullName,
+                childLogicalPath,
+                missingIsAllowed: false);
+
+            if (entry is DirectoryInfo)
+            {
+                ValidateTree(entry.FullName, childLogicalPath);
+            }
+            else if (entry is FileInfo)
+            {
+                RuntimePathUtilities.ThrowIfHardLink(entry.FullName, childLogicalPath);
+            }
+            else
+            {
+                throw new RuntimeFileAccessException(
+                    RuntimePathReasonCodes.UnsupportedRuntimeFile,
+                    "A SessionRoot contains a non-regular filesystem entry.",
+                    childLogicalPath);
+            }
+        }
     }
 }

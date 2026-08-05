@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "v18-core",
+  "saveInput": "8",
+  "loadInput": "9",
+  "saveOutput": "V18-SAVE-COMPLETE",
+  "loadOutputs": [
+    "V18-LOADED-SAVE=818",
+    "V18-LOADED-GLOBAL=1818"
+  ]
+}

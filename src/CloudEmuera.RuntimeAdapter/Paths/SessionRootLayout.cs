@@ -60,10 +60,14 @@ public sealed class SessionRootLayout
     internal SessionRootLayout(
         RuntimePaths runtimePaths,
         IReadOnlyList<RuntimePathMapping> mappings,
+        string copiedManifestDigest,
+        IReadOnlyList<SessionRootManifestEntry> copiedManifestEntries,
         string diagnosticDescription)
     {
         RuntimePaths = runtimePaths;
         Mappings = mappings;
+        CopiedManifestDigest = copiedManifestDigest;
+        CopiedManifestEntries = copiedManifestEntries;
         DiagnosticDescription = diagnosticDescription;
     }
 
@@ -82,6 +86,17 @@ public sealed class SessionRootLayout
     public IReadOnlyList<RuntimePathMapping> Mappings { get; }
 
     public IReadOnlyList<RuntimePathMapping> Entries => Mappings;
+
+    /// <summary>
+    /// Retained for callers compiled against the P0-02 layout shape. Complete
+    /// copy deliberately creates no content links, so this collection is
+    /// always empty in P0-05.
+    /// </summary>
+    public IReadOnlyList<RuntimePathMapping> ContentLinks { get; } = Array.Empty<RuntimePathMapping>();
+
+    public string CopiedManifestDigest { get; }
+
+    public IReadOnlyList<SessionRootManifestEntry> CopiedManifestEntries { get; }
 
     public string DiagnosticDescription { get; }
 }

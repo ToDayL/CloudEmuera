@@ -19,7 +19,7 @@ public sealed class RuntimeFixtureContractTests
 
         Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
         Assert.Equal(2, result.FixtureCount);
-        Assert.Equal(14, result.FileCount);
+        Assert.Equal(18, result.FileCount);
     }
 
     [Fact]
@@ -150,6 +150,23 @@ public sealed class RuntimeFixtureContractTests
             Assert.EndsWith("\n", transcript);
             Assert.DoesNotContain("http://", transcript, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("https://", transcript, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public void NativeSaveScenariosAreDeclaredAndDeterministic()
+    {
+        RuntimeFixtureValidationResult result = RuntimeFixtureValidator.Validate(FixtureRoot);
+        Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
+
+        foreach (RuntimeFixtureDefinition fixture in result.Manifest!.Fixtures!)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(fixture.SaveScenario));
+            using JsonDocument scenario = JsonDocument.Parse(
+                File.ReadAllText(Path.Combine(FixtureRoot, fixture.SaveScenario!.Replace('/', Path.DirectorySeparatorChar))));
+            Assert.Equal(1, scenario.RootElement.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal(fixture.Id, scenario.RootElement.GetProperty("fixtureId").GetString());
+            Assert.NotEmpty(scenario.RootElement.GetProperty("loadOutputs").EnumerateArray());
         }
     }
 

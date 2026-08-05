@@ -26,6 +26,7 @@ services:
       CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
       CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
       CloudEmuera__DataPath: /data
+      CLOUDEMUERA_DEV_CONTAINER: "1"
     ports:
       - "${CLOUDEMUERA_HTTP_PORT:-8080}:8080"
     volumes:

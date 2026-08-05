@@ -7,5 +7,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
+    <ProjectReference Include="../CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
   </ItemGroup>
 </Project>

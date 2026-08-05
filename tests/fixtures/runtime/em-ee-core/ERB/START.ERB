@@ -4,7 +4,19 @@ score = 1
 PRINTL EMEE-START
 PRINTL EMEE-INPUT
 INPUT
-IF RESULT == 4
+IF RESULT == 5
+    savedValue = 505
+    globalValue = 1505
+    SAVEDATA 0, "EMEE-SAVE"
+    SAVEGLOBAL
+    PRINTL EMEE-SAVE-COMPLETE
+    QUIT
+ELSEIF RESULT == 6
+    savedValue = -1
+    globalValue = -1
+    LOADGLOBAL
+    LOADDATA 0
+ELSEIF RESULT == 4
     score = score + 2
 ELSE
     score = score - 1
@@ -25,3 +37,8 @@ QUIT
 @REPORT
 PRINTL EMEE-PROBE
 RETURN
+
+@EVENTLOAD
+PRINTFORML EMEE-LOADED-SAVE={savedValue}
+PRINTFORML EMEE-LOADED-GLOBAL={globalValue}
+QUIT

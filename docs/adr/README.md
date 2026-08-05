@@ -8,3 +8,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0004：Runtime 富内容最小 allowlist](0004-runtime-rich-content-allowlist.md)
 - [ADR-0005：Emuera 固定源码直接集成](0005-vendored-emuera-source.md)
 - [ADR-0006：CI runtime compatibility fixtures](0006-ci-runtime-compatibility-fixtures.md)
+- [ADR-0007：SessionRoot 直接持有 Emuera 原生存档](0007-session-root-native-save-ownership.md)

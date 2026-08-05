@@ -209,6 +209,35 @@ internal static partial class RuntimePathUtilities
             info.Exists && (info.Attributes & FileAttributes.ReparsePoint) != 0;
     }
 
+    public static void ThrowIfHardLink(
+        string path,
+        string logicalPath,
+        RuntimeFileArea? area = null)
+    {
+        if (!OperatingSystem.IsLinux() || IntPtr.Size != 8)
+        {
+            return;
+        }
+
+        try
+        {
+            if (LStat(path, out UnixStat stat) == 0 && stat.LinkCount > 1)
+            {
+                throw new RuntimeFileAccessException(
+                    RuntimePathReasonCodes.UnsupportedRuntimeFile,
+                    "Hard-linked runtime content is not allowed.",
+                    logicalPath,
+                    area);
+            }
+        }
+        catch (DllNotFoundException)
+        {
+        }
+        catch (EntryPointNotFoundException)
+        {
+        }
+    }
+
     private static FileSystemInfo CreateFileSystemInfo(string path)
     {
         FileSystemInfo directoryInfo = new DirectoryInfo(path);

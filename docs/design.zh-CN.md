@@ -25,7 +25,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 - 每个活动 Session 一个 Session Worker 进程；
 - 一个负责拉起和回收上述进程的 init/进程管理器。
 
-系统只依赖一个挂载到 `/data` 的持久化目录，不依赖外部数据库、对象存储、消息队列或远程文件系统。SQLite 是权威元数据存储，文件系统是游戏内容、Session 工作区、存档制品、日志和备份的权威内容存储。
+系统只依赖一个挂载到 `/data` 的持久化目录，不依赖外部数据库、对象存储、消息队列或远程文件系统。SQLite 是权威元数据存储，文件系统是游戏内容、完整 SessionRoot、原生存档、日志和备份的权威内容存储。
 
 ### 2.2 暂定决策
 
@@ -36,7 +36,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | 身份认证 | 本地账户，使用安全的密码哈希和 HttpOnly Session Cookie | `IIdentityProvider` 可替换为单一 OIDC Provider |
 | 多客户端输入 | 同一 `promptId` 的第一个有效输入生效 | 后续可在 Realtime Gateway 前增加控制权租约 |
 | Session 空闲 | 断连不自动关闭，持续占用活动配额 | 管理员策略只能通过显式配置启用 |
-| 存档删除 | 默认软删除，保留期可配置 | 保留期和配额待确认 |
+| 存档删除 | 无活动 Worker 时显式确认后直接删除 | 历史恢复由 SessionRoot 外部备份提供 |
 | HTML/媒体兼容 | 仅开放结构化允许列表中已测试的节点 | 能力由运行时清单和兼容性矩阵声明 |
 | 跨服务器迁移 | MVP 不定义可移植整包格式 | 数据备份不依赖该格式 |
 
@@ -105,7 +105,7 @@ EF Core 用于身份、Game、普通查询和迁移；以下操作必须使用�
 - `state_version` 比较交换；
 - Worker epoch 递增和租约替换；
 - 第一个 prompt 输入抢占；
-- SaveArtifact generation 发布。
+- 停止态存档修改权与 Worker 租约的互斥抢占。
 
 SQLite 不提供数据库自动生成的并发 token，故 `state_version` 由应用显式递增。SQLite Provider 的部分迁移需要重建表，因此生产升级必须先创建一致性备份，由 Migrator 单独执行，禁止多个业务进程自动调用 `Migrate()`。
 
@@ -207,7 +207,7 @@ Web/API 进程不得加载 Emuera Runtime，也不得持有只能存在于内存
 | Compatibility Service | 静态扫描、解析验证、生成能力报告 | 绕过 Blocked 能力 |
 | Session Control Plane | 创建、关闭、查询、配额预留、状态转换 | 解释器执行 |
 | Realtime Gateway | WebSocket 鉴权、恢复、广播、背压、输入转发 | 修改显示事件语义 |
-| Save Service | SaveArtifact 索引、导入导出、重命名、软删除 | 重新解释原生存档内容 |
+| Save Service | 在 Session 停止时授权访问其原生存档文件 | 解析存档内容、维护独立历史版本 |
 | Admin Service | Worker/Session 观测、强制停止、策略配置 | 绕过审计 |
 | Audit Service | 追加式审计记录 | 保存密码或输入全文 |
 
@@ -250,11 +250,22 @@ Supervisor 不解析 ERB，不保存用户认证状态，也不直接向浏览�
 | Console Adapter | 将解释器绘制调用转换为结构化显示操作 |
 | Snapshot Store | 维护当前 ConsoleSnapshot、序号和有界增量环形缓冲 |
 | Input Coordinator | 生成 prompt、验证输入、去重并唤醒 Runtime |
-| Save Committer | 检测成功写入的原生存档并原子提交 SaveArtifact |
 | Capability Guard | 禁止 DLL、进程、非允许网络和不安全路径操作 |
 | Worker IPC | 注册、心跳、事件发送、命令接收与断线重连 |
 
 Runtime 主循环不得被浏览器发送速度阻塞。Console Adapter 将事件写入有界内部队列；队列接近上限时合并相邻文本/样式事件，超过上限时生成新快照并丢弃已被快照覆盖的旧增量。
+
+P0-06 的实际进程切片已落在 `CloudEmuera.Supervisor/SupervisorHost` 和
+`CloudEmuera.Worker/WorkerConnectionLoop`：Supervisor 在自己的私有 runtime 目录监听
+单一 UDS，使用一次性 bootstrap JSON 启动一个带不可变
+`sessionId/workerId/workerEpoch` 的 Worker；Worker 只使用已经物化的 SessionRoot，并以
+`worker.proto` 的 IPC v1 双向流发送结构化 Console、输入结果、心跳和终态。Worker 的
+控制/显示发送队列有界且由单一 gRPC writer 串行写出，短断时保留 binding、prompt 和
+Console 状态并重新注册。UDS stale endpoint 只有在 `lstat` 确认 socket 类型、服务账户
+owner、单链接和 `0700` 父目录后，才通过受保护父目录句柄 `unlinkat` 清理；祖先 symlink、
+路径越界、权限或属主异常均拒绝。Supervisor/Worker 生命周期日志输出结构化
+`sessionId/workerId/workerEpoch`，并过滤 token、SessionRoot、UDS/bootstrap 路径和输入值。
+持久 WorkerLease、epoch 分配和 Supervisor 重启对账仍属于 P1-05，不在本切片内。
 
 ### 3.4 进程启动顺序
 
@@ -311,7 +322,7 @@ ipcEndpoint, acquiredAt, heartbeatAt, expiresAt,
 runtimeVersion, protocolVersion
 ```
 
-新 Worker 创建必须在数据库事务内执行 `epoch = previousEpoch + 1`。Supervisor 向 Worker 签发只对 `sessionId + workerId + epoch` 有效的启动令牌。API、Supervisor 和 Worker 在处理控制命令、输入、心跳、输出、存档提交时都要匹配当前 epoch。
+新 Worker 创建必须在数据库事务内执行 `epoch = previousEpoch + 1`。Supervisor 向 Worker 签发只对 `sessionId + workerId + epoch` 有效的启动令牌。API、Supervisor 和 Worker 在处理控制命令、输入、心跳和输出时都要匹配当前 epoch。存档不经过 IPC 提交；只有当前 Worker 能写当前 SessionRoot。
 
 ## 5. 持久化设计
 
@@ -387,6 +398,7 @@ id TEXT PK
 owner_user_id TEXT NOT NULL FK users
 game_id TEXT NOT NULL FK games
 game_version_id TEXT NOT NULL FK game_versions
+session_root_path TEXT NOT NULL UNIQUE
 name TEXT NOT NULL
 state TEXT NOT NULL
 state_version INTEGER NOT NULL
@@ -418,28 +430,6 @@ acquired_at TEXT NOT NULL
 heartbeat_at TEXT NOT NULL
 expires_at TEXT NOT NULL
 UNIQUE(session_id, epoch)
-```
-
-#### save_artifacts
-
-```text
-id TEXT PK
-owner_user_id TEXT NOT NULL FK users
-game_id TEXT NOT NULL FK games
-game_version_id TEXT NOT NULL FK game_versions
-session_id TEXT NOT NULL FK sessions
-logical_name TEXT NOT NULL
-kind TEXT NOT NULL                 -- SLOT | GLOBAL | AUTOSAVE | IMPORT
-native_layout TEXT NOT NULL        -- ROOT | SAV_DIR
-generation INTEGER NOT NULL
-content_path TEXT NOT NULL
-content_digest TEXT NOT NULL
-size_bytes INTEGER NOT NULL
-runtime_version TEXT NOT NULL
-format_metadata_json TEXT NOT NULL
-created_at TEXT NOT NULL
-deleted_at TEXT NULL
-UNIQUE(session_id, logical_name, generation)
 ```
 
 #### idempotency_records
@@ -477,7 +467,7 @@ metadata_json TEXT NOT NULL
 
 审计表只追加，不通过普通业务 API 修改或删除。
 
-另设 `quota_profiles`、`game_files`、`compatibility_diagnostics`、`save_tombstones`、`schema_migrations` 和短期 `worker_command_results` 表。完整 DDL 在实现阶段由首个数据库迁移固化。
+另设 `quota_profiles`、`game_files`、`compatibility_diagnostics`、`schema_migrations` 和短期 `worker_command_results` 表。存档没有独立内容表；其所有权和 GameVersion 关联由所属 Session 决定，管理操作写入 `audit_events`。完整 DDL 在实现阶段由首个数据库迁移固化。
 
 ### 5.3 文件系统布局
 
@@ -490,12 +480,6 @@ metadata_json TEXT NOT NULL
 │   └── {gameId}/{gameVersionId}/content/   # 发布后不可变
 ├── sessions/{sessionId}/
 │   ├── root/                               # Worker 可见 GameRoot
-│   ├── writable/
-│   │   ├── sav/
-│   │   ├── root-saves/
-│   │   ├── config/
-│   │   └── tmp/
-│   ├── saves/{artifactId}/content
 │   └── metadata/
 │       ├── runtime-manifest.json
 │       └── last-crash.json
@@ -508,19 +492,26 @@ metadata_json TEXT NOT NULL
 
 ### 5.4 SessionRoot 构造
 
-Supervisor 在启动 Worker 前构造独立文件视图：
+Session 管理方在首次启动 Worker 前构造持久、独占的运行目录：
 
 ```text
-root/CSV          → GameVersion/CSV，只读
-root/ERB          → GameVersion/ERB，只读
-root/resources    → GameVersion/resources，只读
-root/sav          → writable/sav，可写
-root/save*.sav    → writable/root-saves/*，可写
-root/global.sav   → writable/root-saves/global.sav，可写
-root/emuera.config→ writable/config/emuera.config，可写
+root/CSV/          # GameVersion 的 Session 私有副本
+root/ERB/          # GameVersion 的 Session 私有副本
+root/resources/    # GameVersion 的 Session 私有副本
+root/sound、font/  # 存在时原样复制
+root/<其他目录>/   # 所有合法未知目录也原样复制
+root/emuera.config # GameVersion 配置的 Session 私有副本
+root/save*.sav     # 根目录模式，Emuera 直接读写
+root/global.sav    # 根目录模式，Emuera 直接读写
+root/sav/          # UseSaveFolder:YES 时，Emuera 直接读写
+root/tmp/          # Session 私有临时内容
 ```
 
-Linux 部署优先为 Worker 建立独立 mount namespace，将 GameVersion 子目录 bind-mount 为只读，将 Session 私有目录 bind-mount 为可写。若部署环境不能安全创建 mount namespace，兼容实现必须满足同等测试：Worker 服务身份对发布目录没有写权限、只能看到当前 Session 的可写目录、路径解析不能越界。不能把普通符号链接本身当作完整安全边界。
+Session 管理方按已发布 manifest 复制完整文件树，不为 CSV/ERB/resources 建立特殊分类，也不静默丢弃未知合法内容。基线实现使用普通字节复制；底层文件系统支持时可以尝试 reflink，但必须保持写时复制语义并在不支持时回退普通复制。禁止硬链接，因为它会让 Session 与 GameVersion 或其他 Session 共享可写 inode。上传阶段已经拒绝软链接、硬链接、FIFO、设备和 socket，复制阶段仍需再次核对实际条目，防止检查与复制之间被替换。
+
+复制成功前先在同一 sessions 父目录下建立 staging root；只有文件数、总字节数、逐项类型和清单摘要全部通过后，才原子重命名为最终 SessionRoot。失败只清理本次 staging，不触碰已存在 SessionRoot。Worker 的 mount namespace 隐藏原始 GameVersion 和其他 Session，只暴露它自己的完整副本及必要系统路径。
+
+SessionRoot 位于挂载数据目录中，本身就是存档的唯一权威副本。Worker 重启复用同一路径；正常退出和崩溃都不触发复制、generation 发布或第二套存档提交协议。
 
 同一容器内的 API/Supervisor 可拥有管理权限，Worker 必须降权，清除不需要的 capabilities，并应用 `no_new_privs`。不同 Session 的工作目录不能通过路径枚举互访。
 
@@ -536,7 +527,7 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 
 1. API 流式接收上传内容到随机命名临时文件，同时计算 SHA-256 并执行压缩前大小限制；
 2. 解包器逐项规范化路径，先校验后落盘；
-3. 拒绝绝对路径、`..`、NUL、设备文件、FIFO、硬链接、符号链接和大小写/Unicode 规范化冲突；
+3. 拒绝绝对路径、`..`、NUL、设备文件、FIFO、硬链接、游戏包携带的符号链接和大小写/Unicode 规范化冲突；
 4. 同时限制条目数、单文件大小、总展开大小、目录深度和压缩比；
 5. 对 ERB/CSV/配置文件检测 BOM，并以确定性顺序尝试 UTF-8 与 Shift-JIS；模糊结果产生诊断，不依赖系统 locale；
 6. 静态扫描禁止能力、资源引用和文件名大小写；
@@ -585,7 +576,7 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 2. 在 `BEGIN IMMEDIATE` 短事务中读取活动配额，插入 `CREATING` Session 和幂等记录；
 3. API 向 Supervisor 发送带 `commandId` 的 `worker.start`；
 4. Supervisor 以 `commandId` 去重，在事务中递增 epoch 并写入 `STARTING` 租约；
-5. Supervisor 构造 SessionRoot、物化存档、施加限制并启动 Worker；
+5. Supervisor 首次完整复制 GameVersion 或校验已有 SessionRoot、施加限制并启动 Worker；
 6. Worker 使用启动令牌注册，加载 Runtime，发送 `worker.ready`；
 7. Supervisor 验证 epoch 并将 Session 更新为 `RUNNING` 或 `DETACHED`；
 8. API 返回 Session 资源。若同步等待超时，返回 `202`，客户端查询状态，不重复创建。
@@ -601,7 +592,7 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 3. Supervisor 发送 `worker.stop(graceDeadline, finalAutosavePolicy)`；
 4. Worker 停止创建新 prompt，等待当前安全点，刷新存档，发送最终事件并退出；
 5. 超过宽限期后 Supervisor 先发送终止信号，再在硬超时后强制结束；
-6. Supervisor 确认进程退出、提交可确认的存档、失效租约，把 Session 置为 `CLOSED` 并释放配额；
+6. Supervisor 确认进程退出、失效租约，把 Session 置为 `CLOSED` 并释放配额；存档已经位于持久 SessionRoot，无退出提交阶段；
 7. API 广播终态并关闭该 Session 的 WebSocket 订阅。
 
 重复关闭 `CLOSED` Session 返回原终态。用户关闭、管理员终止、资源限制和容器关闭使用不同 `closeReason`。
@@ -738,10 +729,10 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 | `GET /sessions/{id}` | Session 详情 | 所有者/管理员 |
 | `POST /sessions/{id}:close` | 优雅关闭 | 幂等 |
 | `GET /sessions/{id}/saves` | 列出存档 | 所有者 |
-| `POST /sessions/{id}/saves:import` | 导入存档 | 流式验证、幂等 |
-| `GET /saves/{id}/content` | 下载存档 | 授权代理下载 |
-| `PATCH /saves/{id}` | 重命名 | 条件更新 |
-| `DELETE /saves/{id}` | 软删除 | 要求确认令牌或显式确认字段 |
+| `PUT /sessions/{id}/saves/{path}` | 导入/替换原生存档 | Session 停止、严格路径校验 |
+| `GET /sessions/{id}/saves/{path}` | 下载原生存档 | 所有者、流式响应 |
+| `PATCH /sessions/{id}/saves/{path}` | 重命名 | Session 停止、目标名校验 |
+| `DELETE /sessions/{id}/saves/{path}` | 删除 | Session 停止、要求显式确认 |
 | `GET /admin/workers` | Worker 状态与资源 | 管理员 |
 | `POST /admin/sessions/{id}:force-stop` | 强制停止 | 管理员，必须填写原因并审计 |
 | `GET /health/live` | 进程存活 | 不检查昂贵依赖 |
@@ -757,6 +748,12 @@ WebSocket 入口为 `GET /api/v1/realtime`。连接建立后通过 `session.resu
 IPC 默认使用 Unix domain socket，协议定义独立于传输。socket 文件权限限制到服务账户；连接建立时还要使用容器启动时生成的短期服务凭据完成挑战响应。Worker 使用一次性启动令牌注册，令牌绑定 Session、Worker、epoch 和过期时间。
 
 禁止把 UDS 暴露到容器端口或共享宿主目录。对敏感命令同时验证对端身份和消息字段，不把“能连接 socket”视为完整授权。
+
+P0-06 的具体契约位于 [`src/CloudEmuera.Ipc/Protos/worker.proto`](../src/CloudEmuera.Ipc/Protos/worker.proto)，
+当前 `protocolVersion=1`。注册同时校验 IPC 版本、`RuntimeBaseline.CloudEmueraIntegrationVersion`
+和固定 upstream commit；Supervisor 以 256-bit bootstrap token 和完整 binding 校验 Worker，
+Worker 通过 `SocketsHttpHandler.ConnectCallback` 只连接 UDS，不提供 TCP fallback。bootstrap
+目录/文件权限为 `0700`/`0600`，文件拒绝链接、特殊文件、异常 hardlink 和非当前服务账户所有者。
 
 ### 10.2 控制消息
 
@@ -776,59 +773,50 @@ sessionId, workerId?, workerEpoch, type, payload
 - `worker.heartbeat`；
 - `session.resume` / `session.snapshot` / `display.batch`；
 - `session.input` / `session.input.result`；
-- `save.committed`；
 - `worker.fenced` / `worker.crashed`。
 
 接收者按 `commandId` 去重，并在短期结果表中返回原结果。超过 `deadline` 的未执行命令拒绝；已经执行完成的命令仍可返回缓存结果。
 
 ### 10.3 背压
 
-控制消息和显示数据使用独立逻辑通道或优先级队列，心跳、停止和 fencing 不能被大量显示事件饿死。每条消息有最大尺寸；大型静态资源和存档内容只传引用和校验和，通过授权文件 API 读取。
+控制消息和显示数据使用独立逻辑通道或优先级队列，心跳、停止和 fencing 不能被大量显示事件饿死。每条消息有最大尺寸；大型静态资源不经过实时通道。存档由授权文件 API 在 Session 停止时直接流式访问。
 
 ## 11. 存档设计
 
 ### 11.1 原生语义与物理隔离
 
-Runtime 仍调用 Emuera 原生序列化逻辑。RuntimePaths 把两种布局映射到当前 Session 私有目录：
+Runtime 只调用 Emuera 原生序列化与反序列化逻辑。SessionRoot 就是存档的持久工作目录，不存在运行目录之外的 SaveArtifact 或逐次保存 generation：
 
-- 根目录模式：`save*.sav`、`global.sav` → `writable/root-saves/`；
-- `sav/` 模式：`sav/*` → `writable/sav/`。
+- `UseSaveFolder:NO`：Emuera 直接读写 `SessionRoot/save*.sav` 和 `SessionRoot/global.sav`；
+- `UseSaveFolder:YES`：Emuera 直接读写 `SessionRoot/sav/*`。
 
-`global.sav` 只在一个 Session 内是“全局”，物理上仍绑定 `User + Game + Session`，不允许跨 Session 共享。
+布局由该游戏版本的 `emuera.config` 决定，不由用户、API 或 Worker 启动参数另行选择。宿主可把检测结果记录在 manifest 中用于提前校验，但若它与运行时实际读取的 `UseSaveFolder` 不一致，Worker 必须拒绝启动，不能同时搜索两处或改写配置。
 
-### 11.2 启动物化
+`global.sav` 只在一个 Session 内是“全局”。每个 SessionRoot 都是独立的普通目录，因此两个用户或同一用户的两个 Session 不共享 `global.sav`、slot 文件、目录 inode 或可写父目录。
 
-创建 Session 时默认得到空存档区。用户显式从另一 Session 复制或从 SaveArtifact 选择恢复点时：
+### 11.2 生命周期与直接读写
 
-1. API 验证源、目标用户/游戏/版本权限和兼容性；
-2. Supervisor 在 Worker 启动前把制品复制到临时工作区；
-3. 校验大小和 SHA-256；
-4. 原子重命名到目标 Session 的对应原生路径；
-5. 记录来源制品 ID。活动 Worker 之间绝不共享同一 inode 的可写存档。
+创建 Session 时建立空的持久 SessionRoot。此后：
 
-### 11.3 原子提交
+1. Supervisor 把该目录的规范绝对路径交给唯一 Worker；
+2. Emuera 在该目录中按原生行为直接打开、覆盖、读取或删除存档；
+3. Worker 正常退出或崩溃后保留目录原状；
+4. 同一 Session 再次启动 Worker 时复用原目录，不执行启动物化或退出提交；
+5. 删除 Session 时才按明确产品策略删除或归档整个目录。
 
-存档写入使用同目录临时文件，例如 `.save01.sav.<nonce>.tmp`：
+CloudEmuera 不包装每次原生保存，不改变上游 `FileMode`、flush、覆盖和失败语义。如果进程在 Emuera 写文件期间被终止，磁盘内容以文件系统和上游当时状态为准；系统不得把这描述成已提供事务性 generation。需要恢复历史时，对静止的整个 `/data` 或 SessionRoot 做宿主机快照/备份。
 
-1. Runtime 原生序列化到临时文件；
-2. flush 文件并在配置要求下 `fsync`；
-3. 校验基本格式和大小；
-4. `rename` 原子替换 Session 工作副本；
-5. 复制或 reflink 到新的不可变 Artifact 临时目录，计算摘要；
-6. 原子重命名 Artifact 目录到最终位置；
-7. 在数据库事务中插入新 generation，并更新逻辑存档当前指针；
-8. 必要时同步父目录元数据。
+### 11.3 管理操作
 
-如果步骤 7 失败，制品目录成为可回收孤儿，但上一 generation 仍有效。绝不先删除旧制品再写新制品。
+活动 Session 的原生文件由 Worker 独占，API 不与其并发修改。列出和下载可以在明确接受非事务性读取语义后开放；MVP 的上传、替换、重命名、复制和删除只允许 Session 处于 `CLOSED` 或其他无 Worker 状态，并在执行前后复核租约不存在。
 
-### 11.4 管理操作
+管理操作只处理允许列表内的 `save*.sav`、`global.sav` 以及当前布局允许的 `sav/` 条目：
 
-- 下载：API 每次验证权限后流式响应，并设置安全的下载文件名；
-- 上传：进入隔离暂存区，验证大小、扩展名、基本格式、目标版本和权限后生成新 Artifact；
-- 重命名：只修改逻辑名称，不修改原生内容；
-- 删除：设置 `deleted_at` 并生成 tombstone；保留期内允许恢复；
-- 自动存档：生成独立 generation，按策略清理旧自动存档，不覆盖手动 generation；
-- 配额：统计活动制品和待删除保留制品的占用，具体计费规则由配置明确。
+- 下载：每次验证 Session 所有权，使用安全下载名并流式读取当前文件；
+- 上传/复制：先写入当前 SessionRoot 外的隔离暂存文件，验证大小、目标名和基本原生格式；确认 Session 仍无 Worker后，再移动到目标路径；这只是管理操作的文件替换，不形成历史 generation；
+- 重命名/删除：要求显式确认、再次检查无活动 Worker，并写审计日志；
+- 自动保存：完全由游戏和 Emuera 控制；CloudEmuera 不另建自动存档调度器；
+- 备份：面向整个挂载数据目录或 SessionRoot，由运维备份策略负责。
 
 ## 12. 安全设计
 
@@ -841,7 +829,7 @@ Runtime 仍调用 Emuera 原生序列化逻辑。RuntimePaths 把两种布局映
 目标控制：
 
 - 非 root 运行，`no_new_privs`，最小 capabilities；
-- 独立进程和文件系统视图，只读游戏内容、只写本 Session 目录；
+- 独立进程和文件系统视图，只暴露本 Session 的完整可写副本，不暴露原始 GameVersion 或其他 Session；
 - 默认无网络；若实现确需本地 IPC，仅允许指定 UDS；
 - seccomp/等价策略禁止创建额外进程、挂载、ptrace 和危险系统调用；
 - cgroup v2 或容器内等价控制限制 CPU、内存和进程数；
@@ -863,7 +851,7 @@ Runtime 仍调用 Emuera 原生序列化逻辑。RuntimePaths 把两种布局映
 
 ### 12.4 路径安全
 
-所有用户路径先按 `/` 解析为逻辑相对路径，拒绝空字节、绝对路径、盘符、父级段和平台保留名。最终访问使用基于目录句柄的逐段打开，并禁止跟随符号链接；只做字符串前缀比较不构成安全校验。文件名同时执行 Unicode 规范化和大小写碰撞检查。
+所有用户路径先按 `/` 解析为逻辑相对路径，拒绝空字节、绝对路径、盘符、父级段和平台保留名。最终访问使用基于目录句柄的逐段打开，并禁止跟随符号链接；只做字符串前缀比较不构成安全校验。SessionRoot 复制过程没有链接例外，遇到任何链接或特殊文件都失败。文件名同时执行 Unicode 规范化和大小写碰撞检查。
 
 ### 12.5 密钥与隐私
 
@@ -892,7 +880,7 @@ API 请求、Session 创建/连接/关闭、Worker 注册/崩溃、游戏发布�
 - 每 Worker CPU、RSS、文件描述符、磁盘、事件速率、快照大小；
 - prompt 等待时间、输入接受/重复/过期计数；
 - SQLite busy、事务时长、WAL 大小和备份结果；
-- 上传拒绝原因、兼容性诊断数量和存档提交失败数。
+- 上传拒绝原因、兼容性诊断数量和存档文件管理失败数。
 
 高基数字段如 `sessionId` 不默认作为通用时序数据库标签；在日志和按需诊断接口中查询。
 
@@ -930,14 +918,14 @@ API 启动后从 SQLite 读取活动 Session，再向 Supervisor 请求当前 `(
 发现 `/data` 不可写、空间低于保留阈值或 SQLite 出现完整性错误时：
 
 - readiness 失败；
-- 禁止新建 Session、发布版本和提交存档；
+- 禁止新建 Session、发布版本和通过 API 修改存档；
 - 已运行 Worker 可继续到安全点，但任何持久化失败都必须明确反馈，不能声称保存成功；
 - 管理员获得高优先级告警；
 - 不自动删除用户数据来尝试恢复空间。
 
 ### 14.4 容器/宿主重启
 
-MVP 不恢复指令级内存状态。重启后所有先前活动 Session 在对账后标记 `CRASHED`，保留最后成功提交的 SaveArtifact，用户可据此创建新 Session。不得把旧 Session 显示成仍可继续运行。
+MVP 不恢复指令级内存状态。重启后所有先前活动 Session 在对账后标记 `CRASHED`，其 SessionRoot 原样保留；用户可以检查其中的原生存档，或显式基于该目录创建新的独立 Session 副本。不得把旧 Session 显示成仍可从中断指令继续运行。
 
 ## 15. 前端设计
 
@@ -970,7 +958,7 @@ pending clientMessageId → result
 - 用户活动 Session、Worker CPU/内存/PID/FD/磁盘配额；
 - 输出速率、快照、增量和 WebSocket 队列上限；
 - 心跳、启动、停止、强制终止超时；
-- 存档大小、自动存档和软删除保留；
+- 存档文件大小、停止态管理操作和 SessionRoot 备份保留；
 - Runtime 基线、兼容配置和禁止能力；
 - 日志级别、轮转、指标和审计保留。
 
@@ -997,10 +985,10 @@ pending clientMessageId → result
 - 相同幂等键并发创建只产生一个 Session；
 - 活动配额只剩一个名额时，并发创建最多一个成功；
 - 两个客户端回答同一 prompt 只有一个 `ACCEPTED`；
-- Worker A epoch 过期后，其心跳、输出、输入结果和存档提交均被拒绝；
+- Worker A epoch 过期后，其心跳、输出和输入结果均被拒绝，且它不能获得新 Worker 的 SessionRoot 写权限；
 - Snapshot 生成期间持续输出，恢复流仍无缺口且无乱序；
 - 关闭和输入并发时，结果要么输入先被接受，要么明确被停止状态拒绝；
-- 存档提交中途进程退出，旧 generation 仍完整可用。
+- Worker 写存档时退出后，系统保留 SessionRoot 现场且不产生虚假的“已提交”状态；其他 Session 不受影响。
 
 ### 17.3 需求验收映射
 
@@ -1014,7 +1002,7 @@ pending clientMessageId → result
 | AC-010 | 安全解包与路径访问 | 恶意归档语料库 |
 | AC-011 | 响应式控制台与授权下载 | 桌面/移动浏览器矩阵 |
 | AC-012 | 有界队列、快照降级 | 持续输出和慢客户端压力测试 |
-| AC-013 | RuntimePaths、原子 SaveArtifact | 两种原生存档布局测试 |
+| AC-013 | 持久 SessionRoot、原生直接读写 | 两种原生存档布局与重启加载测试 |
 
 完整需求追踪在实现任务中以需求编号标注测试用例；每个 `AUTH/GAME/SESS/PLAY/SAVE/OPS/COMP/SEC/NFR` 条目至少关联一个设计组件和一个验证方法。
 
@@ -1034,7 +1022,7 @@ pending clientMessageId → result
 1. SQLite schema、游戏上传/发布和本地账户；
 2. Supervisor、Worker IPC、epoch 和 Session 状态机；
 3. 结构化 Console、Snapshot、WebSocket 恢复和输入去重；
-4. SessionRoot 隔离和 SaveArtifact 管理；
+4. SessionRoot 隔离和停止态原生存档文件管理；
 5. Web 游戏库、Session 控制台、存档界面；
 6. 管理员 Worker 查看与强制停止；
 7. 单容器进程管理、健康检查、备份和升级说明；
@@ -1054,8 +1042,8 @@ pending clientMessageId → result
 4. `ADR-004`：Emuera HTML、Sprite、CBG 和音频的 MVP 允许列表；
 5. `ADR-005`：默认活动 Session、CPU、内存、磁盘、上传和存档配额；
 6. `ADR-006`：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
-7. `ADR-007`：字体文件保留、服务和授权策略；
-8. `ADR-008`：软删除保留期、备份恢复点目标和升级回滚流程。
+7. `ADR-008`：字体文件保留、服务和授权策略；
+8. `ADR-009`：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
 
 ## 20. 设计完成定义
 

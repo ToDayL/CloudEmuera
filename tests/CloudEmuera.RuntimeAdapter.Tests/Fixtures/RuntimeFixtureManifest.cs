@@ -50,6 +50,9 @@ public sealed class RuntimeFixtureDefinition
     [JsonPropertyName("expectedTranscript")]
     public string? ExpectedTranscript { get; set; }
 
+    [JsonPropertyName("saveScenario")]
+    public string? SaveScenario { get; set; }
+
     [JsonPropertyName("coverage")]
     public List<string>? Coverage { get; set; }
 
@@ -91,6 +94,27 @@ public sealed class RuntimeFixtureScenario
 
     [JsonPropertyName("steps")]
     public List<RuntimeFixtureScenarioStep>? Steps { get; set; }
+}
+
+public sealed class RuntimeFixtureSaveScenario
+{
+    [JsonPropertyName("schemaVersion")]
+    public int SchemaVersion { get; set; }
+
+    [JsonPropertyName("fixtureId")]
+    public string? FixtureId { get; set; }
+
+    [JsonPropertyName("saveInput")]
+    public string? SaveInput { get; set; }
+
+    [JsonPropertyName("loadInput")]
+    public string? LoadInput { get; set; }
+
+    [JsonPropertyName("saveOutput")]
+    public string? SaveOutput { get; set; }
+
+    [JsonPropertyName("loadOutputs")]
+    public List<string>? LoadOutputs { get; set; }
 }
 
 public sealed class RuntimeFixtureScenarioStep

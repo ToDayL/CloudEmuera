@@ -91,8 +91,10 @@ internal sealed class EmueraConsole
     public void PrintSingleLine(string value, bool temporary) => EmitLine(value);
     public void PrintSystemLine(string value) => RecordMessage(value);
     public void PrintError(string value) => RecordMessage(value);
-    public void PrintWarning(string value, ScriptPosition? position, int level) => RecordMessage(value);
-    public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) => RecordMessage(value);
+    public void PrintWarning(string value, ScriptPosition? position, int level) =>
+        RecordMessage(FormatDiagnostic(value, position));
+    public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) =>
+        RecordMessage(FormatDiagnostic(value, position));
     public void PrintTemporaryLine(string value) => EmitLine(value);
     public void PrintPlain(string value) => EmitText(value);
     public void PrintPlainWithSingleLineFix(string value) => EmitLine(value);
@@ -257,4 +259,9 @@ internal sealed class EmueraConsole
         if (!string.IsNullOrWhiteSpace(value))
             runtimeMessages.Add(value.Trim());
     }
+
+    private static string FormatDiagnostic(string value, ScriptPosition? position) =>
+        position is { } located
+            ? $"{value} ({located.Filename}:{located.LineNo})"
+            : value;
 }

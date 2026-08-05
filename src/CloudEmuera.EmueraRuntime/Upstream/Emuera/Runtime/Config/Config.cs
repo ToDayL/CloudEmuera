@@ -237,7 +237,16 @@ internal static class Config
 			SavDir = Program.ExeDir;
 		#endregion
 		if (UseSaveFolder && !Directory.Exists(SavDir))
+		{
+#if CLOUDEMUERA_HEADLESS
+			// CloudEmuera P0-05: SessionRoot construction owns the private sav
+			// directory. Headless initialization must never show the desktop
+			// migration dialog or move root-level native saves implicitly.
+			Directory.CreateDirectory(SavDir);
+#else
 			createSavDirAndMoveFiles();
+#endif
+		}
 	}
 	#region EM_私家版_Emuera多言語化改造
 	public static void UpdateLangSetting(ConfigData instance)

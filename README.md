@@ -85,7 +85,7 @@ Emuera.EM+EE 以普通 Git 文件形式固定在 `src/CloudEmuera.EmueraRuntime/
 
 ## 项目状态
 
-开发环境、运行时 fixture、平台端口和结构化 Console 已通过验证；固定上游 Emuera loader/interpreter 已在 Linux 无 UI Runtime 中跑通两套 INPUT 往返，CPU 密集循环 deadline、结构化按钮和可见输出验收证据也已覆盖。下一步是 P0-05 原生存档双布局。Session、身份、存档和实时协议按 [开发计划](docs/development-plan.zh-CN.md) 分阶段实现。
+开发环境、运行时 fixture、平台端口、结构化 Console、P0-05 持久 SessionRoot 和 P0-06 单 Session Worker/UDS IPC 已通过验证；固定上游 Emuera loader/interpreter 已在 Linux 无 UI Runtime 中跑通两套 INPUT 往返，真实独立 Worker 也完成注册、结构化输出、重复输入、短断重连、优雅停止和双进程隔离。下一步是 P1-01 SQLite 首版 schema 与迁移；租约、epoch 持久化、浏览器实时 API、身份和正式 UI 按 [开发计划](docs/development-plan.zh-CN.md) 分阶段实现。
 
 ## 贡献与安全
 

@@ -48,6 +48,9 @@
           "Grpc.Net.Client": "[2.83.0, )"
         }
       },
+      "cloudemuera.runtimeadapter": {
+        "type": "Project"
+      },
       "Google.Protobuf": {
         "type": "CentralTransitive",
         "requested": "[3.35.1, )",

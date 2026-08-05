@@ -65,6 +65,9 @@ Bitmap、Graphics、字体测量对象或音频设备。文件输入先由
 `IRuntimeFileSystem` 复制为 session 私有兼容视图，固定上游 loader 只获得该视图
 内的路径；物理 GameRoot 为空的 port-only 测试证明内容不能绕过文件端口。私有视图
 内部的直接 `System.IO` 调用点已经分类审计，并明确记录 P0-05 延后边界。
+P0-05 将依据 ADR-0007 用持久 SessionRoot 替换正式执行路径中的可销毁视图：内容由
+管理方按发布 manifest 完整复制，原生存档由 Emuera 直接留在 SessionRoot，不增加
+artifact 提交层。
 
 | 能力 | P0-04 状态 |
 | --- | --- |

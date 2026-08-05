@@ -44,27 +44,39 @@ public sealed class UpstreamRuntimeSession : IDisposable
         this.runtimeGateAcquired = runtimeGateAcquired;
     }
 
-    public async Task<bool> InitializeAsync(
-        string configurationRoot,
-        string csvRoot,
-        string erbRoot,
-        string temporaryRoot,
-        string resourceRoot,
-        string soundRoot,
-        string fontRoot)
+    public async Task<bool> InitializeAsync(RuntimePaths paths)
     {
+        ArgumentNullException.ThrowIfNull(paths);
+        paths.ValidateSessionRoot();
+        if (paths.SaveLayout == RuntimeSaveLayout.SavDirectory && HasRootNativeSave(paths.SessionRoot))
+        {
+            throw new UpstreamSaveLayoutConflictException();
+        }
+
         await RuntimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         ownsGate = true;
         runtimeGateAcquired?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
-        ValidatePrivateViewRoots(
-            configurationRoot, csvRoot, erbRoot, temporaryRoot, resourceRoot, soundRoot, fontRoot);
         MinorShift.Emuera.Program.ConfigureHeadless(
-            configurationRoot, csvRoot, erbRoot, temporaryRoot, resourceRoot, soundRoot, fontRoot);
+            paths.SessionRoot,
+            paths.CsvRoot,
+            paths.ErbRoot,
+            paths.TemporaryRoot,
+            paths.ResourceRoot ?? Path.Combine(paths.SessionRoot, "resources"),
+            paths.SoundRoot ?? Path.Combine(paths.SessionRoot, "sound"),
+            paths.FontRoot ?? Path.Combine(paths.SessionRoot, "font"));
         MinorShift.Emuera.GlobalStatic.Reset();
         ConfigData.ResetHeadless();
         ConfigData.Instance.LoadConfig();
         cancellationToken.ThrowIfCancellationRequested();
+        RuntimeSaveLayout actualLayout = Config.UseSaveFolder
+            ? RuntimeSaveLayout.SavDirectory
+            : RuntimeSaveLayout.Root;
+        if (actualLayout != paths.SaveLayout)
+        {
+            throw new UpstreamSaveLayoutMismatchException(paths.SaveLayout, actualLayout);
+        }
+
         JSONConfig.Data = new JSONConfigData();
         HeadlessAudioBridge.Configure(audioPort, cancellationToken);
         Preload.Clear();
@@ -77,7 +89,19 @@ public sealed class UpstreamRuntimeSession : IDisposable
         MinorShift.Emuera.GlobalStatic.Process = process;
         bool initialized = await process.Initialize(null).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        if (initialized && process.LabelDictionary.GetNonEventLabel("SYSTEM_TITLE") is null)
+        if (!initialized)
+        {
+            string details = string.Join(" | ", console.RuntimeMessages.Take(8));
+            throw new InvalidDataException($"The pinned upstream Emuera loader rejected the controlled game content. {details}");
+        }
+
+        if (console.RuntimeMessages.Count > 0)
+        {
+            string details = string.Join(" | ", console.RuntimeMessages.Take(8));
+            throw new InvalidDataException($"The pinned upstream Emuera loader reported script diagnostics. {details}");
+        }
+
+        if (process.LabelDictionary.GetNonEventLabel("SYSTEM_TITLE") is null)
         {
             string details = string.Join(" | ", console.RuntimeMessages);
             throw new InvalidDataException($"The upstream ERB loader did not produce SYSTEM_TITLE. {details}");
@@ -123,16 +147,35 @@ public sealed class UpstreamRuntimeSession : IDisposable
         }
     }
 
-    private static void ValidatePrivateViewRoots(string configurationRoot, params string[] roots)
+    private static bool HasRootNativeSave(string sessionRoot)
     {
-        string normalizedConfiguration = Path.GetFullPath(configurationRoot);
-        string viewRoot = Directory.GetParent(normalizedConfiguration)?.FullName
-            ?? throw new ArgumentException("The headless configuration root must have a private parent directory.", nameof(configurationRoot));
-        foreach (string root in roots.Prepend(configurationRoot))
+        if (File.Exists(Path.Combine(sessionRoot, "global.sav")))
         {
-            string relative = Path.GetRelativePath(viewRoot, Path.GetFullPath(root));
-            if (Path.IsPathRooted(relative) || relative == ".." || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-                throw new ArgumentException("Every upstream runtime root must be contained by one session-private file view.", nameof(roots));
+            return true;
         }
+
+        return Directory.EnumerateFiles(sessionRoot, "save*.sav", SearchOption.TopDirectoryOnly).Any();
+    }
+}
+
+public sealed class UpstreamSaveLayoutMismatchException : Exception
+{
+    public UpstreamSaveLayoutMismatchException(RuntimeSaveLayout expected, RuntimeSaveLayout actual)
+        : base($"The runtime save layout does not match the loaded emuera.config (expected {expected}, actual {actual}).")
+    {
+        Expected = expected;
+        Actual = actual;
+    }
+
+    public RuntimeSaveLayout Expected { get; }
+
+    public RuntimeSaveLayout Actual { get; }
+}
+
+public sealed class UpstreamSaveLayoutConflictException : Exception
+{
+    public UpstreamSaveLayoutConflictException()
+        : base("The sav-directory layout found native save files at the SessionRoot level.")
+    {
     }
 }

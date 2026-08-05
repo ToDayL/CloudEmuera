@@ -104,6 +104,36 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
             AddDiagnostic("unsupported_runtime_capability", EmueraRuntimePhase.Loading, exception.Message, true);
             return Result(EmueraRuntimeStatus.UnsupportedCapability);
         }
+        catch (UpstreamSaveLayoutMismatchException exception)
+        {
+            lock (sync)
+            {
+                state = HostState.Failed;
+            }
+
+            AddDiagnostic("save_layout_mismatch", EmueraRuntimePhase.Initialization, exception.Message, true);
+            return Result(EmueraRuntimeStatus.InitializationFailed);
+        }
+        catch (UpstreamSaveLayoutConflictException exception)
+        {
+            lock (sync)
+            {
+                state = HostState.Failed;
+            }
+
+            AddDiagnostic("save_layout_conflict", EmueraRuntimePhase.Initialization, exception.Message, true);
+            return Result(EmueraRuntimeStatus.InitializationFailed);
+        }
+        catch (RuntimeSaveLayoutInspectionException exception)
+        {
+            lock (sync)
+            {
+                state = HostState.Failed;
+            }
+
+            AddDiagnostic("save_layout_invalid", EmueraRuntimePhase.Initialization, exception.Message, true);
+            return Result(EmueraRuntimeStatus.InitializationFailed);
+        }
         catch (Exception exception) when (exception is IOException or InvalidDataException or RuntimeFileAccessException)
         {
             lock (sync)
@@ -225,8 +255,14 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
             throw new FileNotFoundException("The controlled runtime configuration is missing.");
         }
 
-        string configText = ReadText(configuration, SelectEncoding(), cancellationToken);
-        ValidateConfiguration(configText);
+        using (Stream configurationStream = options.FileSystem.OpenRead(configuration, cancellationToken))
+        {
+            RuntimeSaveLayout actualLayout = EmueraSaveLayoutInspector.Inspect(configurationStream);
+            if (actualLayout != options.Paths.SaveLayout)
+            {
+                throw new UpstreamSaveLayoutMismatchException(options.Paths.SaveLayout, actualLayout);
+            }
+        }
 
         RuntimeFilePath gameBase = new(RuntimeFileArea.GameContent, "CSV/GAMEBASE.CSV");
         if (!options.FileSystem.FileExists(gameBase, cancellationToken))
@@ -260,11 +296,9 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         }
 
         sprites = LoadSprites(cancellationToken);
-        UpstreamRuntimeFileView? fileView = null;
         UpstreamRuntimeSession? session = null;
         try
         {
-            fileView = UpstreamRuntimeFileView.Create(options.Paths, options.FileSystem, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             session = new UpstreamRuntimeSession(
                 options.Console,
@@ -275,14 +309,7 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                     ? (sprite.Name, sprite.Width, sprite.Height)
                     : null,
                 options.UpstreamGateAcquired);
-            bool initialized = session.InitializeAsync(
-                fileView.ConfigurationRoot,
-                fileView.CsvRoot,
-                fileView.ErbRoot,
-                fileView.TemporaryRoot,
-                fileView.ResourceRoot,
-                fileView.SoundRoot,
-                fileView.FontRoot).GetAwaiter().GetResult();
+            bool initialized = session.InitializeAsync(options.Paths).GetAwaiter().GetResult();
             cancellationToken.ThrowIfCancellationRequested();
             if (!initialized)
             {
@@ -290,12 +317,11 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 throw new InvalidDataException($"The pinned upstream Emuera loader rejected the controlled game content. {details}");
             }
 
-            return new InitializedRuntime(session, fileView);
+            return new InitializedRuntime(session);
         }
         catch
         {
             session?.Dispose();
-            fileView?.Dispose();
             throw;
         }
     }
@@ -402,19 +428,6 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
     private Encoding SelectEncoding() => options.CompatibilityProfile == EmueraCompatibilityProfiles.V18Compatible
         ? Encoding.GetEncoding(932, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)
         : new UTF8Encoding(false, true);
-
-    private void ValidateConfiguration(string content)
-    {
-        string expected = options.CompatibilityProfile == EmueraCompatibilityProfiles.V18Compatible ? "NO" : "YES";
-        string? actual = content.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')
-            .Select(line => line.Trim())
-            .FirstOrDefault(line => line.StartsWith("UseSaveFolder:", StringComparison.OrdinalIgnoreCase))?
-            .Split(':', 2)[1].Trim();
-        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidDataException("UseSaveFolder does not match the selected compatibility profile.");
-        }
-    }
 
     private async Task<T> RunWithDeadlineAsync<T>(
         Func<CancellationToken, T> operation,
@@ -535,9 +548,7 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
 
     private sealed record SpriteDefinition(string Name, RuntimeFilePath Path, int Width, int Height);
 
-    private sealed class InitializedRuntime(
-        UpstreamRuntimeSession session,
-        UpstreamRuntimeFileView fileView) : IDisposable
+    private sealed class InitializedRuntime(UpstreamRuntimeSession session) : IDisposable
     {
         private int disposed;
 
@@ -547,14 +558,7 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         {
             if (Interlocked.Exchange(ref disposed, 1) != 0)
                 return;
-            try
-            {
-                Session.Dispose();
-            }
-            finally
-            {
-                fileView.Dispose();
-            }
+            Session.Dispose();
         }
     }
 

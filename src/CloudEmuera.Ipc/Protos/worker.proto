@@ -5,6 +5,8 @@ option csharp_namespace = "CloudEmuera.Ipc.V1";
 package cloudemuera.ipc.v1;
 
 service WorkerControl {
+  // The Supervisor owns the UDS listener. A stream is owned by one Worker
+  // binding for its whole lifetime; it is never multiplexed between workers.
   rpc Connect(stream WorkerEnvelope) returns (stream SupervisorEnvelope);
 }
 
@@ -14,21 +16,86 @@ message WorkerEnvelope {
   string session_id = 3;
   string worker_id = 4;
   uint64 worker_epoch = 5;
+  string correlation_id = 6;
+  reserved 7, 8, 9;
   oneof payload {
     WorkerRegistration registration = 10;
     WorkerHeartbeat heartbeat = 11;
+    WorkerReady ready = 12;
+    DisplayBatch display_batch = 13;
+    InputResult input_result = 14;
+    RuntimeCompleted runtime_completed = 15;
+    RuntimeFailed runtime_failed = 16;
+    WorkerStopped worker_stopped = 17;
+    WorkerCommandResult command_result = 18;
   }
 }
 
 message WorkerRegistration {
   string startup_token = 1;
-  string runtime_version = 2;
+  string runtime_integration_version = 2;
+  string upstream_commit = 3;
+  int64 process_id = 4;
+  int64 last_output_sequence = 5;
+}
+
+message WorkerReady {
+  string runtime_integration_version = 1;
+  string upstream_commit = 2;
+  SaveLayout save_layout = 3;
+  int64 last_output_sequence = 4;
+  string compatibility_profile = 5;
+  string session_root_manifest_digest = 6;
 }
 
 message WorkerHeartbeat {
-  int64 output_sequence = 1;
-  bool waiting_for_input = 2;
-  int64 resident_memory_bytes = 3;
+  int64 monotonic_timestamp_ticks = 1;
+  int64 output_sequence = 2;
+  bool waiting_for_input = 3;
+  int64 resident_memory_bytes = 4;
+}
+
+message DisplayBatch {
+  int64 first_sequence = 1;
+  int64 last_sequence = 2;
+  repeated ConsoleOperation operations = 3;
+  bool is_snapshot = 4;
+  int64 snapshot_sequence = 5;
+  bool was_truncated = 6;
+  int64 dropped_node_count = 7;
+}
+
+message InputResult {
+  string prompt_id = 1;
+  string client_message_id = 2;
+  InputResultKind kind = 3;
+  string reason_code = 4;
+  string value = 5;
+}
+
+message RuntimeCompleted {
+  string status = 1;
+  int64 last_output_sequence = 2;
+}
+
+message RuntimeFailed {
+  string stable_code = 1;
+  string phase = 2;
+  string safe_message = 3;
+  bool fatal = 4;
+  int64 last_output_sequence = 5;
+}
+
+message WorkerStopped {
+  string reason_code = 1;
+  int64 last_output_sequence = 2;
+  bool graceful = 3;
+}
+
+message WorkerCommandResult {
+  string command_type = 1;
+  bool accepted = 2;
+  string reason_code = 3;
 }
 
 message SupervisorEnvelope {
@@ -37,15 +104,37 @@ message SupervisorEnvelope {
   string correlation_id = 3;
   string session_id = 4;
   uint64 worker_epoch = 5;
+  string worker_id = 6;
+  reserved 7, 8, 9;
   oneof payload {
     RegistrationResult registration_result = 10;
     StopWorker stop = 11;
+    StartRuntime start_runtime = 12;
+    SubmitInput submit_input = 13;
   }
 }
 
 message RegistrationResult {
   bool accepted = 1;
   string reason_code = 2;
+  uint32 negotiated_protocol_version = 3;
+  string runtime_integration_version = 4;
+  string upstream_commit = 5;
+}
+
+message StartRuntime {
+  string expected_session_id = 1;
+  string expected_worker_id = 2;
+  uint64 expected_worker_epoch = 3;
+  string expected_compatibility_profile = 4;
+  int64 deadline_unix_milliseconds = 5;
+}
+
+message SubmitInput {
+  string prompt_id = 1;
+  string client_message_id = 2;
+  string value = 3;
+  int64 deadline_unix_milliseconds = 4;
 }
 
 message StopWorker {
@@ -53,3 +142,145 @@ message StopWorker {
   string reason_code = 2;
 }
 
+message ConsoleOperation {
+  oneof payload {
+    AppendNodes append_nodes = 1;
+    ClearConsole clear_console = 2;
+    OpenPrompt open_prompt = 3;
+    ClosePrompt close_prompt = 4;
+  }
+}
+
+message AppendNodes {
+  repeated ConsoleNode nodes = 1;
+}
+
+message ClearConsole {}
+
+message OpenPrompt {
+  ConsolePrompt prompt = 1;
+}
+
+message ClosePrompt {
+  string prompt_id = 1;
+  PromptCloseReason reason = 2;
+}
+
+message ConsoleNode {
+  oneof kind {
+    TextNode text = 1;
+    LineBreakNode line_break = 2;
+    ButtonNode button = 3;
+    ImageNode image = 4;
+  }
+}
+
+message TextNode {
+  string text = 1;
+  TextStyle style = 2;
+}
+
+message LineBreakNode {}
+
+message ButtonNode {
+  repeated ConsoleNode label = 1;
+  string value = 2;
+  string tooltip = 3;
+  bool enabled = 4;
+}
+
+message ImageNode {
+  string asset_id = 1;
+  int32 width = 2;
+  int32 height = 3;
+  string alt_text = 4;
+  bool has_width = 5;
+  bool has_height = 6;
+}
+
+message TextStyle {
+  ConsoleColor foreground = 1;
+  ConsoleColor background = 2;
+  uint32 decorations = 3;
+}
+
+message ConsoleColor {
+  uint32 red = 1;
+  uint32 green = 2;
+  uint32 blue = 3;
+  uint32 alpha = 4;
+}
+
+message ConsolePrompt {
+  string prompt_id = 1;
+  ConsoleInputType input_type = 2;
+  string prompt_text = 3;
+  string default_value = 4;
+  bool has_default_value = 5;
+  InputConstraints constraints = 6;
+  bool has_timeout = 7;
+  int64 timeout_milliseconds = 8;
+  PromptTimeoutBehavior timeout_behavior = 9;
+}
+
+message InputConstraints {
+  oneof kind {
+    TextInputConstraints text = 1;
+    IntegerInputConstraints integer = 2;
+  }
+}
+
+message TextInputConstraints {
+  int32 max_length = 1;
+  bool has_max_length = 2;
+  bool allow_control_characters = 3;
+}
+
+message IntegerInputConstraints {
+  int64 minimum = 1;
+  int64 maximum = 2;
+  bool has_minimum = 3;
+  bool has_maximum = 4;
+  bool allow_sign = 5;
+}
+
+enum SaveLayout {
+  SAVE_LAYOUT_UNSPECIFIED = 0;
+  SAVE_LAYOUT_ROOT = 1;
+  SAVE_LAYOUT_SAV_DIRECTORY = 2;
+}
+
+enum InputResultKind {
+  INPUT_RESULT_UNSPECIFIED = 0;
+  INPUT_RESULT_ACCEPTED = 1;
+  INPUT_RESULT_DUPLICATE = 2;
+  INPUT_RESULT_STALE_PROMPT = 3;
+  INPUT_RESULT_NO_ACTIVE_PROMPT = 4;
+  INPUT_RESULT_INVALID_COMMAND = 5;
+  INPUT_RESULT_INVALID_FORMAT = 6;
+  INPUT_RESULT_CONFLICT = 7;
+  INPUT_RESULT_WORKER_STOPPING = 8;
+  INPUT_RESULT_CANCELLED = 9;
+  INPUT_RESULT_TIMED_OUT = 10;
+}
+
+enum ConsoleInputType {
+  CONSOLE_INPUT_UNSPECIFIED = 0;
+  CONSOLE_INPUT_TEXT = 1;
+  CONSOLE_INPUT_INTEGER = 2;
+}
+
+enum PromptTimeoutBehavior {
+  PROMPT_TIMEOUT_UNSPECIFIED = 0;
+  PROMPT_TIMEOUT_CANCEL = 1;
+  PROMPT_TIMEOUT_DEFAULT_VALUE = 2;
+}
+
+enum PromptCloseReason {
+  PROMPT_CLOSE_UNSPECIFIED = 0;
+  PROMPT_CLOSE_COMPLETED = 1;
+  PROMPT_CLOSE_INPUT_ACCEPTED = 2;
+  PROMPT_CLOSE_CANCELLED = 3;
+  PROMPT_CLOSE_TIMED_OUT = 4;
+  PROMPT_CLOSE_EXPLICIT = 5;
+}

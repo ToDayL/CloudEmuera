@@ -28,7 +28,7 @@ P0-02 完成后仍不能宣称解释器已能运行 ERB。它只为 P0-03 的 Co
 完成后，`CloudEmuera.RuntimeAdapter` 应具备：
 
 - 不依赖 WinForms、GDI+、WPF、系统音频实现或上游 UI 程序集的平台端口；
-- 表达当前 Session 的 GameRoot、只读游戏内容、配置、临时目录及两种存档布局的不可变 `RuntimePaths`；
+- 表达 GameVersion 复制源、当前 Session 的完整 GameRoot、配置、临时目录及两种存档布局的不可变 `RuntimePaths`；
 - 只接受规范相对路径的路径值对象；
 - 将逻辑路径解析到当前 Session 私有区域的集中式 resolver；
 - 对绝对路径、`.`/`..`、NUL、平台分隔符混用、符号链接/重解析点逃逸和跨 Session 物理根进行拒绝；
@@ -64,9 +64,9 @@ git diff --check
 - 不修改固定上游基线源码；依据 ADR-0005，源码后来迁入 `src/CloudEmuera.EmueraRuntime/Upstream`，真实调用点接线属于 P0-04；
 - 不启动解释器，不运行 ERB，不比较真实 transcript；
 - 不定义 P0-03 的最终 Console event、sequence、promptId、HTML allowlist 或 Snapshot；
-- 不实现 SaveArtifact、原生存档序列化、原子提交或导入/导出；这些属于 P0-05 及后续任务；
+- 不实现原生存档序列化或导入/导出；P0-05 让 Emuera 在持久 SessionRoot 中直接保存和加载；
 - 不在 RuntimeAdapter 中执行 Linux mount namespace、bind mount、降权、cgroup 或 seccomp；builder 只生成并验证布局，实际挂载由未来 Supervisor 平台适配器执行；
-- 不使用普通符号链接模拟只读挂载或作为 Session 安全边界；
+- P0-05 把完整合法 GameVersion 文件树复制到 SessionRoot；复制过程不允许任何符号链接或特殊文件；
 - 不把路径字符串校验描述成完整沙箱。TOCTOU 防护、Worker 身份和 mount namespace 仍是纵深防御的必需部分。
 
 ## 4. 上游事实与兼容约束
@@ -156,8 +156,8 @@ public enum RuntimeFileArea
 - `CsvRoot`、`ErbRoot`、`ResourceRoot`、可选 `SoundRoot`/`FontRoot`；
 - `ConfigurationRoot`；
 - `TemporaryRoot`；
-- `RootSaveRoot`：私有 `writable/root-saves/`；
-- `SavDirectoryRoot`：私有 `writable/sav/`；
+- `RootSaveRoot`：兼容属性，简化模型中解析为持久 `SessionRoot`；
+- `SavDirectoryRoot`：兼容属性，简化模型中解析为持久 `SessionRoot/sav/`；
 - `SaveLayout`：`Root` 或 `SavDirectory`。
 
 构造不变量：
@@ -165,18 +165,18 @@ public enum RuntimeFileArea
 - 所有根都是规范绝对路径；相对根直接失败；
 - `SessionRoot`、`SessionWorkspaceRoot` 不能是同一路径，也不能位于 GameVersionRoot 内；
 - 所有可写根必须严格位于当前 `SessionWorkspaceRoot` 内；
-- 所有游戏内容根必须位于当前 `GameVersionRoot` 内；
+- Runtime 实际内容根必须位于当前 `SessionRoot` 内；`GameVersionRoot` 只作为首次完整复制的不可变来源；
 - 两个 Session 的 `SessionWorkspaceRoot`/可写根不得相同或互为祖先；跨 Session 检查由 builder 接收已分配根时完成；
 - 路径包含关系按平台明确的比较器计算，并用带终止分隔符的规范路径判断，不能用裸 `StartsWith`；
-- 根本身及其已存在祖先不能是符号链接/重解析点；不存在的可写叶目录由 builder 创建后再次检查；
+- 所有 Runtime 根及其已存在祖先不能是符号链接/重解析点；SessionRoot 复制过程不存在链接例外；
 - 对外不提供“随意组合绝对路径”的 helper。
 
 保存映射必须有单一入口，例如 `ResolveSavePath(RuntimeRelativePath logicalPath)`：
 
-- `Root` 布局把原生根级 `save*.sav`、`global.sav` 及固定上游确认需要的同类存档文件映射到 `RootSaveRoot`；根级布局不接受包含目录段的路径；
-- `SavDirectory` 布局将相对于引擎 `sav/` 的路径映射到 `SavDirectoryRoot`；
+- `Root` 布局把原生根级 `save*.sav`、`global.sav` 及固定上游确认需要的同类存档文件解析到实际 `SessionRoot`；根级布局不接受包含目录段的路径；
+- `SavDirectory` 布局将相对于引擎 `sav/` 的路径解析到实际 `SessionRoot/sav/`；
 - 两种布局映射同名 `global.sav` 时得到不同 Session 的物理路径；
-- 不依赖进程当前目录，不读取静态 `Program.ExeDir`；
+- 宿主显式把 `SessionRoot` 注入为 `Program.ExeDir`，不依赖进程当前目录；
 - P0-02 只验证路径映射，不声称 Emuera 已经通过该映射保存。
 
 保存文件名的允许集合必须以固定上游真实调用为依据。不要仅允许两位数字 slot，也不要无边界接受任意扩展名。若上游允许文本/图像存档辅助文件，应明确列入规则和测试。
@@ -196,13 +196,13 @@ public enum RuntimeFileArea
 
 1. 验证 GameVersionRoot 已存在，且需要的 CSV/ERB 目录与配置源符合预期；
 2. 验证 SessionRoot 和 workspace 属于调用者传入的当前 Session 分配，不接受从游戏内容读出的根路径；
-3. 创建 `root/`、`writable/sav/`、`writable/root-saves/`、`writable/config/`、`writable/tmp/`；
-4. 创建配置的 Session 私有工作副本或生成对应布局项；绝不让 Runtime 写发布版本中的配置；
-5. 生成只读游戏内容和可写私有区域的映射计划；
+3. 创建持久 `root/`、`root/sav/` 和 `root/tmp/`；
+4. 按发布 manifest 把全部合法普通文件和目录复制到 `root/`，包括配置和未知游戏目录；绝不让 Runtime 写发布版本中的原件；
+5. 验证复制后的逐项类型、大小、摘要及总配额，并确认没有与源或其他 Session 共享可写 inode；
 6. 在创建后重新执行物理路径/链接检查；
-7. 幂等地返回同一布局；若已有对象类型、链接目标或权限与计划冲突则失败，不覆盖、不删除未知内容。
+7. 幂等地返回同一布局；若已有 SessionRoot 的绑定身份或 manifest 不匹配则失败，不覆盖、不删除其中的运行内容。
 
-本步骤不应在测试里要求 root 权限或真实 bind mount。测试检查映射计划、目录创建和拒绝行为。未来 Supervisor 必须按该计划应用 mount namespace/bind mount，并在 Worker 启动前验证只读/可写权限。
+本步骤不应在测试里要求 root 权限或真实 bind mount。P0-05 将 builder 收敛为 staging 后完整复制并原子发布 SessionRoot；未来 Supervisor 用 mount namespace 隐藏原始 GameVersion 和未分配 Session 路径。
 
 ### 5.5 文件系统端口与本地适配器
 
@@ -374,8 +374,8 @@ tests/CloudEmuera.RuntimeAdapter.Tests/
 
 至少覆盖：
 
-1. 根目录布局把 `save00.sav`、另一个合法 slot 和 `global.sav` 映射到当前 Session 的 `writable/root-saves/`；
-2. `sav/` 布局把相同逻辑文件映射到 `writable/sav/`；
+1. 根目录布局把 `save00.sav`、另一个合法 slot 和 `global.sav` 解析到当前持久 `SessionRoot`；
+2. `sav/` 布局把相同逻辑文件解析到当前 `SessionRoot/sav/`；
 3. 映射结果都位于当前 SessionWorkspaceRoot，且不写 GameVersionRoot；
 4. 两个不同 Session 对同一 GameVersion、同一 `global.sav` 得到不同物理路径；
 5. 相同 Session 的重复构造和解析结果确定；
@@ -389,11 +389,11 @@ tests/CloudEmuera.RuntimeAdapter.Tests/
 至少覆盖：
 
 1. 对最小 GameVersion 创建完整、确定的目录和映射计划；
-2. CSV、ERB、resources 映射标记为只读；配置、save、temp 标记为当前 Session 私有可写；
+2. CSV、ERB、resources、配置和未知合法目录都是当前 Session 的独立普通文件或目录；
 3. 同一输入执行两次幂等且不删除已有存档；
 4. 缺失 GameVersion/CSV/ERB、错误文件类型或冲突目录时失败；
 5. 发布版本中的 `emuera.config` 不被直接作为可写目标；
-6. 预先放置符号链接、FIFO/设备等非普通条目时失败；Linux CI 必须执行链接用例；
+6. 源或目标中出现符号链接、硬链接异常、FIFO/设备等条目时失败；Linux CI 必须执行链接用例；
 7. builder 失败不递归删除调用者原有目录或其他 Session 数据；
 8. 生成的诊断不包含另一个 Session 的绝对路径。
 
@@ -406,7 +406,7 @@ tests/CloudEmuera.RuntimeAdapter.Tests/
 3. 目录枚举按 ordinal 规范逻辑路径排序；
 4. 根外符号链接被拒绝；
 5. 指向另一个 Session 的符号链接被拒绝；
-6. 指向允许根内部的符号链接也按保守规则拒绝；
+6. 指向允许根内部的链接也拒绝，完整复制没有链接例外；
 7. 中间父目录是链接时失败，而不只检查最终文件；
 8. 创建不存在文件时，最近存在父目录在根内才允许；
 9. 检查后替换父目录为链接的竞争模拟至少返回失败，不写到测试根外；若纯托管实现无法完全封闭窗口，在测试名和文档明确剩余限制；
@@ -485,7 +485,7 @@ tests/CloudEmuera.RuntimeAdapter.Tests/
 - **端口过窄**：文件接口仍需覆盖固定上游已知的读取、枚举和保存调用，否则 P0-04 会被迫绕过它。新增方法前应给出对应上游调用点和权限测试。
 - **重复时钟**：应用 `IClock` 与 Runtime 单调时钟用途不同。不要让 RuntimeAdapter 为复用一个 `UtcNow` 属性而依赖 Application。
 - **配置可写性**：发布版本的 `emuera.config` 不可直接修改；Session 必须使用私有工作副本。
-- **根级存档映射**：普通目录 bind mount 无法直接表达 GameRoot 下动态出现的 `save*.sav`。P0-02 只固定逻辑映射；P0-04/P0-05 必须结合 Runtime file port 或受控挂载方案验证真实原生保存。
+- **根级存档位置**：SessionRoot 本身是私有可写目录，因此 Emuera 可直接创建根级 `save*.sav`；只有其中的 GameVersion 内容入口指向只读源。
 - **错误泄密**：安全错误不可回显其他 Session 或宿主数据根的绝对路径。
 
 ## 12. 交接给后续任务的结果
@@ -494,7 +494,7 @@ P0-03 应在 `IGameConsole` 边界内定义结构化输出、输入 prompt、seq
 
 P0-04 应在绑定 `RuntimeBaseline.UpstreamCommit` 的内置源码项目中，把上游静态路径、文件、时钟、图像、音频和 Console 调用直接接到本 task 的端口，并在 `MODIFICATIONS.md` 登记；不得为赶通 ERB 而重新直接调用宿主 API。
 
-P0-05 应复用 `RuntimePaths` 的两种 save 映射运行 P0-01 fixture，通过 Emuera 原生逻辑证明 save/load，并在此基础上实现临时文件加原子替换和 SaveArtifact 提交。若真实上游行为暴露 P0-02 契约缺口，应以新增失败测试和最小兼容扩展修正，不能在 Worker 中加入绕过路径守卫的特殊分支。
+P0-05 应把本步骤早期建立的分离 `writable/root-saves` 兼容映射收敛为“完整复制 GameVersion 后持久 SessionRoot 直写”模型，运行 P0-01 fixture，并通过 Emuera 原生逻辑证明 save/load。它不增加链接/mount 分类、SaveArtifact、generation 或退出提交层。若真实上游行为暴露契约缺口，应以新增失败测试和最小兼容扩展修正。
 
 ## 13. 本次实现与复核记录
 
