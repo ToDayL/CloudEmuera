@@ -7,8 +7,8 @@ export default defineConfig({
     host: "0.0.0.0",
     port: 5173,
     proxy: {
-      "/api": "http://api:8080",
-      "/health": "http://api:8080",
+      "/api": "http://api:18080",
+      "/health": "http://api:18080",
     },
   },
   test: {

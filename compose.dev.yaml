@@ -21,14 +21,14 @@ services:
       - --no-launch-profile
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_URLS: http://0.0.0.0:8080
+      ASPNETCORE_URLS: http://0.0.0.0:18080
       NUGET_PACKAGES: /var/cache/nuget
       CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
       CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
       CloudEmuera__DataPath: /data
       CLOUDEMUERA_DEV_CONTAINER: "1"
     ports:
-      - "${CLOUDEMUERA_HTTP_PORT:-8080}:8080"
+      - "${CLOUDEMUERA_HTTP_PORT:-18080}:18080"
     volumes:
       - .:/workspace
       - ${CLOUDEMUERA_DATA_PATH:-./data}:/data

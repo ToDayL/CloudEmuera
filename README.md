@@ -40,8 +40,8 @@ docker compose -f compose.dev.yaml up --build
 启动后：
 
 - 前端开发服务器：<http://localhost:5173>
-- API：<http://localhost:8080>
-- API 存活检查：<http://localhost:8080/health/live>
+- API：<http://localhost:18080>
+- API 存活检查：<http://localhost:18080/health/live>
 
 停止环境：
 
