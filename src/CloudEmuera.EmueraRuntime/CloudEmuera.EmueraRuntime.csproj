@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>CloudEmuera.EmueraRuntime</AssemblyName>
+    <RootNamespace>CloudEmuera.EmueraRuntime</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
+    <ProjectReference Include="UpstreamHeadless/CloudEmuera.EmueraRuntime.UpstreamHeadless.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Kept as an ordinary, compiled source file from the pinned upstream tree.
+         The headless parser uses this cursor instead of introducing a second
+         character-scanning primitive. -->
+    <Compile Remove="Upstream/**/*.cs" />
+    <Compile Remove="UpstreamHeadless/**/*.cs" />
+    <EmbeddedResource Remove="Upstream/**/*" />
+    <EmbeddedResource Remove="UpstreamHeadless/**/*" />
+    <None Remove="Upstream/**/*" />
+    <None Remove="UpstreamHeadless/**/*" />
+    <Compile Include="Upstream/Emuera/Runtime/Utils/CharStream.cs" Link="Upstream/Runtime/Utils/CharStream.cs" />
+  </ItemGroup>
+</Project>

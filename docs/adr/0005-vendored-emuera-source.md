@@ -52,7 +52,38 @@ src/CloudEmuera.EmueraRuntime/
 - 上游升级会成为显式的三方源码合并工作，可能产生冲突；升级必须通过双 fixture 兼容测试和安全审查。
 - 不再通过 patch 文件摘要证明修改集合，改用 Git 历史、integration version、`MODIFICATIONS.md` 和 runtime compatibility tests。
 
+## P0-04 集成边界与能力表
+
+依赖方向固定为 `Worker/compatibility harness → CloudEmuera.EmueraRuntime →
+CloudEmuera.RuntimeAdapter`。RuntimeAdapter 不反向引用解释器，headless 程序集
+目标为 Linux `net10.0`，不引用 WinForms、WPF、WMP/COM 或 NAudio。
+
+平台调用替换目标如下：Console/Input 已走 `IGameConsole`，deadline 与 AWAIT 已走
+`IRuntimeClock`，静态 PNG 与 Sprite 已走 `IRuntimeImagePort` 的 metadata 节点，
+音频只走 `IRuntimeAudioPort` 并观察 `Unsupported`。服务端执行路径不创建
+Bitmap、Graphics、字体测量对象或音频设备。文件输入先由
+`IRuntimeFileSystem` 复制为 session 私有兼容视图，固定上游 loader 只获得该视图
+内的路径；物理 GameRoot 为空的 port-only 测试证明内容不能绕过文件端口。私有视图
+内部的直接 `System.IO` 调用点已经分类审计，并明确记录 P0-05 延后边界。
+
+| 能力 | P0-04 状态 |
+| --- | --- |
+| 真实 CSV/GAMEBASE、配置和 ERB loader/interpreter | Supported（受控双 fixture 的 Phase-0 slice） |
+| PRINT/PRINTFORM、变量、CALL/RETURN、IF、EXISTFUNCTION | Supported（Phase-0 slice） |
+| INPUT/INPUTS、promptId、取消和 deadline | Supported |
+| 允许列表 HTML、静态 PNG/Sprite ImageNode | Supported |
+| 原生 save/global 双布局 | Deferred to P0-05 |
+| CBG、动态 Graphics、字体测量、动画 | Unsupported / fail closed |
+| 桌面输入、剪贴板、插件、CALLSHARP、网络 | Unsupported / fail closed |
+
+CloudEmuera integration version 首次可运行修订为 `headless-p0.4.1`。升级固定
+上游时必须保留原始 commit/tree，更新 integration version，并重新通过双 fixture
+正序、反序与专项回归；回退时可整体回退 runtime integration 提交而不改写上游来源。
+
 ## 验证
+
+上游 `System.IO` 的 P0-04 调用点、私有视图约束和 P0-05 延后边界记录在
+[`runtime-system-io-audit.zh-CN.md`](../runtime-system-io-audit.zh-CN.md)。
 
 ```bash
 ./scripts/verify-third-party.sh

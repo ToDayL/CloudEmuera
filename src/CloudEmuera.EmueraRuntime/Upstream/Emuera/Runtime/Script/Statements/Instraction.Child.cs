@@ -28,6 +28,9 @@ using trmb = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.MessageBox;
 
 namespace MinorShift.Emuera.GameProc.Function;
 
+// CloudEmuera modification: headless audio availability is decided by
+// IRuntimeAudioPort rather than probing a host path or opening an audio device.
+
 internal sealed partial class FunctionIdentifier
 {
 	#region Emuera.NET VAR命令
@@ -2709,7 +2712,11 @@ internal sealed partial class FunctionIdentifier
 			string filepath = Path.GetFullPath(Program.SoundDir + datFilename);
 			try
 			{
+				#if CLOUDEMUERA_HEADLESS
+				if (true)
+				#else
 				if (File.Exists(filepath))
+				#endif
 				{
 					int i;
 					for (i = 0; i < sound.Length; i++)
@@ -2773,7 +2780,11 @@ internal sealed partial class FunctionIdentifier
 
 			try
 			{
+				#if CLOUDEMUERA_HEADLESS
+				if (true)
+				#else
 				if (File.Exists(filepath))
+				#endif
 					bgm.play(filepath, -1); // -1 means repeat indefinitely
 			}
 			catch

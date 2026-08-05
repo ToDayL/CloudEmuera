@@ -114,7 +114,7 @@ dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=ConsoleCon
 
 2026-08-04 验证记录：在 Linux 开发容器（.NET 10 SDK）中完成 `ConsoleContract` 专项 36 项、RuntimeAdapter 全量 115 项、Domain 4 项；覆盖并发 Emit 精确 `1..N`、估算字节与 receipt cache 上限、generator 分配和调用者 ID 拒绝、旧 ID 淘汰后的复用/迟到输入回归、rollover 后 snapshot+deltas 归约、HTML 注入 limits 与属性/URL 攻击、invalid/valid 输入并发、取消/超时/有效输入竞态及 timeout 后迟到输入。`./scripts/check.sh` 通过（Release 构建 0 警告/0 错误，Web typecheck、测试和 production build 通过），`./scripts/verify-third-party.sh` 与 `git diff --check` 通过。
 
-### P0-04 — 无 UI Runtime 运行到 INPUT（NEXT）
+### P0-04 — 无 UI Runtime 运行到 INPUT（DONE）
 
 需求映射：COMP、SESS-003/004、PLAY-001、AC-008/009。
 
@@ -128,7 +128,29 @@ dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=ConsoleCon
 
 通过条件：v18 与 EM+EE 两套资产均在无显示服务器环境运行；输出 transcript 与基线一致；相同输入得到确定结果；运行期间不存在 WinForms 窗口、桌面会话或 API 进程内状态依赖。
 
-### P0-05 — Emuera 原生存档双布局（TODO）
+2026-08-05 完成记录：Ubuntu 24.04 开发容器、.NET SDK 10.0.302，
+`DISPLAY`/`WAYLAND_DISPLAY` 均为空；固定 upstream commit
+`2175f8a629257efb08214e093704b3a3d3d06d05`、tree
+`a3c96867e3a5b5d5f90877a4e7c6f8056d5f5b9b`、integration version
+`headless-p0.4.1`。真实上游 `ErbLoader`、parser、`Process`、`VariableEvaluator`
+和指令系统执行 `v18-core` 与 `em-ee-core`，各 18 项场景断言通过；完整 transcript、
+integer prompt、RESULT 分支、以 `verifiedByVisibleOutput` 明示的 score=3 证据、
+bold/italic、Sprite、连续 sequence、无存档
+副作用和 GameContent 摘要均通过。旧 fixture-only AST executor 已删除。
+RuntimeCompatibility 19 项（其中 RuntimeBridge 16 项）、RuntimeAdapter 116 项、
+Domain 4 项和 Web 1 项
+测试通过；Release 构建 63 条固定上游源码 warning/0 错误，Web typecheck 与
+production build 通过。
+文件输入使用 `IRuntimeFileSystem` 私有兼容视图，物理 GameRoot 为空的测试通过；
+System.IO 调用点审计见 `docs/runtime-system-io-audit.zh-CN.md`。
+审查补强覆盖纯计算无限循环在硬超时内返回 `DeadlineExceeded`、四个
+`PrintButton`/`PrintButtonC` 重载保留提交值，以及禁止从输出文本伪造 runtime
+变量。`./scripts/check.sh` 再次通过。
+初始化 deadline 也会协作取消 preload/ERH/ERB 装载，并统一回收迟到完成的
+session 与私有 file view；回归测试确认超时后第二个 host 可以立即成功初始化，
+静态 runtime gate 不泄漏。
+
+### P0-05 — Emuera 原生存档双布局（NEXT）
 
 需求映射：SAVE-004、SAVE-010～015、AC-013/014。
 
@@ -369,7 +391,7 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P0-04/P0-05，证明无 UI 输入和两种原生存档；
+1. 执行 P0-05，在已完成的无 UI 输入链路上证明两种原生存档；
 2. 执行 P0-06，形成首个跨进程端到端切片。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

@@ -3,7 +3,7 @@
   "runtimeBaseline": {
     "upstreamRepository": "https://gitlab.com/EvilMask/emuera.em.git",
     "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
-    "cloudEmueraIntegrationVersion": "source-v1"
+    "cloudEmueraIntegrationVersion": "headless-p0.4.1"
   },
   "fixtures": [
     {

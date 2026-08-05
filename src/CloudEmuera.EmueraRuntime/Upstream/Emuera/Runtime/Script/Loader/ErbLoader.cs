@@ -19,6 +19,8 @@ using trsl = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.SystemLine;
 
 namespace MinorShift.Emuera.Runtime.Script.Loader;
 
+// CloudEmuera modification: the headless ERB loader cooperatively probes the
+// initialization cancellation token during loading and syntax preparation.
 internal sealed class ErbLoader
 {
 	public ErbLoader(EmueraConsole main, ExpressionMediator exm, Process proc)
@@ -61,6 +63,9 @@ internal sealed class ErbLoader
 			#region EE_ファイル読み込み順拡張
 			foreach (var dir in firstDir)
 			{
+#if CLOUDEMUERA_HEADLESS
+				parentProcess.ThrowIfHeadlessCancellationRequested();
+#endif
 				var firstErbFiles = Config.Config.GetFiles(dir, erbDir, "*.ERB");
 				foreach (var erb in firstErbFiles)
 				{
@@ -83,6 +88,9 @@ internal sealed class ErbLoader
 
 			foreach (var erb in erbFiles)
 			{
+#if CLOUDEMUERA_HEADLESS
+				parentProcess.ThrowIfHeadlessCancellationRequested();
+#endif
 				string filename = erb.Key;
 				string file = erb.Value;
 				if (loadedFiles.Contains(file))
@@ -121,6 +129,12 @@ internal sealed class ErbLoader
 			if (displayReport)
 				output.PrintSystemLine(trsl.LoadComplete.Text);
 		}
+#if CLOUDEMUERA_HEADLESS
+		catch (OperationCanceledException)
+		{
+			throw;
+		}
+#endif
 		catch (Exception e)
 		{
 			ParserMediator.FlushWarningList();
@@ -358,6 +372,10 @@ internal sealed class ErbLoader
 			output.PrintSystemLine(" ");
 		while ((st = eReader.ReadEnabledLine(ppstate.Disabled)) != null)
 		{
+#if CLOUDEMUERA_HEADLESS
+			if ((eReader.LineNo & 1023) == 0)
+				parentProcess.ThrowIfHeadlessCancellationRequested();
+#endif
 			position = new ScriptPosition(eReader.Filename, eReader.LineNo);
 			//rename処理をEraStreamReaderに移管
 			//変換できなかった[[～～]]についてはLexAnalyzerがエラーを投げる
@@ -513,6 +531,9 @@ internal sealed class ErbLoader
 		List<FunctionLabelLine> labelList = labelDic.GetAllLabels(false);
 		foreach (FunctionLabelLine label in labelList)
 		{
+#if CLOUDEMUERA_HEADLESS
+			parentProcess.ThrowIfHeadlessCancellationRequested();
+#endif
 			try
 			{
 				if (label.Arg != null)
@@ -688,10 +709,16 @@ internal sealed class ErbLoader
 		List<FunctionLabelLine> labelList = labelDic.GetAllLabels(true);
 		while (true)
 		{
+#if CLOUDEMUERA_HEADLESS
+			parentProcess.ThrowIfHeadlessCancellationRequested();
+#endif
 			labelDepth++;
 			int countInDepth = 0;
 			foreach (FunctionLabelLine label in labelList)
 			{
+#if CLOUDEMUERA_HEADLESS
+				parentProcess.ThrowIfHeadlessCancellationRequested();
+#endif
 				if (label.Depth != labelDepth)
 					continue;
 				//1756beta003 なんで追加したんだろう デバグ中になんかやったのか とりあえずコメントアウトしておく

@@ -246,7 +246,10 @@ public sealed class ConsoleStateStore
                         "The close operation does not match the active prompt.");
                 }
 
-                return new PreparedMutation(visibleNodes, null, wasTruncated, droppedNodeCount, DroppedThisOperation: false);
+                // Copy before Apply clears the mutable backing list. Returning
+                // visibleNodes itself would erase all output that preceded an
+                // accepted/cancelled prompt while reducing ClosePrompt.
+                return new PreparedMutation(visibleNodes.ToArray(), null, wasTruncated, droppedNodeCount, DroppedThisOperation: false);
             default:
                 throw new ConsoleContractException(
                     ConsoleContractViolationReason.InvalidNodeType,

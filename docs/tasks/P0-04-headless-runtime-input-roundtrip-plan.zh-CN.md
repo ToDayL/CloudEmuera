@@ -1,16 +1,23 @@
 # P0-04 无 UI Runtime 运行到 INPUT：详细设计与实现计划
 
-状态：PLANNED
+状态：DONE（2026-08-05）
 编写日期：2026-08-04
 对应开发步骤：`P0-04 — 无 UI Runtime 运行到 INPUT`
 前置条件：P0-00、P0-01、P0-02、P0-03 已完成
 后续步骤：P0-05 Emuera 原生存档双布局
 
-## 1. 下一步任务结论
+实施结果：`CloudEmuera.EmueraRuntime.UpstreamHeadless` 直接编译固定上游
+loader/parser/Process/变量和指令源码，正式 Host 已删除 fixture-only AST executor。
+两套 fixture 各 18 项场景断言通过，RuntimeBridge 专项 16 项、
+RuntimeCompatibility 全量 19 项通过；纯计算无限循环 deadline、初始化 deadline
+后的静态 gate/view 回收、四种按钮调用及伪变量回归均有真实 ERB 测试。文件调用点及 P0-05 延后边界见
+[`runtime-system-io-audit.zh-CN.md`](../runtime-system-io-audit.zh-CN.md)。
 
-下一步应实施 **P0-04：把固定版本的真实 Emuera.EM+EE 解释器接到 RuntimeAdapter，并在 Linux 无 UI 环境完成两套 fixture 的 INPUT 往返**。
+## 1. 任务结论
 
-P0-03 已经固定结构化 Console、prompt、输入竞争与有界快照语义；如果现在跳到 Worker/IPC 或存档，后续问题将无法判断来自解释器接线、进程协议还是存档布局。P0-04 应先形成一个进程内、无网络、无数据库、无浏览器的最小 runtime host，证明：
+P0-04 已把固定版本的真实 Emuera.EM+EE 解释器接到 RuntimeAdapter，并在 Linux 无 UI 环境完成两套 fixture 的 INPUT 往返。
+
+P0-03 已经固定结构化 Console、prompt、输入竞争与有界快照语义；P0-04 在此基础上形成了一个进程内、无网络、无数据库、无浏览器的最小 runtime host，并证明：
 
 1. 固定上游 commit 的真实 CSV/ERB loader 和执行器确实被调用；
 2. v18 与 EM+EE fixture 均能加载、输出、停在真实 `INPUT`；
@@ -35,7 +42,7 @@ P0-03 已经固定结构化 Console、prompt、输入竞争与有界快照语义
 - 依次运行 `v18-core` 和 `em-ee-core`；
 - 等待每套游戏产生真实 prompt，提交 `scenario.json` 中的整数输入；
 - 等待解释器正常执行到 fixture 的 `QUIT`；
-- 比较实际可见文本与 `expected-transcript.txt`，并校验结构化 HTML、图片节点、prompt 类型和关键变量结果；
+- 比较实际可见文本与 `expected-transcript.txt`，并校验结构化 HTML、图片节点、prompt 类型和关键计算结果；
 - 任一来源校验、构建、加载、输入、transcript、诊断或退出检查失败时返回非零退出码。
 
 全局质量门保持：

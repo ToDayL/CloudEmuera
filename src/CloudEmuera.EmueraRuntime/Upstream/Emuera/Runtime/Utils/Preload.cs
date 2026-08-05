@@ -3,10 +3,14 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using trerror = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
 
 namespace MinorShift.Emuera.Runtime.Utils;
+
+// CloudEmuera modification: headless initialization can cancel recursive
+// preload work instead of leaving the single-runtime gate held indefinitely.
 static partial class Preload
 {
 	static Dictionary<string, string[]> files = new(StringComparer.OrdinalIgnoreCase);
@@ -49,8 +53,9 @@ static partial class Preload
 		}
 	}
 
-	public static async Task Load(string path)
+	public static async Task Load(string path, CancellationToken cancellationToken = default)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
 		var startTime = DateTime.Now;
 		Debug.WriteLine($"Load: {path} : Start");
 
@@ -60,29 +65,32 @@ static partial class Preload
 			await Task.Run(() =>
 			{
 				dir.EnumerateFiles("*", SearchOption.AllDirectories)
-				.AsParallel()
-				.Where(x =>
-				{
-					var ext = x.Extension;
-					return ext.Equals(".csv", StringComparison.OrdinalIgnoreCase) ||
-							ext.Equals(".erb", StringComparison.OrdinalIgnoreCase) ||
-							ext.Equals(".erh", StringComparison.OrdinalIgnoreCase) ||
-							ext.Equals(".erd", StringComparison.OrdinalIgnoreCase) ||
-							ext.Equals(".als", StringComparison.OrdinalIgnoreCase);
-				}).ForAll((childPath) =>
-				{
-					var key = childPath;
-					var value = readAllLinesDetectEncoding(childPath.ToString());
-					lock (files)
+					.AsParallel()
+					.WithCancellation(cancellationToken)
+					.Where(x =>
 					{
-						files[key.ToString()] = value;
-					}
-
-				});
-			});
+						var ext = x.Extension;
+						return ext.Equals(".csv", StringComparison.OrdinalIgnoreCase) ||
+								ext.Equals(".erb", StringComparison.OrdinalIgnoreCase) ||
+								ext.Equals(".erh", StringComparison.OrdinalIgnoreCase) ||
+								ext.Equals(".erd", StringComparison.OrdinalIgnoreCase) ||
+								ext.Equals(".als", StringComparison.OrdinalIgnoreCase);
+					})
+					.ForAll(childPath =>
+					{
+						cancellationToken.ThrowIfCancellationRequested();
+						var key = childPath;
+						var value = readAllLinesDetectEncoding(childPath.ToString());
+						lock (files)
+						{
+							files[key.ToString()] = value;
+						}
+					});
+			}, cancellationToken);
 		}
 		else
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			var key = path;
 			var value = readAllLinesDetectEncoding(path);
 			lock (files)
@@ -90,6 +98,7 @@ static partial class Preload
 				files[key] = value;
 			}
 		};
+		cancellationToken.ThrowIfCancellationRequested();
 
 		Debug.WriteLine($"Load: {path} : End in {(DateTime.Now - startTime).TotalMilliseconds}ms");
 	}

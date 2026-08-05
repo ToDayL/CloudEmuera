@@ -20,6 +20,12 @@ internal sealed partial class Process
 	{
 		while (true)
 		{
+#if CLOUDEMUERA_HEADLESS
+			// CloudEmuera modification: keep cancellation latency bounded for scripts
+			// which never reach an INPUT/AWAIT bridge without taxing every instruction.
+			if ((state.lineCount & 1023) == 0)
+				headlessCancellationToken.ThrowIfCancellationRequested();
+#endif
 			//bool sequential = state.Sequential;
 			state.ShiftNextLine();
 			//WinmmTimerから時間を取得するのはそれ自体結構なコストがかかるので10000行に一回くらいで。

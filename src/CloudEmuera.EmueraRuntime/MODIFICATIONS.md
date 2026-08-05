@@ -16,3 +16,61 @@ inside modified upstream files and does not replace Git history or review.
 
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
+
+## 2026-08-05 — P0-04 headless integration
+
+- Modified upstream files:
+  - `Upstream/Emuera/GlobalStatic.cs`: the headless build does not instantiate
+    the desktop GDI font collection.
+  - `Upstream/Emuera/Runtime/Config/ConfigData.cs`: config paths follow each
+    controlled session root and the singleton can be reset between fixtures.
+  - `Upstream/Emuera/Runtime/Script/Process.cs`: headless initialization skips
+    the Bitmap-based resource loader; image metadata is handled by the image
+    port instead. It also accepts the runtime cancellation token and propagates
+    cancellation instead of converting it into an ERB execution error.
+  - `Upstream/Emuera/Runtime/Script/Process.ScriptProc.cs`: the headless
+    instruction loop probes cancellation every 1,024 logical lines so a
+    CPU-bound ERB loop cannot bypass the run deadline.
+  - `Upstream/Emuera/Runtime/Script/Loader/ErbLoader.cs` and `ErhLoader.cs`:
+    headless initialization probes cancellation between files and at bounded
+    line/syntax-preparation intervals.
+  - `Upstream/Emuera/Runtime/Utils/Preload.cs`: recursive preload accepts the
+    initialization token and propagates it through parallel enumeration.
+  - `Upstream/Emuera/Runtime/Script/Statements/Instraction.Child.cs`: headless
+    audio commands delegate availability to `IRuntimeAudioPort` instead of
+    probing a host path or opening an audio device.
+- CloudEmuera scope: `UpstreamHeadless/` compiles the pinned upstream
+  loader/parser/`Process`/variable/instruction sources with an adapter-backed
+  Console/Input/Clock/Image/Audio boundary. `Headless/EmueraRuntimeHost.cs`
+  owns lifecycle, deadlines and diagnostics. The former fixture-only
+  `VendoredErbParser`/AST executor was removed.
+- Behavior verified so far: both controlled profiles execute through the real
+  upstream `Process.Initialize` and `Process.DoScript`, block at INPUT, assign
+  RESULT through upstream code, then emit HTML/Sprite nodes and reach QUIT.
+  INPUTS, cancellation, AWAIT/clock and unsupported audio have bridge tests.
+  CPU-bound infinite loops return `DeadlineExceeded` within an outer hard test
+  timeout; the host also bounds its post-cancellation cleanup wait.
+- Initialization ownership: the session and its private file view are returned
+  as one disposable result. Deadline/caller-cancellation paths dispose results
+  that finish during the grace window and attach cleanup to later successful
+  completion. Initialization cancellation releases the static runtime gate;
+  a regression verifies that the private view disappears and a second host
+  initializes successfully.
+- Structured output: all integer/string `PrintButton` and `PrintButtonC`
+  overloads emit `ButtonNode` values (the upstream methods expose no tooltip
+  argument). The previous output-text `NAME=value` heuristic was removed;
+  fixture score evidence is now explicitly reported as
+  `verifiedByVisibleOutput` and runtime `Variables` are not fabricated.
+- File boundary: `UpstreamRuntimeFileView` recursively obtains declared content
+  through `IRuntimeFileSystem`, materializes a disposable session-private view,
+  and gives the fixed loader only paths inside that view. A port-only test runs
+  successfully while the physical GameRoot remains empty.
+- The direct `System.IO` call-point audit and P0-05 deferral boundary are
+  recorded in `docs/runtime-system-io-audit.zh-CN.md`. All `Program.*Dir`
+  values are now runtime-validated as children of one private view; dynamic
+  Graphics/CBG calls fail closed before GDI objects can be created.
+- Requirements/decisions: P0-04, ADR-0004, ADR-0005 and ADR-0006.
+- Verification: `./scripts/test-runtime-compat.sh --scenario input-roundtrip`
+  passes 18 assertions per fixture; RuntimeBridge 16, RuntimeCompatibility 19,
+  RuntimeAdapter 116, Domain 4 and Web 1 tests pass. `./scripts/check.sh`,
+  source/fixture verification and `git diff --check` pass.

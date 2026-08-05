@@ -10,6 +10,9 @@ using trerror = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
 
 namespace MinorShift.Emuera.Runtime.Config;
 
+// CloudEmuera modification: headless sessions can run sequentially with
+// different controlled roots instead of retaining the desktop process path.
+
 /// <summary>
 /// プログラム全体で使用される値でWindow作成前に設定して以後変更されないもの
 /// (という予定だったが今は違う)
@@ -18,13 +21,16 @@ namespace MinorShift.Emuera.Runtime.Config;
 internal sealed class ConfigData
 {
 	#region eee_カレントディレクトリー
-	readonly static string configPath = Program.ExeDir + "emuera.config";
+	static string configPath => Program.ExeDir + "emuera.config";
 	#endregion
-	readonly static string configdebugPath = Program.DebugDir + "debug.config";
+	static string configdebugPath => Program.DebugDir + "debug.config";
 
 	static ConfigData() { }
 	private static ConfigData instance = new();
 	public static ConfigData Instance { get { return instance; } }
+#if CLOUDEMUERA_HEADLESS
+	public static void ResetHeadless() { instance = new ConfigData(); }
+#endif
 
 	private ConfigData() { setDefault(); }
 	#region EM_私家版_Emuera多言語化改造

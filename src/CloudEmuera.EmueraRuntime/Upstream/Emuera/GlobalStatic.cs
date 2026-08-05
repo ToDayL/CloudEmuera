@@ -11,6 +11,9 @@ using System.Drawing.Text;
 
 namespace MinorShift.Emuera;
 
+// CloudEmuera modification: the headless build must not construct GDI font
+// collections while loading the parser/runtime static state.
+
 /* 1756 作成
  * できるだけデータはprivateにして必要なものだけが参照するようにしようという設計だったのは今は昔。
  * 改変のたびにProcess.Instance.XXXなんかがどんどん増えていく。
@@ -45,7 +48,11 @@ internal static class GlobalStatic
 	public static bool ForceQuitAndRestart;//連続実行を防ぐ
 	#endregion
 	#region EE_フォントファイル対応
+#if CLOUDEMUERA_HEADLESS
+	public static PrivateFontCollection Pfc;
+#else
 	public static PrivateFontCollection Pfc = new();
+#endif
 	#endregion
 
 	public static CtrlZ ctrlZ = new();

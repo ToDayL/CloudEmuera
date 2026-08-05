@@ -16,6 +16,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using trerror = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error;
 using trmb = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.MessageBox;
@@ -23,8 +24,24 @@ using trsl = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.SystemLine;
 
 namespace MinorShift.Emuera.GameProc;
 
+// CloudEmuera modification: the headless build indexes image metadata through
+// RuntimeAdapter instead of the desktop Bitmap loader and accepts a cooperative
+// cancellation token used by the headless instruction-loop probe.
+
 internal sealed partial class Process(EmueraConsole view)
 {
+#if CLOUDEMUERA_HEADLESS
+	private CancellationToken headlessCancellationToken;
+
+	public void SetHeadlessCancellationToken(CancellationToken cancellationToken)
+	{
+		headlessCancellationToken = cancellationToken;
+	}
+
+	internal void ThrowIfHeadlessCancellationRequested() =>
+		headlessCancellationToken.ThrowIfCancellationRequested();
+#endif
+
 	public LogicalLine getCurrentLine { get { return state.CurrentLine; } }
 
 	/// <summary>
@@ -53,6 +70,9 @@ internal sealed partial class Process(EmueraConsole view)
 
 	public async Task<bool> Initialize(StreamWriter logWriter)
 	{
+#if CLOUDEMUERA_HEADLESS
+		ThrowIfHeadlessCancellationRequested();
+#endif
 		var stopWatch = new Stopwatch();
 		stopWatch.Start();
 		LexicalAnalyzer.UseMacro = false;
@@ -78,7 +98,10 @@ internal sealed partial class Process(EmueraConsole view)
 
 			logWriter?.WriteLine($"Proc:Init:Image:Start {stopWatch.ElapsedMilliseconds}ms");
 			//リソースフォルダ読み込み
-			var err = await Task.Run(() => AppContents.LoadContents(false));
+			Exception err = null;
+#if !CLOUDEMUERA_HEADLESS
+			err = await Task.Run(() => AppContents.LoadContents(false));
+#endif
 			if (err != null)
 			{
 				ParserMediator.FlushWarningList();
@@ -160,6 +183,9 @@ internal sealed partial class Process(EmueraConsole view)
 				console.PrintSystemLine(trsl.GamebaseError.Text);
 				return false;
 			}
+#if CLOUDEMUERA_HEADLESS
+			ThrowIfHeadlessCancellationRequested();
+#endif
 			console.SetWindowTitle(gamebase.ScriptWindowTitle);
 			GlobalStatic.GameBaseData = gamebase;
 			logWriter?.WriteLine($"Proc:Init:MainCSV:End {stopWatch.ElapsedMilliseconds}ms");
@@ -167,6 +193,9 @@ internal sealed partial class Process(EmueraConsole view)
 			//前記以外のcsvを全て読み込み
 			ConstantData constant = new();
 			constant.LoadData(Program.CsvDir, console, Config.DisplayReport);
+#if CLOUDEMUERA_HEADLESS
+			ThrowIfHeadlessCancellationRequested();
+#endif
 			logWriter?.WriteLine($"Proc:Init:EtcCSV:End {stopWatch.ElapsedMilliseconds}ms");
 
 			GlobalStatic.ConstantData = constant;
@@ -207,6 +236,9 @@ internal sealed partial class Process(EmueraConsole view)
 				console.PrintSystemLine("");
 				return false;
 			}
+#if CLOUDEMUERA_HEADLESS
+			ThrowIfHeadlessCancellationRequested();
+#endif
 			LexicalAnalyzer.UseMacro = idDic.UseMacro();
 			logWriter?.WriteLine($"Proc:Init:ERH:End {stopWatch.ElapsedMilliseconds}ms");
 
@@ -219,6 +251,9 @@ internal sealed partial class Process(EmueraConsole view)
 				noError = await loader.LoadErbList(Program.AnalysisFiles, labelDic);
 			else
 				noError = await loader.LoadErbDir(Program.ErbDir, Config.DisplayReport, labelDic);
+#if CLOUDEMUERA_HEADLESS
+			ThrowIfHeadlessCancellationRequested();
+#endif
 			logWriter?.WriteLine($"Proc:Init:ERB:End {stopWatch.ElapsedMilliseconds}ms");
 
 			initSystemProcess();
@@ -226,6 +261,12 @@ internal sealed partial class Process(EmueraConsole view)
 
 			logWriter?.WriteLine($"Proc:Init:End {stopWatch.ElapsedMilliseconds}ms");
 		}
+#if CLOUDEMUERA_HEADLESS
+		catch (OperationCanceledException) when (headlessCancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+#endif
 		catch (Exception e)
 		{
 			handleException(e, null, true);
@@ -346,6 +387,12 @@ internal sealed partial class Process(EmueraConsole view)
 				runScriptProc();
 			}
 		}
+#if CLOUDEMUERA_HEADLESS
+		catch (OperationCanceledException) when (headlessCancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+#endif
 		catch (Exception ec)
 		{
 			LogicalLine currentLine = state.ErrorLine;

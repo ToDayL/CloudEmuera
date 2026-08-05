@@ -7,6 +7,19 @@ namespace CloudEmuera.RuntimeAdapter.Tests.ConsoleContract;
 public sealed class ConsoleSnapshotTests
 {
     [Fact]
+    public void ClosingPromptPreservesVisibleOutput()
+    {
+        var store = new ConsoleStateStore();
+        store.Apply(new AppendNodesOperation([new TextNode("before-input"), LineBreakNode.Instance]));
+        store.Apply(new OpenPromptOperation(new ConsolePrompt("p1", ConsoleInputType.Integer)));
+
+        store.Apply(new ClosePromptOperation("p1", ConsolePromptCloseReason.InputAccepted));
+
+        Assert.Null(store.Snapshot.CurrentPrompt);
+        Assert.Contains(store.Snapshot.VisibleNodes, node => node is TextNode text && text.Text == "before-input");
+    }
+
+    [Fact]
     public void VisibleLimitsTrimOldTopLevelNodesAndKeepPrompt()
     {
         var store = new ConsoleStateStore(new ConsoleHistoryOptions

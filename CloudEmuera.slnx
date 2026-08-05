@@ -4,6 +4,8 @@
     <Project Path="src/CloudEmuera.Application/CloudEmuera.Application.csproj" />
     <Project Path="src/CloudEmuera.Contracts/CloudEmuera.Contracts.csproj" />
     <Project Path="src/CloudEmuera.Domain/CloudEmuera.Domain.csproj" />
+    <Project Path="src/CloudEmuera.EmueraRuntime/CloudEmuera.EmueraRuntime.csproj" />
+    <Project Path="src/CloudEmuera.EmueraRuntime/UpstreamHeadless/CloudEmuera.EmueraRuntime.UpstreamHeadless.csproj" />
     <Project Path="src/CloudEmuera.Infrastructure/CloudEmuera.Infrastructure.csproj" />
     <Project Path="src/CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
     <Project Path="src/CloudEmuera.Migrator/CloudEmuera.Migrator.csproj" />
@@ -13,6 +15,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CloudEmuera.Domain.Tests/CloudEmuera.Domain.Tests.csproj" />
+    <Project Path="tests/CloudEmuera.RuntimeCompatibility.Tests/CloudEmuera.RuntimeCompatibility.Tests.csproj" />
     <Project Path="tests/CloudEmuera.RuntimeAdapter.Tests/CloudEmuera.RuntimeAdapter.Tests.csproj" />
   </Folder>
 </Solution>

@@ -13,6 +13,8 @@ using trsl = MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.SystemLine;
 
 namespace MinorShift.Emuera.Runtime.Script.Loader;
 
+// CloudEmuera modification: the headless ERH loader cooperatively probes the
+// initialization cancellation token at file and bounded line intervals.
 internal sealed class ErhLoader
 {
 	public ErhLoader(EmueraConsole main, IdentifierDictionary idDic, Process proc)
@@ -49,6 +51,9 @@ internal sealed class ErhLoader
 		{
 			foreach (var (filename, file) in headerFiles)
 			{
+#if CLOUDEMUERA_HEADLESS
+				parentProcess.ThrowIfHeadlessCancellationRequested();
+#endif
 				if (displayReport)
 					output.PrintSystemLine(string.Format(trsl.LoadingFile.Text, filename));
 				noError = loadHeaderFile(file, filename);
@@ -93,6 +98,10 @@ internal sealed class ErhLoader
 		{
 			while ((st = eReader.ReadEnabledLine()) != null)
 			{
+#if CLOUDEMUERA_HEADLESS
+				if ((eReader.LineNo & 1023) == 0)
+					parentProcess.ThrowIfHeadlessCancellationRequested();
+#endif
 				if (!noError)
 					return false;
 				position = new ScriptPosition(filename, eReader.LineNo);
