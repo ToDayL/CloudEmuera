@@ -18,11 +18,11 @@ RUN dotnet publish src/CloudEmuera.Api/CloudEmuera.Api.csproj --no-restore -c Re
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
-ENV ASPNETCORE_URLS=http://0.0.0.0:18080 \
+ENV ASPNETCORE_URLS=http://0.0.0.0:28647 \
     CloudEmuera__DataPath=/data
 COPY --from=dotnet-build /out/api ./
 RUN mkdir -p /data && chown -R app:app /data /app
 USER app
-EXPOSE 18080
+EXPOSE 28647
 VOLUME ["/data"]
 ENTRYPOINT ["dotnet", "CloudEmuera.Api.dll"]

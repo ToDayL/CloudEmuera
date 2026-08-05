@@ -699,8 +699,8 @@ SessionRoot、UDS、bootstrap 路径和输入值。
 两套 fixture input roundtrip、重复 start、错误 token/binding、独立控制客户端进程退出、短断重连、
 等待输入停止、双 Worker 并行、Worker 日志字段/脱敏，以及 UDS 普通文件、目录、symlink、
 stale socket、父目录权限、祖先 symlink、owner 和路径边界安全场景。全量 `CloudEmuera.slnx`
-Release 构建通过（0 警告/0 错误）；`CLOUDEMUERA_HTTP_PORT=18080 CLOUDEMUERA_WEB_PORT=15173
-./scripts/check.sh` 通过，其中 Domain 4、IPC 9、RuntimeAdapter 137、RuntimeCompatibility 26、
+Release 构建通过（0 警告/0 错误）；默认 API 端口为 `28647` 的 `./scripts/check.sh` 通过，其中
+Domain 4、IPC 9、RuntimeAdapter 137、RuntimeCompatibility 26、
 Worker Integration 18 项测试及 Web typecheck、单测和生产构建全部通过。`input-roundtrip`
 （2 fixture/36 assertions）、`save-root`（1/20）和 `save-directory`（1/20）兼容场景、
 `verify-third-party.sh`、`verify-dev-user.sh` 与 `git diff --check` 均通过。P1-05 的持久
