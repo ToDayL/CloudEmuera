@@ -339,6 +339,27 @@ runtimeVersion, protocolVersion
 
 字段类型以 SQLite 表达，细节可由 ORM 迁移生成。
 
+P1-01 已将本节的首版元数据基线固化为 `InitialMetadata` migration：所有 `*_at` 列为
+`INTEGER` Unix epoch milliseconds（应用边界使用 `DateTimeOffset`），状态/角色/结果为
+稳定的大写 `TEXT`，布尔值为受 `CHECK` 约束的 `INTEGER`，JSON 使用 `json_valid` 校验。
+ID 使用 `TEXT` 类型前缀值，内容摘要使用 `sha256:` 加 64 位小写十六进制，路径为受约束的
+`/` 分隔相对 DataRoot 路径。所有首版外键都显式使用 `ON UPDATE RESTRICT` 和
+`ON DELETE RESTRICT`。
+
+#### quota_profiles
+
+```text
+id TEXT PK
+name TEXT UNIQUE NOT NULL
+max_active_sessions INTEGER NOT NULL
+max_game_package_bytes INTEGER NOT NULL
+max_session_bytes INTEGER NOT NULL
+max_output_bytes_per_second INTEGER NOT NULL
+created_at INTEGER NOT NULL
+updated_at INTEGER NOT NULL
+state_version INTEGER NOT NULL DEFAULT 0
+```
+
 #### users
 
 ```text
@@ -350,11 +371,12 @@ security_stamp TEXT NOT NULL
 role TEXT NOT NULL                 -- PLAYER | ADMIN
 status TEXT NOT NULL               -- ACTIVE | DISABLED
 access_failed_count INTEGER NOT NULL DEFAULT 0
-lockout_end TEXT NULL
+lockout_end INTEGER NULL
 quota_profile_id TEXT NOT NULL
 preferences_json TEXT NOT NULL
-created_at TEXT NOT NULL
-updated_at TEXT NOT NULL
+created_at INTEGER NOT NULL
+updated_at INTEGER NOT NULL
+state_version INTEGER NOT NULL DEFAULT 0
 ```
 
 该表通过自定义 EF Core 映射作为 ASP.NET Core Identity 的用户存储；若后续启用多角色、外部登录、恢复令牌或 MFA，再增加标准化的 `user_roles`、`user_logins`、`user_tokens` 和 `user_claims` 表，不把认证票据明文写入 `users`。
@@ -367,8 +389,9 @@ owner_user_id TEXT NOT NULL FK users
 name TEXT NOT NULL
 visibility TEXT NOT NULL           -- PRIVATE | SERVER_SHARED
 status TEXT NOT NULL               -- ACTIVE | DELETED
-created_at TEXT NOT NULL
-updated_at TEXT NOT NULL
+created_at INTEGER NOT NULL
+updated_at INTEGER NOT NULL
+state_version INTEGER NOT NULL DEFAULT 0
 UNIQUE(owner_user_id, name)
 ```
 
@@ -379,14 +402,14 @@ id TEXT PK
 game_id TEXT NOT NULL FK games
 version_label TEXT NOT NULL
 status TEXT NOT NULL               -- DRAFT | VALIDATING | PUBLISHED | BLOCKED | DELETED
-content_digest TEXT NULL UNIQUE
+content_digest TEXT NULL (非 NULL 值唯一)
 content_path TEXT NOT NULL
 manifest_json TEXT NOT NULL
 runtime_config_json TEXT NOT NULL
 compatibility_summary_json TEXT NOT NULL
 created_by TEXT NOT NULL FK users
-created_at TEXT NOT NULL
-published_at TEXT NULL
+created_at INTEGER NOT NULL
+published_at INTEGER NULL
 state_version INTEGER NOT NULL
 UNIQUE(game_id, version_label)
 ```
@@ -397,7 +420,8 @@ UNIQUE(game_id, version_label)
 id TEXT PK
 owner_user_id TEXT NOT NULL FK users
 game_id TEXT NOT NULL FK games
-game_version_id TEXT NOT NULL FK game_versions
+game_version_id TEXT NOT NULL
+-- FOREIGN KEY(game_version_id, game_id) REFERENCES game_versions(id, game_id)
 session_root_path TEXT NOT NULL UNIQUE
 name TEXT NOT NULL
 state TEXT NOT NULL
@@ -407,10 +431,11 @@ waiting_for_input INTEGER NOT NULL DEFAULT 0
 current_prompt_id TEXT NULL
 last_output_sequence INTEGER NOT NULL DEFAULT 0
 close_reason TEXT NULL
-created_at TEXT NOT NULL
-started_at TEXT NULL
-last_activity_at TEXT NOT NULL
-closed_at TEXT NULL
+created_at INTEGER NOT NULL
+started_at INTEGER NULL
+last_activity_at INTEGER NOT NULL
+closed_at INTEGER NULL
+FOREIGN KEY(game_version_id, game_id) REFERENCES game_versions(id, game_id)
 ```
 
 常用索引：`(owner_user_id, created_at DESC)`、`(state, last_activity_at)`、`(game_version_id)`。
@@ -426,9 +451,9 @@ pid INTEGER NULL
 ipc_endpoint TEXT NOT NULL
 runtime_version TEXT NOT NULL
 protocol_version INTEGER NOT NULL
-acquired_at TEXT NOT NULL
-heartbeat_at TEXT NOT NULL
-expires_at TEXT NOT NULL
+acquired_at INTEGER NOT NULL
+heartbeat_at INTEGER NOT NULL
+expires_at INTEGER NOT NULL
 UNIQUE(session_id, epoch)
 ```
 
@@ -442,8 +467,8 @@ request_digest TEXT NOT NULL
 response_status INTEGER NOT NULL
 response_json TEXT NOT NULL
 resource_id TEXT NULL
-created_at TEXT NOT NULL
-expires_at TEXT NOT NULL
+created_at INTEGER NOT NULL
+expires_at INTEGER NOT NULL
 PRIMARY KEY(actor_user_id, scope, idempotency_key)
 ```
 
@@ -453,7 +478,7 @@ PRIMARY KEY(actor_user_id, scope, idempotency_key)
 
 ```text
 id TEXT PK
-occurred_at TEXT NOT NULL
+occurred_at INTEGER NOT NULL
 actor_user_id TEXT NULL
 actor_type TEXT NOT NULL            -- USER | ADMIN | SYSTEM
 action TEXT NOT NULL
@@ -467,7 +492,11 @@ metadata_json TEXT NOT NULL
 
 审计表只追加，不通过普通业务 API 修改或删除。
 
-另设 `quota_profiles`、`game_files`、`compatibility_diagnostics`、`schema_migrations` 和短期 `worker_command_results` 表。存档没有独立内容表；其所有权和 GameVersion 关联由所属 Session 决定，管理操作写入 `audit_events`。完整 DDL 在实现阶段由首个数据库迁移固化。
+P1-01 另外建立 EF history 表 `schema_migrations`，并保留 EF Core SQLite provider 使用的
+内部 `__EFMigrationsLock` 表；产品迁移仍必须先持有 CloudEmuera 的
+`<database>.migration.lock` 文件锁。`game_files`、`compatibility_diagnostics` 和短期
+`worker_command_results` 留给后续任务，首版不创建。存档没有独立内容表；其所有权和
+GameVersion 关联由所属 Session 决定，管理操作写入 `audit_events`。
 
 ### 5.3 文件系统布局
 
@@ -953,7 +982,18 @@ pending clientMessageId → result
 配置组包括：
 
 - 身份提供商与会话 Cookie；
-- 数据路径、数据库参数和备份窗口；
+- 数据路径、数据库参数和备份窗口；P1-01 的数据库 CLI 与布局如下：
+
+  ```bash
+  CloudEmuera.Migrator migrate --data-root <path> [--database cloudemuera.db]
+  CloudEmuera.Migrator check --data-root <path> [--database cloudemuera.db]
+  ```
+
+  `migrate` 独占 `<database>.migration.lock`，仅在存在待执行 migration 时把 SQLite
+  Online Backup 写入 `<data-root>/backups/`，然后执行全部编译进程的 migration；`check`
+  只读验证 migration history、foreign-key check 和 quick check。退出码 `0/10/11/12/13/14/15`
+  分别表示成功、配置非法、锁竞争、数据库高于当前 binary、备份失败、migration 失败和完整性
+  检查失败。业务 API、Supervisor 和 Worker 不调用 `Database.Migrate()`。
 - 上传/解压/文件数量/编码限制；
 - 用户活动 Session、Worker CPU/内存/PID/FD/磁盘配额；
 - 输出速率、快照、增量和 WebSocket 队列上限；

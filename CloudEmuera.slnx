@@ -19,5 +19,6 @@
     <Project Path="tests/CloudEmuera.RuntimeCompatibility.Tests/CloudEmuera.RuntimeCompatibility.Tests.csproj" />
     <Project Path="tests/CloudEmuera.RuntimeAdapter.Tests/CloudEmuera.RuntimeAdapter.Tests.csproj" />
     <Project Path="tests/CloudEmuera.Worker.IntegrationTests/CloudEmuera.Worker.IntegrationTests.csproj" />
+    <Project Path="tests/CloudEmuera.Infrastructure.Tests/CloudEmuera.Infrastructure.Tests.csproj" />
   </Folder>
 </Solution>

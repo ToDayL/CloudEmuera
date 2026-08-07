@@ -223,21 +223,44 @@ P1-05 的持久 WorkerLease、epoch 分配、Supervisor 重启对账和沙箱限
 
 ## 4. Phase 1：端到端单机 MVP
 
-### P1-01 — SQLite 首版 schema 与迁移（NEXT）
+### P1-01 — SQLite 首版 schema 与迁移（DONE）
 
-需求映射：核心领域模型、GAME-004/010、SESS-005/007、SAVE-005、OPS-005。
+需求映射：核心领域模型、GAME-004/008/010、SESS-002/005/007/010、SAVE-005/015、
+OPS-005、NFR-011。
 
-交付物：users、games、game_versions、sessions、worker_leases、idempotency_records、audit_events migration；SessionRoot 路径、并发 token、唯一索引和 UTC 时间约定。
+详细设计：[`tasks/P1-01-sqlite-initial-schema-migration-plan.zh-CN.md`](tasks/P1-01-sqlite-initial-schema-migration-plan.zh-CN.md)。
+
+交付物：quota_profiles、users、games、game_versions、sessions、worker_leases、
+idempotency_records、audit_events migration；SessionRoot 路径、并发 token、唯一索引和
+UTC 时间约定；独占 Migrator、迁移前一致性备份和失败回滚。
 
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Infrastructure.Tests --filter 'Category=Migration|Category=PersistenceConstraint'
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore \
+  --configuration Release --filter 'Category=Migration|Category=PersistenceConstraint'
 ```
 
 通过条件：空库可升级到最新版本；已有样例库升级后数据不丢失；重复内容哈希、租约唯一性和幂等键约束由数据库强制；失败 migration 不留下部分 schema。
 
-### P1-02 — 本地身份、资源授权与审计（TODO）
+2026-08-07 完成记录：`InitialMetadata`（`20260807071428_InitialMetadata`）固化八张业务表、
+`schema_migrations`、复合 GameVersion/Session 与 lease epoch 外键、RESTRICT 删除/更新、
+JSON/digest/path/enum/布尔 CHECK、审计只追加 trigger；未创建 Save 或默认 Identity 表。统一
+connection factory 启用 foreign keys、WAL、synchronous NORMAL 和有界 busy timeout；独立
+Migrator 负责 `<database>.migration.lock`、Online Backup、完整性检查和稳定退出码。
+Infrastructure 全量 36 项、`Migration|PersistenceConstraint` 定向 33 项和
+`MigrationProcess` 真实进程冒烟 3 项均在 Linux dev Docker 通过；构建为 Release 0 警告/0 错误。
+另以独立临时目录验证了 migration 失败回滚、备份前置屏障、锁竞争、取消/损坏数据库、FIFO/
+sidecar symlink、statx 文件类型封送、锁文件替换竞态、descriptor-backed SQLite 打开、busy
+timeout、独立 connection 约束和 epoch fencing。Linux 数据库/锁/备份操作使用受保护目录句柄、
+`openat(O_NOFOLLOW)`、`/proc/self/fd/<fd>`、`flock`、`linkat`/`unlinkat` 和 inode identity check，
+随后执行
+`./scripts/check.sh`、`./scripts/verify-dev-user.sh`、`./scripts/verify-third-party.sh` 和
+`git diff --check` 均通过。
+
+### P1-02 — 本地身份、资源授权与审计（NEXT）
 
 需求映射：AUTH-001～005、OPS-005、AC-004。
 
@@ -431,6 +454,6 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P1-01，落地 SQLite 首版 schema 与迁移。
+1. 执行 P1-02，落地本地身份、资源授权与审计。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

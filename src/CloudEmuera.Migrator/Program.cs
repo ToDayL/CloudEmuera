@@ -1,2 +1,1 @@
-Console.WriteLine("CloudEmuera database migrator: no migrations are defined yet.");
-
+return await MigratorCommand.RunAsync(args).ConfigureAwait(false);

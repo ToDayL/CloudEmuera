@@ -1,0 +1,485 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace CloudEmuera.Infrastructure.Persistence;
+
+internal static class LinuxFileOperations
+{
+    private const int OpenReadOnly = 0;
+    private const int OpenReadWrite = 2;
+    private const int OpenCreate = 0x40;
+    private const int OpenExclusive = 0x80;
+    private const int OpenNonBlocking = 0x800;
+    private const int OpenDirectoryFlag = 0x10000;
+    private const int OpenCloseOnExec = 0x80000;
+    private const int OpenNoFollow = 0x20000;
+    private const int AtEmptyPath = 0x1000;
+    private const int LockExclusive = 2;
+    private const int LockNonBlocking = 4;
+    private const int ErrnoNoEntry = 2;
+    private const int ErrnoExist = 17;
+    private const int ErrnoAgain = 11;
+    private const int ErrnoWouldBlock = 11;
+    private const int ErrnoLoop = 40;
+    private const int ErrnoNotDirectory = 20;
+    private const int ErrnoIsDirectory = 21;
+    private const int RegularFileType = 0x8000;
+    private const int DirectoryFileType = 0x4000;
+    private const uint StatxType = 0x00000001;
+    private const uint StatxBasicStats = 0x000007ff;
+    private const int StatxBufferSize = 256;
+
+    public static SafeFileHandle OpenDirectory(string path)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string root = Path.GetPathRoot(fullPath) ?? throw new SqlitePathException("The SQLite parent path has no filesystem root.");
+        SafeFileHandle handle = CreateHandle(
+            NativeMethods.Open(root, OpenReadOnly | OpenDirectoryFlag | OpenCloseOnExec, 0),
+            "open directory root");
+        try
+        {
+            string relative = Path.GetRelativePath(root, fullPath);
+            foreach (string segment in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            {
+                SafeFileHandle next = TryOpenDirectoryAt(handle, segment)
+                    ?? throw new SqlitePathException("The SQLite parent path disappeared during secure traversal.");
+                handle.Dispose();
+                handle = next;
+            }
+
+            FileIdentity identity = ReadIdentity(handle);
+            if (!identity.IsDirectory)
+            {
+                throw new SqlitePathException("The SQLite parent path must be a directory.");
+            }
+
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    public static SafeFileHandle OpenOrCreateDirectory(string path)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string root = Path.GetPathRoot(fullPath) ?? throw new SqlitePathException("The SQLite parent path has no filesystem root.");
+        SafeFileHandle handle = CreateHandle(
+            NativeMethods.Open(root, OpenReadOnly | OpenDirectoryFlag | OpenCloseOnExec, 0),
+            "open directory root");
+        try
+        {
+            string relative = Path.GetRelativePath(root, fullPath);
+            foreach (string segment in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            {
+                SafeFileHandle? next = TryOpenDirectoryAt(handle, segment);
+                if (next is null)
+                {
+                    if (NativeMethods.MkdirAt(handle, segment, 0x1C0) != 0)
+                    {
+                        int error = Marshal.GetLastPInvokeError();
+                        if (error != ErrnoExist)
+                        {
+                            throw CreateError("mkdirat directory path", error);
+                        }
+                    }
+
+                    next = TryOpenDirectoryAt(handle, segment)
+                        ?? throw new SqlitePathException("The SQLite directory disappeared during creation.");
+                    if (NativeMethods.Fchmod(next, 0x1C0) != 0)
+                    {
+                        next.Dispose();
+                        throw CreateError("fchmod directory path", Marshal.GetLastPInvokeError());
+                    }
+                }
+
+                handle.Dispose();
+                handle = next;
+            }
+
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    public static SafeFileHandle OpenOrCreateDirectoryAt(SafeFileHandle parentDirectory, string name)
+    {
+        ValidateLeafName(name);
+        SafeFileHandle? existing = TryOpenDirectoryAt(parentDirectory, name);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        if (NativeMethods.MkdirAt(parentDirectory, name, 0x1C0) != 0)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            if (error != ErrnoExist)
+            {
+                throw CreateError("mkdirat", error);
+            }
+        }
+
+        SafeFileHandle created = TryOpenDirectoryAt(parentDirectory, name)
+            ?? throw new SqlitePathException("The SQLite directory disappeared during creation.");
+        if (NativeMethods.Fchmod(created, 0x1C0) != 0)
+        {
+            created.Dispose();
+            throw CreateError("fchmod directory", Marshal.GetLastPInvokeError());
+        }
+        return created;
+    }
+
+    public static SafeFileHandle? TryOpenDirectoryAt(SafeFileHandle parentDirectory, string name)
+    {
+        ValidateLeafName(name);
+        int descriptor = NativeMethods.OpenAt(parentDirectory, name, OpenReadOnly | OpenDirectoryFlag | OpenCloseOnExec | OpenNoFollow, 0);
+        if (descriptor < 0)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            if (error == ErrnoNoEntry)
+            {
+                return null;
+            }
+
+            throw CreatePathError("openat directory", error);
+        }
+
+        SafeFileHandle handle = new((IntPtr)descriptor, ownsHandle: true);
+        try
+        {
+            FileIdentity identity = ReadIdentity(handle);
+            if (!identity.IsDirectory)
+            {
+                throw new SqlitePathException("The SQLite directory must be a directory.");
+            }
+
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    public static SafeFileHandle OpenRegularFileAt(
+        SafeFileHandle parentDirectory,
+        string name,
+        bool readOnly,
+        bool create,
+        bool exclusive)
+    {
+        ValidateLeafName(name);
+        int flags = (readOnly ? OpenReadOnly : OpenReadWrite) | OpenNonBlocking | OpenCloseOnExec | OpenNoFollow;
+        if (create)
+        {
+            flags |= OpenCreate;
+        }
+
+        if (exclusive)
+        {
+            flags |= OpenExclusive;
+        }
+
+        int descriptor = NativeMethods.OpenAt(parentDirectory, name, flags, 0x180);
+        if (descriptor < 0)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            if (error == ErrnoExist && exclusive)
+            {
+                throw new IOException("The target file already exists.");
+            }
+
+            throw CreatePathError("openat file", error);
+        }
+
+        SafeFileHandle handle = new((IntPtr)descriptor, ownsHandle: true);
+        try
+        {
+            FileIdentity identity = ReadIdentity(handle);
+            if (!identity.IsRegularFile)
+            {
+                throw new SqlitePathException("The SQLite path must be a regular non-link file.");
+            }
+
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    public static SafeFileHandle? TryOpenRegularFileAt(SafeFileHandle parentDirectory, string name, bool readOnly)
+    {
+        ValidateLeafName(name);
+        int flags = (readOnly ? OpenReadOnly : OpenReadWrite) | OpenNonBlocking | OpenCloseOnExec | OpenNoFollow;
+        int descriptor = NativeMethods.OpenAt(parentDirectory, name, flags, 0);
+        if (descriptor < 0)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            if (error == ErrnoNoEntry)
+            {
+                return null;
+            }
+
+            throw CreatePathError("openat optional file", error);
+        }
+
+        SafeFileHandle handle = new((IntPtr)descriptor, ownsHandle: true);
+        try
+        {
+            FileIdentity identity = ReadIdentity(handle);
+            if (!identity.IsRegularFile)
+            {
+                throw new SqlitePathException("The SQLite path must be a regular non-link file.");
+            }
+
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    public static FileStream CreateFileStream(SafeFileHandle handle, FileAccess access, int bufferSize = 4096) =>
+        new(handle, access, bufferSize, isAsync: false);
+
+    public static string GetProcFileDescriptorPath(SafeFileHandle handle)
+    {
+        if (handle.IsClosed || handle.IsInvalid)
+        {
+            throw new SqlitePathException("The SQLite file descriptor is no longer valid.");
+        }
+
+        if (!Directory.Exists("/proc/self/fd"))
+        {
+            throw new SqlitePathException("Linux procfs is required for descriptor-backed SQLite access.");
+        }
+
+        long descriptor = handle.DangerousGetHandle().ToInt64();
+        return $"/proc/self/fd/{descriptor.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    public static void ApplyPrivateMode(SafeFileHandle handle)
+    {
+        if (NativeMethods.Fchmod(handle, 0x180) != 0)
+        {
+            throw CreateError("fchmod", Marshal.GetLastPInvokeError());
+        }
+    }
+
+    public static bool TryAcquireExclusiveLock(SafeFileHandle handle)
+    {
+        if (NativeMethods.Flock(handle, LockExclusive | LockNonBlocking) == 0)
+        {
+            return true;
+        }
+
+        int error = Marshal.GetLastPInvokeError();
+        if (error is ErrnoAgain or ErrnoWouldBlock)
+        {
+            return false;
+        }
+
+        throw CreateError("flock", error);
+    }
+
+    public static FileIdentity ReadIdentity(SafeFileHandle handle)
+    {
+        IntPtr statBuffer = Marshal.AllocHGlobal(StatxBufferSize);
+        try
+        {
+            if (NativeMethods.Statx(handle, string.Empty, AtEmptyPath, StatxBasicStats, statBuffer) != 0)
+            {
+                throw CreateError("statx", Marshal.GetLastPInvokeError());
+            }
+
+            LinuxStatx stat = Marshal.PtrToStructure<LinuxStatx>(statBuffer);
+            if ((stat.Mask & StatxType) == 0)
+            {
+                throw new SqlitePathException("The filesystem did not provide a file type.");
+            }
+
+            return new FileIdentity(
+                stat.FileSystemDeviceMajor,
+                stat.FileSystemDeviceMinor,
+                stat.Inode,
+                stat.Mode);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(statBuffer);
+        }
+    }
+
+    public static void EnsureSameIdentity(SafeFileHandle expected, SafeFileHandle actual)
+    {
+        FileIdentity expectedIdentity = ReadIdentity(expected);
+        FileIdentity actualIdentity = ReadIdentity(actual);
+        if (expectedIdentity.DeviceMajor != actualIdentity.DeviceMajor
+            || expectedIdentity.DeviceMinor != actualIdentity.DeviceMinor
+            || expectedIdentity.Inode != actualIdentity.Inode)
+        {
+            throw new SqlitePathException("A SQLite path changed during the operation.");
+        }
+    }
+
+    public static void LinkAtFromName(
+        SafeFileHandle sourceDirectory,
+        string sourceName,
+        SafeFileHandle destinationDirectory,
+        string destinationName)
+    {
+        ValidateLeafName(sourceName);
+        ValidateLeafName(destinationName);
+        if (NativeMethods.LinkAt(sourceDirectory, sourceName, destinationDirectory, destinationName, 0) != 0)
+        {
+            throw CreateError("linkat", Marshal.GetLastPInvokeError());
+        }
+    }
+
+    public static void UnlinkAtIfExists(SafeFileHandle directory, string name)
+    {
+        ValidateLeafName(name);
+        if (NativeMethods.UnlinkAt(directory, name, 0) == 0)
+        {
+            return;
+        }
+
+        int error = Marshal.GetLastPInvokeError();
+        if (error != ErrnoNoEntry)
+        {
+            throw CreateError("unlinkat", error);
+        }
+    }
+
+    private static SafeFileHandle CreateHandle(int descriptor, string operation)
+    {
+        if (descriptor >= 0)
+        {
+            return new SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
+        }
+
+        throw CreatePathError(operation, Marshal.GetLastPInvokeError());
+    }
+
+    private static void ValidateLeafName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)
+            || name is "." or ".."
+            || name.Contains('/')
+            || name.Contains('\\')
+            || name.Contains('\0'))
+        {
+            throw new SqlitePathException("A native SQLite directory operation requires a safe leaf name.");
+        }
+    }
+
+    private static Exception CreatePathError(string operation, int error) =>
+        error is ErrnoLoop or ErrnoNotDirectory or ErrnoIsDirectory
+            ? new SqlitePathException($"The SQLite path is unsafe for {operation}.")
+            : CreateError(operation, error);
+
+    private static LinuxFileOperationException CreateError(string operation, int error) =>
+        new LinuxFileOperationException(operation, error);
+
+    internal readonly record struct FileIdentity(uint DeviceMajor, uint DeviceMinor, ulong Inode, ushort Mode)
+    {
+        public bool IsRegularFile => (Mode & 0xF000) == RegularFileType;
+
+        public bool IsDirectory => (Mode & 0xF000) == DirectoryFileType;
+    }
+
+    private sealed class LinuxFileOperationException(string operation, int error)
+        : IOException($"{operation} failed with errno {error}.");
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    private struct LinuxStatx
+    {
+        public uint Mask;
+        public uint BlockSize;
+        public ulong Attributes;
+        public uint LinkCount;
+        public uint UserId;
+        public uint GroupId;
+        public ushort Mode;
+        public ushort Spare0;
+        public ulong Inode;
+        public ulong Size;
+        public ulong Blocks;
+        public ulong AttributesMask;
+        public LinuxStatxTimestamp AccessTime;
+        public LinuxStatxTimestamp BirthTime;
+        public LinuxStatxTimestamp ChangeTime;
+        public LinuxStatxTimestamp ModifyTime;
+        public uint DeviceMajor;
+        public uint DeviceMinor;
+        public uint FileSystemDeviceMajor;
+        public uint FileSystemDeviceMinor;
+        public ulong MountId;
+        public uint DirectIoMemoryAlignment;
+        public uint DirectIoOffsetAlignment;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    private struct LinuxStatxTimestamp
+    {
+        public long Seconds;
+        public uint Nanoseconds;
+        public int Reserved;
+    }
+
+    private static partial class NativeMethods
+    {
+        [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux openat operations require stable native flags and SafeFileHandle ownership.")]
+        [SuppressMessage("Interoperability", "CA2101", Justification = "Linux path arguments are explicitly marshaled as UTF-8.")]
+        public static extern int Open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags, uint mode);
+
+        [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux openat operations require stable native flags and SafeFileHandle ownership.")]
+        [SuppressMessage("Interoperability", "CA2101", Justification = "Linux path arguments are explicitly marshaled as UTF-8.")]
+        public static extern int OpenAt(SafeFileHandle directory, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags, uint mode);
+
+        [DllImport("libc", EntryPoint = "mkdirat", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux mkdirat is used beneath an already-open directory handle.")]
+        [SuppressMessage("Interoperability", "CA2101", Justification = "Linux path arguments are explicitly marshaled as UTF-8.")]
+        public static extern int MkdirAt(SafeFileHandle directory, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, uint mode);
+
+        [DllImport("libc", EntryPoint = "fchmod", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux fchmod operates on the already-open file descriptor.")]
+        public static extern int Fchmod(SafeFileHandle file, uint mode);
+
+        [DllImport("libc", EntryPoint = "flock", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux flock provides the cross-process migration lock.")]
+        public static extern int Flock(SafeFileHandle file, int operation);
+
+        [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux statx uses the stable kernel UAPI struct marshaled below.")]
+        [SuppressMessage("Interoperability", "CA2101", Justification = "The empty path is required with AT_EMPTY_PATH and has no user-controlled characters.")]
+        public static extern int Statx(SafeFileHandle directory, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags, uint mask, IntPtr buffer);
+
+        [DllImport("libc", EntryPoint = "linkat", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux linkat publishes a validated temporary backup name below protected directory handles.")]
+        [SuppressMessage("Interoperability", "CA2101", Justification = "Validated source and destination leaves are explicitly marshaled as UTF-8.")]
+        public static extern int LinkAt(SafeFileHandle source, [MarshalAs(UnmanagedType.LPUTF8Str)] string sourcePath, SafeFileHandle destinationDirectory, [MarshalAs(UnmanagedType.LPUTF8Str)] string destinationPath, int flags);
+
+        [DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux unlinkat removes only a validated leaf below an open directory handle.")]
+        [SuppressMessage("Interoperability", "CA2101", Justification = "Linux path arguments are explicitly marshaled as UTF-8.")]
+        public static extern int UnlinkAt(SafeFileHandle directory, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
+    }
+}

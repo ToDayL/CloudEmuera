@@ -6,7 +6,7 @@
 
 CloudEmuera 将 Emuera.EM+EE 文字游戏运行时部署到远程服务器，让玩家通过桌面或移动浏览器管理游戏包、运行相互隔离且可重连的 Session，并管理 Emuera 原生存档。
 
-当前处于 Phase 0 运行时切分阶段。已有内容包括：
+Phase 0 运行时切分与兼容性证明已经完成，当前进入 Phase 1 单机 MVP 实施阶段。已有内容包括：
 
 - Git 仓库、解决方案和前后端工程骨架；
 - API 健康检查和版本端点；
@@ -16,10 +16,13 @@ CloudEmuera 将 Emuera.EM+EE 文字游戏运行时部署到远程服务器，让
 - Docker Compose 开发环境及宿主 UID/GID 映射；
 - 固定版本、直接纳入仓库的 Emuera.EM+EE 源码；
 - Runtime fixture、平台端口和结构化 Console/Input；
+- 原生双布局存档与持久私有 SessionRoot；
+- 单 Session Worker/Supervisor UDS IPC 冒烟链路；
 - Apache-2.0 项目许可证和第三方许可声明。
 
 身份、游戏包、持久 Worker 管理、浏览器实时协议、正式存档管理和正式 UI 仍待实现；P0-06
-已提供最小的单 Session Worker/Supervisor UDS IPC 冒烟链路。仓库目前不能安全运行不受信任的游戏包。
+已提供最小的单 Session Worker/Supervisor UDS IPC 冒烟链路。Phase 1 首个任务是 P1-01
+SQLite 首版 schema 与迁移。仓库目前不能安全运行不受信任的游戏包。
 
 ## 已确认技术方案
 
@@ -180,7 +183,8 @@ Emuera.EM+EE 以普通 Git 文件位于 `src/CloudEmuera.EmueraRuntime/Upstream`
 
 ## 开发顺序
 
-按 `docs/development-plan.zh-CN.md` 的编号顺序推进。当前首要工作是 Phase 0：建立合法的最小兼容测试集，提取运行时平台接口，让无 UI Worker 能运行到 INPUT、接受输入，并用原生格式完成两种存档布局的保存和加载。
+按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0 已完成；当前首要工作是
+P1-01：建立 SQLite 首版 schema、数据库约束、独占 Migrator、迁移前备份和失败回滚验证。
 
 涉及待决事项时，在实现前创建 ADR，至少记录背景、选项、决策、后果和验证方案。不要以临时代码默默固化产品或安全决策。
 

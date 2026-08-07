@@ -1,0 +1,225 @@
+using CloudEmuera.Infrastructure.Persistence;
+using CloudEmuera.Infrastructure.Tests.Support;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+
+namespace CloudEmuera.Infrastructure.Tests.Persistence;
+
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1707", Justification = "P1-01 scenario names use separators for requirement mapping.")]
+public sealed class InitialMigrationTests
+{
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task EmptyDatabase_MigratesToLatestSchema()
+    {
+        using TemporarySqliteDatabase database = new();
+
+        MigrationResult result = await database.MigrateAsync();
+
+        Assert.True(result.Succeeded, result.ErrorCode);
+        await using DbContextScope scope = database.OpenContext();
+        HashSet<string> tables = await ReadObjectsAsync(scope.Connection, "table");
+        HashSet<string> indexes = await ReadObjectsAsync(scope.Connection, "index");
+        HashSet<string> triggers = await ReadObjectsAsync(scope.Connection, "trigger");
+
+        Assert.Equal(
+            [
+                "__EFMigrationsLock",
+                "audit_events",
+                "game_versions",
+                "games",
+                "idempotency_records",
+                "quota_profiles",
+                "schema_migrations",
+                "sessions",
+                "users",
+                "worker_leases",
+            ],
+            tables.Order(StringComparer.Ordinal));
+        Assert.Contains("trg_audit_events_append_only_update", triggers);
+        Assert.Contains("trg_audit_events_append_only_delete", triggers);
+        Assert.Contains("ux_game_versions_content_digest", indexes);
+        Assert.Contains("ux_worker_leases_worker_id", indexes);
+        Assert.DoesNotContain(tables, name => name.StartsWith("AspNet", StringComparison.Ordinal));
+        Assert.DoesNotContain(tables, name => name.Contains("save", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(tables, name => name == "__EFMigrationsHistory");
+        Assert.Equal(1, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task LatestDatabase_MigrateAgain_IsNoOpAndPreservesRows()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+
+        await using (DbContextScope scope = database.OpenContext())
+        {
+            scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
+            await scope.Context.SaveChangesAsync();
+        }
+
+        int backupsBefore = CountBackups(database);
+        MigrationResult result = await database.MigrateAsync();
+        int backupsAfter = CountBackups(database);
+
+        Assert.True(result.Succeeded, result.ErrorCode);
+        Assert.Equal(backupsBefore, backupsAfter);
+        await using DbContextScope verify = database.OpenContext();
+        Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
+        Assert.Equal(1, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task PreexistingDatabase_InitialMigration_PreservesUnrelatedData()
+    {
+        using TemporarySqliteDatabase database = new();
+        await CreateProbeDatabaseAsync(database.DatabasePath);
+
+        MigrationResult result = await database.MigrateAsync();
+
+        Assert.True(result.Succeeded, result.ErrorCode);
+        Assert.NotNull(result.BackupPath);
+        string backupPath = result.BackupPath!;
+        Assert.True(File.Exists(backupPath));
+        string backupFileName = Path.GetFileName(backupPath);
+        Assert.StartsWith("cloudemuera.db.before-", backupFileName, StringComparison.Ordinal);
+        Assert.EndsWith("-20260807071428_InitialMetadata.sqlite", backupFileName, StringComparison.Ordinal);
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(backupPath) & (UnixFileMode)0x1FF);
+        }
+        await using DbContextScope scope = database.OpenContext();
+        Assert.Equal("probe-value", await ReadStringAsync(scope.Connection, "SELECT value FROM probe WHERE id = 1;"));
+        Assert.Equal(1, CountBackups(database));
+        Assert.Empty(Directory.EnumerateFiles(database.BackupDirectoryPath, ".*.tmp-*", SearchOption.TopDirectoryOnly));
+        await using SqliteConnection backup = OpenReadOnly(backupPath);
+        Assert.Equal("probe-value", await ReadStringAsync(backup, "SELECT value FROM probe WHERE id = 1;"));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task InitialMigration_Down_RemovesOwnedSchemaOnly()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        await using (DbContextScope scope = database.OpenContext())
+        {
+            await ExecuteAsync(scope.Connection, "CREATE TABLE probe (id INTEGER PRIMARY KEY, value TEXT NOT NULL);");
+            await ExecuteAsync(scope.Connection, "INSERT INTO probe (id, value) VALUES (1, 'keep');");
+            await scope.Context.Database.MigrateAsync("0");
+        }
+
+        await using DbContextScope verify = database.OpenContext();
+        HashSet<string> tables = await ReadObjectsAsync(verify.Connection, "table");
+        HashSet<string> triggers = await ReadObjectsAsync(verify.Connection, "trigger");
+        Assert.Contains("probe", tables);
+        Assert.Contains("schema_migrations", tables);
+        Assert.DoesNotContain("users", tables);
+        Assert.DoesNotContain("sessions", tables);
+        Assert.Empty(triggers);
+        Assert.Equal("keep", await ReadStringAsync(verify.Connection, "SELECT value FROM probe WHERE id = 1;"));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task NewDatabase_DoesNotCreateBackup()
+    {
+        using TemporarySqliteDatabase database = new();
+
+        MigrationResult result = await database.MigrateAsync();
+
+        Assert.True(result.Succeeded, result.ErrorCode);
+        Assert.False(Directory.Exists(database.BackupDirectoryPath));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task DatabaseNewerThanBinary_CheckFailsWithoutMutation()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        await using (DbContextScope scope = database.OpenContext())
+        {
+            await ExecuteAsync(scope.Connection, "INSERT INTO schema_migrations (MigrationId, ProductVersion) VALUES ('99999999999999_Future', '99.0.0');");
+        }
+
+        MigrationResult result = await database.CheckAsync();
+
+        Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
+        Assert.Equal(2, await CountHistoryRowsAsync(database));
+    }
+
+    private static int CountBackups(TemporarySqliteDatabase database) =>
+        Directory.Exists(database.BackupDirectoryPath)
+            ? Directory.EnumerateFiles(database.BackupDirectoryPath, "*.sqlite", SearchOption.TopDirectoryOnly).Count()
+            : 0;
+
+    private static async Task CreateProbeDatabaseAsync(string databasePath)
+    {
+        await using SqliteConnection connection = new(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false,
+        }.ToString());
+        await connection.OpenAsync();
+        await ExecuteAsync(connection, "CREATE TABLE probe (id INTEGER PRIMARY KEY, value TEXT NOT NULL);");
+        await ExecuteAsync(connection, "INSERT INTO probe (id, value) VALUES (1, 'probe-value');");
+    }
+
+    private static SqliteConnection OpenReadOnly(string path)
+    {
+        SqliteConnection connection = new(new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        return connection;
+    }
+
+    private static async Task<HashSet<string>> ReadObjectsAsync(SqliteConnection connection, string type)
+    {
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type = $type AND name NOT LIKE 'sqlite_%' ORDER BY name;";
+        command.Parameters.AddWithValue("$type", type);
+        await using SqliteDataReader reader = await command.ExecuteReaderAsync();
+        HashSet<string> values = new(StringComparer.Ordinal);
+        while (await reader.ReadAsync())
+        {
+            values.Add(reader.GetString(0));
+        }
+
+        return values;
+    }
+
+    private static async Task<int> ScalarIntAsync(SqliteConnection connection, string sql)
+    {
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<int> CountHistoryRowsAsync(TemporarySqliteDatabase database)
+    {
+        await using DbContextScope scope = database.OpenContext(SqliteConnectionAccess.ReadOnly);
+        return await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;");
+    }
+
+    private static async Task<string> ReadStringAsync(SqliteConnection connection, string sql)
+    {
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        return (string)(await command.ExecuteScalarAsync() ?? throw new InvalidOperationException("Expected a value."));
+    }
+
+    private static async Task ExecuteAsync(SqliteConnection connection, string sql)
+    {
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+}
