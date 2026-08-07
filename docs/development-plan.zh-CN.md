@@ -1,7 +1,7 @@
 # CloudEmuera 可验证开发计划
 
 状态：Draft v0.1  
-更新日期：2026-08-05
+更新日期：2026-08-07
 依据：`requirements.zh-CN.md`、`design.zh-CN.md`
 
 ## 1. 计划目标
@@ -82,6 +82,8 @@ git diff --check
 
 通过条件：资产清单与磁盘内容校验一致；测试无网络运行；至少一个 v18 风格和一个当前 EM+EE 风格合成游戏被发现；缺失、被篡改或许可证信息不完整时验证必定失败。2026-08-04 已在开发容器中完成上述命令，fixture validator 报告 2 个 profile、14 个 payload 文件，`FixtureContract` 26 项测试通过。
 
+2026-08-07 复核：在 Linux 开发容器重跑上述验证，fixture validator 报告 2 个 fixture、18 个文件（P0-04/05 增补资产后由 14 个 payload 文件增长），`FixtureContract` 27 项通过；`scripts/check.sh`、`scripts/verify-third-party.sh` 与 `git diff --check` 均通过。
+
 ### P0-02 — 平台端口与 RuntimePaths（DONE）
 
 需求映射：SAVE-002、SAVE-011～014、Phase 0 运行时要求。
@@ -98,6 +100,8 @@ dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=RuntimePat
 
 2026-08-04 验证记录：在 Linux 开发容器（.NET 10 SDK）中完成 `RuntimePaths|Architecture` 专项测试 53 项、RuntimeAdapter 测试程序集全量 79 项（其中 FixtureContract 26 项）；覆盖生产 `TimeProviderRuntimeClock` deadline smoke test、手动时钟 deadline 累计 elapsed，以及 `sav/` 嵌套目录的创建、读取、写入、元数据和枚举一致性。架构测试直接检查程序集引用，禁止 `System.Drawing`、`System.Drawing.Common`、NAudio 和 `CloudEmuera.Application`，并检查公共 API 的字段、事件、构造函数和继承关系。`scripts/check.sh` 通过（Release 构建 0 警告/0 错误，后端与 Web 检查通过），`scripts/verify-runtime-fixtures.sh`、`scripts/verify-third-party.sh` 和 `git diff --check` 均通过。符号链接与 FIFO 逃逸用例在 Linux 上实际创建并拒绝；Windows/其他平台仍覆盖词法、规范路径和程序集架构约束，实际重解析点发布门保留给 Linux CI。
 
+2026-08-07 复核：`RuntimePaths|Architecture` 专项 48 项通过。2026-08-04 记录的 53 项为当时分类快照，P0-03～05 增补并重分类部分测试后该类计数变化；RuntimeAdapter 测试程序集全量当前为 137 项。
+
 ### P0-03 — 结构化 Console 与输入端口（DONE）
 
 需求映射：PLAY-001～003、PLAY-007～010。
@@ -113,6 +117,8 @@ dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=ConsoleCon
 通过条件：固定运行时调用生成稳定 transcript；sequence 严格递增；未知/危险 HTML 不能产生脚本或任意 URL；历史超过上限后仍能生成一致快照；过期 prompt 被拒绝。
 
 2026-08-04 验证记录：在 Linux 开发容器（.NET 10 SDK）中完成 `ConsoleContract` 专项 36 项、RuntimeAdapter 全量 115 项、Domain 4 项；覆盖并发 Emit 精确 `1..N`、估算字节与 receipt cache 上限、generator 分配和调用者 ID 拒绝、旧 ID 淘汰后的复用/迟到输入回归、rollover 后 snapshot+deltas 归约、HTML 注入 limits 与属性/URL 攻击、invalid/valid 输入并发、取消/超时/有效输入竞态及 timeout 后迟到输入。`./scripts/check.sh` 通过（Release 构建 0 警告/0 错误，Web typecheck、测试和 production build 通过），`./scripts/verify-third-party.sh` 与 `git diff --check` 通过。
+
+2026-08-07 复核：`ConsoleContract` 专项 37 项通过（2026-08-04 记录为 36 项，后续增补 1 项）。
 
 ### P0-04 — 无 UI Runtime 运行到 INPUT（DONE）
 
@@ -425,6 +431,6 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P0-06，形成首个跨进程端到端切片。
+1. 执行 P1-01，落地 SQLite 首版 schema 与迁移。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。
