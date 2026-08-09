@@ -15,6 +15,8 @@ public static class SqliteStorageConventions
     public const string WorkerLeasesTable = "worker_leases";
     public const string IdempotencyRecordsTable = "idempotency_records";
     public const string AuditEventsTable = "audit_events";
+    public const string AuthSessionsTable = "auth_sessions";
+    public const string InstanceStateTable = "instance_state";
 }
 
 public static class PersistenceLimits
@@ -44,6 +46,7 @@ public static class PersistenceLimits
     public const int ResourceIdMaxLength = 128;
     public const int RequestIdMaxLength = 128;
     public const int ReasonCodeMaxLength = 128;
+    public const int EmailMaxLength = 254;
 
     public const int DefaultBusyTimeoutMilliseconds = 5_000;
     public const int MinimumBusyTimeoutMilliseconds = 100;

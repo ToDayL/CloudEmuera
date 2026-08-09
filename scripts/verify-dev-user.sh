@@ -6,8 +6,8 @@ cd "$repo_root"
 
 source "$repo_root/scripts/lib/dev-env.sh"
 
-for service in api web; do
-  docker compose -f compose.dev.yaml run --rm --no-deps --build "$service" sh -euc '
+for service in api web e2e; do
+  docker compose --profile e2e -f compose.dev.yaml run --rm --no-deps --build "$service" sh -euc '
     actual_identity="$(id -u):$(id -g)"
     expected_identity="${CLOUDEMUERA_UID}:${CLOUDEMUERA_GID}"
     test "$actual_identity" = "$expected_identity"

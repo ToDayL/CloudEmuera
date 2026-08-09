@@ -8,6 +8,7 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
+import { CreateUserInput, CurrentUser, UpdateUserInput, useAuth } from "./auth";
 
 type IconName =
   | "archive"
@@ -83,6 +84,8 @@ function Logo() {
 }
 
 function AppShell({ children }: { children: ReactNode }) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   useEffect(() => setMobileOpen(false), [location.pathname]);
@@ -98,14 +101,15 @@ function AppShell({ children }: { children: ReactNode }) {
       <nav className="main-nav" aria-label="主导航">
         <p className="nav-caption">PLAY</p>
         {nav.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => isActive ? "active" : ""}><Icon name={item.icon}/><span>{item.label}</span></NavLink>)}
-        <p className="nav-caption second">SYSTEM</p>
+        {user?.role === "ADMIN" && <><p className="nav-caption second">SYSTEM</p>
         <NavLink to="/admin" className={({ isActive }) => isActive ? "active" : ""}><Icon name="server"/><span>运行状态</span></NavLink>
+        <NavLink to="/admin/users" className={({ isActive }) => isActive ? "active" : ""}><Icon name="user"/><span>用户管理</span></NavLink></>}
         <NavLink to="/settings" className={({ isActive }) => isActive ? "active" : ""}><Icon name="settings"/><span>设置</span></NavLink>
       </nav>
       <div className="sidebar-foot">
         <div className="quota-label"><span>运行中的 Session</span><strong>2 / 4</strong></div>
         <div className="quota-track"><span/></div>
-        <button className="profile-button"><span className="avatar">林</span><span><strong>林间</strong><small>玩家账户</small></span><Icon name="more"/></button>
+        <button className="profile-button" onClick={() => void logout().finally(() => navigate("/login", { replace: true }))}><span className="avatar">{user?.username.slice(0, 1) ?? "?"}</span><span><strong>{user?.username}</strong><small>{user?.role === "ADMIN" ? "管理员" : "玩家账户"} · 注销</small></span><Icon name="more"/></button>
       </div>
     </aside>
     {mobileOpen && <button className="sidebar-scrim" aria-label="关闭导航" onClick={() => setMobileOpen(false)}/>}
@@ -281,6 +285,77 @@ function AdminPage() {
   return <><PageHeader eyebrow="SYSTEM" title="运行状态" description="观察单机实例、Supervisor 与每个活动 Worker 的健康状态。" actions={<span className="updated"><i/>刚刚更新</span>}/><section className="health-grid"><article><span className="summary-icon mint"><Icon name="server"/></span><div><p>API</p><strong>健康</strong><small>12 ms · v0.1.0-dev</small></div></article><article><span className="summary-icon mint"><Icon name="settings"/></span><div><p>Supervisor</p><strong>健康</strong><small>最后心跳 2 秒前</small></div></article><article><span className="summary-icon blue"><Icon name="gamepad"/></span><div><p>Worker</p><strong>2 / 4</strong><small>50% 活动配额</small></div></article><article><span className="summary-icon peach"><Icon name="archive"/></span><div><p>数据目录</p><strong>18.6 GB</strong><small>剩余 74%</small></div></article></section><section className="panel"><div className="panel-heading"><div><h2>活动 Worker</h2><p>每个活动 Session 由一个独立进程持有。</p></div><button className="secondary-button">查看审计记录</button></div><div className="worker-table"><div className="worker-head"><span>Session / Worker</span><span>状态</span><span>CPU</span><span>内存</span><span>输出速率</span><span>心跳</span></div>{[{name:"周目二 · 港口存档",id:"wrk_8fd2 · epoch 3",cpu:"2.4%",mem:"286 MB",rate:"18 evt/s"},{name:"初见流程",id:"wrk_1ac4 · epoch 1",cpu:"0.8%",mem:"241 MB",rate:"0 evt/s"}].map((w,i)=><div className="worker-row" key={w.id}><span><strong>{w.name}</strong><small>{w.id}</small></span><span><Status state={i ? "DETACHED" : "RUNNING"}/></span><span>{w.cpu}</span><span>{w.mem}</span><span>{w.rate}</span><span>2 秒前</span></div>)}</div></section><div className="security-banner"><span><Icon name="check"/></span><p><strong>运行环境隔离检查已通过</strong><small>namespace、cgroup v2、seccomp 与私有文件系统边界均已启用。</small></p><button>查看详情</button></div></>;
 }
 
+const defaultUserInput: CreateUserInput = { username: "", email: "", temporaryPassword: "", role: "PLAYER" };
+
+function AdminUsersPage() {
+  const { listUsers, createUser, updateUser, resetUserPassword, user: actor } = useAuth();
+  const [users, setUsers] = useState<CurrentUser[]>([]);
+  const [form, setForm] = useState<CreateUserInput>(defaultUserInput);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<CurrentUser | null>(null);
+  const [profile, setProfile] = useState<UpdateUserInput>({});
+  const [resetting, setResetting] = useState<CurrentUser | null>(null);
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const loaded = await listUsers();
+      setUsers(loaded);
+    } catch { setError("无法加载用户列表。请确认当前账户仍有管理员权限。"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void refresh(); }, []);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setError(""); setCreating(true);
+    try {
+      const created = await createUser(form);
+      setUsers(current => [...current, created]);
+      setForm(defaultUserInput);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法创建用户。"); }
+    finally { setCreating(false); }
+  };
+  const changeStatus = async (target: CurrentUser) => {
+    setError("");
+    try {
+      const updated = await updateUser(target.id, target.stateVersion, { status: target.status === "ACTIVE" ? "DISABLED" : "ACTIVE" });
+      setUsers(current => current.map(item => item.id === updated.id ? updated : item));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法更新用户状态。"); }
+  };
+  const toggleRole = async (target: CurrentUser) => {
+    setError("");
+    try {
+      const updated = await updateUser(target.id, target.stateVersion, { role: target.role === "ADMIN" ? "PLAYER" : "ADMIN" });
+      setUsers(current => current.map(item => item.id === updated.id ? updated : item));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法更新用户角色。"); }
+  };
+  const submitReset = async (event: FormEvent) => {
+    event.preventDefault(); if (!resetting) return; setError("");
+    try { await resetUserPassword(resetting.id, resetting.stateVersion, temporaryPassword); setResetting(null); setTemporaryPassword(""); await refresh(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "无法重置密码。"); }
+  };
+  const submitProfile = async (event: FormEvent) => {
+    event.preventDefault(); if (!editing) return; setError("");
+    try {
+      const updated = await updateUser(editing.id, editing.stateVersion, profile);
+      setUsers(current => current.map(item => item.id === updated.id ? updated : item));
+      setEditing(null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法更新用户资料。"); }
+  };
+  return <>
+    <PageHeader eyebrow="IDENTITY" title="用户管理" description="创建本地账户，并管理账号状态、角色与临时密码。所有更改立即撤销该用户的现有登录会话。" />
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <section className="panel admin-users-panel"><div className="panel-heading"><div><h2>本地账户</h2><p>用户必须使用邮箱登录；新建与重置账户均需首次修改临时密码。</p></div><span className="tag">{users.length} 个账户</span></div>
+      {loading ? <p className="admin-empty" aria-busy="true">正在加载用户…</p> : <div className="admin-user-table"><div className="admin-user-head"><span>用户</span><span>角色</span><span>状态</span><span>版本</span><span>操作</span></div>{users.map(target => <div className="admin-user-row" key={target.id}><span><strong>{target.username}</strong><small>{target.email}</small></span><span><span className={`tag ${target.role === "ADMIN" ? "warning" : "success"}`}>{target.role === "ADMIN" ? "管理员" : "玩家"}</span></span><span>{target.status === "ACTIVE" ? (target.mustChangePassword ? "需改密" : "启用") : "已禁用"}</span><span>#{target.stateVersion}</span><span className="admin-row-actions"><button className="text-button" onClick={() => { setEditing(target); setProfile({ username: target.username, email: target.email }); }}>编辑</button><button className="text-button" onClick={() => void toggleRole(target)} disabled={target.id === actor?.id}>{target.role === "ADMIN" ? "降为玩家" : "设为管理员"}</button><button className="text-button" onClick={() => void changeStatus(target)} disabled={target.id === actor?.id}>{target.status === "ACTIVE" ? "禁用" : "启用"}</button><button className="text-button" onClick={() => { setResetting(target); setTemporaryPassword(""); }} disabled={target.id === actor?.id}>重置密码</button></span></div>)}</div>}
+    </section>
+    <section className="form-panel admin-create-form"><div><p className="eyebrow">NEW ACCOUNT</p><h2>创建用户</h2><p>临时密码仅用于本次安全传递；服务端不会在响应中返回它。</p></div><form onSubmit={submit}><label><span>用户名</span><input value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} autoComplete="off" required /></label><label><span>登录邮箱</span><input value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} type="email" autoComplete="off" required /></label><label><span>临时密码</span><input value={form.temporaryPassword} onChange={event => setForm({ ...form, temporaryPassword: event.target.value })} type="password" autoComplete="new-password" minLength={12} required /></label><label><span>角色</span><select value={form.role} onChange={event => setForm({ ...form, role: event.target.value as CurrentUser["role"] })}><option value="PLAYER">玩家</option><option value="ADMIN">管理员</option></select></label><div className="form-actions"><button className="primary-button" disabled={creating}>{creating ? "正在创建…" : "创建用户"}</button></div></form></section>
+    {resetting && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="reset-password-title"><button className="icon-button modal-close" aria-label="关闭" onClick={() => setResetting(null)}><Icon name="close"/></button><h2 id="reset-password-title">重置 {resetting.username} 的密码</h2><p className="modal-intro">此操作会立即注销该用户，并要求其在下次登录后修改临时密码。</p><form className="form-panel modal-form" onSubmit={submitReset}><label><span>新临时密码</span><input type="password" value={temporaryPassword} onChange={event => setTemporaryPassword(event.target.value)} autoComplete="new-password" minLength={12} required /></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setResetting(null)}>取消</button><button className="danger-button">确认重置</button></div></form></section></div>}
+    {editing && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title"><button className="icon-button modal-close" aria-label="关闭" onClick={() => setEditing(null)}><Icon name="close"/></button><h2 id="edit-user-title">编辑 {editing.username}</h2><p className="modal-intro">更改用户名或登录邮箱会立即撤销该账户的现有登录会话。</p><form className="form-panel modal-form" onSubmit={submitProfile}><label><span>用户名</span><input value={profile.username ?? ""} onChange={event => setProfile({ ...profile, username: event.target.value })} required /></label><label><span>登录邮箱</span><input value={profile.email ?? ""} onChange={event => setProfile({ ...profile, email: event.target.value })} type="email" required /></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setEditing(null)}>取消</button><button className="primary-button">保存资料</button></div></form></section></div>}
+  </>;
+}
+
 function SettingsPage() {
   return <><PageHeader eyebrow="PREFERENCES" title="设置" description="调整浏览器体验与账户偏好；运行时配置由每个游戏版本决定。"/><section className="panel settings-panel"><h2>外观与交互</h2><label className="setting-row"><span><strong>跟随游戏自动滚动</strong><small>仅当你已经靠近控制台底部时自动滚动</small></span><input type="checkbox" defaultChecked/></label><label className="setting-row"><span><strong>减少动态效果</strong><small>关闭界面过渡与加载动画</small></span><input type="checkbox"/></label><label className="setting-row"><span><strong>控制台文字大小</strong><small>仅影响游戏输出，不改变应用界面</small></span><select defaultValue="medium"><option value="small">较小</option><option value="medium">标准</option><option value="large">较大</option></select></label></section></>;
 }
@@ -291,22 +366,49 @@ function ConfirmDialog({ title, body, confirm, onCancel }: { title: string; body
 
 function LoginPage() {
   const navigate = useNavigate();
-  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">YOUR ERA, ANYWHERE</p><h1>故事不会因为<br/>离开浏览器而暂停。</h1><p>在桌面或手机上继续你的 Emuera 游戏。每段旅程独立运行，安全保存，随时重连。</p></div><small>CloudEmuera · Self-hosted runtime</small></section><section className="login-form-wrap"><form className="login-form" onSubmit={e => {e.preventDefault(); navigate("/games");}}><p className="eyebrow">WELCOME BACK</p><h2>登录 CloudEmuera</h2><p>访问你的游戏库与正在运行的 Session。</p><label><span>用户名</span><input defaultValue="linjian" autoComplete="username"/></label><label><span>密码</span><input type="password" defaultValue="prototype" autoComplete="current-password"/></label><div className="login-options"><label><input type="checkbox" defaultChecked/> 保持登录</label><button type="button">忘记密码？</button></div><button className="primary-button wide">登录 <Icon name="arrow"/></button><div className="demo-note"><Icon name="spark"/><span>原型模式：使用任意账户即可进入</span></div></form></section></main>;
+  const location = useLocation();
+  const { user, login } = useAuth();
+  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [rememberMe, setRememberMe] = useState(false); const [error, setError] = useState(""); const [pending, setPending] = useState(false);
+  if (user) return <Navigate to={user.mustChangePassword ? "/change-password" : "/games"} replace/>;
+  const returnTo = new URLSearchParams(location.search).get("returnTo");
+  const safeReturnTo = returnTo && /^\/(?!\/)/.test(returnTo) && !returnTo.includes("\\") ? returnTo : "/games";
+  const submit = async (event: FormEvent) => { event.preventDefault(); setError(""); setPending(true); try { const current = await login(email, password, rememberMe); navigate(current.mustChangePassword ? "/change-password" : safeReturnTo, { replace: true }); } catch (failure) { const error = failure as { code?: string; status?: number }; setError(error.code === "SERVICE_NOT_READY" ? "服务尚未完成数据库迁移或首次初始化。" : error.code === "TOO_MANY_ATTEMPTS" ? "登录尝试过于频繁，请稍后重试。" : error.status && error.status >= 500 ? "登录服务暂时不可用。" : "邮箱或密码不正确。"); } finally { setPending(false); } };
+  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">YOUR ERA, ANYWHERE</p><h1>故事不会因为<br/>离开浏览器而暂停。</h1><p>在桌面或手机上继续你的 Emuera 游戏。每段旅程独立运行，安全保存，随时重连。</p></div><small>CloudEmuera · Self-hosted runtime</small></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><p className="eyebrow">WELCOME BACK</p><h2>登录 CloudEmuera</h2><p>使用登录邮箱访问你的游戏库与正在运行的 Session。</p><label><span>登录邮箱</span><input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" required/></label><label><span>密码</span><input value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" required/></label><div className="login-options"><label><input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}/> 保持登录</label></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? "正在登录…" : <>登录 <Icon name="arrow"/></>}</button></form></section></main>;
 }
+
+function ChangePasswordPage() {
+  const { user, changePassword } = useAuth(); const navigate = useNavigate(); const [currentPassword, setCurrentPassword] = useState(""); const [newPassword, setNewPassword] = useState(""); const [confirmation, setConfirmation] = useState(""); const [error, setError] = useState(""); const [pending, setPending] = useState(false);
+  if (!user) return <Navigate to="/login" replace/>;
+  if (!user.mustChangePassword) return <Navigate to="/games" replace/>;
+  const submit = async (event: FormEvent) => { event.preventDefault(); setError(""); if (newPassword !== confirmation) { setError("两次输入的新密码不一致。"); return; } setPending(true); try { await changePassword(currentPassword, newPassword); navigate("/games", { replace: true }); } catch { setError("无法修改密码，请检查当前密码和新密码长度。"); } finally { setPending(false); } };
+  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">SECURITY REQUIRED</p><h1>先更新临时密码。</h1><p>这是首次登录或管理员重置密码后的必要步骤。</p></div></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><h2>修改密码</h2><label><span>当前密码</span><input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} autoComplete="current-password" required/></label><label><span>新密码</span><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" minLength={12} required/></label><label><span>确认新密码</span><input type="password" value={confirmation} onChange={e => setConfirmation(e.target.value)} autoComplete="new-password" minLength={12} required/></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? "正在保存…" : "保存新密码"}</button></form></section></main>;
+}
+
+function RequireAuthenticated({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth(); const location = useLocation();
+  if (loading) return <main className="auth-loading" aria-busy="true">正在检查登录状态…</main>;
+  if (!user) return <Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname)}`} replace/>;
+  if (user.mustChangePassword) return <Navigate to="/change-password" replace/>;
+  return <>{children}</>;
+}
+
+function RequireAdmin({ children }: { children: ReactNode }) { const { user } = useAuth(); return user?.role === "ADMIN" ? <>{children}</> : <Navigate to="/games" replace/>; }
 
 export function App() {
   return <Routes>
     <Route path="/login" element={<LoginPage/>}/>
-    <Route path="*" element={<AppShell><Routes>
+    <Route path="/change-password" element={<ChangePasswordPage/>}/>
+    <Route path="*" element={<RequireAuthenticated><AppShell><Routes>
       <Route path="/games" element={<GamesPage/>}/>
       <Route path="/games/:gameId" element={<GameDetailPage/>}/>
       <Route path="/sessions" element={<SessionsPage/>}/>
       <Route path="/sessions/new" element={<NewSessionPage/>}/>
       <Route path="/sessions/:sessionId" element={<ConsolePage/>}/>
       <Route path="/saves" element={<SavesPage/>}/>
-      <Route path="/admin" element={<AdminPage/>}/>
+      <Route path="/admin" element={<RequireAdmin><AdminPage/></RequireAdmin>}/>
+      <Route path="/admin/users" element={<RequireAdmin><AdminUsersPage/></RequireAdmin>}/>
       <Route path="/settings" element={<SettingsPage/>}/>
       <Route path="*" element={<Navigate to="/games" replace/>}/>
-    </Routes></AppShell>}/>
+    </Routes></AppShell></RequireAuthenticated>}/>
   </Routes>;
 }

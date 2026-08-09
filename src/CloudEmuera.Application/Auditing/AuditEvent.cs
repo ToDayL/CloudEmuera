@@ -1,0 +1,21 @@
+namespace CloudEmuera.Application.Auditing;
+
+public sealed class AuditEvent(string action, string resourceType, string resourceId, string result, string actorType, string? actorUserId = null, string? reasonCode = null, string? requestId = null)
+{
+    public string Action { get; } = action; public string ResourceType { get; } = resourceType; public string ResourceId { get; } = resourceId; public string Result { get; } = result; public string ActorType { get; } = actorType; public string? ActorUserId { get; } = actorUserId; public string? ReasonCode { get; } = reasonCode; public string? RequestId { get; } = requestId;
+}
+
+public static class AuditActions
+{
+    public const string SystemAdminBootstrapped = "SYSTEM_ADMIN_BOOTSTRAPPED";
+    public const string SystemAdminBootstrapFailed = "SYSTEM_ADMIN_BOOTSTRAP_FAILED";
+    public const string LoginSucceeded = "AUTH_LOGIN_SUCCEEDED";
+    public const string LoginFailed = "AUTH_LOGIN_FAILED";
+    public const string Logout = "AUTH_LOGOUT";
+    public const string PasswordChanged = "AUTH_PASSWORD_CHANGED";
+    public const string UserCreated = "USER_CREATED";
+    public const string UserProfileUpdated = "USER_PROFILE_UPDATED";
+    public const string UserRoleChanged = "USER_ROLE_CHANGED";
+    public const string UserStatusChanged = "USER_STATUS_CHANGED";
+    public const string PasswordReset = "USER_PASSWORD_RESET";
+}

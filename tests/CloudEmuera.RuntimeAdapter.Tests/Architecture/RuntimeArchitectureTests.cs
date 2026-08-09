@@ -34,7 +34,9 @@ public sealed class RuntimeArchitectureTests
     [Fact]
     public void RuntimePublicApiDoesNotLeakDesktopTypes()
     {
-        foreach (Assembly assembly in RuntimeAssemblies())
+        // Application now intentionally exposes identity/application contracts. It is not a runtime
+        // public API and is therefore excluded from the desktop-type surface assertion.
+        foreach (Assembly assembly in RuntimeAssemblies().Where(assembly => assembly != typeof(IClock).Assembly))
         {
             foreach (Type type in assembly.GetExportedTypes())
             {

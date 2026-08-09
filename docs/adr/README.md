@@ -4,6 +4,7 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 
 当前索引：
 
+- [ADR-0001：本地身份与 OIDC 重新评审触发条件](0001-local-identity-and-oidc-trigger.md)
 - [ADR-0003：ConsoleSnapshot 有界内存与恢复语义](0003-console-snapshot-bounds.md)
 - [ADR-0004：Runtime 富内容最小 allowlist](0004-runtime-rich-content-allowlist.md)
 - [ADR-0005：Emuera 固定源码直接集成](0005-vendored-emuera-source.md)

@@ -23,7 +23,12 @@ cp .env.example .env
 ./scripts/dev-up.sh
 ```
 
-启动脚本会读取宿主机的 `id -u` 和 `id -g`，以此构建 API 与 Web 开发镜像，并让所有容器进程使用相同 UID/GID。容器写入的 `node_modules`、`bin`、`obj` 和 lockfile 因而仍归当前开发用户所有。不要直接运行未注入 UID/GID 的裸 `docker compose up`；如需手工运行，请先执行：
+P1-02 身份功能已落地。首次使用前可在 `.env` 修改管理员 username 和登录 email；临时密码固定示例为
+`CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password`。全新数据库启动时只创建一次管理员，
+登录仅使用 email，首次登录必须修改临时密码。初始化完成后后续启动忽略这三个 bootstrap 变量。
+`.env` 不得提交 Git。
+
+启动脚本会先停止可能仍在运行的旧 API，通过独占 Migrator 为 `./data` 创建迁移前备份并升级到最新 schema，再启动 API/Web。它还会读取宿主机的 `id -u` 和 `id -g`，以此构建开发镜像，并让所有容器进程使用相同 UID/GID。容器写入的 `node_modules`、`bin`、`obj` 和 lockfile 因而仍归当前开发用户所有。不要直接运行未注入 UID/GID、未执行 Migrator 的裸 `docker compose up`；如需手工运行，请先执行：
 
 ```bash
 export CLOUDEMUERA_UID="$(id -u)"
@@ -55,6 +60,9 @@ docker compose -f compose.dev.yaml up --build
 ./scripts/check.sh
 ```
 
+身份 E2E/CI 必须使用测试脚本生成的临时 env、DataRoot、Compose project 和端口；它们不得读取或
+修改当前 checkout 的人工 `.env`、`./data`，也不得停止人工开发容器。
+
 如果选择原生开发，需要 .NET 10 SDK、Node.js 24 LTS 和 pnpm 11：
 
 ```bash
@@ -85,7 +93,11 @@ Emuera.EM+EE 以普通 Git 文件形式固定在 `src/CloudEmuera.EmueraRuntime/
 
 ## 项目状态
 
-开发环境、运行时 fixture、平台端口、结构化 Console、P0-05 持久 SessionRoot 和 P0-06 单 Session Worker/UDS IPC 已通过验证；固定上游 Emuera loader/interpreter 已在 Linux 无 UI Runtime 中跑通两套 INPUT 往返，真实独立 Worker 也完成注册、结构化输出、重复输入、短断重连、优雅停止和双进程隔离。下一步是 P1-01 SQLite 首版 schema 与迁移；租约、epoch 持久化、浏览器实时 API、身份和正式 UI 按 [开发计划](docs/development-plan.zh-CN.md) 分阶段实现。
+开发环境、Phase 0 运行时切分、P1-01 SQLite 首版 schema/迁移和 P1-02 本地身份、资源授权与
+审计已完成；固定上游 Emuera
+loader/interpreter 已在 Linux 无 UI Runtime 中跑通两套 INPUT 往返，真实独立 Worker 也完成
+注册、结构化输出、重复输入、短断重连、优雅停止和双进程隔离。下一步是 P1-03 安全游戏包摄取；
+后续功能按 [开发计划](docs/development-plan.zh-CN.md) 分阶段实现。
 
 ## 贡献与安全
 

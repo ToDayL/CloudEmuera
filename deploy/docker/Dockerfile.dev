@@ -32,6 +32,45 @@ ENV DOTNET_CLI_HOME=/home/cloudemuera \
 WORKDIR /workspace
 USER ${DEV_UID}:${DEV_GID}
 
+FROM mcr.microsoft.com/playwright:v1.62.1-noble AS e2e-dev
+
+ARG DEV_UID=1000
+ARG DEV_GID=1000
+ARG PNPM_VERSION=11.20.0
+
+RUN COREPACK_HOME=/var/cache/corepack corepack enable && \
+    COREPACK_HOME=/var/cache/corepack corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
+RUN set -eux; \
+    existing_group="$(getent group "${DEV_GID}" | cut -d: -f1 || true)"; \
+    if [ "${DEV_GID}" = "0" ]; then \
+        :; \
+    elif [ -z "${existing_group}" ]; then \
+        groupadd --gid "${DEV_GID}" cloudemuera; \
+    elif [ "${existing_group}" != "cloudemuera" ]; then \
+        groupmod --new-name cloudemuera "${existing_group}"; \
+    fi; \
+    existing_user="$(getent passwd "${DEV_UID}" | cut -d: -f1 || true)"; \
+    if [ "${DEV_UID}" = "0" ]; then \
+        :; \
+    elif [ -z "${existing_user}" ]; then \
+        useradd --uid "${DEV_UID}" --gid "${DEV_GID}" --create-home --shell /bin/bash cloudemuera; \
+    elif [ "${existing_user}" != "cloudemuera" ]; then \
+        usermod --login cloudemuera --home /home/cloudemuera --move-home "${existing_user}"; \
+        usermod --gid "${DEV_GID}" cloudemuera; \
+    fi; \
+    install -d -o "${DEV_UID}" -g "${DEV_GID}" /workspace /var/cache/pnpm /var/cache/corepack
+
+ENV COREPACK_HOME=/var/cache/corepack \
+    HOME=/home/cloudemuera \
+    PNPM_HOME=/var/cache/pnpm \
+    pnpm_config_store_dir=/var/cache/pnpm/store \
+    PATH=/var/cache/pnpm:$PATH \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+WORKDIR /workspace
+USER ${DEV_UID}:${DEV_GID}
+
 # Public ECR mirrors the Docker Official Image and avoids Docker Hub IPv6-only
 # resolution failures in some development networks.
 FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS web-dev

@@ -25,6 +25,10 @@ internal sealed class CloudEmueraUserConfiguration : IEntityTypeConfiguration<Cl
         builder.Property(user => user.LoginName).HasColumnName("login_name").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.LoginNameMaxLength).IsRequired();
         builder.Property(user => user.NormalizedLoginName).HasColumnName("normalized_login_name").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.LoginNameMaxLength).IsRequired();
         builder.Property(user => user.PasswordHash).HasColumnName("password_hash").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.PasswordHashMaxLength);
+        builder.Property(user => user.Email).HasColumnName("email").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.EmailMaxLength);
+        builder.Property(user => user.NormalizedEmail).HasColumnName("normalized_email").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.EmailMaxLength);
+        builder.Property(user => user.MustChangePassword).HasColumnName("must_change_password").HasColumnType("INTEGER").HasDefaultValue(false).IsRequired();
+        builder.Property(user => user.PasswordChangedAt).HasColumnName("password_changed_at").HasColumnType("INTEGER").HasConversion(SqliteValueConverters.NullableDateTimeOffsetToUnixMilliseconds, SqliteValueConverters.NullableDateTimeOffsetComparer);
         builder.Property(user => user.SecurityStamp).HasColumnName("security_stamp").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.SecurityStampMaxLength).IsRequired();
         builder.Property(user => user.Role).HasColumnName("role").HasColumnType("TEXT").HasConversion(SqliteValueConverters.CreateEnumConverter<UserRole>(), SqliteValueConverters.CreateEnumComparer<UserRole>()).IsRequired();
         builder.Property(user => user.Status).HasColumnName("status").HasColumnType("TEXT").HasConversion(SqliteValueConverters.CreateEnumConverter<UserStatus>(), SqliteValueConverters.CreateEnumComparer<UserStatus>()).IsRequired();
@@ -38,8 +42,6 @@ internal sealed class CloudEmueraUserConfiguration : IEntityTypeConfiguration<Cl
 
         IgnoreIdentityProperty(builder, user => user.UserName);
         IgnoreIdentityProperty(builder, user => user.NormalizedUserName);
-        IgnoreIdentityProperty(builder, user => user.Email);
-        IgnoreIdentityProperty(builder, user => user.NormalizedEmail);
         IgnoreIdentityProperty(builder, user => user.EmailConfirmed);
         IgnoreIdentityProperty(builder, user => user.ConcurrencyStamp);
         IgnoreIdentityProperty(builder, user => user.PhoneNumber);
@@ -48,6 +50,7 @@ internal sealed class CloudEmueraUserConfiguration : IEntityTypeConfiguration<Cl
         IgnoreIdentityProperty(builder, user => user.LockoutEnabled);
 
         builder.HasIndex(user => user.NormalizedLoginName).IsUnique().HasDatabaseName("ux_users_normalized_login_name");
+        builder.HasIndex(user => user.NormalizedEmail).IsUnique().HasDatabaseName("ux_users_normalized_email").HasFilter("normalized_email IS NOT NULL");
         builder.HasIndex(user => user.QuotaProfileId).HasDatabaseName("ix_users_quota_profile");
         builder.HasOne(user => user.QuotaProfile).WithMany(profile => profile.Users).HasForeignKey(user => user.QuotaProfileId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_users_quota_profiles");
     }

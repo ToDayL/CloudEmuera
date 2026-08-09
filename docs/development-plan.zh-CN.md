@@ -1,7 +1,7 @@
 # CloudEmuera 可验证开发计划
 
 状态：Draft v0.1  
-更新日期：2026-08-07
+更新日期：2026-08-08
 依据：`requirements.zh-CN.md`、`design.zh-CN.md`
 
 ## 1. 计划目标
@@ -260,21 +260,49 @@ timeout、独立 connection 约束和 epoch fencing。Linux 数据库/锁/备份
 `./scripts/check.sh`、`./scripts/verify-dev-user.sh`、`./scripts/verify-third-party.sh` 和
 `git diff --check` 均通过。
 
-### P1-02 — 本地身份、资源授权与审计（NEXT）
+### P1-02 — 本地身份、资源授权与审计（DONE）
 
-需求映射：AUTH-001～005、OPS-005、AC-004。
+需求映射：AUTH-001～006、OPS-004/005、SEC-009、NFR-011/015～018、AC-004。
 
-交付物：本地账户、密码哈希、cookie/session 安全配置、玩家/管理员策略、资源所有权授权器、敏感操作审计；`ADR-001` 记录未来 OIDC 触发条件。
+详细设计：[`tasks/P1-02-local-identity-authorization-audit-plan.zh-CN.md`](tasks/P1-02-local-identity-authorization-audit-plan.zh-CN.md)。
+
+交付物：本地账户、email-only 登录、可撤销 Cookie session、密码哈希与锁定、CSRF/Data
+Protection、玩家/管理员策略、资源所有权授权器、敏感操作审计、仅未初始化实例从 `.env`
+原子创建首个管理员并强制首次改密，以及接入真实身份的登录和管理员用户页面；`ADR-0001`
+记录未来 OIDC 触发条件。自动化校验使用独立临时 env/DataRoot/Compose project/端口，不读取或
+修改同一 checkout 的人工 `.env`、`./data` 或开发容器。
 
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Api.IntegrationTests --filter 'Category=Authentication|Category=Authorization'
+./scripts/test-identity.sh --suite api
+./scripts/test-identity-e2e.sh
 ```
 
-通过条件：匿名访问受保护端点返回 401；跨用户读取/修改返回 403 或不可枚举的 404；管理员操作写入审计；WebSocket 升级和恢复重新鉴权；日志不包含密码或输入全文。
+通过条件：并发启动最多原子创建一个 bootstrap 管理员，完成后永久忽略 bootstrap 变量且不会因
+管理员缺失重跑；登录只接受 email，首次登录强制改密；人工与自动化环境隔离；
+匿名访问受保护端点返回 401；跨用户私有资源返回不可枚举的 404；管理员只获得显式
+策略能力且操作写入审计；注销、禁用、改密和角色变化会撤销旧会话；Cookie 写请求具备 CSRF
+防护；WebSocket 升级/恢复授权组件每次重新鉴权，真实协议由 P1-08 接线；日志不包含密码、
+Cookie、session ID 或输入全文；现有前端完成真实登录、强制改密和注销闭环。
 
-### P1-03 — 安全游戏包摄取（TODO）
+实施记录（2026-08-09）：已交付真实 email-only Cookie 登录、首次改密、注销、管理员用户
+创建/资料编辑/启停/角色调整/临时密码重置页面，以及服务端 CSRF、会话撤销、审计与资源授权
+边界。`IdentityApiContractTests` 覆盖匿名拒绝、CSRF、首次改密、管理员创建、非管理员管理端点
+拒绝和禁用即时撤销；`e2e/tests/identity.spec.ts` 覆盖 bootstrap 管理员和玩家的浏览器闭环。
+验证入口保持隔离的临时 env、DataRoot、Compose project 和动态端口。
+
+复验与加固（2026-08-09）：修复 COMPLETED 实例在移除/改变 bootstrap 变量后重启错误降级、
+授权 action/kind/descriptor 不一致仍可能放行、审计缺少 HTTP request correlation 等问题；补齐适配
+既有 `users` 表的 ASP.NET Core Identity store、分批且单轮有界的 auth session 清理、Data
+Protection owner/type/link/mode 校验。新增 P1-01 带数据升级、并发最后管理员、审计写失败回滚、
+统一认证失败、登录限流、Cookie 跨 host 重建、logout 重放、WebSocket Origin/resume、key ring
+恶意路径和桌面/移动 API 重启 E2E。`./scripts/check.sh` 实际通过 262 个 .NET 测试、6 个 Web
+测试、类型检查和 production build，Release 构建为 0 warning/0 error。
+开发启动脚本同时改为在 API 启动前独占运行 Migrator；登录页会区分未迁移/未初始化、限流、服务
+故障与真实凭据错误，避免把 `503 SERVICE_NOT_READY` 误报为邮箱或密码错误。
+
+### P1-03 — 安全游戏包摄取（NEXT）
 
 需求映射：GAME-001～003、GAME-007、AC-010。
 
@@ -454,6 +482,6 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P1-02，落地本地身份、资源授权与审计。
+1. 执行 P1-03，落地安全游戏包摄取、隔离暂存与恶意归档防御。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

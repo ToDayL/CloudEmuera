@@ -26,9 +26,11 @@ public sealed class InitialMigrationTests
             [
                 "__EFMigrationsLock",
                 "audit_events",
+                "auth_sessions",
                 "game_versions",
                 "games",
                 "idempotency_records",
+                "instance_state",
                 "quota_profiles",
                 "schema_migrations",
                 "sessions",
@@ -43,7 +45,7 @@ public sealed class InitialMigrationTests
         Assert.DoesNotContain(tables, name => name.StartsWith("AspNet", StringComparison.Ordinal));
         Assert.DoesNotContain(tables, name => name.Contains("save", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(tables, name => name == "__EFMigrationsHistory");
-        Assert.Equal(1, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(3, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -67,7 +69,32 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(1, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(3, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task PopulatedP101Database_UpgradesToIdentitySchemaAndPreservesLegacyUser()
+    {
+        using TemporarySqliteDatabase database = new();
+        await using (DbContextScope initial = database.OpenContext(SqliteConnectionAccess.ReadWriteCreate))
+        {
+            await initial.Context.Database.MigrateAsync("20260807071428_InitialMetadata");
+            await ExecuteAsync(initial.Connection, "INSERT INTO quota_profiles (id, name, max_active_sessions, max_game_package_bytes, max_session_bytes, max_output_bytes_per_second, created_at, updated_at, state_version) VALUES ('qtp_legacy', 'Legacy', 1, 1024, 2048, 512, 1, 1, 0);");
+            await ExecuteAsync(initial.Connection, "INSERT INTO users (id, login_name, normalized_login_name, role, status, quota_profile_id, preferences_json, created_at, updated_at, state_version, password_hash, security_stamp, lockout_end, access_failed_count) VALUES ('usr_legacy', 'legacy', 'LEGACY', 'PLAYER', 'ACTIVE', 'qtp_legacy', '{}', 1, 1, 0, NULL, 'legacy-security-stamp', NULL, 0);");
+        }
+
+        MigrationResult result = await database.MigrateAsync();
+
+        Assert.True(result.Succeeded, result.ErrorCode);
+        Assert.NotNull(result.BackupPath);
+        await using DbContextScope verify = database.OpenContext();
+        CloudEmueraUser user = await verify.Context.Users.SingleAsync(value => value.Id == "usr_legacy");
+        Assert.Null(user.Email);
+        Assert.Null(user.PasswordChangedAt);
+        Assert.False(user.MustChangePassword);
+        Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
+        Assert.Equal(3, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -148,7 +175,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(2, await CountHistoryRowsAsync(database));
+        Assert.Equal(4, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>

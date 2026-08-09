@@ -17,6 +17,10 @@ public sealed class CloudEmueraUser : IdentityUser<string>
 
     public string NormalizedLoginName { get; set; } = string.Empty;
 
+    public bool MustChangePassword { get; set; }
+
+    public DateTimeOffset? PasswordChangedAt { get; set; }
+
     public UserRole Role { get; set; }
 
     public UserStatus Status { get; set; }

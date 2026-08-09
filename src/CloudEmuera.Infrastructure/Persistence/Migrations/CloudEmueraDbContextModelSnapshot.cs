@@ -116,6 +116,73 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.AuthSessionRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<long>("AbsoluteExpiresAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("absolute_expires_at");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created_at");
+
+                    b.Property<long>("IdleExpiresAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("idle_expires_at");
+
+                    b.Property<bool>("IsPersistent")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("is_persistent");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<string>("RevokeReason")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("revoke_reason");
+
+                    b.Property<long?>("RevokedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("SecurityStamp")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("security_stamp");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_auth_sessions");
+
+                    b.HasIndex("IdleExpiresAt")
+                        .HasDatabaseName("ix_auth_sessions_idle_expiry");
+
+                    b.HasIndex("UserId", "RevokedAt", "AbsoluteExpiresAt")
+                        .HasDatabaseName("ix_auth_sessions_user_active");
+
+                    b.ToTable("auth_sessions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_auth_sessions_id", "substr(id, 1, 6) = 'auths_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_auth_sessions_revocation", "(revoked_at IS NULL AND revoke_reason IS NULL) OR (revoked_at IS NOT NULL AND revoke_reason IS NOT NULL AND revoked_at >= created_at)");
+
+                            t.HasCheckConstraint("ck_auth_sessions_times", "created_at >= 0 AND created_at <= last_seen_at AND last_seen_at <= idle_expires_at AND idle_expires_at <= absolute_expires_at");
+                        });
+                });
+
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", b =>
                 {
                     b.Property<string>("Id")
@@ -133,6 +200,11 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("Email")
+                        .HasMaxLength(254)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email");
+
                     b.Property<long?>("LockoutEnd")
                         .HasColumnType("INTEGER")
                         .HasColumnName("lockout_end");
@@ -143,11 +215,26 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("login_name");
 
+                    b.Property<bool>("MustChangePassword")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("must_change_password");
+
+                    b.Property<string>("NormalizedEmail")
+                        .HasMaxLength(254)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("normalized_email");
+
                     b.Property<string>("NormalizedLoginName")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("TEXT")
                         .HasColumnName("normalized_login_name");
+
+                    b.Property<long?>("PasswordChangedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("password_changed_at");
 
                     b.Property<string>("PasswordHash")
                         .HasMaxLength(512)
@@ -196,6 +283,11 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_users");
+
+                    b.HasIndex("NormalizedEmail")
+                        .IsUnique()
+                        .HasDatabaseName("ux_users_normalized_email")
+                        .HasFilter("normalized_email IS NOT NULL");
 
                     b.HasIndex("NormalizedLoginName")
                         .IsUnique()
@@ -496,6 +588,51 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_idempotency_scope", "length(scope) BETWEEN 1 AND 100 AND instr(scope, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_idempotency_time_order", "created_at >= 0 AND expires_at > created_at");
+                        });
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.InstanceStateRow", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BootstrapStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("bootstrap_status");
+
+                    b.Property<string>("InitialAdminUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("initial_admin_user_id");
+
+                    b.Property<long?>("InitializedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("initialized_at");
+
+                    b.Property<int>("StateVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0)
+                        .HasColumnName("state_version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_instance_state");
+
+                    b.HasIndex("InitialAdminUserId")
+                        .HasDatabaseName("ix_instance_state_initial_admin");
+
+                    b.ToTable("instance_state", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_instance_state_id", "id = 1");
+
+                            t.HasCheckConstraint("ck_instance_state_shape", "(bootstrap_status = 'BOOTSTRAP_REQUIRED' AND initialized_at IS NULL AND initial_admin_user_id IS NULL) OR (bootstrap_status = 'COMPLETED' AND initialized_at IS NOT NULL AND initial_admin_user_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_instance_state_status", "bootstrap_status IN ('BOOTSTRAP_REQUIRED', 'COMPLETED')");
+
+                            t.HasCheckConstraint("ck_instance_state_version", "state_version >= 0");
                         });
                 });
 
@@ -800,6 +937,18 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.AuthSessionRow", b =>
+                {
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_auth_sessions_user");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", b =>
                 {
                     b.HasOne("CloudEmuera.Infrastructure.Persistence.QuotaProfileRow", "QuotaProfile")
@@ -855,6 +1004,15 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_idempotency_records_actor_user");
 
                     b.Navigation("ActorUser");
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.InstanceStateRow", b =>
+                {
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", null)
+                        .WithMany()
+                        .HasForeignKey("InitialAdminUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_instance_state_initial_admin");
                 });
 
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.SessionRow", b =>

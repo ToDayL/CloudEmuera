@@ -18,11 +18,14 @@ Phase 0 运行时切分与兼容性证明已经完成，当前进入 Phase 1 单
 - Runtime fixture、平台端口和结构化 Console/Input；
 - 原生双布局存档与持久私有 SessionRoot；
 - 单 Session Worker/Supervisor UDS IPC 冒烟链路；
+- SQLite 首版 schema、独占 Migrator、迁移备份与约束测试；
+- React 游戏库、Session、控制台、存档和管理页面展示版；
 - Apache-2.0 项目许可证和第三方许可声明。
 
-身份、游戏包、持久 Worker 管理、浏览器实时协议、正式存档管理和正式 UI 仍待实现；P0-06
-已提供最小的单 Session Worker/Supervisor UDS IPC 冒烟链路。Phase 1 首个任务是 P1-01
-SQLite 首版 schema 与迁移。仓库目前不能安全运行不受信任的游戏包。
+游戏包、持久 Worker 管理、浏览器实时协议、正式存档管理和正式 UI 仍待实现；P0-06
+已提供最小的单 Session Worker/Supervisor UDS IPC 冒烟链路，P1-01 已完成首版 SQLite
+持久化基线，P1-02 已完成本地身份、资源授权与审计。当前任务是 P1-03 安全游戏包摄取。
+仓库目前仍不能安全运行不受信任的游戏包。
 
 ## 已确认技术方案
 
@@ -183,8 +186,9 @@ Emuera.EM+EE 以普通 Git 文件位于 `src/CloudEmuera.EmueraRuntime/Upstream`
 
 ## 开发顺序
 
-按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0 已完成；当前首要工作是
-P1-01：建立 SQLite 首版 schema、数据库约束、独占 Migrator、迁移前备份和失败回滚验证。
+按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0、P1-01 和 P1-02 已完成；当前首要
+工作是 P1-03：安全游戏包摄取、隔离暂存、流式配额与恶意归档防御。P1-02 自动化身份校验必须
+继续与人工 `.env`、`./data` 和 Compose project 隔离。
 
 涉及待决事项时，在实现前创建 ADR，至少记录背景、选项、决策、后果和验证方案。不要以临时代码默默固化产品或安全决策。
 

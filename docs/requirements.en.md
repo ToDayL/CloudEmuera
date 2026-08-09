@@ -103,6 +103,7 @@ Session 1 ── 1 private SessionRoot
 - **AUTH-003**: A user must not enumerate, read, control, or delete another user's private Sessions or saves.
 - **AUTH-004**: Administrative force-stop and resource mutation operations must create audit records.
 - **AUTH-005**: The WebSocket endpoint must revalidate identity and access when upgrading a connection and resuming a Session.
+- **AUTH-006**: Only while its durable state is uninitialized, a fresh instance must atomically create its first administrator from deployment-provided username, email, and temporary password values. Login must accept email only, and the first login must require changing the temporary password. Concurrent startup may create the administrator at most once. Once completed, the instance must permanently ignore bootstrap configuration and must not rerun bootstrap because administrators are absent, disabled, or have lost their passwords.
 
 ### 6.2 Game package and ERB management
 
@@ -423,6 +424,7 @@ Session management must copy every valid regular file and directory in the publi
 - **NFR-012**: The Chinese and English requirements must retain identical requirement identifiers. Changes to one document must trigger a parity check against the other.
 - **NFR-013**: Every message protocol must include a version field and be forward-compatible with unknown optional fields.
 - **NFR-014**: Merging upstream EM+EE changes must generate a change report and run both the v18 and current EM+EE suites.
+- **NFR-018**: Automated identity checks running in the same checkout must not read or modify the manual `.env`, `./data`, or Compose project. They must use an explicit temporary env file, an isolated DataRoot, a unique project name, and isolated ports.
 
 ### 13.4 Accessibility and client compatibility
 
@@ -490,14 +492,15 @@ Session management must copy every valid regular file and directory in the publi
 
 ## 17. Open Questions
 
-1. Will the MVP use local accounts or an OIDC/OAuth identity provider?
-2. What are the default per-user active runtime Session and game/save storage quotas?
-3. Does multi-tab access need an explicit controller lease, or is first-valid-input sufficient?
-4. What compatibility level will the MVP promise for Emuera HTML, sprites, CBG, and audio?
-5. May administrators configure a maximum Session lifetime, or only stop Sessions for resource and security reasons?
-6. Do games and saves need a portable cross-server import/export format?
-7. Which representative v18 and EM+EE games can legally be used in automated compatibility tests?
-8. Must bundled fonts be retained, and how will font and game-asset licenses be handled?
+Identity is confirmed as local accounts with email-only login, revocable Cookie Sessions, and a first-administrator bootstrap that reads `.env` only for an uninitialized instance. ADR-0001 records the triggers for reconsidering OIDC. Remaining open questions:
+
+1. What are the default per-user active runtime Session and game/save storage quotas?
+2. Does multi-tab access need an explicit controller lease, or is first-valid-input sufficient?
+3. What compatibility level will the MVP promise for Emuera HTML, sprites, CBG, and audio?
+4. May administrators configure a maximum Session lifetime, or only stop Sessions for resource and security reasons?
+5. Do games and saves need a portable cross-server import/export format?
+6. Which representative v18 and EM+EE games can legally be used in automated compatibility tests?
+7. Must bundled fonts be retained, and how will font and game-asset licenses be handled?
 
 ## 18. Primary Risks
 

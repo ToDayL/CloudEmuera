@@ -33,7 +33,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 
 | 事项 | MVP 暂定方案 | 可替换边界 |
 | --- | --- | --- |
-| 身份认证 | 本地账户，使用安全的密码哈希和 HttpOnly Session Cookie | `IIdentityProvider` 可替换为单一 OIDC Provider |
+| 身份认证 | 本地账户、email-only 登录、可撤销 HttpOnly Cookie Session；未初始化实例从 `.env` 原子 bootstrap 首个管理员 | `IIdentityProvider` 可替换为单一 OIDC Provider；bootstrap 完成后永久忽略首次配置且不开放注册 |
 | 多客户端输入 | 同一 `promptId` 的第一个有效输入生效 | 后续可在 Realtime Gateway 前增加控制权租约 |
 | Session 空闲 | 断连不自动关闭，持续占用活动配额 | 管理员策略只能通过显式配置启用 |
 | 存档删除 | 无活动 Worker 时显式确认后直接删除 | 历史恢复由 SessionRoot 外部备份提供 |
@@ -366,6 +366,8 @@ state_version INTEGER NOT NULL DEFAULT 0
 id TEXT PK
 login_name TEXT UNIQUE NOT NULL
 normalized_login_name TEXT UNIQUE NOT NULL
+email TEXT NULL
+normalized_email TEXT NULL
 password_hash TEXT NULL
 security_stamp TEXT NOT NULL
 role TEXT NOT NULL                 -- PLAYER | ADMIN
@@ -380,6 +382,43 @@ state_version INTEGER NOT NULL DEFAULT 0
 ```
 
 该表通过自定义 EF Core 映射作为 ASP.NET Core Identity 的用户存储；若后续启用多角色、外部登录、恢复令牌或 MFA，再增加标准化的 `user_roles`、`user_logins`、`user_tokens` 和 `user_claims` 表，不把认证票据明文写入 `users`。
+
+P1-02 通过新 migration 为 `users` 增加 `email`、`normalized_email`、`must_change_password` 和
+`password_changed_at`；email 是唯一登录凭据，login_name 只作为唯一显示/管理标识。不得修改
+P1-01 的 `InitialMetadata` migration。
+
+#### instance_state
+
+```text
+id INTEGER PK                         -- 固定为 1
+bootstrap_status TEXT NOT NULL        -- BOOTSTRAP_REQUIRED | COMPLETED
+initialized_at INTEGER NULL
+initial_admin_user_id TEXT NULL FK users
+state_version INTEGER NOT NULL DEFAULT 0
+```
+
+该单例是实例是否曾初始化的权威事实。BOOTSTRAP_REQUIRED 时，API 从部署环境读取管理员
+username、email 和临时 password，在一个 SQLite 写事务中创建默认 quota、首个管理员、审计与
+完成标记，并设置首次登录强制改密。完成状态不可逆，后续启动忽略 bootstrap 变量，不根据当前
+管理员数量重新推导；管理员全部缺失、禁用或遗失密码时也不得重跑。
+
+#### auth_sessions
+
+```text
+id TEXT PK
+user_id TEXT NOT NULL FK users
+security_stamp TEXT NOT NULL
+created_at INTEGER NOT NULL
+last_seen_at INTEGER NOT NULL
+idle_expires_at INTEGER NOT NULL
+absolute_expires_at INTEGER NOT NULL
+revoked_at INTEGER NULL
+revoke_reason TEXT NULL
+is_persistent INTEGER NOT NULL
+```
+
+浏览器 Cookie 包含受 Data Protection 保护的最小 claims 和随机 session ID；每次认证都复核
+该表与 User 当前状态。注销、禁用、角色或密码变化会撤销对应记录，API 重启不丢失有效会话。
 
 #### games
 
@@ -744,7 +783,7 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 
 | 方法与路径 | 用途 | 权限/说明 |
 | --- | --- | --- |
-| `POST /auth/login` | 本地登录 | 速率限制、防暴力破解 |
+| `POST /auth/login` | 以 email/password 本地登录 | 不接受 username；速率限制、防暴力破解 |
 | `POST /auth/logout` | 注销当前会话 | 使服务端会话失效 |
 | `GET /games` | 列出可见游戏 | 私有所有者或共享游戏 |
 | `POST /games` | 创建 Game | 玩家 |
@@ -878,6 +917,12 @@ CloudEmuera 不包装每次原生保存，不改变上游 `FileMode`、flush、�
 - 资源响应使用清单中声明的 MIME、`nosniff` 和下载/内联白名单；
 - 登录、上传、搜索、创建 Session 和输入分别实施速率限制。
 
+全新实例不开放 `/setup` 或注册 API。仅当持久状态为 BOOTSTRAP_REQUIRED 时，API 从 `.env`
+读取 `CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME`、`CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL` 和
+`CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD`，在一个 SQLite 写事务内提交管理员、默认 quota、完成
+标记和审计；并发启动最多一个成功。管理员使用 email 登录且首次登录强制改密。COMPLETED 后
+不再读取或验证这些变量；“没有 ACTIVE ADMIN”不是重新 bootstrap 的条件。
+
 ### 12.4 路径安全
 
 所有用户路径先按 `/` 解析为逻辑相对路径，拒绝空字节、绝对路径、盘符、父级段和平台保留名。最终访问使用基于目录句柄的逐段打开，并禁止跟随符号链接；只做字符串前缀比较不构成安全校验。SessionRoot 复制过程没有链接例外，遇到任何链接或特殊文件都失败。文件名同时执行 Unicode 规范化和大小写碰撞检查。
@@ -981,7 +1026,8 @@ pending clientMessageId → result
 
 配置组包括：
 
-- 身份提供商与会话 Cookie；
+- 身份提供商、email-only 登录、会话 Cookie、仅首次读取的 bootstrap 管理员 username/email/
+  password，以及允许的 WebSocket Origin；
 - 数据路径、数据库参数和备份窗口；P1-01 的数据库 CLI 与布局如下：
 
   ```bash
@@ -1001,6 +1047,11 @@ pending clientMessageId → result
 - 存档文件大小、停止态管理操作和 SessionRoot 备份保留；
 - Runtime 基线、兼容配置和禁止能力；
 - 日志级别、轮转、指标和审计保留。
+
+人工开发使用仓库根 `.env` 与 `./data`。自动化身份测试必须生成独立临时 env/DataRoot，使用唯一
+Compose project 和动态端口，并通过 `--env-file` 与 API service 的显式 environment mapping 传入
+bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开发容器。所有示例均使用
+`CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password`，应用不提供密码文件替代协议。
 
 启动时完成配置模式校验；不安全组合或单位错误直接失败，并给出不含密钥的明确诊断。
 
@@ -1076,7 +1127,7 @@ pending clientMessageId → result
 
 以下事项在进入对应实现前必须形成 ADR：
 
-1. `ADR-001`：从本地账户切换到单一 OIDC Provider 的触发条件和迁移方式；
+1. `ADR-0001`：从本地账户切换到单一 OIDC Provider 的触发条件和迁移方式；
 2. `ADR-002`：所选 Linux namespace/cgroup/seccomp 沙箱在目标发行版和 Docker 配置下的能力验证、降级与拒绝就绪条件；
 3. `ADR-003`：ConsoleSnapshot 的序列化格式、大小上限和压缩策略；
 4. `ADR-004`：Emuera HTML、Sprite、CBG 和音频的 MVP 允许列表；

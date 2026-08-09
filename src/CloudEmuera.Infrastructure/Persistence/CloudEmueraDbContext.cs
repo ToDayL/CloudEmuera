@@ -20,6 +20,8 @@ public sealed class CloudEmueraDbContext(DbContextOptions<CloudEmueraDbContext> 
     public DbSet<IdempotencyRecordRow> IdempotencyRecords => Set<IdempotencyRecordRow>();
 
     public DbSet<AuditEventRow> AuditEvents => Set<AuditEventRow>();
+    public DbSet<AuthSessionRow> AuthSessions => Set<AuthSessionRow>();
+    public DbSet<InstanceStateRow> InstanceStates => Set<InstanceStateRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

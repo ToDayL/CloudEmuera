@@ -27,6 +27,9 @@ services:
       CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
       CloudEmuera__DataPath: /data
       CLOUDEMUERA_DEV_CONTAINER: "1"
+      CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME-}"
+      CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL-}"
+      CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD-}"
     ports:
       - "${CLOUDEMUERA_HTTP_PORT:-28647}:28647"
     volumes:
@@ -65,6 +68,33 @@ services:
       - corepack-cache-v2:/var/cache/corepack
     depends_on:
       - api
+    init: true
+
+  e2e:
+    profiles: ["e2e"]
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.dev
+      target: e2e-dev
+      args:
+        DEV_UID: "${CLOUDEMUERA_UID:-1000}"
+        DEV_GID: "${CLOUDEMUERA_GID:-1000}"
+        PNPM_VERSION: "11.20.0"
+    image: cloudemuera/e2e-dev:${CLOUDEMUERA_UID:-1000}-${CLOUDEMUERA_GID:-1000}
+    user: "${CLOUDEMUERA_UID:-1000}:${CLOUDEMUERA_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      COREPACK_HOME: /var/cache/corepack
+      HOME: /home/cloudemuera
+      PNPM_HOME: /var/cache/pnpm
+      pnpm_config_store_dir: /var/cache/pnpm/store
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
+      CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
+    volumes:
+      - .:/workspace
+      - pnpm-store-v2:/var/cache/pnpm
+      - corepack-cache-v2:/var/cache/corepack
     init: true
 
 volumes:
