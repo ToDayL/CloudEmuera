@@ -287,7 +287,12 @@ function UploadDialog({ onClose, games, initialGameId }: { onClose: () => void; 
     setError("");
     void ingestGamePackage(file)
       .then(result => { setIngestion(result); setStep("ingested"); })
-      .catch(err => { setError(err instanceof Error ? err.message : "上传失败。"); setStep("error"); });
+      .catch(err => {
+        // A transport-level failure (e.g. "Failed to fetch") usually means the
+        // server aborted the body: the archive exceeded the server/network limit.
+        setError(err instanceof ApiError ? err.message : "网络错误：上传未能完成。请确认文件未超过大小限制，并检查网络后重试。");
+        setStep("error");
+      });
   };
 
   const bind = async (event: FormEvent) => {

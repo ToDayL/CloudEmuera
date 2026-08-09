@@ -203,6 +203,28 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
+  it("reports a friendly message when the package upload fails at the transport level", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/games") return Promise.resolve(jsonResponse({ items: [] }));
+      if (url === "/api/v1/auth/csrf") return Promise.resolve(jsonResponse({ token: "csrf-token" }));
+      if (url === "/api/v1/game-package-ingestions") return Promise.reject(new TypeError("Failed to fetch"));
+      return Promise.resolve(jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAt("/games");
+    expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "导入游戏" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "导入游戏包" });
+    const fileInput = dialog.querySelector('input[type="file"]');
+    fireEvent.change(fileInput as HTMLInputElement, { target: { files: [new File(["x".repeat(1024)], "large.zip", { type: "application/zip" })] } });
+
+    expect(await within(dialog).findByText(/网络错误：上传未能完成/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "重新选择文件" })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("shows reconnect state without closing the session", () => {
     renderAt("/sessions/sess-world");
 

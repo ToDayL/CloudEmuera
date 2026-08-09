@@ -19,6 +19,18 @@ NFR-011/013、AC-008～010/014。
 [`ADR-0008`](../adr/0008-secure-zip-ingestion-policy.md)；SessionRoot 所有权见
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)。
 
+## 0.4 2026-08-10 大包上传（>30MB）请求体上限修复
+
+- 现象：30+MB ZIP 上传在浏览器端报 “Failed to fetch”。
+- 原因：Kestrel 默认 `MaxRequestBodySize` 为 30,000,000 字节（30MB），API 未调整；超过时
+  Kestrel 在应用读取请求体前中断连接，浏览器表现为网络错误。
+- 修复：`POST /api/v1/game-package-ingestions` 通过
+  `IHttpMaxRequestBodySizeFeature.MaxRequestBodySize = null` 放开 Kestrel 上限；真正的
+  大小限制仍由 `GamePackageIngestionService.ReceiveAsync` 按配额（默认 2GiB）流式强制。
+  前端上传失败文案区分服务端错误与传输层错误。
+- 验证：隔离真实 Kestrel 环境上传 32,515,891 字节（~31MB）ZIP 返回 201；Web 单测覆盖
+  传输层失败提示。
+
 ## 0.3 2026-08-10 单根目录展平、固定名大小写别名与真实游戏兼容
 
 - 摄取展平：`GamePackageIngestionService` 检测“唯一顶层目录”分布（如

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.Features;
 using System.Security.Claims;
 using CloudEmuera.Api.Bootstrap;
 using CloudEmuera.Api.Security;
@@ -276,6 +277,11 @@ adminGames.MapPost("/{id}/diagnostics/{diagnosticId}:override", async (string id
 
 app.MapPost("/api/v1/game-package-ingestions", async (HttpContext context, IAntiforgery antiforgery, IGamePackageIngestionService ingestion, ApiIdempotencyStore idempotency) =>
 {
+    // Game packages stream up to the per-user package quota (default 2 GiB), far
+    // above the Kestrel 30 MiB request-body default. Removing the Kestrel cap for
+    // this route is safe because GamePackageIngestionService.ReceiveAsync enforces
+    // the archive limit while streaming; other endpoints keep the default cap.
+    context.Features.Get<IHttpMaxRequestBodySizeFeature>()?.MaxRequestBodySize = null;
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
     if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error("IDEMPOTENCY_KEY_REQUIRED", "需要 Idempotency-Key。", 428);
