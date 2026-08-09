@@ -1,8 +1,40 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AuthProvider, CurrentUser } from "./auth";
+
+const digest = "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+
+function game(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "g1",
+    name: "ERA: The World",
+    visibility: "PRIVATE",
+    status: "ACTIVE",
+    workspaceStatus: "NONE",
+    hasCurrentContent: true,
+    contentDigest: digest,
+    contentRevision: 1,
+    stateVersion: 1,
+    createdAt: "2026-08-01T00:00:00Z",
+    updatedAt: "2026-08-09T08:00:00Z",
+    ...overrides,
+  };
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function mockFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    return Promise.resolve(handler(url, init));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
 
 describe("App", () => {
   function renderAt(path: string) {
@@ -10,14 +42,139 @@ describe("App", () => {
     return render(<MemoryRouter initialEntries={[path]}><AuthProvider initialUser={user}><App /></AuthProvider></MemoryRouter>);
   }
 
-  it("renders and filters the game library", () => {
+  it("loads the game library from the real API and filters by search and visibility", async () => {
+    mockFetch((url) => {
+      if (url === "/api/v1/games") {
+        return jsonResponse({ items: [game({ id: "g1", name: "ERA: The World" }), game({ id: "g2", name: "ERA Megaten", visibility: "SERVER_SHARED", workspaceStatus: "DRAFT" })] });
+      }
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
     renderAt("/games");
 
-    expect(screen.getByRole("heading", { name: "游戏库" })).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText("搜索游戏…"), { target: { value: "Megaten" } });
+    expect(await screen.findByRole("heading", { name: "ERA: The World" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "ERA Megaten" })).toBeInTheDocument();
 
+    fireEvent.change(screen.getByPlaceholderText("搜索游戏…"), { target: { value: "Megaten" } });
     expect(screen.getByRole("heading", { name: "ERA Megaten" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "ERA: The World" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("搜索游戏…"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "我的游戏" }));
+    expect(screen.getByRole("heading", { name: "ERA: The World" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "ERA Megaten" })).not.toBeInTheDocument();
+
+    expect(screen.getByRole("link", { name: "开始游戏" })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("creates a game through the real API contract", async () => {
+    const created = game({ id: "g-new", name: "My Era Game", contentRevision: 0, hasCurrentContent: false, contentDigest: null, workspaceStatus: "NONE" });
+    let gamesList: unknown[] = [];
+    const fetchMock = mockFetch((url, init) => {
+      if (url === "/api/v1/games" && init?.method === "POST") { gamesList = [created]; return jsonResponse(created, 201); }
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/games") return jsonResponse({ items: gamesList });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games");
+
+    expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "创建游戏" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "创建游戏" });
+    fireEvent.change(within(dialog).getByLabelText("游戏名称"), { target: { value: "My Era Game" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建游戏" }));
+
+    expect(await screen.findByRole("heading", { name: "My Era Game" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/games", expect.objectContaining({ method: "POST" }));
+    vi.unstubAllGlobals();
+  });
+
+  it("uploads a package and binds it to a new game workspace", async () => {
+    const ingestion = {
+      ingestionId: "ing-1",
+      ownerUserId: "usr_test",
+      expiresAt: "2026-08-10T00:00:00Z",
+      manifest: {
+        schemaVersion: 1, archiveBytes: 1024, archiveDigest: "sha256:aa", contentBytes: 512,
+        fileCount: 1, directoryCount: 1, contentDigest: "sha256:bb", files: [], directories: [], diagnostics: [],
+      },
+    };
+    const created = game({ id: "g-new", name: "My Game", workspaceStatus: "DRAFT", contentRevision: 0, hasCurrentContent: false, contentDigest: null });
+    mockFetch((url, init) => {
+      if (url === "/api/v1/games" && init?.method === "POST") return jsonResponse(created, 201);
+      if (url === "/api/v1/games/g-new/package" && init?.method === "PUT") return jsonResponse(created);
+      if (url === "/api/v1/game-package-ingestions") return jsonResponse(ingestion, 201);
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/games") return jsonResponse({ items: [] });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games");
+    expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "导入游戏" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "导入游戏包" });
+    const fileInput = dialog.querySelector('input[type="file"]');
+    expect(fileInput).not.toBeNull();
+    fireEvent.change(fileInput as HTMLInputElement, { target: { files: [new File(["zip"], "my-game.zip", { type: "application/zip" })] } });
+
+    expect(await within(dialog).findByText("游戏包已安全解压")).toBeInTheDocument();
+    expect(within(dialog).getByText(/1 个文件/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "绑定并查看草稿" }));
+
+    expect(await within(dialog).findByText("游戏包已绑定到工作区")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: /查看草稿并启用/ })).toHaveAttribute("href", "/games/g-new");
+    vi.unstubAllGlobals();
+  });
+
+  it("browses the workspace and opens a text file for editing", async () => {
+    const draft = game({ workspaceStatus: "DRAFT", stateVersion: 2 });
+    const files = [
+      { path: "ERB", isDirectory: true, bytes: 0 },
+      { path: "ERB/START.ERB", isDirectory: false, bytes: 13, etag: "sha256:start" },
+    ];
+    const textFile = { path: "ERB/START.ERB", content: "@SYSTEM_TITLE\n", encoding: "UTF-8", hasBom: false, bytes: 13, etag: "sha256:start", stateVersion: 2 };
+    mockFetch((url) => {
+      if (url === "/api/v1/games/g1") return jsonResponse(draft);
+      if (url.startsWith("/api/v1/games/g1/files")) return jsonResponse({ items: files });
+      if (url.startsWith("/api/v1/games/g1/file?")) return jsonResponse(textFile);
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games/g1");
+    expect(await screen.findByRole("heading", { name: "ERA: The World" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "文件" }));
+    expect(await screen.findByRole("button", { name: /START\.ERB/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /START\.ERB/ }));
+
+    expect(await screen.findByLabelText("编辑 ERB/START.ERB")).toHaveValue("@SYSTEM_TITLE\n");
+    vi.unstubAllGlobals();
+  });
+
+  it("validates then activates the workspace through the real API contract", async () => {
+    const draft = game({ workspaceStatus: "DRAFT", stateVersion: 2 });
+    const validation = { canActivate: true, contentDigest: digest, fileCount: 1, totalBytes: 13, diagnostics: [], stateVersion: 3 };
+    const activated = game({ workspaceStatus: "NONE", contentRevision: 2, stateVersion: 3 });
+    let current = draft;
+    mockFetch((url) => {
+      if (url.endsWith(":validate")) return jsonResponse(validation);
+      if (url.endsWith(":activate")) { current = activated; return jsonResponse(activated); }
+      if (url === "/api/v1/games/g1") return jsonResponse(current);
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games/g1");
+    expect(await screen.findByRole("heading", { name: "ERA: The World" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "兼容性" }));
+    expect(await screen.findByText("尚未运行验证")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "运行验证" }));
+    expect(await screen.findByText("验证通过，可以启用")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "内容" }));
+    fireEvent.click(screen.getByRole("button", { name: "验证并启用" }));
+    expect(await screen.findByText(/内容修订 #2/)).toBeInTheDocument();
+    expect(screen.queryByText("工作区草稿")).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 
   it("shows reconnect state without closing the session", () => {
