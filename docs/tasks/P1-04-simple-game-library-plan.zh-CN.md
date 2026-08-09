@@ -19,6 +19,18 @@ NFR-011/013、AC-008～010/014。
 [`ADR-0008`](../adr/0008-secure-zip-ingestion-policy.md)；SessionRoot 所有权见
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)。
 
+## 0.2 2026-08-10 诊断可见性与失败原因展示
+
+- 新增 `GET /api/v1/games/{id}/diagnostics`（仅 owner）：读取持久化的
+  `compatibility_diagnostics`，并把 messageKey 解析为可读 Message
+  （`GameDiagnosticMessages` 目录，与 `InspectWorkspace`/Validator 的诊断保持同步）；
+- 前端「兼容性」页改为优先加载持久化诊断，验证/启用失败后自动拉取并展示阻断原因，
+  错误横幅显示“N 条阻断诊断，详见「兼容性」”，不再只显示
+  “The workspace has activation-blocking diagnostics.” 这类笼统错误；
+- 对 `ACTIVATION_VALIDATION_FAILED`/`GAME_VALIDATION_FAILED` 等错误码做前端文案映射。
+- 实测样例：单层顶层文件夹打包（`eraJK.../ERB|CSV` 不在根目录）会导致结构检查
+  `ERB_ENTRYPOINT_MISSING`；展开后还需注意 Linux 下 `GAMEBASE.CSV` 大小写严格匹配。
+
 ## 0.1 2026-08-09 浏览器 UI 接入（P1-10 不再处理 Game 的 UI）
 
 - 游戏库页（`GET /api/v1/games`）：真实列表、可见性筛选、搜索、创建游戏、ZIP 导入 →
