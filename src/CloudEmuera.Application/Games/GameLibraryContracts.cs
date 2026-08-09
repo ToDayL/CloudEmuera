@@ -109,11 +109,23 @@ public sealed class GameLibraryException(string code, string message) : Exceptio
 public static class GameLibraryErrorCodes
 {
     public const string NotFound = "GAME_NOT_FOUND";
+    public const string NameConflict = "GAME_NAME_CONFLICT";
+    public const string InUse = "GAME_IN_USE";
+    public const string HasNoCurrentContent = "GAME_HAS_NO_CURRENT_CONTENT";
     public const string Conflict = "GAME_CONFLICT";
-    public const string StateVersionConflict = "STATE_VERSION_CONFLICT";
+    public const string StateVersionConflict = "GAME_STATE_CONFLICT";
     public const string InvalidInput = "GAME_INPUT_INVALID";
-    public const string WorkspaceMissing = "GAME_WORKSPACE_MISSING";
+    public const string WorkspaceNotFound = "WORKSPACE_NOT_FOUND";
+    public const string WorkspaceAlreadyExists = "WORKSPACE_ALREADY_EXISTS";
+    public const string FileNotFound = "FILE_NOT_FOUND";
+    public const string FileTypeNotEditable = "FILE_TYPE_NOT_EDITABLE";
+    public const string FileTooLargeToEdit = "FILE_TOO_LARGE_TO_EDIT";
+    public const string TextEncodingUnsupported = "TEXT_ENCODING_UNSUPPORTED";
+    public const string TextNotRepresentable = "TEXT_NOT_REPRESENTABLE";
     public const string ValidationFailed = "GAME_VALIDATION_FAILED";
+    public const string ValidationInProgress = "VALIDATION_IN_PROGRESS";
+    public const string ActivationInProgress = "ACTIVATION_IN_PROGRESS";
+    public const string ActivationValidationFailed = "ACTIVATION_VALIDATION_FAILED";
     public const string UnsafePath = "GAME_PATH_UNSAFE";
     public const string FileChanged = "FILE_CHANGED";
     public const string SearchCursorInvalid = "SEARCH_CURSOR_INVALID";

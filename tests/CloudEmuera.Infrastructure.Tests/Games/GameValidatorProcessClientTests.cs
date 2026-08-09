@@ -17,7 +17,7 @@ public sealed class GameValidatorProcessClientTests : IDisposable
     }
 
     [Theory]
-    [InlineData("printf 'not-json'", "VALIDATOR_PROTOCOL_INVALID")]
+    [InlineData("printf 'not-json'", "VALIDATOR_PROTOCOL_ERROR")]
     [InlineData("exit 7", "VALIDATOR_CRASHED")]
     [InlineData("kill -9 $$", "VALIDATOR_CRASHED")]
     [InlineData("sleep 2", "VALIDATOR_TIMEOUT")]

@@ -73,7 +73,7 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
         {
             Kill(process);
             await ObserveAsync(stdout, stderr).ConfigureAwait(false);
-            return Failure("VALIDATOR_PROTOCOL_INVALID");
+            return Failure("VALIDATOR_PROTOCOL_ERROR");
         }
     }
 
@@ -81,9 +81,9 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
     {
         ValidatorResponse? response = JsonSerializer.Deserialize<ValidatorResponse>(payload, ProtocolJson);
         if (response is null || response.SchemaVersion != 1 || response.Diagnostics is null || response.Diagnostics.Count > 256)
-            return Failure("VALIDATOR_PROTOCOL_INVALID");
+            return Failure("VALIDATOR_PROTOCOL_ERROR");
         if (response.Diagnostics.Any(item => string.IsNullOrWhiteSpace(item.Code) || item.Code.Length > 100 || item.Message.Length > 500))
-            return Failure("VALIDATOR_PROTOCOL_INVALID");
+            return Failure("VALIDATOR_PROTOCOL_ERROR");
         IReadOnlyList<GameValidationDiagnostic> diagnostics = response.Diagnostics.Select(item =>
             new GameValidationDiagnostic(item.Code, item.Severity, item.Path, item.Message, item.ActivationBlocking)).ToArray();
         bool canActivate = response.CanActivate && !diagnostics.Any(item => item.ActivationBlocking);

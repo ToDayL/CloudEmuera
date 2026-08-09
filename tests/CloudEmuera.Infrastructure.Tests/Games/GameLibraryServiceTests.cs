@@ -311,7 +311,7 @@ public sealed class GameLibraryServiceTests
 
         GameLibraryException inUse = await Assert.ThrowsAsync<GameLibraryException>(() => service.DeleteAsync(
             new CurrentActor("usr_fixture", "PLAYER", "auths_fixture"), game.Id, blocked.StateVersion));
-        Assert.Equal(GameLibraryErrorCodes.Conflict, inUse.Code);
+        Assert.Equal(GameLibraryErrorCodes.InUse, inUse.Code);
 
         GameLibraryItem active = await service.SetBlockedAsync(admin, game.Id, false, blocked.StateVersion);
         Assert.Equal("ACTIVE", active.Status);

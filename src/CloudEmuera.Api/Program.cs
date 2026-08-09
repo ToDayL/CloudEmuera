@@ -467,11 +467,15 @@ internal static class ApiIdentity
         {
             int status = exception.Code switch
             {
-                GameLibraryErrorCodes.NotFound => 404,
+                GameLibraryErrorCodes.NotFound or GameLibraryErrorCodes.FileNotFound => 404,
                 GameLibraryErrorCodes.StateVersionConflict or GameLibraryErrorCodes.FileChanged => 412,
-                GameLibraryErrorCodes.Conflict => 409,
-                GameLibraryErrorCodes.WorkspaceMissing => 409,
-                GameLibraryErrorCodes.ValidationFailed => 422,
+                GameLibraryErrorCodes.Conflict or GameLibraryErrorCodes.NameConflict or GameLibraryErrorCodes.InUse
+                    or GameLibraryErrorCodes.HasNoCurrentContent or GameLibraryErrorCodes.WorkspaceNotFound
+                    or GameLibraryErrorCodes.WorkspaceAlreadyExists or GameLibraryErrorCodes.ValidationInProgress
+                    or GameLibraryErrorCodes.ActivationInProgress => 409,
+                GameLibraryErrorCodes.ValidationFailed or GameLibraryErrorCodes.ActivationValidationFailed
+                    or GameLibraryErrorCodes.FileTypeNotEditable or GameLibraryErrorCodes.FileTooLargeToEdit
+                    or GameLibraryErrorCodes.TextEncodingUnsupported or GameLibraryErrorCodes.TextNotRepresentable => 422,
                 GameLibraryErrorCodes.IdempotencyConflict => 409,
                 GameLibraryErrorCodes.DiagnosticOverrideNotAllowed => 409,
                 _ => 400,

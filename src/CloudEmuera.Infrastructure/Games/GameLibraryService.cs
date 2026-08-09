@@ -47,12 +47,12 @@ public sealed class GameLibraryService(
         string gameDirectory = GameDirectory(row.Id);
         InitializeGameDirectory(gameDirectory, row.Id, actor.UserId);
         db.Games.Add(row);
-        AddAudit(actor, "GAME_CREATED", row.Id, now);
+        AddAudit(actor, "GAME_CREATE", row.Id, now);
         try { await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); }
         catch (DbUpdateException exception)
         {
             Directory.Move(gameDirectory, $"{gameDirectory}.failed-{Guid.NewGuid():N}");
-            throw Conflict("A game with the same name already exists.", exception);
+            throw new GameLibraryException(GameLibraryErrorCodes.NameConflict, $"A game with the same name already exists. {exception.Message}");
         }
         return ToItem(row);
     }
@@ -71,7 +71,7 @@ public sealed class GameLibraryService(
         if (name is not null) row.Name = NormalizeName(name);
         if (visibility is not null) row.Visibility = ParseVisibility(visibility);
         Touch(row);
-        AddAudit(actor, "GAME_UPDATED", row.Id, row.UpdatedAt);
+        AddAudit(actor, "GAME_UPDATE", row.Id, row.UpdatedAt);
         await SaveAsync(cancellationToken).ConfigureAwait(false);
         return ToItem(row);
     }
@@ -82,7 +82,7 @@ public sealed class GameLibraryService(
         GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
         EnsureVersion(row, expectedStateVersion);
         bool isReferenced = await db.Sessions.AnyAsync(session => session.GameId == gameId, cancellationToken).ConfigureAwait(false);
-        if (isReferenced) throw Conflict("A game referenced by a session cannot be deleted.");
+        if (isReferenced) throw new GameLibraryException(GameLibraryErrorCodes.InUse, "A game referenced by a session cannot be deleted.");
         DateTimeOffset now = timeProvider.GetUtcNow();
         await db.GameContentOperations
             .Where(operation => operation.GameId == gameId
@@ -100,7 +100,7 @@ public sealed class GameLibraryService(
         row.DeletedBy = actor.UserId;
         row.DeletedAt = now;
         Touch(row, now);
-        AddAudit(actor, "GAME_DELETED", row.Id, row.UpdatedAt);
+        AddAudit(actor, "GAME_DELETE", row.Id, row.UpdatedAt);
         await SaveAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -112,7 +112,7 @@ public sealed class GameLibraryService(
         EnsureVersion(row, expectedStateVersion);
         row.Status = blocked ? GameStatus.Blocked : GameStatus.Active;
         Touch(row);
-        AddAudit(actor, blocked ? "GAME_BLOCKED" : "GAME_UNBLOCKED", row.Id, row.UpdatedAt);
+        AddAudit(actor, blocked ? "GAME_BLOCK" : "GAME_UNBLOCK", row.Id, row.UpdatedAt);
         await SaveAsync(cancellationToken).ConfigureAwait(false);
         return ToItem(row);
     }
@@ -147,7 +147,7 @@ public sealed class GameLibraryService(
             row.CompatibilitySummaryJson = "{}";
             await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
             Touch(row);
-            AddAudit(actor, "GAME_PACKAGE_BOUND", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { ingestionId, contentDigest }));
+            AddAudit(actor, "GAME_PACKAGE_UPLOAD", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { ingestionId, contentDigest }));
             CompleteOperation(operation, contentDigest, row.UpdatedAt);
             try { await SaveAsync(cancellationToken).ConfigureAwait(false); }
             catch
@@ -176,8 +176,8 @@ public sealed class GameLibraryService(
         await using FileStream mutationLock = AcquireMutationLock(gameId);
         GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
         EnsureVersion(row, expectedStateVersion);
-        if (row.WorkspacePath is not null) throw Conflict("The game already has an editable workspace.");
-        if (row.CurrentContentPath is null) throw new GameLibraryException(GameLibraryErrorCodes.WorkspaceMissing, "The game has no current content to edit.");
+        if (row.WorkspacePath is not null) throw new GameLibraryException(GameLibraryErrorCodes.WorkspaceAlreadyExists, "The game already has an editable workspace.");
+        if (row.CurrentContentPath is null) throw new GameLibraryException(GameLibraryErrorCodes.HasNoCurrentContent, "The game has no current content to edit.");
         string staging = Path.Combine(GameDirectory(gameId), $".workspace-{Guid.NewGuid():N}");
         CopyTree(AbsoluteDataPath(row.CurrentContentPath), staging);
         MakeWritable(staging);
@@ -197,7 +197,7 @@ public sealed class GameLibraryService(
         row.WorkspaceStatus = GameWorkspaceStatus.Draft;
         await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
         Touch(row);
-        AddAudit(actor, "GAME_WORKSPACE_CREATED", row.Id, row.UpdatedAt);
+        AddAudit(actor, "GAME_WORKSPACE_CREATE", row.Id, row.UpdatedAt);
         try { await SaveAsync(cancellationToken).ConfigureAwait(false); }
         catch
         {
@@ -231,7 +231,7 @@ public sealed class GameLibraryService(
         await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
         db.GameFiles.RemoveRange(await db.GameFiles.Where(file => file.GameId == gameId && file.Scope == "WORKSPACE").ToArrayAsync(cancellationToken).ConfigureAwait(false));
         Touch(row);
-        AddAudit(actor, "GAME_WORKSPACE_DISCARDED", row.Id, row.UpdatedAt);
+        AddAudit(actor, "GAME_WORKSPACE_DISCARD", row.Id, row.UpdatedAt);
         try { await SaveAsync(cancellationToken).ConfigureAwait(false); }
         catch
         {
@@ -247,7 +247,7 @@ public sealed class GameLibraryService(
         string root = ResolveReadableRoot(actor, row, scope);
         string logical = NormalizeRelativePath(directory ?? string.Empty, allowEmpty: true);
         string path = ResolvePath(root, logical, allowMissingLeaf: false);
-        if (!Directory.Exists(path)) throw NotFound();
+        if (!Directory.Exists(path)) throw new GameLibraryException(GameLibraryErrorCodes.FileNotFound, "The requested game content directory does not exist.");
         return new DirectoryInfo(path).EnumerateFileSystemInfos()
             .OrderBy(entry => entry.Name, StringComparer.Ordinal)
             .Select(entry =>
@@ -265,11 +265,12 @@ public sealed class GameLibraryService(
         string filePath = ResolvePath(ResolveReadableRoot(actor, row, scope), NormalizeRelativePath(path), allowMissingLeaf: false);
         var info = new FileInfo(filePath);
         RejectLink(info);
-        if (!info.Exists || info.Length > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The file is not an editable text file.");
+        if (!info.Exists) throw new GameLibraryException(GameLibraryErrorCodes.FileNotFound, "The requested game file does not exist.");
+        if (info.Length > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.FileTooLargeToEdit, "The file is too large to edit as text.");
         cancellationToken.ThrowIfCancellationRequested();
         byte[] bytes = await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
         if (!TryReadGameText(bytes, out string text, out string? encoding, out bool hasBom))
-            throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The text encoding is unsupported.");
+            throw new GameLibraryException(GameLibraryErrorCodes.TextEncodingUnsupported, "The text encoding is unsupported.");
         return new GameTextFile(path, text, encoding!, hasBom, bytes.LongLength, ComputeETag(bytes), row.StateVersion);
     }
 
@@ -320,6 +321,7 @@ public sealed class GameLibraryService(
         string filePath = ResolvePath(ResolveReadableRoot(actor, row, scope), NormalizeRelativePath(path), allowMissingLeaf: false);
         var info = new FileInfo(filePath);
         RejectLink(info);
+        if (!info.Exists) throw new GameLibraryException(GameLibraryErrorCodes.FileNotFound, "The requested game file does not exist.");
         var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         if (LinuxFileOperations.ReadIdentity(stream.SafeFileHandle).LinkCount != 1)
         {
@@ -350,14 +352,14 @@ public sealed class GameLibraryService(
 
     public async Task<GameLibraryItem> WriteTextFileAsync(CurrentActor actor, string gameId, string path, string content, int expectedStateVersion, string? expectedFileETag = null, bool requireAbsent = false, CancellationToken cancellationToken = default)
     {
-        if (Encoding.UTF8.GetByteCount(content) > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The edited file is too large.");
+        if (Encoding.UTF8.GetByteCount(content) > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.FileTooLargeToEdit, "The edited file is too large.");
         await using FileStream mutationLock = AcquireMutationLock(gameId);
         GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
         EnsureVersion(row, expectedStateVersion);
         string root = RequireWorkspace(row);
         string logical = NormalizeRelativePath(path);
         string target = ResolvePath(root, logical, allowMissingLeaf: true);
-        if (!IsGameTextFile(target)) throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "Only game text files are editable.");
+        if (!IsGameTextFile(target)) throw new GameLibraryException(GameLibraryErrorCodes.FileTypeNotEditable, "Only game text files are editable.");
         string[] segments = logical.Split('/');
         string parentPath = string.Join('/', segments[..^1]);
         string temporaryName = $".cloudemuera-edit-{Guid.NewGuid():N}";
@@ -375,7 +377,7 @@ public sealed class GameLibraryService(
             }
             byte[] existingBytes = existing is null ? [] : ReadAll(existing);
             byte[] encoded = EncodeEditedText(existingBytes, existing is not null, content);
-            if (encoded.LongLength > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The edited file is too large.");
+            if (encoded.LongLength > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.FileTooLargeToEdit, "The edited file is too large.");
             try
             {
                 using SafeFileHandle temporary = LinuxFileOperations.OpenRegularFileAt(parent, temporaryName, readOnly: false, create: true, exclusive: true);
@@ -399,7 +401,7 @@ public sealed class GameLibraryService(
         await ReplaceFileIndexAsync(gameId, "WORKSPACE", inspection.Entries, cancellationToken).ConfigureAwait(false);
         await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
         MarkWorkspaceChanged(row);
-        AddAudit(actor, "GAME_FILE_WRITTEN", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { path = logical }));
+        AddAudit(actor, "GAME_FILE_UPDATE", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { path = logical }));
         await SaveAsync(cancellationToken).ConfigureAwait(false);
         return ToItem(row);
     }
@@ -423,7 +425,7 @@ public sealed class GameLibraryService(
         await ReplaceFileIndexAsync(gameId, "WORKSPACE", inspection.Entries, cancellationToken).ConfigureAwait(false);
         await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
         MarkWorkspaceChanged(row);
-        AddAudit(actor, "GAME_PATH_DELETED", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { path = logical }));
+        AddAudit(actor, "GAME_FILE_DELETE", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { path = logical }));
         await SaveAsync(cancellationToken).ConfigureAwait(false);
         return ToItem(row);
     }
@@ -471,7 +473,7 @@ public sealed class GameLibraryService(
             MarkWorkspaceChanged(row);
             row.CompatibilitySummaryJson = JsonSerializer.Serialize(new { inspection.CanActivate, inspection.Diagnostics });
             await ReplaceDiagnosticsAsync(row, inspection.Diagnostics, cancellationToken).ConfigureAwait(false);
-            AddAudit(actor, "GAME_VALIDATED", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { inspection.CanActivate, inspection.ContentDigest }));
+            AddAudit(actor, "GAME_VALIDATE", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { inspection.CanActivate, inspection.ContentDigest }));
             CompleteOperation(operation, inspection.ContentDigest, row.UpdatedAt);
             await SaveAsync(cancellationToken).ConfigureAwait(false);
             return new GameValidationResult(inspection.CanActivate, inspection.ContentDigest, inspection.FileCount, inspection.TotalBytes, inspection.Diagnostics, row.StateVersion);
@@ -519,7 +521,7 @@ public sealed class GameLibraryService(
             await ReplaceDiagnosticsAsync(row, inspection.Diagnostics, cancellationToken).ConfigureAwait(false);
             await SaveAsync(cancellationToken).ConfigureAwait(false);
             await FailOperationAsync(operation.Id, GameLibraryErrorCodes.ValidationFailed).ConfigureAwait(false);
-            throw new GameLibraryException(GameLibraryErrorCodes.ValidationFailed, "The workspace has activation-blocking diagnostics.");
+            throw new GameLibraryException(GameLibraryErrorCodes.ActivationValidationFailed, "The workspace has activation-blocking diagnostics.");
         }
         _ = PublishActivationTree(gameDirectory, operation.Id, staging, workspace);
         DateTimeOffset now = timeProvider.GetUtcNow();
@@ -547,7 +549,7 @@ public sealed class GameLibraryService(
         db.GameFiles.RemoveRange(await db.GameFiles.Where(file => file.GameId == gameId && file.Scope == "WORKSPACE").ToArrayAsync(cancellationToken).ConfigureAwait(false));
         await ReplaceDiagnosticsAsync(row, inspection.Diagnostics, cancellationToken).ConfigureAwait(false);
         Touch(row, now);
-        AddAudit(actor, "GAME_ACTIVATED", row.Id, now, JsonSerializer.Serialize(new { row.ContentDigest, row.ContentRevision }));
+        AddAudit(actor, "GAME_ACTIVATE", row.Id, now, JsonSerializer.Serialize(new { row.ContentDigest, row.ContentRevision }));
         CompleteOperation(operation, inspection.ContentDigest, now);
         await SaveAsync(cancellationToken).ConfigureAwait(false);
         return ToItem(row);
@@ -596,13 +598,13 @@ public sealed class GameLibraryService(
             "WORKSPACE" when row.OwnerUserId == actor.UserId && row.WorkspacePath is not null => AbsoluteDataPath(row.WorkspacePath),
             "CURRENT" when row.CurrentContentPath is not null => AbsoluteDataPath(row.CurrentContentPath),
             "WORKSPACE" when row.OwnerUserId != actor.UserId => throw NotFound(),
-            "WORKSPACE" or "CURRENT" => throw new GameLibraryException(GameLibraryErrorCodes.WorkspaceMissing, "The requested game content does not exist."),
+            "WORKSPACE" or "CURRENT" => throw new GameLibraryException(GameLibraryErrorCodes.NotFound, "The requested game content does not exist."),
             _ => throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The content scope is invalid."),
         };
     }
 
     private string RequireWorkspace(GameRow row) => row.WorkspacePath is null
-        ? throw new GameLibraryException(GameLibraryErrorCodes.WorkspaceMissing, "The game has no editable workspace.")
+        ? throw new GameLibraryException(GameLibraryErrorCodes.WorkspaceNotFound, "The game has no editable workspace.")
         : AbsoluteDataPath(row.WorkspacePath);
 
     private void MarkWorkspaceChanged(GameRow row)
@@ -656,7 +658,13 @@ public sealed class GameLibraryService(
         };
         db.GameContentOperations.Add(operation);
         try { await db.SaveChangesAsync(token).ConfigureAwait(false); }
-        catch (DbUpdateException exception) { throw Conflict("Another game content operation is active.", exception); }
+        catch (DbUpdateException exception)
+        {
+            string code = type == GameContentOperationType.Validate ? GameLibraryErrorCodes.ValidationInProgress
+                : type == GameContentOperationType.Activate ? GameLibraryErrorCodes.ActivationInProgress
+                : GameLibraryErrorCodes.Conflict;
+            throw new GameLibraryException(code, $"Another game content operation is active. {exception.Message}");
+        }
         return operation;
     }
 
@@ -927,7 +935,7 @@ public sealed class GameLibraryService(
         if (existing)
         {
             if (!TryReadGameText(existingBytes, out _, out string? detected, out _))
-                throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The existing text encoding is unsupported.");
+                throw new GameLibraryException(GameLibraryErrorCodes.TextEncodingUnsupported, "The existing text encoding is unsupported.");
             if (detected is not null) encoding = detected;
         }
         try
@@ -941,7 +949,7 @@ public sealed class GameLibraryService(
         }
         catch (EncoderFallbackException exception)
         {
-            throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, $"The text cannot be represented in the original encoding: {exception.Message}");
+            throw new GameLibraryException(GameLibraryErrorCodes.TextNotRepresentable, $"The text cannot be represented in the original encoding: {exception.Message}");
         }
     }
 
