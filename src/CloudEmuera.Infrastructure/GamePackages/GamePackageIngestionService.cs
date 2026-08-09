@@ -102,6 +102,7 @@ public sealed class GamePackageIngestionService(
                 await TransitionAsync(ingestionId, GamePackageIngestionStatus.Extracting, GamePackageIngestionStatus.Analyzing, deadline.Token).ConfigureAwait(false);
                 if (faultInjector is not null) await faultInjector.InjectAsync(GamePackageIngestionFaultPoint.BeforeAnalyze, deadline.Token).ConfigureAwait(false);
                 GamePackageManifest manifest = Analyze(archiveBytes, archiveDigest, content, extraction, effectiveLimits);
+                await AdjustReservationAsync(ingestionId, archiveBytes, extraction.TotalBytes, deadline.Token).ConfigureAwait(false);
                 string manifestJson = JsonSerializer.Serialize(manifest, JsonOptions);
                 using (SafeFileHandle manifestHandle = LinuxGamePackageStagingStore.CreateFile(candidate, "manifest.json"))
                 await using (FileStream manifestStream = LinuxGamePackageStagingStore.Stream(manifestHandle, FileAccess.Write, async: true))
@@ -543,6 +544,32 @@ public sealed class GamePackageIngestionService(
         }
         await output.FlushAsync(token).ConfigureAwait(false);
         return (total, Digest(hash.GetHashAndReset()));
+    }
+
+    /// <summary>
+    /// After the archive is received and expanded, settle the staging reservation
+    /// to the actual bytes on disk instead of the worst-case archive+expanded
+    /// quota. The conservative start reservation still bounds concurrent uploads;
+    /// settling prevents a handful of unconsumed READY packages from exhausting
+    /// the whole staging budget (each upload would otherwise reserve several GiB
+    /// regardless of its real size).
+    /// </summary>
+    private async Task AdjustReservationAsync(string ingestionId, long archiveBytes, long expandedBytes, CancellationToken token)
+    {
+        long actualReservation = checked(archiveBytes + expandedBytes);
+        DateTimeOffset now = timeProvider.GetUtcNow();
+        await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, token).ConfigureAwait(false);
+        long active = await db.GamePackageIngestions.Where(item => item.Id != ingestionId).SumAsync(item => (long?)item.ReservedBytes, token).ConfigureAwait(false) ?? 0;
+        if (active > storageOptions.MaxStagingReservedBytes - actualReservation)
+            throw new GamePackageIngestionException(GamePackageRejectionCodes.StagingBudgetExhausted, "The staging budget is exhausted after the package was received.");
+        int changed = await db.GamePackageIngestions
+            .Where(item => item.Id == ingestionId && item.Status == GamePackageIngestionStatus.Analyzing)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.ReservedBytes, actualReservation)
+                .SetProperty(item => item.UpdatedAt, now)
+                .SetProperty(item => item.StateVersion, item => item.StateVersion + 1), token).ConfigureAwait(false);
+        if (changed != 1) throw new GamePackageIngestionException("INGESTION_STATE_CONFLICT", "The package ingestion state changed concurrently.");
+        await transaction.CommitAsync(token).ConfigureAwait(false);
     }
 
     private async Task UpdateArchiveAsync(string id, long bytes, string digest, CancellationToken token)

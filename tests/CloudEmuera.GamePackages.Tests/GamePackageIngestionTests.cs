@@ -640,6 +640,35 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
         await Service().AbandonAsync(completed.IngestionId, userId);
     }
 
+    [Fact]
+    [Trait("Category", "ArchiveQuota")]
+    public async Task ReservationSettlesToActualSizeAfterAnalysis()
+    {
+        byte[] zip = CreateZip(("ERB/START.ERB", "@SYSTEM_TITLE\n"u8.ToArray(), null), ("emuera.config", "Use sav folder:NO\n"u8.ToArray(), null));
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+
+        GamePackageIngestionRow row = await db.GamePackageIngestions.AsNoTracking().SingleAsync(item => item.Id == result.IngestionId);
+        long expected = result.Manifest.ArchiveBytes + result.Manifest.ContentBytes;
+        Assert.Equal(expected, row.ReservedBytes);
+        Assert.True(row.ReservedBytes < Limits().MaxArchiveBytes + Limits().MaxExpandedBytes,
+            "an ingested package must not keep the worst-case quota reservation");
+    }
+
+    [Fact]
+    [Trait("Category", "ArchiveQuota")]
+    public async Task UnconsumedReadyIngestionsReserveOnlyActualBytes()
+    {
+        byte[] zip = CreateZip(("ERB/START.ERB", "@SYSTEM_TITLE\n"u8.ToArray(), null), ("emuera.config", "Use sav folder:NO\n"u8.ToArray(), null));
+        IngestedGamePackage first = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+        IngestedGamePackage second = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+
+        long total = await db.GamePackageIngestions.Where(item => item.Status == GamePackageIngestionStatus.Ready)
+            .SumAsync(item => (long)item.ReservedBytes);
+        long one = first.Manifest.ArchiveBytes + first.Manifest.ContentBytes;
+        Assert.True(total <= 2 * one,
+            $"two unconsumed READY packages must not accumulate worst-case reservations (reserved={total}, actual per package={one})");
+    }
+
     private async Task AssertRejectedAsync(byte[] zip, string expectedCode, GamePackageIngestionLimits? limits = null)
     {
         GamePackageIngestionException error = await Assert.ThrowsAsync<GamePackageIngestionException>(

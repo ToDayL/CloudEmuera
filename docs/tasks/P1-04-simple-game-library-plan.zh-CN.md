@@ -19,6 +19,18 @@ NFR-011/013、AC-008～010/014。
 [`ADR-0008`](../adr/0008-secure-zip-ingestion-policy.md)；SessionRoot 所有权见
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)。
 
+## 0.5 2026-08-10 暂存配额按实际大小结算（修复“进入 staging 后无法再次上传”）
+
+- 现象：同一/多个包上传几次后，新上传在“安全检查”前即失败，错误被折叠成
+  “游戏包不安全或不受支持。”；实际为 `STAGING_BUDGET_EXHAUSTED`。
+- 原因：每次摄取按最坏情况预留（默认 2GiB+4GiB=6GiB），两次未消费的 READY 摄取就把
+  12GiB 暂存配额占满。
+- 修复：`AdjustReservationAsync` 在分析完成后把 `ReservedBytes` 原子结算为实际
+  `archiveBytes + expandedBytes` 并复核预算（ADR-0012）；错误按拒绝码返回具体中文原因，
+  前端显示错误码与阻断诊断明细。
+- 验证：GamePackages 49 项通过；隔离真实 Kestrel 连续上传同一 31MB 包成功且两条 READY
+  行只占实际大小。
+
 ## 0.4 2026-08-10 大包上传（>30MB）请求体上限修复
 
 - 现象：30+MB ZIP 上传在浏览器端报 “Failed to fetch”。
