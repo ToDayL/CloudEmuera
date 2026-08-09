@@ -380,6 +380,13 @@ Game 错误码与审计动作对齐计划 §15；API 暴露 OpenAPI 文档端点
 无 GameVersion）；生成式 TypeScript 客户端与 WebSocket JSON Schema 类型生成推迟到 P1-10；
 Session 创建/启用并发完整集成测试按 P1-04 计划 §12 属 P1-06，本步交付 copy lease 端口及
 rename 钉住测试。
+2026-08-09 UI 接入：P1-04 的浏览器 UI（游戏库列表/创建/导入绑定、单一 Game 内容页的
+workspace/current 文件浏览、文本编辑、搜索、验证、原子启用、丢弃草稿、删除与下载）已接入真实
+API；P1-10 不再处理 Game 的 UI。同时修复开发容器 Validator 程序集路径解析（Development 下
+默认路径指向不存在的目录）与 Debug/Release 解析行为不一致（上游 DEBUG 经过时间系统行被当作
+阻断诊断），使开发环境可真实执行验证与启用。新增 Web 单元测试（列表/创建/上传绑定/文件编辑/
+验证启用）、HTTP 集成测试（GameLibrary 类别，含真实 parser 进程）与 RuntimeBridge 回归测试；
+`pnpm --dir src/CloudEmuera.Web typecheck/test/build`、定向 .NET 测试与隔离 e2e 身份套件通过。
 
 ### P1-05 — Supervisor、租约、epoch 与状态机（TODO）
 
@@ -454,11 +461,12 @@ dotnet test tests/CloudEmuera.Saves.IntegrationTests
 
 通过条件：跨用户和跨 Session 访问失败；上传校验大小、路径和版本；活动 Worker 存在时所有修改操作被拒绝；操作与 Worker 启动竞争时只有一方成功；显式复制产生独立物理文件；API 不解析或改写 Emuera 原生内容。
 
-### P1-10 — 浏览器游戏库、Session 控制台和存档界面（TODO）
+### P1-10 — 浏览器 Session 控制台和存档界面（TODO）
 
-需求映射：GAME-006、SESS-005/006、PLAY-002/009、SAVE-003、AC-011。
+需求映射：SESS-005/006、PLAY-002/009、SAVE-003、AC-011。
 
-交付物：登录、游戏库、上传/编辑/发布、Session 列表、结构化 Console、输入控件、重连状态和存档管理页面；移动安全区和键盘处理。
+交付物：登录、Session 列表、结构化 Console、输入控件、重连状态和存档管理页面；移动安全区和键盘处理。
+游戏库、工作区编辑与发布等 Game 管理 UI 已随 P1-04 完成，不再属于 P1-10。
 
 验证：
 

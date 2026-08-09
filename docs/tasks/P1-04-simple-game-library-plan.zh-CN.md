@@ -19,6 +19,27 @@ NFR-011/013、AC-008～010/014。
 [`ADR-0008`](../adr/0008-secure-zip-ingestion-policy.md)；SessionRoot 所有权见
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)。
 
+## 0.1 2026-08-09 浏览器 UI 接入（P1-10 不再处理 Game 的 UI）
+
+- 游戏库页（`GET /api/v1/games`）：真实列表、可见性筛选、搜索、创建游戏、ZIP 导入 →
+  摄取（`POST /game-package-ingestions`）→ 新建或绑定已有游戏工作区（`PUT /games/{id}/package`）；
+- 单一 Game 内容页：当前内容/工作区概览、从当前内容开始编辑、上传替换工作区、验证（`:validate`）、
+  原子启用（`:activate`）、丢弃草稿、编辑资料、删除与管理员禁用；
+- 文件页：workspace/current 目录浏览与面包屑、文本查看/编辑（ETag 前置条件与 `X-Game-State-Version`
+  CAS）、新建/删除文本文件、下载与有界搜索（签名游标分页）；当前内容只读；
+- 兼容性页：展示最近一次验证的诊断（阻断/非阻断），可重复运行验证；
+- 验证：Web 单元测试覆盖列表/创建/上传绑定/文件编辑/验证启用等分支；新增 HTTP 集成测试
+  `GameLibraryApiContractTests`（含真实 parser 进程）与 `RuntimeBridge` 回归测试；隔离 e2e
+  身份套件确认登录后进入真实数据游戏库不回归。
+
+开发环境修复（同轮落地，映射 GAME-007 与验证能力）：
+
+- `Program.cs`：Validator 程序集路径改为从内容根向上定位仓库内的
+  `src/CloudEmuera.Validator/bin/{Debug|Release}/net10.0`，按环境优先、缺失时回退另一配置，
+  发布布局回退到 API 同目录；
+- `UpstreamHeadless/HeadlessEmueraConsole.cs`：`PrintSystemLine` 不再进入 `RuntimeMessages`，
+  消除上游 DEBUG 构建的经过时间系统行被当作阻断诊断导致 Debug/Release 行为不一致的问题。
+
 ## 0. 2026-08-09 实现进度
 
 本轮已经落地：
