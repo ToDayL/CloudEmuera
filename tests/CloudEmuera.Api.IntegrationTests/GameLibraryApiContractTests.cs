@@ -155,9 +155,13 @@ public sealed class GameLibraryApiContractTests : IDisposable
         var stream = new MemoryStream();
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
         {
-            // A single top-level wrapper folder is a common distribution layout; the
-            // controlled structure check rejects it because ERB/CSV are not at the root.
-            ZipArchiveEntry entry = archive.CreateEntry("game-folder/CSV/GAMEBASE.CSV");
+            // Multiple top-level entries are never flattened, so the structure
+            // check still rejects this package because ERB/CSV are not at the root.
+            ZipArchiveEntry entry = archive.CreateEntry("README.txt");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("readme\n");
+            entry = archive.CreateEntry("game-folder/CSV/GAMEBASE.CSV");
             using (Stream writer = entry.Open())
             using (var text = new StreamWriter(writer))
                 text.Write("title,validator-test\n");
@@ -172,6 +176,76 @@ public sealed class GameLibraryApiContractTests : IDisposable
         }
         stream.Position = 0;
         return stream;
+    }
+
+    private static MemoryStream CreateSingleRootCaseVariantArchive()
+    {
+        var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            // The user-reported distribution: a single top-level wrapper folder and
+            // a case-variant GAMEBASE.CSV. Flattening + the fixed-case alias must
+            // make the package validate and activate through the real parser.
+            ZipArchiveEntry entry = archive.CreateEntry("eraJK-wrapper/CSV/GameBase.csv");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("title,validator-test\n");
+            entry = archive.CreateEntry("eraJK-wrapper/ERB/START.ERB");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("@SYSTEM_TITLE\nINPUT\nQUIT\n");
+            entry = archive.CreateEntry("eraJK-wrapper/emuera.config");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("Use sav folder:NO\n");
+        }
+        stream.Position = 0;
+        return stream;
+    }
+
+    [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task SingleRootFolderWithCaseVariantGameBaseFlattensAndActivates()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
+        _factory = new IdentityFactory(_dataRoot);
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+
+        string csrf = await GetCsrfAsync(client);
+        Assert.True((await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf)).IsSuccessStatusCode);
+        csrf = await GetCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Flattened Fixture", "PRIVATE"), csrf))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
+        csrf = await GetCsrfAsync(client);
+        using MemoryStream archive = CreateSingleRootCaseVariantArchive();
+        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", archive.ToArray(), "application/zip", csrf, $"ingest-{Guid.NewGuid():N}"))
+            .Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
+        Assert.Contains(package.Manifest.Files, file => file.Path == "ERB/START.ERB");
+        Assert.Contains(package.Manifest.Files, file => file.Path == "CSV/GameBase.csv");
+        Assert.DoesNotContain(package.Manifest.Files, file => file.Path.StartsWith("eraJK-wrapper/", StringComparison.Ordinal));
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
+            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, $"bind-{Guid.NewGuid():N}"))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
+        Assert.Equal("DRAFT", draft.WorkspaceStatus);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage validated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, $"validate-{Guid.NewGuid():N}");
+        GameValidationResult validation = await validated.Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
+        Assert.Equal(HttpStatusCode.OK, validated.StatusCode);
+        Assert.True(validation.CanActivate, string.Join(',', validation.Diagnostics.Select(item => item.Code)));
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage activated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, $"activate-{Guid.NewGuid():N}");
+        GameLibraryItem current = await activated.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Activate response was missing.");
+        Assert.Equal(HttpStatusCode.OK, activated.StatusCode);
+        Assert.True(current.HasCurrentContent);
+        Assert.Equal("NONE", current.WorkspaceStatus);
     }
 
     public void Dispose()
