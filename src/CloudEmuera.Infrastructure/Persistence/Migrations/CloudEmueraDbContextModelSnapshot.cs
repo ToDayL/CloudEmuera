@@ -318,6 +318,378 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.CompatibilityDiagnosticRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("ActivationBlocking")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("activation_blocking");
+
+                    b.Property<string>("ArgumentsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1048576)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("arguments_json");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("code");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("GameId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("game_id");
+
+                    b.Property<int?>("LineNumber")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("line_number");
+
+                    b.Property<string>("LogicalPath")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("logical_path");
+
+                    b.Property<string>("MessageKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("message_key");
+
+                    b.Property<long?>("OverriddenAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("overridden_at");
+
+                    b.Property<string>("OverriddenBy")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("overridden_by");
+
+                    b.Property<string>("OverridePolicy")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("override_policy");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("severity");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("stage");
+
+                    b.Property<int>("WorkspaceRevision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("workspace_revision");
+
+                    b.HasKey("Id")
+                        .HasName("pk_compatibility_diagnostics");
+
+                    b.HasIndex("OverriddenBy");
+
+                    b.HasIndex("GameId", "WorkspaceRevision", "ActivationBlocking")
+                        .HasDatabaseName("ix_compatibility_diagnostics_game_revision");
+
+                    b.ToTable("compatibility_diagnostics", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_arguments", "length(arguments_json) BETWEEN 2 AND 1048576 AND json_valid(arguments_json) = 1 AND arguments_json <> ''");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_blocking", "activation_blocking IN (0, 1)");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_code", "length(code) BETWEEN 1 AND 128 AND instr(code, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_created", "created_at >= 0");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_game_id", "substr(game_id, 1, 5) = 'game_' AND length(game_id) BETWEEN 5 AND 64 AND instr(game_id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_id", "substr(id, 1, 5) = 'diag_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_line", "line_number IS NULL OR line_number > 0");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_message", "length(message_key) BETWEEN 1 AND 256 AND instr(message_key, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_override", "override_policy IN ('NEVER', 'ADMIN') AND ((overridden_by IS NULL AND overridden_at IS NULL) OR (override_policy = 'ADMIN' AND overridden_by IS NOT NULL AND overridden_at IS NOT NULL))");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_path", "logical_path IS NULL OR (length(logical_path) BETWEEN 1 AND 512 AND substr(logical_path, 1, 1) <> '/' AND instr(logical_path, char(92)) = 0 AND instr(logical_path, char(0)) = 0 AND instr(logical_path, '//') = 0 AND instr('/' || logical_path || '/', '/./') = 0 AND instr('/' || logical_path || '/', '/../') = 0)");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_revision", "workspace_revision >= 0");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_severity", "severity IN ('INFO', 'WARNING', 'ERROR')");
+
+                            t.HasCheckConstraint("ck_compatibility_diagnostics_stage", "length(stage) BETWEEN 1 AND 32 AND instr(stage, char(0)) = 0");
+                        });
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameContentCopyLeaseRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ConsumerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("consumer_id");
+
+                    b.Property<string>("ConsumerType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("consumer_type");
+
+                    b.Property<string>("ContentDigest")
+                        .IsRequired()
+                        .HasMaxLength(71)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("content_digest");
+
+                    b.Property<long>("ContentRevision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("content_revision");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created_at");
+
+                    b.Property<long>("ExpiresAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("GameId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("game_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_game_content_copy_leases");
+
+                    b.HasIndex("ConsumerType", "ConsumerId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_game_content_copy_leases_consumer");
+
+                    b.HasIndex("GameId", "ContentRevision", "ExpiresAt")
+                        .HasDatabaseName("ix_game_content_copy_leases_content");
+
+                    b.ToTable("game_content_copy_leases", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_game_content_copy_leases_consumer", "consumer_type IN ('SESSION_CREATE', 'VALIDATION') AND length(consumer_id) BETWEEN 1 AND 64 AND instr(consumer_id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_game_content_copy_leases_digest", "length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64");
+
+                            t.HasCheckConstraint("ck_game_content_copy_leases_game_id", "substr(game_id, 1, 5) = 'game_' AND length(game_id) BETWEEN 5 AND 64 AND instr(game_id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_game_content_copy_leases_id", "substr(id, 1, 4) = 'gcl_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_game_content_copy_leases_revision", "content_revision > 0");
+
+                            t.HasCheckConstraint("ck_game_content_copy_leases_time", "created_at >= 0 AND expires_at > created_at");
+                        });
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameContentOperationRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("completed_at");
+
+                    b.Property<string>("ContentDigest")
+                        .HasMaxLength(71)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("content_digest");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("error_code");
+
+                    b.Property<long>("ExpectedContentRevision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("expected_content_revision");
+
+                    b.Property<int>("ExpectedGameStateVersion")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("expected_game_state_version");
+
+                    b.Property<string>("GameId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("game_id");
+
+                    b.Property<string>("IngestionId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ingestion_id");
+
+                    b.Property<long>("LeaseExpiresAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<string>("OperationType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("operation_type");
+
+                    b.Property<int>("StateVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0)
+                        .HasColumnName("state_version");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("WorkPath")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("work_path");
+
+                    b.HasKey("Id")
+                        .HasName("pk_game_content_operations");
+
+                    b.HasIndex("GameId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_game_content_operations_active_game")
+                        .HasFilter("status IN ('PENDING', 'RUNNING', 'CONTENT_READY')");
+
+                    b.HasIndex("IngestionId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_game_content_operations_ingestion")
+                        .HasFilter("ingestion_id IS NOT NULL");
+
+                    b.HasIndex("GameId", "CreatedAt")
+                        .HasDatabaseName("ix_game_content_operations_game_created");
+
+                    b.ToTable("game_content_operations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_game_content_operations_completion", "(status IN ('COMMITTED', 'FAILED') AND completed_at IS NOT NULL) OR (status NOT IN ('COMMITTED', 'FAILED') AND completed_at IS NULL)");
+
+                            t.HasCheckConstraint("ck_game_content_operations_digest", "content_digest IS NULL OR (length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
+
+                            t.HasCheckConstraint("ck_game_content_operations_error", "error_code IS NULL OR (length(error_code) BETWEEN 1 AND 128 AND instr(error_code, char(0)) = 0)");
+
+                            t.HasCheckConstraint("ck_game_content_operations_game_id", "substr(game_id, 1, 5) = 'game_' AND length(game_id) BETWEEN 5 AND 64 AND instr(game_id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_game_content_operations_id", "substr(id, 1, 4) = 'gop_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_game_content_operations_status", "status IN ('PENDING', 'RUNNING', 'CONTENT_READY', 'COMMITTED', 'FAILED')");
+
+                            t.HasCheckConstraint("ck_game_content_operations_time", "created_at >= 0 AND updated_at >= created_at AND lease_expires_at >= created_at AND (completed_at IS NULL OR completed_at >= created_at)");
+
+                            t.HasCheckConstraint("ck_game_content_operations_type", "operation_type IN ('IMPORT', 'RESET_WORKSPACE', 'VALIDATE', 'ACTIVATE')");
+
+                            t.HasCheckConstraint("ck_game_content_operations_versions", "expected_game_state_version >= 0 AND expected_content_revision >= 0 AND state_version >= 0");
+
+                            t.HasCheckConstraint("ck_game_content_operations_work_path", "work_path IS NULL OR (length(work_path) BETWEEN 1 AND 512 AND substr(work_path, 1, 1) <> '/' AND instr(work_path, char(92)) = 0 AND instr(work_path, char(0)) = 0 AND instr(work_path, '//') = 0 AND instr('/' || work_path || '/', '/./') = 0 AND instr('/' || work_path || '/', '/../') = 0)");
+                        });
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameFileRow", b =>
+                {
+                    b.Property<string>("GameId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("game_id");
+
+                    b.Property<string>("Scope")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("LogicalPath")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("logical_path");
+
+                    b.Property<long>("ByteLength")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("byte_length");
+
+                    b.Property<string>("ContentDigest")
+                        .HasMaxLength(71)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("content_digest");
+
+                    b.Property<string>("EntryKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("entry_kind");
+
+                    b.Property<string>("FileKind")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("file_kind");
+
+                    b.Property<bool?>("HasBom")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("has_bom");
+
+                    b.Property<string>("TextEncoding")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("text_encoding");
+
+                    b.HasKey("GameId", "Scope", "LogicalPath")
+                        .HasName("pk_game_files");
+
+                    b.HasIndex("GameId", "Scope", "EntryKind")
+                        .HasDatabaseName("ix_game_files_scope_kind");
+
+                    b.ToTable("game_files", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_game_files_digest", "(entry_kind = 'DIRECTORY' AND content_digest IS NULL) OR (entry_kind = 'FILE' AND length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
+
+                            t.HasCheckConstraint("ck_game_files_file_metadata", "(entry_kind = 'DIRECTORY' AND file_kind IS NULL AND text_encoding IS NULL AND has_bom IS NULL) OR (entry_kind = 'FILE' AND file_kind IN ('TEXT', 'BINARY') AND ((file_kind = 'BINARY' AND text_encoding IS NULL AND has_bom IS NULL) OR (file_kind = 'TEXT' AND text_encoding IN ('UTF8', 'UTF8_BOM', 'SHIFT_JIS', 'UNKNOWN') AND has_bom IN (0, 1))))");
+
+                            t.HasCheckConstraint("ck_game_files_game_id", "substr(game_id, 1, 5) = 'game_' AND length(game_id) BETWEEN 5 AND 64 AND instr(game_id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_game_files_kind", "entry_kind IN ('FILE', 'DIRECTORY')");
+
+                            t.HasCheckConstraint("ck_game_files_length", "byte_length >= 0 AND (entry_kind = 'FILE' OR byte_length = 0)");
+
+                            t.HasCheckConstraint("ck_game_files_path", "length(logical_path) BETWEEN 1 AND 512 AND substr(logical_path, 1, 1) <> '/' AND instr(logical_path, char(92)) = 0 AND instr(logical_path, char(0)) = 0 AND instr(logical_path, '//') = 0 AND instr('/' || logical_path || '/', '/./') = 0 AND instr('/' || logical_path || '/', '/../') = 0");
+
+                            t.HasCheckConstraint("ck_game_files_scope", "scope IN ('WORKSPACE', 'CURRENT')");
+                        });
+                });
+
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GamePackageIngestionRow", b =>
                 {
                     b.Property<string>("Id")
@@ -333,6 +705,10 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasMaxLength(71)
                         .HasColumnType("TEXT")
                         .HasColumnName("archive_digest");
+
+                    b.Property<long?>("CleanupCompletedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("cleanup_completed_at");
 
                     b.Property<string>("ContentDigest")
                         .HasMaxLength(71)
@@ -370,10 +746,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                     b.Property<long?>("ReservationReleasedAt")
                         .HasColumnType("INTEGER")
                         .HasColumnName("reservation_released_at");
-
-                    b.Property<long?>("CleanupCompletedAt")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("cleanup_completed_at");
 
                     b.Property<long>("ReservedBytes")
                         .HasColumnType("INTEGER")
@@ -451,9 +823,59 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
 
+                    b.Property<long?>("ActivatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("activated_at");
+
+                    b.Property<string>("ActivatedBy")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("activated_by");
+
+                    b.Property<string>("CompatibilitySummaryJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1048576)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("compatibility_summary_json");
+
+                    b.Property<string>("ContentDigest")
+                        .HasMaxLength(71)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("content_digest");
+
+                    b.Property<long>("ContentRevision")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("content_revision");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER")
                         .HasColumnName("created_at");
+
+                    b.Property<string>("CurrentContentPath")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("current_content_path");
+
+                    b.Property<long?>("DeletedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("DeletedBy")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("deleted_by");
+
+                    b.Property<string>("ManifestJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1048576)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("manifest_json");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -467,7 +889,16 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("owner_user_id");
 
+                    b.Property<string>("RuntimeConfigJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1048576)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("runtime_config_json");
+
                     b.Property<int>("StateVersion")
+                        .IsConcurrencyToken()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(0)
@@ -487,8 +918,30 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("visibility");
 
+                    b.Property<string>("WorkspacePath")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("workspace_path");
+
+                    b.Property<string>("WorkspaceStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("workspace_status");
+
                     b.HasKey("Id")
                         .HasName("pk_games");
+
+                    b.HasIndex("ActivatedBy");
+
+                    b.HasIndex("CurrentContentPath")
+                        .IsUnique()
+                        .HasDatabaseName("ux_games_current_content_path");
+
+                    b.HasIndex("DeletedBy");
+
+                    b.HasIndex("WorkspacePath")
+                        .IsUnique()
+                        .HasDatabaseName("ux_games_workspace_path");
 
                     b.HasIndex("OwnerUserId", "Name")
                         .IsUnique()
@@ -496,150 +949,37 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                     b.ToTable("games", null, t =>
                         {
+                            t.HasCheckConstraint("ck_games_compatibility_json", "length(compatibility_summary_json) BETWEEN 2 AND 1048576 AND json_valid(compatibility_summary_json) = 1 AND compatibility_summary_json <> ''");
+
+                            t.HasCheckConstraint("ck_games_content", "(current_content_path IS NULL AND content_digest IS NULL AND content_revision = 0 AND activated_by IS NULL AND activated_at IS NULL) OR (current_content_path IS NOT NULL AND length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64 AND content_revision > 0 AND activated_by IS NOT NULL AND activated_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_games_content_path", "current_content_path IS NULL OR (length(current_content_path) BETWEEN 1 AND 512 AND substr(current_content_path, 1, 1) <> '/' AND instr(current_content_path, char(92)) = 0 AND instr(current_content_path, char(0)) = 0 AND instr(current_content_path, '//') = 0 AND instr('/' || current_content_path || '/', '/./') = 0 AND instr('/' || current_content_path || '/', '/../') = 0)");
+
+                            t.HasCheckConstraint("ck_games_deleted_fields", "(status = 'DELETED' AND deleted_by IS NOT NULL AND deleted_at IS NOT NULL) OR (status <> 'DELETED' AND deleted_by IS NULL AND deleted_at IS NULL)");
+
                             t.HasCheckConstraint("ck_games_id", "substr(id, 1, 5) = 'game_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_games_manifest_json", "length(manifest_json) BETWEEN 2 AND 1048576 AND json_valid(manifest_json) = 1 AND manifest_json <> ''");
 
                             t.HasCheckConstraint("ck_games_name", "length(name) BETWEEN 1 AND 200 AND instr(name, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_games_owner_id", "substr(owner_user_id, 1, 4) = 'usr_' AND length(owner_user_id) BETWEEN 5 AND 64 AND instr(owner_user_id, char(0)) = 0");
 
-                            t.HasCheckConstraint("ck_games_state_version", "state_version >= 0");
+                            t.HasCheckConstraint("ck_games_runtime_config_json", "length(runtime_config_json) BETWEEN 2 AND 1048576 AND json_valid(runtime_config_json) = 1 AND runtime_config_json <> ''");
 
-                            t.HasCheckConstraint("ck_games_status", "status IN ('ACTIVE', 'DELETED')");
+                            t.HasCheckConstraint("ck_games_state_version", "state_version >= 0 AND content_revision >= 0");
+
+                            t.HasCheckConstraint("ck_games_status", "status IN ('ACTIVE', 'BLOCKED', 'DELETED')");
 
                             t.HasCheckConstraint("ck_games_time_order", "created_at >= 0 AND updated_at >= created_at");
 
                             t.HasCheckConstraint("ck_games_visibility", "visibility IN ('PRIVATE', 'SERVER_SHARED')");
-                        });
-                });
 
-            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameVersionRow", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
+                            t.HasCheckConstraint("ck_games_workspace", "(workspace_status = 'NONE' AND workspace_path IS NULL) OR (workspace_status <> 'NONE' AND workspace_path IS NOT NULL)");
 
-                    b.Property<string>("CompatibilitySummaryJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(1048576)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
-                        .HasColumnName("compatibility_summary_json");
+                            t.HasCheckConstraint("ck_games_workspace_path", "workspace_path IS NULL OR (length(workspace_path) BETWEEN 1 AND 512 AND substr(workspace_path, 1, 1) <> '/' AND instr(workspace_path, char(92)) = 0 AND instr(workspace_path, char(0)) = 0 AND instr(workspace_path, '//') = 0 AND instr('/' || workspace_path || '/', '/./') = 0 AND instr('/' || workspace_path || '/', '/../') = 0)");
 
-                    b.Property<string>("ContentDigest")
-                        .HasMaxLength(71)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("content_digest");
-
-                    b.Property<string>("ContentPath")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("content_path");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("CreatedBy")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_by");
-
-                    b.Property<string>("GameId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("game_id");
-
-                    b.Property<string>("ManifestJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(1048576)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
-                        .HasColumnName("manifest_json");
-
-                    b.Property<long?>("PublishedAt")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("published_at");
-
-                    b.Property<string>("RuntimeConfigJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(1048576)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
-                        .HasColumnName("runtime_config_json");
-
-                    b.Property<int>("StateVersion")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasDefaultValue(0)
-                        .HasColumnName("state_version");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("TEXT")
-                        .HasColumnName("status");
-
-                    b.Property<string>("VersionLabel")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("version_label");
-
-                    b.HasKey("Id")
-                        .HasName("pk_game_versions");
-
-                    b.HasAlternateKey("Id", "GameId")
-                        .HasName("ak_game_versions_id_game_id");
-
-                    b.HasIndex("ContentDigest")
-                        .IsUnique()
-                        .HasDatabaseName("ux_game_versions_content_digest")
-                        .HasFilter("content_digest IS NOT NULL");
-
-                    b.HasIndex("ContentPath")
-                        .IsUnique()
-                        .HasDatabaseName("ux_game_versions_content_path");
-
-                    b.HasIndex("CreatedBy")
-                        .HasDatabaseName("ix_game_versions_created_by");
-
-                    b.HasIndex("GameId", "VersionLabel")
-                        .IsUnique()
-                        .HasDatabaseName("ux_game_versions_game_label");
-
-                    b.ToTable("game_versions", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_game_versions_compatibility_json", "length(compatibility_summary_json) BETWEEN 2 AND 1048576 AND json_valid(compatibility_summary_json) = 1 AND compatibility_summary_json <> ''");
-
-                            t.HasCheckConstraint("ck_game_versions_content_path", "length(content_path) BETWEEN 1 AND 512 AND substr(content_path, 1, 1) <> '/' AND instr(content_path, char(92)) = 0 AND instr(content_path, char(0)) = 0 AND instr(content_path, '//') = 0 AND instr('/' || content_path || '/', '/./') = 0 AND instr('/' || content_path || '/', '/../') = 0");
-
-                            t.HasCheckConstraint("ck_game_versions_created_by", "substr(created_by, 1, 4) = 'usr_' AND length(created_by) BETWEEN 5 AND 64 AND instr(created_by, char(0)) = 0");
-
-                            t.HasCheckConstraint("ck_game_versions_digest", "content_digest IS NULL OR (length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
-
-                            t.HasCheckConstraint("ck_game_versions_game_id", "substr(game_id, 1, 5) = 'game_' AND length(game_id) BETWEEN 5 AND 64 AND instr(game_id, char(0)) = 0");
-
-                            t.HasCheckConstraint("ck_game_versions_id", "substr(id, 1, 5) = 'gver_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
-
-                            t.HasCheckConstraint("ck_game_versions_manifest_json", "length(manifest_json) BETWEEN 2 AND 1048576 AND json_valid(manifest_json) = 1 AND manifest_json <> ''");
-
-                            t.HasCheckConstraint("ck_game_versions_published_fields", "status NOT IN ('PUBLISHED', 'BLOCKED') OR (content_digest IS NOT NULL AND published_at IS NOT NULL)");
-
-                            t.HasCheckConstraint("ck_game_versions_runtime_config_json", "length(runtime_config_json) BETWEEN 2 AND 1048576 AND json_valid(runtime_config_json) = 1 AND runtime_config_json <> ''");
-
-                            t.HasCheckConstraint("ck_game_versions_state_version", "state_version >= 0");
-
-                            t.HasCheckConstraint("ck_game_versions_status", "status IN ('DRAFT', 'VALIDATING', 'PUBLISHED', 'BLOCKED', 'DELETED')");
-
-                            t.HasCheckConstraint("ck_game_versions_time_order", "created_at >= 0 AND (published_at IS NULL OR published_at >= created_at)");
-
-                            t.HasCheckConstraint("ck_game_versions_version_label", "length(version_label) BETWEEN 1 AND 100 AND instr(version_label, char(0)) = 0");
+                            t.HasCheckConstraint("ck_games_workspace_status", "workspace_status IN ('NONE', 'DRAFT', 'VALIDATING')");
                         });
                 });
 
@@ -857,12 +1197,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("game_id");
 
-                    b.Property<string>("GameVersionId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("game_version_id");
-
                     b.Property<long>("LastActivityAt")
                         .HasColumnType("INTEGER")
                         .HasColumnName("last_activity_at");
@@ -885,6 +1219,14 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("owner_user_id");
 
+                    b.Property<string>("RuntimeManifestJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(1048576)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("runtime_manifest_json");
+
                     b.Property<string>("RuntimeVersion")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -896,6 +1238,16 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("TEXT")
                         .HasColumnName("session_root_path");
+
+                    b.Property<string>("SourceContentDigest")
+                        .IsRequired()
+                        .HasMaxLength(71)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_content_digest");
+
+                    b.Property<long>("SourceContentRevision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("source_content_revision");
 
                     b.Property<long?>("StartedAt")
                         .HasColumnType("INTEGER")
@@ -933,11 +1285,8 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                     b.HasIndex("GameId")
                         .HasDatabaseName("ix_sessions_game");
 
-                    b.HasIndex("GameVersionId")
-                        .HasDatabaseName("ix_sessions_game_version");
-
-                    b.HasIndex("GameVersionId", "GameId")
-                        .HasDatabaseName("ix_sessions_game_version_game");
+                    b.HasIndex("GameId", "SourceContentDigest")
+                        .HasDatabaseName("ix_sessions_game_content_digest");
 
                     b.HasIndex("OwnerUserId", "CreatedAt")
                         .IsDescending(false, true)
@@ -956,8 +1305,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_sessions_game_id", "substr(game_id, 1, 5) = 'game_' AND length(game_id) BETWEEN 5 AND 64 AND instr(game_id, char(0)) = 0");
 
-                            t.HasCheckConstraint("ck_sessions_game_version_id", "substr(game_version_id, 1, 5) = 'gver_' AND length(game_version_id) BETWEEN 5 AND 64 AND instr(game_version_id, char(0)) = 0");
-
                             t.HasCheckConstraint("ck_sessions_id", "substr(id, 1, 5) = 'sess_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_sessions_name", "length(name) BETWEEN 1 AND 200 AND instr(name, char(0)) = 0");
@@ -966,7 +1313,13 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_sessions_root_path", "length(session_root_path) BETWEEN 1 AND 512 AND substr(session_root_path, 1, 1) <> '/' AND instr(session_root_path, char(92)) = 0 AND instr(session_root_path, char(0)) = 0 AND instr(session_root_path, '//') = 0 AND instr('/' || session_root_path || '/', '/./') = 0 AND instr('/' || session_root_path || '/', '/../') = 0");
 
+                            t.HasCheckConstraint("ck_sessions_runtime_manifest_json", "length(runtime_manifest_json) BETWEEN 2 AND 1048576 AND json_valid(runtime_manifest_json) = 1 AND runtime_manifest_json <> ''");
+
                             t.HasCheckConstraint("ck_sessions_runtime_version", "length(runtime_version) BETWEEN 1 AND 128 AND instr(runtime_version, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_sessions_source_digest", "length(source_content_digest) = 71 AND substr(source_content_digest, 1, 7) = 'sha256:' AND lower(source_content_digest) = source_content_digest AND substr(source_content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(source_content_digest, 8)) = 64");
+
+                            t.HasCheckConstraint("ck_sessions_source_revision", "source_content_revision > 0");
 
                             t.HasCheckConstraint("ck_sessions_state", "state IN ('CREATING', 'STARTING', 'RUNNING', 'DETACHED', 'STOPPING', 'CLOSED', 'CRASHED')");
 
@@ -1087,6 +1440,60 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                     b.Navigation("QuotaProfile");
                 });
 
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.CompatibilityDiagnosticRow", b =>
+                {
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.GameRow", "Game")
+                        .WithMany()
+                        .HasForeignKey("GameId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_compatibility_diagnostics_game");
+
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", null)
+                        .WithMany()
+                        .HasForeignKey("OverriddenBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_compatibility_diagnostics_overridden_by");
+
+                    b.Navigation("Game");
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameContentCopyLeaseRow", b =>
+                {
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.GameRow", "Game")
+                        .WithMany()
+                        .HasForeignKey("GameId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_game_content_copy_leases_game");
+
+                    b.Navigation("Game");
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameContentOperationRow", b =>
+                {
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.GameRow", "Game")
+                        .WithMany()
+                        .HasForeignKey("GameId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_game_content_operations_game");
+
+                    b.Navigation("Game");
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameFileRow", b =>
+                {
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.GameRow", "Game")
+                        .WithMany()
+                        .HasForeignKey("GameId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_game_files_game");
+
+                    b.Navigation("Game");
+                });
+
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GamePackageIngestionRow", b =>
                 {
                     b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", "Owner")
@@ -1101,6 +1508,18 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameRow", b =>
                 {
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActivatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_games_activated_by");
+
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", null)
+                        .WithMany()
+                        .HasForeignKey("DeletedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_games_deleted_by");
+
                     b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", "OwnerUser")
                         .WithMany()
                         .HasForeignKey("OwnerUserId")
@@ -1109,27 +1528,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_games_owner_user");
 
                     b.Navigation("OwnerUser");
-                });
-
-            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameVersionRow", b =>
-                {
-                    b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", "Creator")
-                        .WithMany()
-                        .HasForeignKey("CreatedBy")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_game_versions_creator");
-
-                    b.HasOne("CloudEmuera.Infrastructure.Persistence.GameRow", "Game")
-                        .WithMany("Versions")
-                        .HasForeignKey("GameId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_game_versions_game");
-
-                    b.Navigation("Creator");
-
-                    b.Navigation("Game");
                 });
 
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.IdempotencyRecordRow", b =>
@@ -1169,17 +1567,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_sessions_owner_user");
 
-                    b.HasOne("CloudEmuera.Infrastructure.Persistence.GameVersionRow", "GameVersion")
-                        .WithMany("Sessions")
-                        .HasForeignKey("GameVersionId", "GameId")
-                        .HasPrincipalKey("Id", "GameId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_sessions_game_version_game");
-
                     b.Navigation("Game");
-
-                    b.Navigation("GameVersion");
 
                     b.Navigation("OwnerUser");
                 });
@@ -1198,13 +1586,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameRow", b =>
-                {
-                    b.Navigation("Sessions");
-
-                    b.Navigation("Versions");
-                });
-
-            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.GameVersionRow", b =>
                 {
                     b.Navigation("Sessions");
                 });

@@ -22,7 +22,7 @@ public sealed class PersistenceConstraintTests
 
     [Fact]
     [Trait("Category", "PersistenceConstraint")]
-    public async Task DuplicateGameNameAndVersionLabel_AreRejected()
+    public async Task DuplicateGameNameAndContentPath_AreRejected()
     {
         using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync();
         await using DbContextScope scope = database.OpenContext();
@@ -30,29 +30,24 @@ public sealed class PersistenceConstraintTests
         await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
 
         scope.Context.ChangeTracker.Clear();
-        GameVersionRow duplicateVersion = PersistenceFixtures.CreateVersion("gver_second");
-        duplicateVersion.VersionLabel = "gver_fixture";
-        scope.Context.GameVersions.Add(duplicateVersion);
+        GameRow duplicateContent = PersistenceFixtures.CreateGame("game_second", name: "Other Game");
+        duplicateContent.CurrentContentPath = "games/game_fixture/content";
+        scope.Context.Games.Add(duplicateContent);
         await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
     }
 
     [Fact]
     [Trait("Category", "PersistenceConstraint")]
-    public async Task NullDraftDigestsAreAllowed_ButPublishedDigestIsUnique()
+    public async Task DraftWorkspaceMayExistWithoutCurrentContent()
     {
-        using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync(includeVersion: false, includeSession: false);
+        using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync(includeContent: false, includeSession: false);
         await using DbContextScope scope = database.OpenContext();
-        scope.Context.GameVersions.AddRange(
-            PersistenceFixtures.CreateVersion("gver_draft_1"),
-            PersistenceFixtures.CreateVersion("gver_draft_2"));
-        await scope.Context.SaveChangesAsync();
+        GameRow game = await scope.Context.Games.SingleAsync();
+        game.WorkspaceStatus = GameWorkspaceStatus.Draft;
+        game.WorkspacePath = "games/game_fixture/workspace";
 
-        string digest = "sha256:" + new string('b', 64);
-        scope.Context.GameVersions.Add(PersistenceFixtures.CreateVersion("gver_published_1", digest: digest, status: GameVersionStatus.Published));
         await scope.Context.SaveChangesAsync();
-        scope.Context.GameVersions.Add(PersistenceFixtures.CreateVersion("gver_published_2", digest: digest, status: GameVersionStatus.Published));
-
-        await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
+        Assert.Null(game.ContentDigest);
     }
 
     [Fact]
@@ -67,37 +62,34 @@ public sealed class PersistenceConstraintTests
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET waiting_for_input = 2 WHERE id = 'sess_fixture';"));
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET state_version = -1 WHERE id = 'sess_fixture';"));
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET last_output_sequence = -1 WHERE id = 'sess_fixture';"));
-        await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "INSERT INTO game_versions (id, game_id, version_label, status, content_digest, content_path, manifest_json, runtime_config_json, compatibility_summary_json, created_by, created_at, state_version) VALUES ('gver_bad', 'game_fixture', 'bad', 'DRAFT', 'sha256:bad', 'games/game_fixture/gver_bad/content', '{}', '{}', '{}', 'usr_fixture', 0, 0);"));
+        await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE games SET content_digest = 'sha256:bad' WHERE id = 'game_fixture';"));
     }
 
     [Fact]
     [Trait("Category", "PersistenceConstraint")]
-    public async Task SessionCompositeForeignKey_RejectsCrossGameVersionReference()
+    public async Task SessionForeignKey_RejectsUnknownGameReference()
     {
         using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync(includeSession: false);
         await using DbContextScope scope = database.OpenContext();
-        scope.Context.Games.Add(PersistenceFixtures.CreateGame("game_other", name: "Other Game"));
-        scope.Context.GameVersions.Add(PersistenceFixtures.CreateVersion("gver_other", "game_other"));
-        await scope.Context.SaveChangesAsync();
-        scope.Context.Sessions.Add(PersistenceFixtures.CreateSession("sess_cross", "game_other", "gver_fixture"));
+        scope.Context.Sessions.Add(PersistenceFixtures.CreateSession("sess_cross", "game_missing"));
 
         await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
     }
 
     [Fact]
     [Trait("Category", "PersistenceConstraint")]
-    public async Task ReferencedGameVersionAndSessionRoot_CannotBeDeletedOrReused()
+    public async Task ReferencedGameAndCurrentContentPath_CannotBeDeletedOrReused()
     {
         using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync();
         await using DbContextScope scope = database.OpenContext();
-        GameVersionRow version = await scope.Context.GameVersions.SingleAsync(row => row.Id == "gver_fixture");
-        scope.Context.GameVersions.Remove(version);
+        GameRow game = await scope.Context.Games.SingleAsync(row => row.Id == "game_fixture");
+        scope.Context.Games.Remove(game);
         await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
 
         scope.Context.ChangeTracker.Clear();
-        GameVersionRow duplicatePath = PersistenceFixtures.CreateVersion("gver_duplicate_path");
-        duplicatePath.ContentPath = version.ContentPath;
-        scope.Context.GameVersions.Add(duplicatePath);
+        GameRow duplicatePath = PersistenceFixtures.CreateGame("game_duplicate_path", name: "Duplicate Path");
+        duplicatePath.CurrentContentPath = game.CurrentContentPath;
+        scope.Context.Games.Add(duplicatePath);
         await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
     }
 
@@ -179,6 +171,26 @@ public sealed class PersistenceConstraintTests
 
     [Fact]
     [Trait("Category", "PersistenceConstraint")]
+    public async Task OnlyOneActiveContentOperationPerGameIsAllowed()
+    {
+        using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync();
+        await using DbContextScope scope = database.OpenContext();
+        scope.Context.GameContentOperations.Add(PersistenceFixtures.CreateGameContentOperation());
+        await scope.Context.SaveChangesAsync();
+        scope.Context.GameContentOperations.Add(PersistenceFixtures.CreateGameContentOperation("gop_second"));
+        await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
+
+        scope.Context.ChangeTracker.Clear();
+        GameContentOperationRow first = await scope.Context.GameContentOperations.SingleAsync();
+        first.Status = GameContentOperationStatus.Committed;
+        first.CompletedAt = PersistenceFixtures.CreatedAt;
+        await scope.Context.SaveChangesAsync();
+        scope.Context.GameContentOperations.Add(PersistenceFixtures.CreateGameContentOperation("gop_second"));
+        await scope.Context.SaveChangesAsync();
+    }
+
+    [Fact]
+    [Trait("Category", "PersistenceConstraint")]
     public async Task ClosedAndWaitingSessionFields_MustBeConsistent()
     {
         using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync();
@@ -203,7 +215,7 @@ public sealed class PersistenceConstraintTests
         Assert.Equal(1, await CountAsync(scope.Connection, "SELECT COUNT(*) FROM sessions WHERE owner_user_id = 'usr_fixture';"));
     }
 
-    private static async Task<TemporarySqliteDatabase> CreateSeededDatabaseAsync(bool includeVersion = true, bool includeSession = true)
+    private static async Task<TemporarySqliteDatabase> CreateSeededDatabaseAsync(bool includeContent = true, bool includeSession = true)
     {
         TemporarySqliteDatabase database = new();
         MigrationResult result = await database.MigrateAsync();
@@ -211,11 +223,7 @@ public sealed class PersistenceConstraintTests
         await using DbContextScope scope = database.OpenContext();
         scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
         scope.Context.Users.Add(PersistenceFixtures.CreateUser());
-        scope.Context.Games.Add(PersistenceFixtures.CreateGame());
-        if (includeVersion)
-        {
-            scope.Context.GameVersions.Add(PersistenceFixtures.CreateVersion());
-        }
+        scope.Context.Games.Add(PersistenceFixtures.CreateGame(withContent: includeContent));
 
         if (includeSession)
         {

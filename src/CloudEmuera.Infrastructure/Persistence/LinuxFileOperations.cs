@@ -204,6 +204,81 @@ internal static class LinuxFileOperations
         return CreateHandle(descriptor, "openat duplicate directory");
     }
 
+    public static SafeFileHandle OpenEntryAt(SafeFileHandle parentDirectory, string name)
+    {
+        ValidateLeafName(name);
+        return OpenPathAt(parentDirectory, name);
+    }
+
+    public static SafeFileHandle OpenDirectoryPath(SafeFileHandle root, string logicalPath, bool create)
+    {
+        SafeFileHandle current = DuplicateDirectory(root);
+        try
+        {
+            foreach (string segment in logicalPath.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                ValidateLeafName(segment);
+                SafeFileHandle next = create
+                    ? OpenOrCreateDirectoryAt(current, segment)
+                    : TryOpenDirectoryAt(current, segment)
+                        ?? throw new IOException("The directory path is missing.");
+                current.Dispose();
+                current = next;
+            }
+
+            return current;
+        }
+        catch
+        {
+            current.Dispose();
+            throw;
+        }
+    }
+
+    public static void CopyTree(SafeFileHandle sourceDirectory, SafeFileHandle destinationParent, string destinationName)
+    {
+        using SafeFileHandle destination = CreateDirectoryAt(destinationParent, destinationName);
+        CopyDirectoryContents(sourceDirectory, destination);
+        Sync(destination);
+        Sync(destinationParent);
+    }
+
+    private static void CopyDirectoryContents(SafeFileHandle sourceDirectory, SafeFileHandle destinationDirectory)
+    {
+        string descriptorPath = GetProcFileDescriptorPath(sourceDirectory);
+        foreach (string path in Directory.EnumerateFileSystemEntries(descriptorPath).Order(StringComparer.Ordinal))
+        {
+            string leaf = Path.GetFileName(path);
+            using SafeFileHandle entry = OpenEntryAt(sourceDirectory, leaf);
+            FileIdentity identity = ReadIdentity(entry);
+            if (identity.UserId != CurrentUserId) throw new IOException("Refusing to copy an entry owned by another user.");
+            if (identity.IsDirectory)
+            {
+                using SafeFileHandle childSource = TryOpenDirectoryAt(sourceDirectory, leaf)
+                    ?? throw new IOException("The source directory disappeared during copy.");
+                using SafeFileHandle childDestination = CreateDirectoryAt(destinationDirectory, leaf);
+                CopyDirectoryContents(childSource, childDestination);
+                Sync(childDestination);
+            }
+            else if (identity.IsRegularFile)
+            {
+                if (identity.LinkCount != 1) throw new IOException("Refusing to copy a multiply-linked source file.");
+                using SafeFileHandle sourceFile = OpenRegularFileAt(sourceDirectory, leaf, readOnly: true, create: false, exclusive: false);
+                using SafeFileHandle destinationFile = OpenRegularFileAt(destinationDirectory, leaf, readOnly: false, create: true, exclusive: true);
+                using FileStream input = CreateFileStream(sourceFile, FileAccess.Read);
+                using FileStream output = CreateFileStream(destinationFile, FileAccess.Write);
+                input.CopyTo(output);
+                output.Flush(flushToDisk: true);
+                Sync(destinationFile);
+            }
+            else
+            {
+                throw new IOException("Refusing to copy a link or special file.");
+            }
+        }
+        Sync(destinationDirectory);
+    }
+
     public static SafeFileHandle OpenRegularFileAt(
         SafeFileHandle parentDirectory,
         string name,
@@ -300,11 +375,25 @@ internal static class LinuxFileOperations
         }
     }
 
+    public static void RenameBetweenDirectories(SafeFileHandle sourceDirectory, string sourceName, SafeFileHandle destinationDirectory, string destinationName)
+    {
+        ValidateLeafName(sourceName);
+        ValidateLeafName(destinationName);
+        if (NativeMethods.RenameAt(sourceDirectory, sourceName, destinationDirectory, destinationName) != 0)
+            throw CreateError("renameat across directories", Marshal.GetLastPInvokeError());
+    }
+
+    public static void Sync(SafeFileHandle handle)
+    {
+        if (NativeMethods.Fsync(handle) != 0) throw CreateError("fsync", Marshal.GetLastPInvokeError());
+    }
+
     public static void DeleteTreeAt(
         SafeFileHandle parentDirectory,
         string name,
         int maxDepth = 64,
-        FileIdentity? expectedIdentity = null)
+        FileIdentity? expectedIdentity = null,
+        bool allowReadOnly = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDepth);
         ValidateLeafName(name);
@@ -316,17 +405,17 @@ internal static class LinuxFileOperations
         if (identity.UserId != CurrentUserId) throw new IOException("Refusing to remove a staging entry owned by another user.");
         if (identity.IsRegularFile)
         {
-            if ((identity.Mode & 0x1FF) != 0x180) throw new IOException("Refusing to remove a staging file with unsafe permissions.");
+            if (!IsSafeFileMode(identity.Mode, allowReadOnly)) throw new IOException("Refusing to remove a staging file with unsafe permissions.");
             if (identity.LinkCount != 1) throw new IOException("Refusing to remove a multiply-linked staging file.");
             UnlinkAtChecked(parentDirectory, name, isDirectory: false);
             return;
         }
         if (!identity.IsDirectory) throw new IOException("Refusing to remove a link or special staging entry.");
-        if ((identity.Mode & 0x1FF) != 0x1C0) throw new IOException("Refusing to remove a staging directory with unsafe permissions.");
+        if (!IsSafeDirectoryMode(identity.Mode, allowReadOnly)) throw new IOException("Refusing to remove a staging directory with unsafe permissions.");
 
         using SafeFileHandle directory = TryOpenDirectoryAt(parentDirectory, name)
             ?? throw new IOException("The staging directory disappeared during cleanup.");
-        DeleteDirectoryContents(directory, maxDepth - 1);
+        DeleteDirectoryContents(directory, maxDepth - 1, allowReadOnly);
         EnsureSameIdentity(entry, directory);
         UnlinkAtChecked(parentDirectory, name, isDirectory: true);
     }
@@ -335,11 +424,12 @@ internal static class LinuxFileOperations
         SafeFileHandle parentDirectory,
         string name,
         int maxDepth = 64,
-        FileIdentity? expectedIdentity = null)
+        FileIdentity? expectedIdentity = null,
+        bool allowReadOnly = false)
     {
         try
         {
-            DeleteTreeAt(parentDirectory, name, maxDepth, expectedIdentity);
+            DeleteTreeAt(parentDirectory, name, maxDepth, expectedIdentity, allowReadOnly);
             return true;
         }
         catch (LinuxFileOperationException exception) when (exception.Error == ErrnoNoEntry)
@@ -348,15 +438,27 @@ internal static class LinuxFileOperations
         }
     }
 
-    private static void DeleteDirectoryContents(SafeFileHandle directory, int remainingDepth)
+    private static void DeleteDirectoryContents(SafeFileHandle directory, int remainingDepth, bool allowReadOnly)
     {
         if (remainingDepth < 0) throw new IOException("Staging cleanup exceeded its maximum depth.");
         string descriptorPath = GetProcFileDescriptorPath(directory);
         foreach (string path in Directory.EnumerateFileSystemEntries(descriptorPath))
         {
             string leaf = Path.GetFileName(path);
-            DeleteTreeAt(directory, leaf, remainingDepth);
+            DeleteTreeAt(directory, leaf, remainingDepth, allowReadOnly: allowReadOnly);
         }
+    }
+
+    private static bool IsSafeFileMode(ushort mode, bool allowReadOnly)
+    {
+        int permissions = mode & 0x1FF;
+        return permissions == 0x180 || (allowReadOnly && permissions is 0x100 or 0x124);
+    }
+
+    private static bool IsSafeDirectoryMode(ushort mode, bool allowReadOnly)
+    {
+        int permissions = mode & 0x1FF;
+        return permissions == 0x1C0 || (allowReadOnly && permissions is 0x140 or 0x16D);
     }
 
     private static SafeFileHandle OpenPathAt(SafeFileHandle parentDirectory, string name)
@@ -585,6 +687,10 @@ internal static class LinuxFileOperations
         [DllImport("libc", EntryPoint = "fchmod", SetLastError = true)]
         [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux fchmod operates on the already-open file descriptor.")]
         public static extern int Fchmod(SafeFileHandle file, uint mode);
+
+        [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux fsync operates on an already-open file or directory descriptor.")]
+        public static extern int Fsync(SafeFileHandle file);
 
         [DllImport("libc", EntryPoint = "flock", SetLastError = true)]
         [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux flock provides the cross-process migration lock.")]

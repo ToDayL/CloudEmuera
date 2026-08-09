@@ -10,8 +10,8 @@ public enum SessionRootManifestEntryKind
 }
 
 /// <summary>
-/// One ordinary entry in a published GameVersion manifest. Paths are
-/// slash-separated and relative to the GameVersionRoot.
+/// One ordinary entry in a published GameContent manifest. Paths are
+/// slash-separated and relative to the GameContentRoot.
 /// </summary>
 public sealed record SessionRootManifestEntry
 {
@@ -73,7 +73,7 @@ public sealed class SessionRootPublishedManifest
 {
     public SessionRootPublishedManifest(
         IEnumerable<SessionRootManifestEntry> entries,
-        string? gameVersionIdentity = null)
+        string? gameContentIdentity = null)
     {
         ArgumentNullException.ThrowIfNull(entries);
         var materialized = entries.ToArray();
@@ -114,34 +114,34 @@ public sealed class SessionRootPublishedManifest
             .ThenBy(entry => entry.Kind)
             .ToArray();
         ManifestDigest = ComputeDigest(Entries);
-        GameVersionIdentity = string.IsNullOrWhiteSpace(gameVersionIdentity)
+        GameContentIdentity = string.IsNullOrWhiteSpace(gameContentIdentity)
             ? ManifestDigest
-            : gameVersionIdentity;
+            : gameContentIdentity;
     }
 
     public IReadOnlyList<SessionRootManifestEntry> Entries { get; }
 
     public string ManifestDigest { get; }
 
-    public string GameVersionIdentity { get; }
+    public string GameContentIdentity { get; }
 
     public static SessionRootPublishedManifest FromDirectory(
-        string gameVersionRoot,
-        string? gameVersionIdentity = null)
+        string gameContentRoot,
+        string? gameContentIdentity = null)
     {
-        string root = RuntimePathUtilities.NormalizeAbsolutePath(gameVersionRoot, nameof(gameVersionRoot));
-        RuntimePathUtilities.ThrowIfReparsePoint(root, "<game-version-root>", missingIsAllowed: false);
+        string root = RuntimePathUtilities.NormalizeAbsolutePath(gameContentRoot, nameof(gameContentRoot));
+        RuntimePathUtilities.ThrowIfReparsePoint(root, "<game-content-root>", missingIsAllowed: false);
         if (!Directory.Exists(root))
         {
             throw new RuntimePathException(
                 RuntimePathReasonCodes.EntryNotFound,
-                "The GameVersion root does not exist.",
-                "<game-version-root>");
+                "The GameContent root does not exist.",
+                "<game-content-root>");
         }
 
         var entries = new List<SessionRootManifestEntry>();
         AddDirectory(root, root, entries);
-        return new SessionRootPublishedManifest(entries, gameVersionIdentity);
+        return new SessionRootPublishedManifest(entries, gameContentIdentity);
     }
 
     private static void AddDirectory(
@@ -176,7 +176,7 @@ public sealed class SessionRootPublishedManifest
             {
                 throw new RuntimeFileAccessException(
                     RuntimePathReasonCodes.UnsupportedRuntimeFile,
-                    "A GameVersion contains a non-regular filesystem entry.",
+                    "A GameContent contains a non-regular filesystem entry.",
                     relative,
                     RuntimeFileArea.GameContent);
             }
@@ -220,7 +220,7 @@ public sealed class SessionRootPublishedManifest
         {
             throw new RuntimePathException(
                 RuntimePathReasonCodes.UnsupportedRuntimeFile,
-                "A GameVersion file could not be read as a regular file.",
+                "A GameContent file could not be read as a regular file.",
                 logicalPath,
                 RuntimeFileArea.GameContent,
                 exception);

@@ -7,19 +7,19 @@ internal sealed class RuntimeTestWorkspace : IDisposable
     public RuntimeTestWorkspace()
     {
         Root = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-tests", Guid.NewGuid().ToString("N"));
-        GameVersionRoot = Path.Combine(Root, "game-version");
+        GameContentRoot = Path.Combine(Root, "game-content");
         SessionWorkspaceRoot = Path.Combine(Root, "session-workspace");
-        Directory.CreateDirectory(Path.Combine(GameVersionRoot, "CSV"));
-        Directory.CreateDirectory(Path.Combine(GameVersionRoot, "ERB"));
-        Directory.CreateDirectory(Path.Combine(GameVersionRoot, "resources"));
-        File.WriteAllText(Path.Combine(GameVersionRoot, "CSV", "GAMEBASE.CSV"), "; test\n");
-        File.WriteAllText(Path.Combine(GameVersionRoot, "ERB", "START.ERB"), "@SYSTEM_TITLE\n");
-        File.WriteAllText(Path.Combine(GameVersionRoot, "emuera.config"), "Use sav folder:NO\n");
+        Directory.CreateDirectory(Path.Combine(GameContentRoot, "CSV"));
+        Directory.CreateDirectory(Path.Combine(GameContentRoot, "ERB"));
+        Directory.CreateDirectory(Path.Combine(GameContentRoot, "resources"));
+        File.WriteAllText(Path.Combine(GameContentRoot, "CSV", "GAMEBASE.CSV"), "; test\n");
+        File.WriteAllText(Path.Combine(GameContentRoot, "ERB", "START.ERB"), "@SYSTEM_TITLE\n");
+        File.WriteAllText(Path.Combine(GameContentRoot, "emuera.config"), "Use sav folder:NO\n");
     }
 
     public string Root { get; }
 
-    public string GameVersionRoot { get; }
+    public string GameContentRoot { get; }
 
     public string SessionWorkspaceRoot { get; }
 
@@ -27,11 +27,11 @@ internal sealed class RuntimeTestWorkspace : IDisposable
     {
         if (saveLayout == RuntimeSaveLayout.SavDirectory)
         {
-            File.WriteAllText(Path.Combine(GameVersionRoot, "emuera.config"), "Use sav folder:YES\n");
+            File.WriteAllText(Path.Combine(GameContentRoot, "emuera.config"), "Use sav folder:YES\n");
         }
 
         SessionRootLayout layout = new SessionRootLayoutBuilder(
-            GameVersionRoot,
+            GameContentRoot,
             SessionWorkspaceRoot,
             saveLayout).Build();
         return layout.RuntimePaths;

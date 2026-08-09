@@ -18,7 +18,7 @@ CloudEmuera 的单机 MVP 已经为每个 Session 分配持久、独占的本地
 
 - 每个 Session 从创建到删除始终拥有一个持久、独占的 `SessionRoot`；它是该
   Session 完整游戏副本、配置、临时状态和原生存档的唯一权威文件树。
-- Session 管理方在首次启动前按发布 manifest 把固定 GameVersion 的完整合法普通
+- Session 管理方在首次启动前按 Game 当前 manifest 把固定摘要的完整合法普通
   文件树复制到 staging root。CSV、ERB、resources、配置和管理方不认识的游戏目录
   使用同一规则，不做 mount/copy/discard 分类。
 - 复制完成后重新校验文件类型、数量、总大小和摘要，再把 staging 原子重命名为最终
@@ -29,9 +29,9 @@ CloudEmuera 的单机 MVP 已经为每个 Session 分配持久、独占的本地
   不存在管理方链接例外。
 - Emuera 以 `SessionRoot` 作为 `Program.ExeDir`，直接使用原生 reader/writer。
   `UseSaveFolder:NO` 写根级 `save*.sav`/`global.sav`，`YES` 写 `sav/`。
-- `UseSaveFolder` 来自游戏版本的 `emuera.config`，是布局的唯一权威。宿主记录的布局
+- `UseSaveFolder` 来自 Session 创建时复制内容中的 `emuera.config`，是布局的唯一权威。宿主记录的布局
   只能用于校验，不能覆盖配置。
-- Worker 只能看到自己的 SessionRoot，不需要看到原始 GameVersion。正常停止、崩溃或
+- Worker 只能看到自己的 SessionRoot，不需要看到 Game workspace 或 current content。正常停止、崩溃或
   重启都不触发再次复制、存档物化、提交或 generation 发布。
   重启同一 Session 时复用原目录。
 - MVP 不建立 `SaveArtifact` 领域实体或数据库表。停止态存档 API 直接授权访问
@@ -68,20 +68,20 @@ CloudEmuera 的单机 MVP 已经为每个 Session 分配持久、独占的本地
 - Runtime 无需定义存档内容格式、提交通知或 generation 协议，保存兼容性更接近原版。
 - 同一 Session 的 Worker 重启天然看到原有存档；不同 Session 通过不同实际目录隔离。
 - 未知合法文件和目录天然保留，游戏可以在自己的完整副本内修改任意内容。
-- Session 创建时间、磁盘空间和 inode 数随 GameVersion 大小增长；配额必须在复制前
+- Session 创建时间、磁盘空间和 inode 数随 Game 当前内容大小增长；配额必须在复制前
   预留并在复制过程中强制执行。reflink 只能优化成本，不能成为正确性前提。
 - 进程在原生 writer 覆盖文件期间退出时可能留下上游本来会产生的现场；产品不得宣称
   每次保存都具有事务性历史恢复点。
 - 存档管理操作必须与 Worker 租约互斥。上传、替换、重命名、复制和删除只允许在没有
   活动 Worker 时执行。
-- 原始 GameVersion 摘要必须在 Session 运行前后保持不变，Worker 沙箱不得暴露源目录。
+- Session 记录的源摘要和私有副本必须在运行前后保持绑定一致，Worker 沙箱不得暴露 Game 源目录。
 
 ## 验证
 
 - P0-05 的 `save-root` 与 `save-directory` 场景分别以真实 Emuera 保存、退出、复用同一
   SessionRoot 启动并加载原值。
-- 两个用户及同一用户的两个 Session 绑定同一 GameVersion 时，存档路径、内容和
-  `global.sav` 完全独立，GameVersion 摘要保持不变。
+- 两个用户及同一用户的两个 Session 从同一 Game current content 创建时，存档路径、内容和
+  `global.sav` 完全独立；Game 后续编辑不改变这些 SessionRoot。
 - layout builder 测试证明 manifest 中每个合法条目都被复制、未知目录未丢失、源和目标
   不共享可写 inode，并拒绝链接、特殊文件、摘要变化、配额超限和半成品恢复。
 - 测试和运行报告证明不存在 `SaveArtifact`、generation 或关闭时复制步骤。

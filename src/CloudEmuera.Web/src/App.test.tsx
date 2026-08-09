@@ -14,7 +14,7 @@ describe("App", () => {
     renderAt("/games");
 
     expect(screen.getByRole("heading", { name: "游戏库" })).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText("搜索游戏或版本…"), { target: { value: "Megaten" } });
+    fireEvent.change(screen.getByPlaceholderText("搜索游戏…"), { target: { value: "Megaten" } });
 
     expect(screen.getByRole("heading", { name: "ERA Megaten" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "ERA: The World" })).not.toBeInTheDocument();

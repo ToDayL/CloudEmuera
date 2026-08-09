@@ -2,12 +2,11 @@ using CloudEmuera.Application.Identity;
 
 namespace CloudEmuera.Application.Authorization;
 
-public enum ResourceKind { Game, GameVersion, Session, Save, Worker, User, Audit }
+public enum ResourceKind { Game, Session, Save, Worker, User, Audit }
 
 public enum ResourceAction
 {
-    GameRead, GameMutate, GamePublish, GameBlock,
-    GameVersionRead, GameVersionMutate,
+    GameRead, GameMutate, GameValidate, GameActivate, GameBlock,
     SessionRead, SessionControl, SessionForceStop, SessionResume,
     SaveList, SaveDownload, SaveMutate, UserAdminister, AuditRead,
 }
@@ -46,16 +45,17 @@ public sealed class ResourceAuthorizer(IResourceAccessReader reader) : IResource
 
         if (action == ResourceAction.SessionForceStop)
             return actor.IsAdmin ? ResourceAccessDecision.Allowed : ResourceAccessDecision.NotFoundOrHidden;
+        if (action == ResourceAction.GameBlock)
+            return actor.IsAdmin ? ResourceAccessDecision.Allowed : ResourceAccessDecision.NotFoundOrHidden;
 
         bool owner = string.Equals(resource.OwnerUserId, actor.UserId, StringComparison.Ordinal);
-        bool sharedRead = resource.IsServerShared && action is ResourceAction.GameRead or ResourceAction.GameVersionRead;
+        bool sharedRead = resource.IsServerShared && action == ResourceAction.GameRead;
         return owner || sharedRead ? ResourceAccessDecision.Allowed : ResourceAccessDecision.NotFoundOrHidden;
     }
 
     private static bool ActionMatchesKind(ResourceKind kind, ResourceAction action) => action switch
     {
-        ResourceAction.GameRead or ResourceAction.GameMutate or ResourceAction.GamePublish or ResourceAction.GameBlock => kind == ResourceKind.Game,
-        ResourceAction.GameVersionRead or ResourceAction.GameVersionMutate => kind == ResourceKind.GameVersion,
+        ResourceAction.GameRead or ResourceAction.GameMutate or ResourceAction.GameValidate or ResourceAction.GameActivate or ResourceAction.GameBlock => kind == ResourceKind.Game,
         ResourceAction.SessionRead or ResourceAction.SessionControl or ResourceAction.SessionForceStop or ResourceAction.SessionResume => kind == ResourceKind.Session,
         ResourceAction.SaveList or ResourceAction.SaveDownload or ResourceAction.SaveMutate => kind == ResourceKind.Save,
         ResourceAction.UserAdminister => kind == ResourceKind.User,

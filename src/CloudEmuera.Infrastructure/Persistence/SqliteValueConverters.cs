@@ -31,7 +31,7 @@ internal static class SqliteValueConverters
     public static ValueConverter<TEnum, string> CreateEnumConverter<TEnum>()
         where TEnum : struct, Enum =>
         new(
-            value => value.ToString().ToUpperInvariant(),
+            value => ToStorageEnumName(value.ToString()),
             value => ParseEnum<TEnum>(value));
 
     public static ValueComparer<TEnum> CreateEnumComparer<TEnum>()
@@ -44,11 +44,26 @@ internal static class SqliteValueConverters
     private static TEnum ParseEnum<TEnum>(string value)
         where TEnum : struct, Enum
     {
-        if (!Enum.TryParse(value, ignoreCase: true, out TEnum result) || !Enum.IsDefined(result))
-        {
-            throw new InvalidOperationException($"Unknown persisted {typeof(TEnum).Name} value.");
-        }
-
-        return result;
+        string normalized = NormalizeEnumName(value);
+        foreach (TEnum candidate in Enum.GetValues<TEnum>())
+            if (NormalizeEnumName(candidate.ToString()) == normalized) return candidate;
+        throw new InvalidOperationException($"Unknown persisted {typeof(TEnum).Name} value.");
     }
+
+    private static string ToStorageEnumName(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        var builder = new System.Text.StringBuilder(value.Length + 4);
+        for (int index = 0; index < value.Length; index++)
+        {
+            char character = value[index];
+            if (index > 0 && char.IsUpper(character) && (char.IsLower(value[index - 1]) || (index + 1 < value.Length && char.IsLower(value[index + 1]))))
+                builder.Append('_');
+            builder.Append(char.ToUpperInvariant(character));
+        }
+        return builder.ToString();
+    }
+
+    private static string NormalizeEnumName(string value) =>
+        new string(value.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
 }

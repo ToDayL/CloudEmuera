@@ -9,7 +9,7 @@
 
 Session 管理方先通过 `SessionRootLayoutBuilder` 按发布 manifest 将完整普通文件树复制到
 持久 SessionRoot。固定上游 loader 直接收到该 SessionRoot 及其 `CSV`、`ERB`、资源和
-`tmp` 子目录；运行时只使用这份副本，不接触原始 GameVersion 或其他 SessionRoot。
+`tmp` 子目录；运行时只使用这份副本，不接触 Game workspace/current content 或其他 SessionRoot。
 `UpstreamRuntimeSession` 在设置 `Program.*Dir` 前重新校验 SessionRoot 内所有条目都是
 普通文件/目录，并拒绝链接、特殊文件和共享硬链接。
 
@@ -23,7 +23,7 @@ Session 管理方先通过 `SessionRootLayoutBuilder` 按发布 manifest 将完�
 | --- | --- | --- |
 | 配置 | `ConfigData` 的 config/default/fixed 读写 | `Program.ExeDir` 指向 SessionRoot；配置是复制后的私有普通文件 |
 | CSV/ERB 预载 | `Preload`、`EraStreamReader`、`EncodingHandler` | 只读取 SessionRoot 内的 `CSV`、`ERB`；源与目标不共享 inode |
-| Loader 枚举 | `Config.GetFiles`、`ErbLoader`、`ErhLoader`、`ConstantData` | 根固定为 SessionRoot；不存在原始 GameVersion 路径 |
+| Loader 枚举 | `Config.GetFiles`、`ErbLoader`、`ErhLoader`、`ConstantData` | 根固定为 SessionRoot；不存在 Game 库内容路径 |
 | 诊断源码行 | `Process` 的 `File.ReadLines` | 文件名来自已加载 label，根固定为 SessionRoot 内的 `ERB` 或 `CSV` |
 | 资源图片 | `AppContents.LoadContents` | headless 编译路径禁用；PNG/Sprite 由 `IRuntimeImagePort` 解析 metadata |
 | 音频 | `PLAYSOUND`/`PLAYBGM` 的宿主文件探测 | headless 编译路径禁用探测，统一调用 `IRuntimeAudioPort` |

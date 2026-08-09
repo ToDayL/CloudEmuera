@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Globalization;
 using CloudEmuera.Contracts.Identity;
+using CloudEmuera.Contracts.Games;
+using CloudEmuera.Application.Games;
 using CloudEmuera.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -18,6 +20,7 @@ public sealed class IdentityApiContractTests : IDisposable
 
     [Fact]
     [Trait("Category", "IdentityApi")]
+    [Trait("Category", "GameLibrary")]
     public async Task EmailLoginPasswordChangeAndAdminUserManagementUseRealCookieAndCsrfProtection()
     {
         await CreateDatabaseAsync();
@@ -43,6 +46,17 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.False(current.MustChangePassword);
 
         csrf = await GetCsrfAsync(anonymous);
+        HttpResponseMessage gameCreated = await SendJsonAsync(anonymous, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("API Fixture"), csrf);
+        GameLibraryItem game = await gameCreated.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
+        Assert.Equal(HttpStatusCode.Created, gameCreated.StatusCode);
+        Assert.Equal("NONE", game.WorkspaceStatus);
+        Assert.False(game.HasCurrentContent);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync("/api/v1/game-versions")).StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionRequired, (await SendJsonAsync(anonymous, HttpMethod.Patch, $"/api/v1/games/{game.Id}", new UpdateGameRequest("Renamed", null), csrf)).StatusCode);
+        HttpResponseMessage gameUpdated = await SendJsonAsync(anonymous, HttpMethod.Patch, $"/api/v1/games/{game.Id}", new UpdateGameRequest("Renamed", null), csrf, game.StateVersion);
+        Assert.Equal(HttpStatusCode.OK, gameUpdated.StatusCode);
+
+        csrf = await GetCsrfAsync(anonymous);
         HttpResponseMessage created = await SendJsonAsync(anonymous, HttpMethod.Post, "/api/v1/admin/users", new CreateUserRequest("player-one", "player@example.test", "player-temporary-password", "PLAYER", null), csrf);
         CurrentUserResponse player = await created.Content.ReadFromJsonAsync<CurrentUserResponse>() ?? throw new Xunit.Sdk.XunitException("Create user response was missing.");
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
@@ -53,6 +67,10 @@ public sealed class IdentityApiContractTests : IDisposable
         HttpResponseMessage playerLogin = await SendJsonAsync(playerClient, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("player@example.test", "player-temporary-password", false), playerCsrf);
         Assert.True(playerLogin.IsSuccessStatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await playerClient.GetAsync("/api/v1/admin/users")).StatusCode);
+        playerCsrf = await GetCsrfAsync(playerClient);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(playerClient, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("player-temporary-password", "player-permanent-password"), playerCsrf)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/games/{game.Id}")).StatusCode);
+        player = await (await playerClient.GetAsync("/api/v1/auth/me")).Content.ReadFromJsonAsync<CurrentUserResponse>() ?? throw new Xunit.Sdk.XunitException("Current player response was missing.");
 
         csrf = await GetCsrfAsync(anonymous);
         HttpResponseMessage disabled = await SendJsonAsync(anonymous, HttpMethod.Patch, $"/api/v1/admin/users/{player.Id}", new UpdateUserRequest(null, null, null, "DISABLED"), csrf, player.StateVersion);

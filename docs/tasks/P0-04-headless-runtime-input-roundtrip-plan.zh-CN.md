@@ -1,6 +1,9 @@
 # P0-04 无 UI Runtime 运行到 INPUT：详细设计与实现计划
 
 状态：DONE（2026-08-05）
+
+术语迁移：本文中“运行一个 GameVersion”按 ADR-0010 解释为“运行一个已物化的 Game 内容树”；
+Host 单实例限制不建立 GameVersion 产品实体。
 编写日期：2026-08-04
 对应开发步骤：`P0-04 — 无 UI Runtime 运行到 INPUT`
 前置条件：P0-00、P0-01、P0-02、P0-03 已完成

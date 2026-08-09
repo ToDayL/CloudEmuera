@@ -523,7 +523,7 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         };
         foreach (string root in new[]
         {
-            options.Paths.GameVersionRoot,
+            options.Paths.GameContentRoot,
             options.Paths.SessionRoot,
             options.Paths.SessionWorkspaceRoot,
             options.Paths.TemporaryRoot

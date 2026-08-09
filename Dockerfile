@@ -15,12 +15,15 @@ COPY tests ./tests
 COPY --from=web-build /src/src/CloudEmuera.Web/dist src/CloudEmuera.Api/wwwroot
 RUN dotnet restore CloudEmuera.slnx --locked-mode
 RUN dotnet publish src/CloudEmuera.Api/CloudEmuera.Api.csproj --no-restore -c Release -o /out/api
+RUN dotnet publish src/CloudEmuera.Validator/CloudEmuera.Validator.csproj --no-restore -c Release -o /out/validator
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://0.0.0.0:28647 \
     CloudEmuera__DataPath=/data
 COPY --from=dotnet-build /out/api ./
+COPY --from=dotnet-build /out/validator ./validator/
+ENV CloudEmuera__ValidatorAssembly=/app/validator/CloudEmuera.Validator.dll
 RUN mkdir -p /data && chown -R app:app /data /app
 USER app
 EXPOSE 28647

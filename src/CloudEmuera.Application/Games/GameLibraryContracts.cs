@@ -1,0 +1,123 @@
+using CloudEmuera.Application.Identity;
+
+namespace CloudEmuera.Application.Games;
+
+public sealed record GameLibraryItem(
+    string Id,
+    string Name,
+    string Visibility,
+    string Status,
+    string WorkspaceStatus,
+    bool HasCurrentContent,
+    string? ContentDigest,
+    long ContentRevision,
+    int StateVersion,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record GameFileItem(string Path, bool IsDirectory, long Bytes, string? ETag = null);
+public sealed record GameSearchMatch(string Path, int Line, int Column, string Preview);
+public sealed record GameSearchPage(IReadOnlyList<GameSearchMatch> Items, string? NextCursor);
+public sealed record GameTextFile(string Path, string Content, string Encoding, bool HasBom, long Bytes, string ETag, int StateVersion);
+public sealed record GameFileDownload(string FileName, long Bytes, string ETag, Stream Content);
+public sealed record GameContentOperationItem(string Id, string Type, string Status, string? ContentDigest, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt);
+public sealed record GameDiagnosticItem(string Id, string Code, string Severity, string? Path, string MessageKey, bool ActivationBlocking, string OverridePolicy, string? OverriddenBy, DateTimeOffset? OverriddenAt);
+
+public sealed record GameValidationDiagnostic(
+    string Code,
+    string Severity,
+    string? Path,
+    string Message,
+    bool ActivationBlocking);
+
+public sealed record GameValidationResult(
+    bool CanActivate,
+    string ContentDigest,
+    int FileCount,
+    long TotalBytes,
+    IReadOnlyList<GameValidationDiagnostic> Diagnostics,
+    int StateVersion);
+
+public sealed record GameParserValidationResult(
+    bool CanActivate,
+    IReadOnlyList<GameValidationDiagnostic> Diagnostics);
+
+/// <summary>
+/// Runs the pinned Emuera parser in an isolated, one-shot process. Implementations
+/// must bound execution time and protocol output and must never execute the game loop.
+/// </summary>
+public interface IGameContentValidator
+{
+    Task<GameParserValidationResult> ValidateAsync(string snapshotRoot, CancellationToken cancellationToken = default);
+}
+
+public abstract class GameContentCopyLease : IAsyncDisposable
+{
+    public abstract string LeaseId { get; }
+    public abstract string GameId { get; }
+    public abstract long ContentRevision { get; }
+    public abstract string ContentDigest { get; }
+    public abstract string ContentRootPath { get; }
+    public abstract ValueTask RenewAsync(CancellationToken cancellationToken = default);
+    public abstract ValueTask DisposeAsync();
+}
+
+public interface IGameContentCopyLeaseStore
+{
+    Task<GameContentCopyLease> AcquireAsync(
+        string gameId,
+        long contentRevision,
+        string contentDigest,
+        string consumerType,
+        string consumerId,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IGameContentOperationMaintenance
+{
+    Task<int> ReconcileAsync(int maxItems = 32, CancellationToken cancellationToken = default);
+}
+
+public interface IGameLibraryService
+{
+    Task<IReadOnlyList<GameLibraryItem>> ListAsync(CurrentActor actor, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> CreateAsync(CurrentActor actor, string name, string visibility, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem?> GetAsync(CurrentActor actor, string gameId, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> UpdateAsync(CurrentActor actor, string gameId, string? name, string? visibility, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task DeleteAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> SetBlockedAsync(CurrentActor actor, string gameId, bool blocked, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> BindPackageAsync(CurrentActor actor, string gameId, string ingestionId, string contentDigest, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> StartEditingAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> DiscardWorkspaceAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<GameFileItem>> ListFilesAsync(CurrentActor actor, string gameId, string? scope, string? directory, CancellationToken cancellationToken = default);
+    Task<GameTextFile> ReadTextFileAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default);
+    Task<GameSearchPage> SearchAsync(CurrentActor actor, string gameId, string? scope, string query, string? cursor = null, int limit = 100, CancellationToken cancellationToken = default);
+    Task<GameFileDownload> OpenDownloadAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default);
+    Task<GameContentOperationItem?> GetOperationAsync(CurrentActor actor, string gameId, string operationId, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> WriteTextFileAsync(CurrentActor actor, string gameId, string path, string content, int expectedStateVersion, string? expectedFileETag = null, bool requireAbsent = false, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> DeletePathAsync(CurrentActor actor, string gameId, string path, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<GameDiagnosticItem> OverrideDiagnosticAsync(CurrentActor actor, string gameId, string diagnosticId, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<GameValidationResult> ValidateAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> ActivateAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
+}
+
+public sealed class GameLibraryException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
+public static class GameLibraryErrorCodes
+{
+    public const string NotFound = "GAME_NOT_FOUND";
+    public const string Conflict = "GAME_CONFLICT";
+    public const string StateVersionConflict = "STATE_VERSION_CONFLICT";
+    public const string InvalidInput = "GAME_INPUT_INVALID";
+    public const string WorkspaceMissing = "GAME_WORKSPACE_MISSING";
+    public const string ValidationFailed = "GAME_VALIDATION_FAILED";
+    public const string UnsafePath = "GAME_PATH_UNSAFE";
+    public const string FileChanged = "FILE_CHANGED";
+    public const string SearchCursorInvalid = "SEARCH_CURSOR_INVALID";
+    public const string SearchLimitExceeded = "SEARCH_LIMIT_EXCEEDED";
+    public const string IdempotencyConflict = "IDEMPOTENCY_KEY_REUSED";
+    public const string DiagnosticOverrideNotAllowed = "DIAGNOSTIC_OVERRIDE_NOT_ALLOWED";
+}

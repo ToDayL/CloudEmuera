@@ -12,6 +12,9 @@ public sealed class SqliteDatabaseOptions
 
     public string MigrationsAssembly { get; init; } = typeof(CloudEmueraDbContext).Assembly.GetName().Name!;
 
+    /// <summary>Optional operator-supplied, identity-bound plan for the legacy Game collapse.</summary>
+    public string? GameCollapsePlanPath { get; init; }
+
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(DataRoot))

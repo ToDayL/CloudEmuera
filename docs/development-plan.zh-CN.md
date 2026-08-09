@@ -96,7 +96,7 @@ git diff --check
 dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=RuntimePaths|Category=Architecture'
 ```
 
-通过条件：根目录与 `sav/` 两种布局映射测试通过；绝对路径、`..`、符号链接逃逸和跨 Session 路径被拒绝；架构测试证明 Domain/Application/RuntimeAdapter 核心不引用 WinForms；伪时钟可确定性推进超时输入。P0-05 依据 ADR-0007 把发布内容完整复制到持久 SessionRoot，不增加链接例外。
+通过条件：根目录与 `sav/` 两种布局映射测试通过；绝对路径、`..`、符号链接逃逸和跨 Session 路径被拒绝；架构测试证明 Domain/Application/RuntimeAdapter 核心不引用 WinForms；伪时钟可确定性推进超时输入。P0-05 依据 ADR-0007 把 Game current content 完整复制到持久 SessionRoot，不增加链接例外。
 
 2026-08-04 验证记录：在 Linux 开发容器（.NET 10 SDK）中完成 `RuntimePaths|Architecture` 专项测试 53 项、RuntimeAdapter 测试程序集全量 79 项（其中 FixtureContract 26 项）；覆盖生产 `TimeProviderRuntimeClock` deadline smoke test、手动时钟 deadline 累计 elapsed，以及 `sav/` 嵌套目录的创建、读取、写入、元数据和枚举一致性。架构测试直接检查程序集引用，禁止 `System.Drawing`、`System.Drawing.Common`、NAudio 和 `CloudEmuera.Application`，并检查公共 API 的字段、事件、构造函数和继承关系。`scripts/check.sh` 通过（Release 构建 0 警告/0 错误，后端与 Web 检查通过），`scripts/verify-runtime-fixtures.sh`、`scripts/verify-third-party.sh` 和 `git diff --check` 均通过。符号链接与 FIFO 逃逸用例在 Linux 上实际创建并拒绝；Windows/其他平台仍覆盖词法、规范路径和程序集架构约束，实际重解析点发布门保留给 Linux CI。
 
@@ -124,7 +124,7 @@ dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --filter 'Category=ConsoleCon
 
 需求映射：COMP、SESS-003/004、PLAY-001、AC-008/009。
 
-交付物：直接集成的固定上游解释器源码、CloudEmuera headless integration project、来源/修改记录；无 UI runtime harness；从测试 GameVersion 启动、输出、停在 INPUT、接受输入并继续执行的流程。
+交付物：直接集成的固定上游解释器源码、CloudEmuera headless integration project、来源/修改记录；无 UI runtime harness；从测试 Game 内容树启动、输出、停在 INPUT、接受输入并继续执行的流程。
 
 验证：
 
@@ -162,7 +162,7 @@ session 与私有 file view；回归测试确认超时后第二个 host 可以�
 
 详细设计：[`tasks/P0-05-native-save-session-root-plan.zh-CN.md`](tasks/P0-05-native-save-session-root-plan.zh-CN.md)，架构决策见 [`ADR-0007`](adr/0007-session-root-native-save-ownership.md)。
 
-交付物：Session 管理方构造的持久私有运行目录；GameVersion 完整合法普通文件树的独立副本；由游戏配置决定的根目录 `save*.sav/global.sav` 与 `sav/` 布局；Worker/Emuera 对 SessionRoot 的原生直接保存/加载 harness。
+交付物：Session 管理方构造的持久私有运行目录；Game 当前完整合法普通文件树的独立副本；由游戏配置决定的根目录 `save*.sav/global.sav` 与 `sav/` 布局；Worker/Emuera 对 SessionRoot 的原生直接保存/加载 harness。
 
 验证：
 
@@ -175,10 +175,10 @@ docker compose -f compose.dev.yaml run --rm api \
   --configuration Release --filter 'Category=SessionRoot|Category=SaveIsolation'
 ```
 
-通过条件：两种布局均由复制后的 `emuera.config` 自动决定，能保存、退出、用同一 SessionRoot 重新启动并加载原值；未知合法目录和文件完整保留；存档只出现在对应 SessionRoot；两个用户和同一用户两个 Session 不共享可写 inode，路径、文件与 Global 值互不影响；原始 GameVersion 未被修改；不存在 SaveArtifact、generation 或退出时复制/提交步骤。
+通过条件：两种布局均由复制后的 `emuera.config` 自动决定，能保存、退出、用同一 SessionRoot 重新启动并加载原值；未知合法目录和文件完整保留；存档只出现在对应 SessionRoot；两个用户和同一用户两个 Session 不共享可写 inode，路径、文件与 Global 值互不影响；Game 库源内容未被修改；不存在 SaveArtifact、generation 或退出时复制/提交步骤。
 
 2026-08-05 完成记录：实现 ADR-0007 的完整普通文件树复制和持久 SessionRoot 直写模型。
-Session 管理方/harness 负责 SessionRoot 分配、GameVersion 绑定、manifest/配额输入和授权
+Session 管理方/harness 负责 SessionRoot 分配、Game/source digest 绑定、manifest/配额输入和授权
 前置条件；RuntimeAdapter builder 只执行安全物化与原子发布，不管理 Session 生命周期。
 固定上游配置文件键为 `Use sav folder`，由复制后的 `emuera.config` 决定根目录或
 `sav/` 存档布局，并由 Runtime 二次校验 `Config.UseSaveFolder`。两个真实 fixture 均完成
@@ -230,7 +230,7 @@ OPS-005、NFR-011。
 
 详细设计：[`tasks/P1-01-sqlite-initial-schema-migration-plan.zh-CN.md`](tasks/P1-01-sqlite-initial-schema-migration-plan.zh-CN.md)。
 
-交付物：quota_profiles、users、games、game_versions、sessions、worker_leases、
+交付物：quota_profiles、users、games、旧 `game_versions`、sessions、worker_leases、
 idempotency_records、audit_events migration；SessionRoot 路径、并发 token、唯一索引和
 UTC 时间约定；独占 Migrator、迁移前一致性备份和失败回滚。
 
@@ -246,7 +246,7 @@ docker compose -f compose.dev.yaml run --rm api \
 通过条件：空库可升级到最新版本；已有样例库升级后数据不丢失；重复内容哈希、租约唯一性和幂等键约束由数据库强制；失败 migration 不留下部分 schema。
 
 2026-08-07 完成记录：`InitialMetadata`（`20260807071428_InitialMetadata`）固化八张业务表、
-`schema_migrations`、复合 GameVersion/Session 与 lease epoch 外键、RESTRICT 删除/更新、
+`schema_migrations`、旧 GameVersion/Session 与 lease epoch 外键、RESTRICT 删除/更新、
 JSON/digest/path/enum/布尔 CHECK、审计只追加 trigger；未创建 Save 或默认 Identity 表。统一
 connection factory 启用 foreign keys、WAL、synchronous NORMAL 和有界 busy timeout；独立
 Migrator 负责 `<database>.migration.lock`、Online Backup、完整性检查和稳定退出码。
@@ -341,19 +341,41 @@ TOCTOU、取消、模拟磁盘写满、rename/CAS/audit 故障、过期 CONSUMIN
 `./scripts/check.sh` 通过 locked restore、Release 0 warning/0 error、全部 .NET 与 Web 测试、Web
 typecheck 和 production build；`./scripts/verify-third-party.sh` 与 `git diff --check` 通过。
 
-### P1-04 — 草稿编辑与不可变发布（NEXT）
+P1-01 的 `game_versions` 是 ADR-0010 之前已完成的旧 schema。不得回改已提交 migration；P1-04
+必须新增升级 migration，把内容元数据合并进 `games`、把 Session 改为 Game + 源摘要快照，并删除
+旧表和产品代码。
+
+### P1-04 — 简化游戏库、工作区编辑与当前内容启用（DONE）
 
 需求映射：GAME-004～010。
 
-交付物：Game/GameVersion API、目录浏览、文本读取编辑、搜索、草稿和发布流水线、运行时清单、引用保护和逻辑删除。
+详细设计：
+[`tasks/P1-04-simple-game-library-plan.zh-CN.md`](tasks/P1-04-simple-game-library-plan.zh-CN.md)，
+架构决策见
+[`ADR-0010`](adr/0010-single-game-content-without-version-entities.md)。
+
+交付物：移除 GameVersion 的 schema/代码迁移；单一 Game API；workspace 目录浏览、文本读取编辑和
+搜索；验证与 current content 原子启用；运行时清单；Session 源摘要快照；引用保护和逻辑删除。
 
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Api.IntegrationTests --filter 'Category=GameVersioning'
+dotnet test tests/CloudEmuera.Api.IntegrationTests --filter 'Category=GameLibrary'
 ```
 
-通过条件：发布产生内容寻址的只读版本；编辑已发布文件只能创建草稿/新版本；活动 Session 固定版本内容不变；仍被引用版本不能物理删除；并发发布不会产生两个相同版本身份。
+通过条件：公开契约不存在 GameVersion；每个 Game 最多一个 workspace 和一个 current content；
+编辑/启用不改变既有 SessionRoot；Session 创建与内容替换并发只复制完整旧树或新树；被 Session
+引用的 Game 不能删除；升级后旧 schema 数据按明确规则保留或在修改前安全失败。
+
+当前实现记录：schema/实体/授权/RuntimeAdapter 的 GameVersion 清除、旧数据升级、Game CRUD、摄取
+绑定、workspace 编辑/丢弃、目录/文本/下载/搜索、只读 current 启用、文件/诊断索引、持久 operation
+与基础对账已经完成。一次性真实 Emuera parser-only Validator 及超时/崩溃/超输出/非法协议、只读
+validation snapshot、owner inode marker、内容复制/发布/删除的 Linux dirfd 主路径、持久 copy lease、
+`CONTENT_READY` 恢复/续租/retired 清理、强 ETag/创建前置条件、幂等、独立速率限制、诊断 override、
+签名搜索游标，以及迁移计划/选择/物理 journal 已完成。当前已通过 `check.sh`、开发用户映射、
+第三方声明和 diff check；故障矩阵（真实 SIGKILL 进程终止、DB 提交窗口、lease 过期对账）、只读
+遍历 TOCTOU 审计与非 Linux managed fallback 平台差异验证于 2026-08-09 完成并补测试
+（Infrastructure 77 项），本步骤标记为 DONE。
 
 ### P1-05 — Supervisor、租约、epoch 与状态机（TODO）
 
@@ -374,7 +396,8 @@ dotnet test tests/CloudEmuera.Domain.Tests --filter 'Category=Concurrency'
 
 需求映射：SESS-001、SESS-005～008、AC-001、AC-006。
 
-交付物：创建、列表、详情、关闭 HTTP API；幂等键；GameVersion 固定；Supervisor 编排；关闭与输入并发语义。
+交付物：创建、列表、详情、关闭 HTTP API；幂等键；Game + source content digest/manifest 固定；
+Supervisor 编排；关闭与输入并发语义。
 
 验证：
 
@@ -470,7 +493,8 @@ dotnet test tests/CloudEmuera.Operations.IntegrationTests
 ./scripts/test-worker-limits.sh
 ```
 
-通过条件：Worker 不能读取其他 Session、写 GameVersion、访问宿主路径、创建禁止的进程或任意联网；CPU/内存/磁盘超限产生明确状态；目标 Docker 配置缺少必需沙箱能力时服务不进入 ready。
+通过条件：Worker 不能读取其他 Session、写 Game workspace/current content、访问宿主路径、创建
+禁止的进程或任意联网；CPU/内存/磁盘超限产生明确状态；目标 Docker 配置缺少必需沙箱能力时服务不进入 ready。
 
 ### P1-13 — 单容器生产进程管理与恢复（TODO）
 
@@ -507,6 +531,7 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P1-04，落地 Game/GameVersion API、草稿编辑、验证和不可变发布。
+1. ~~完成 P1-04 剩余安全加固：真实 parser-only Validator、dirfd/fsync 内容存储、崩溃恢复/续租、
+   copy lease 端口和旧 DataRoot 迁移工具。~~ 已于 2026-08-09 完成，P1-04 标记为 DONE。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

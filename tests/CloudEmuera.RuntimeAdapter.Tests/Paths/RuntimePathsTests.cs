@@ -22,7 +22,7 @@ public sealed class RuntimePathsTests
         Assert.NotEqual(rootGlobal, directoryGlobal);
         Assert.True(RuntimePathUtilitiesForTests.IsWithin(rootGlobal, rootPaths.SessionWorkspaceRoot));
         Assert.True(RuntimePathUtilitiesForTests.IsWithin(directoryGlobal, directoryPaths.SessionWorkspaceRoot));
-        Assert.False(RuntimePathUtilitiesForTests.IsWithin(rootGlobal, rootPaths.GameVersionRoot));
+        Assert.False(RuntimePathUtilitiesForTests.IsWithin(rootGlobal, rootPaths.GameContentRoot));
     }
 
     [Fact]
@@ -70,13 +70,13 @@ public sealed class RuntimePathsTests
 
         RuntimePaths firstPaths = new(
             Path.Combine(first, "root"),
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             first,
             RuntimeSaveLayout.Root);
 
         RuntimePathException exception = Assert.Throws<RuntimePathException>(() => new RuntimePaths(
             Path.Combine(second, "root"),
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             second,
             RuntimeSaveLayout.Root,
             new[] { firstPaths.SessionWorkspaceRoot }));

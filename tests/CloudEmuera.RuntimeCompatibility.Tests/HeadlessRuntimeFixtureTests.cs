@@ -442,7 +442,7 @@ public sealed class HeadlessRuntimeFixtureTests
     {
         private RuntimeHostFixture(
             string root,
-            string gameVersionRoot,
+            string gameContentRoot,
             SessionRootPublishedManifest manifest,
             RuntimePaths paths,
             LocalRuntimeFileSystem fileSystem,
@@ -451,7 +451,7 @@ public sealed class HeadlessRuntimeFixtureTests
             bool ownsRoot)
         {
             Root = root;
-            GameVersionRoot = gameVersionRoot;
+            GameContentRoot = gameContentRoot;
             Manifest = manifest;
             Paths = paths;
             FileSystem = fileSystem;
@@ -463,7 +463,7 @@ public sealed class HeadlessRuntimeFixtureTests
         private readonly bool ownsRoot;
 
         public string Root { get; }
-        public string GameVersionRoot { get; }
+        public string GameContentRoot { get; }
         public SessionRootPublishedManifest Manifest { get; }
         public RuntimePaths Paths { get; }
         public LocalRuntimeFileSystem FileSystem { get; }
@@ -517,7 +517,7 @@ public sealed class HeadlessRuntimeFixtureTests
             string sessionRoot = Path.Combine(Root, "session-b");
             string sessionWorkspace = Path.Combine(Root, "session-b-workspace");
             SessionRootLayout layout = new SessionRootLayoutBuilder(
-                GameVersionRoot,
+                GameContentRoot,
                 sessionRoot,
                 sessionWorkspace,
                 [Paths.SessionRoot])
@@ -525,7 +525,7 @@ public sealed class HeadlessRuntimeFixtureTests
             var fileSystem = new LocalRuntimeFileSystem(layout.RuntimePaths);
             return new RuntimeHostFixture(
                 Root,
-                GameVersionRoot,
+                GameContentRoot,
                 Manifest,
                 layout.RuntimePaths,
                 fileSystem,

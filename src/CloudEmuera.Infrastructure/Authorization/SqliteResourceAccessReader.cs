@@ -9,12 +9,8 @@ public sealed class SqliteResourceAccessReader(CloudEmueraDbContext db) : IResou
 {
     public async Task<ResourceDescriptor?> FindAsync(ResourceKind kind, string resourceId, CancellationToken cancellationToken = default) => kind switch
     {
-        ResourceKind.Game => await db.Games.AsNoTracking().Where(row => row.Id == resourceId && row.Status == GameStatus.Active)
+        ResourceKind.Game => await db.Games.AsNoTracking().Where(row => row.Id == resourceId && row.Status != GameStatus.Deleted)
             .Select(row => new ResourceDescriptor(ResourceKind.Game, row.Id, row.OwnerUserId, row.Visibility == GameVisibility.ServerShared)).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false),
-        ResourceKind.GameVersion => await db.GameVersions.AsNoTracking().Where(row => row.Id == resourceId)
-            .Join(db.Games.AsNoTracking(), version => version.GameId, game => game.Id, (version, game) => new { version, game })
-            .Where(value => value.game.Status == GameStatus.Active)
-            .Select(value => new ResourceDescriptor(ResourceKind.GameVersion, value.version.Id, value.game.OwnerUserId, value.game.Visibility == GameVisibility.ServerShared)).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false),
         ResourceKind.Session or ResourceKind.Save => await db.Sessions.AsNoTracking().Where(row => row.Id == resourceId)
             .Select(row => new ResourceDescriptor(kind, row.Id, row.OwnerUserId)).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false),
         ResourceKind.Worker => await db.WorkerLeases.AsNoTracking().Where(row => row.SessionId == resourceId)

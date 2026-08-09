@@ -50,12 +50,26 @@ public sealed class DatabaseMigrationRunner
                 MigrationState state = await ReadMigrationStateAsync(paths, existedBeforeOpen, readOnly: false, cancellationToken).ConfigureAwait(false);
                 if (state.PendingMigrations.Count == 0)
                 {
+                    if (state.AppliedMigrations.Contains("20260809150000_CollapseGameVersionsIntoGames", StringComparer.Ordinal))
+                    {
+                        await LegacyGameDataRootMigrator.FinalizeAsync(_options, "20260809150000_CollapseGameVersionsIntoGames", cancellationToken).ConfigureAwait(false);
+                    }
                     await VerifyDatabaseAsync(paths, readOnly: false, cancellationToken).ConfigureAwait(false);
                     Log(operation, "up_to_date", null, stopwatch);
                     return MigrationResult.SuccessResult(operation, state.AppliedMigrations, state.PendingMigrations);
                 }
 
                 string firstPendingMigration = state.PendingMigrations[0];
+                const string collapseMigrationId = "20260809150000_CollapseGameVersionsIntoGames";
+                LegacyGameCollapseReport? collapseReport = null;
+                IReadOnlyList<LegacyGameCollapseSelection>? collapseSelections = null;
+                if (state.PendingMigrations.Contains(collapseMigrationId, StringComparer.Ordinal))
+                {
+                    collapseReport = await LegacyGameCollapsePlanner.PlanAsync(_options, cancellationToken).ConfigureAwait(false);
+                    collapseSelections = _options.GameCollapsePlanPath is null
+                        ? LegacyGameCollapsePlanner.AutomaticSelections(collapseReport)
+                        : await LegacyGameCollapsePlanner.LoadAndValidateSelectionsAsync(_options.GameCollapsePlanPath, collapseReport, cancellationToken).ConfigureAwait(false);
+                }
                 string? backupPath = null;
                 if (existedBeforeOpen)
                 {
@@ -76,11 +90,24 @@ public sealed class DatabaseMigrationRunner
 
                 try
                 {
-                    await ApplyMigrationsAsync(paths, cancellationToken).ConfigureAwait(false);
+                    if (collapseReport is not null)
+                    {
+                        await LegacyGameDataRootMigrator.PrepareAsync(_options, collapseReport, collapseMigrationId, cancellationToken).ConfigureAwait(false);
+                    }
+                    await ApplyMigrationsAsync(paths, collapseSelections, cancellationToken).ConfigureAwait(false);
+                    if (collapseReport is not null)
+                    {
+                        await LegacyGameDataRootMigrator.FinalizeAsync(_options, collapseMigrationId, cancellationToken).ConfigureAwait(false);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
                     throw;
+                }
+                catch (LegacyGameCollapseException exception)
+                {
+                    Log(operation, exception.Code, firstPendingMigration, stopwatch);
+                    return new MigrationResult(MigrationExitCodes.MigrationFailed, operation, "failed", state.AppliedMigrations, state.PendingMigrations, backupPath, exception.Code);
                 }
                 catch (Exception)
                 {
@@ -116,6 +143,11 @@ public sealed class DatabaseMigrationRunner
         {
             Log(operation, "database_newer_than_binary", null, stopwatch);
             return Failure(operation, MigrationExitCodes.DatabaseNewerThanBinary, "database_newer_than_binary", stopwatch);
+        }
+        catch (LegacyGameCollapseException exception)
+        {
+            Log(operation, exception.Code, null, stopwatch);
+            return Failure(operation, MigrationExitCodes.MigrationFailed, exception.Code, stopwatch);
         }
         catch (Exception exception) when (exception is SqlitePathException or SqliteConfigurationException or UnauthorizedAccessException)
         {
@@ -198,13 +230,40 @@ public sealed class DatabaseMigrationRunner
         return new MigrationState(known, applied, pending);
     }
 
-    private async Task ApplyMigrationsAsync(SqliteDatabasePaths paths, CancellationToken cancellationToken)
+    private async Task ApplyMigrationsAsync(SqliteDatabasePaths paths, IReadOnlyList<LegacyGameCollapseSelection>? collapseSelections, CancellationToken cancellationToken)
     {
         bool existed = File.Exists(paths.DatabasePath);
         SqliteConnectionFactory connectionFactory = new(_options, createDataRoot: true);
         await using SqliteConnection connection = connectionFactory.OpenConnection(existed ? SqliteConnectionAccess.ReadWrite : SqliteConnectionAccess.ReadWriteCreate);
-        await using CloudEmueraDbContext context = CreateContext(connection);
-        await context.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (collapseSelections is not null)
+            {
+                await using SqliteCommand create = connection.CreateCommand();
+                create.CommandText = "CREATE TABLE IF NOT EXISTS __cloudemuera_game_collapse_selection (game_id TEXT PRIMARY KEY NOT NULL, current_version_id TEXT NULL, workspace_version_id TEXT NULL); DELETE FROM __cloudemuera_game_collapse_selection;";
+                await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                foreach (LegacyGameCollapseSelection selection in collapseSelections)
+                {
+                    await using SqliteCommand insert = connection.CreateCommand();
+                    insert.CommandText = "INSERT INTO __cloudemuera_game_collapse_selection (game_id,current_version_id,workspace_version_id) VALUES ($game,$current,$workspace);";
+                    insert.Parameters.AddWithValue("$game", selection.GameId);
+                    insert.Parameters.AddWithValue("$current", (object?)selection.CurrentVersionId ?? DBNull.Value);
+                    insert.Parameters.AddWithValue("$workspace", (object?)selection.WorkspaceVersionId ?? DBNull.Value);
+                    await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
+            await using CloudEmueraDbContext context = CreateContext(connection);
+            await context.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (collapseSelections is not null)
+            {
+                await using SqliteCommand cleanup = connection.CreateCommand();
+                cleanup.CommandText = "DROP TABLE IF EXISTS __cloudemuera_game_collapse_selection;";
+                await cleanup.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task VerifyDatabaseAsync(SqliteDatabasePaths paths, bool readOnly, CancellationToken cancellationToken)

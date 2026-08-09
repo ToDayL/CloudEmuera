@@ -48,7 +48,7 @@ public sealed class LocalRuntimeFileSystemTests
 
         Assert.True(File.Exists(Path.Combine(paths.RootSaveRoot, "save00.sav")));
         Assert.True(File.Exists(Path.Combine(paths.TemporaryRoot, "worker.tmp")));
-        Assert.False(File.Exists(Path.Combine(paths.GameVersionRoot, "save00.sav")));
+        Assert.False(File.Exists(Path.Combine(paths.GameContentRoot, "save00.sav")));
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public sealed class LocalRuntimeFileSystemTests
         {
             File.CreateSymbolicLink(
                 Path.Combine(paths.TemporaryRoot, "save00.sav"),
-                Path.Combine(paths.GameVersionRoot, "CSV", "GAMEBASE.CSV"));
+                Path.Combine(paths.GameContentRoot, "CSV", "GAMEBASE.CSV"));
             RuntimeFileAccessException exception = Assert.Throws<RuntimeFileAccessException>(() =>
                 fileSystem.FileExists(RuntimeFilePath.Parse(RuntimeFileArea.Temporary, "save00.sav")));
             Assert.Equal(RuntimePathReasonCodes.SymbolicLinkRejected, exception.ReasonCode);

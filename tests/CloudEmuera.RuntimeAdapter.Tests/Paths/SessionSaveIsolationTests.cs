@@ -11,14 +11,14 @@ public sealed class SessionSaveIsolationTests
     public void RootLayoutSavesArePrivateToEachSession()
     {
         using var workspace = new RuntimeTestWorkspace();
-        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot);
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot);
         SessionRootLayout first = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
             manifest,
             new SessionRootCopyLimits());
         SessionRootLayout second = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             Path.Combine(workspace.SessionWorkspaceRoot, "session-b"),
             manifest,
             new SessionRootCopyLimits());
@@ -34,7 +34,7 @@ public sealed class SessionSaveIsolationTests
         Assert.NotEqual(first.RuntimePaths.ResolveSavePath(save.RelativePath), second.RuntimePaths.ResolveSavePath(save.RelativePath));
         Assert.True(File.Exists(Path.Combine(first.SessionRoot, "save00.sav")));
         Assert.False(File.Exists(Path.Combine(second.SessionRoot, "save00.sav")));
-        Assert.False(File.Exists(Path.Combine(workspace.GameVersionRoot, "save00.sav")));
+        Assert.False(File.Exists(Path.Combine(workspace.GameContentRoot, "save00.sav")));
     }
 
     [Fact]
@@ -46,22 +46,22 @@ public sealed class SessionSaveIsolationTests
         }
 
         using var workspace = new RuntimeTestWorkspace();
-        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot);
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot);
         string firstRoot = Path.Combine(workspace.Root, "user-a", "session-a");
         string secondRoot = Path.Combine(workspace.Root, "user-b", "session-b");
         SessionRootLayout first = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             firstRoot,
             manifest,
             new SessionRootCopyLimits());
         SessionRootLayout second = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             secondRoot,
             manifest,
             new SessionRootCopyLimits(),
             [firstRoot]);
 
-        string sourceContent = Path.Combine(workspace.GameVersionRoot, "ERB", "START.ERB");
+        string sourceContent = Path.Combine(workspace.GameContentRoot, "ERB", "START.ERB");
         string firstContent = Path.Combine(first.SessionRoot, "ERB", "START.ERB");
         string secondContent = Path.Combine(second.SessionRoot, "ERB", "START.ERB");
         Assert.NotEqual(GetUnixIdentity(sourceContent), GetUnixIdentity(firstContent));
@@ -80,17 +80,17 @@ public sealed class SessionSaveIsolationTests
         Assert.NotEqual(
             GetUnixIdentity(Path.Combine(first.SessionRoot, "global.sav")),
             GetUnixIdentity(Path.Combine(second.SessionRoot, "global.sav")));
-        Assert.False(File.Exists(Path.Combine(workspace.GameVersionRoot, "global.sav")));
+        Assert.False(File.Exists(Path.Combine(workspace.GameContentRoot, "global.sav")));
     }
 
     [Fact]
     public void SavDirectoryLayoutDoesNotFallBackToTheSessionRoot()
     {
         using var workspace = new RuntimeTestWorkspace();
-        File.WriteAllText(Path.Combine(workspace.GameVersionRoot, "emuera.config"), "Use sav folder:YES\n");
-        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot);
+        File.WriteAllText(Path.Combine(workspace.GameContentRoot, "emuera.config"), "Use sav folder:YES\n");
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot);
         SessionRootLayout layout = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
             manifest,
             new SessionRootCopyLimits());
@@ -118,18 +118,18 @@ public sealed class SessionSaveIsolationTests
         }
 
         using var workspace = new RuntimeTestWorkspace();
-        File.WriteAllText(Path.Combine(workspace.GameVersionRoot, "emuera.config"), "Use sav folder:YES\n");
-        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot);
+        File.WriteAllText(Path.Combine(workspace.GameContentRoot, "emuera.config"), "Use sav folder:YES\n");
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot);
         string firstRoot = Path.Combine(workspace.Root, "user-a", "session-a");
         string secondRoot = Path.Combine(workspace.Root, "user-a", "session-b");
         string secondWorkspace = Path.Combine(workspace.Root, "user-a-session-b-workspace");
         SessionRootLayout first = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             firstRoot,
             manifest,
             new SessionRootCopyLimits());
         SessionRootLayout second = new SessionRootLayoutBuilder(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             secondRoot,
             secondWorkspace,
             [firstRoot])

@@ -22,10 +22,14 @@ Phase 0 运行时切分与兼容性证明已经完成，当前进入 Phase 1 单
 - React 游戏库、Session、控制台、存档和管理页面展示版；
 - Apache-2.0 项目许可证和第三方许可声明。
 
-游戏包、持久 Worker 管理、浏览器实时协议、正式存档管理和正式 UI 仍待实现；P0-06
+Game 库后端纵切和内容启用基线已经实现，但正式 parser-only Validator、dirfd/fsync 存储与完整恢复
+加固仍待完成；持久 Worker 管理、浏览器实时协议、正式存档管理和正式 UI 仍待实现。P0-06
 已提供最小的单 Session Worker/Supervisor UDS IPC 冒烟链路，P1-01 已完成首版 SQLite
-持久化基线，P1-02 已完成本地身份、资源授权与审计。当前任务是 P1-03 安全游戏包摄取。
-仓库目前仍不能安全运行不受信任的游戏包。
+持久化基线，P1-02 已完成本地身份、资源授权与审计，P1-03 已完成安全游戏包摄取。当前任务是
+P1-04：依据 ADR-0010 移除 GameVersion 产品概念，建立单一 Game workspace/current content 模型；
+核心纵切、一次性真实 Validator、dirfd 文本写删和 copy lease 已完成，崩溃恢复/API 收尾仍在进行。
+当前 schema/后端 API 基线已落地，仓库在真实 Validator 与存储恢复加固完成前仍不能宣称可安全运行
+任意不受信任游戏包。
 
 ## 已确认技术方案
 
@@ -34,7 +38,7 @@ Phase 0 运行时切分与兼容性证明已经完成，当前进入 Phase 1 单
 - 浏览器实时通信：原生 WebSocket，HTTP 负责资源和管理操作；
 - 进程内/容器内通信：gRPC over Unix Domain Socket；
 - 进程模型：一个 Web/API、一个 Worker Supervisor、每个活动 Session 一个独立 Worker；
-- 持久化：SQLite 保存元数据，挂载的数据目录保存游戏版本、Session 工作区和存档；
+- 持久化：SQLite 保存元数据，挂载的数据目录保存 Game workspace/current content、SessionRoot 和存档；
 - 部署：MVP 为单容器，开发环境使用 Docker Compose；
 - 沙箱方向：Linux namespace、cgroup、seccomp 和只读/私有文件系统边界；
 - 许可证：CloudEmuera 自研代码使用 Apache-2.0；Emuera.EM+EE 保留 zlib/libpng 许可证。
@@ -45,8 +49,11 @@ Phase 0 运行时切分与兼容性证明已经完成，当前进入 Phase 1 单
 
 1. 每个活动 Session 只能有一个有效 Worker，并用递增 epoch fencing 拒绝旧 Worker 的心跳、输出和输入结果；同一时刻只能把 SessionRoot 写权限交给该 Worker。
 2. 浏览器断开不会关闭 Session；`DETACHED` 仍占用 Worker，不能偷换为挂起状态。
-3. GameVersion 发布后不可变，Session 必须固定到明确版本。
-4. 每个 Session 使用独立、持久的实际 SessionRoot。创建时把已发布 GameVersion 的完整合法普通文件树复制进去；Worker 只读写该副本，原始 GameVersion 保持不可变，不共享可写 inode。
+3. 产品不建立 GameVersion。每个 Game 最多一个可编辑 workspace 和一个当前只读 content；新内容
+   验证后原子替换 current，不提供版本列表、版本标签或历史回滚。
+4. 每个 Session 使用独立、持久的实际 SessionRoot。创建时把 Game 当时 current content 的完整
+   合法普通文件树复制进去，并记录源摘要/manifest 快照；Worker 只读写该副本，Game 后续编辑不
+   改变既有 SessionRoot，库内容与 Session 不共享可写 inode。
 5. 必须兼容根目录存档与 `sav/` 两种 Emuera 原生布局，不定义替代存档格式。
 6. Worker 只输出结构化、可校验的 Console 事件，不把任意游戏 HTML 直接交给浏览器。
 7. 输出使用单调递增 sequence；输入使用 `promptId + clientMessageId`，重复输入不得执行两次。
@@ -186,9 +193,9 @@ Emuera.EM+EE 以普通 Git 文件位于 `src/CloudEmuera.EmueraRuntime/Upstream`
 
 ## 开发顺序
 
-按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0、P1-01 和 P1-02 已完成；当前首要
-工作是 P1-03：安全游戏包摄取、隔离暂存、流式配额与恶意归档防御。P1-02 自动化身份校验必须
-继续与人工 `.env`、`./data` 和 Compose project 隔离。
+按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0、P1-01～P1-03 已完成；当前首要工作
+是 P1-04：迁移旧 `game_versions` schema/代码，建立单一 Game workspace/current content、编辑、
+验证和原子启用。P1-02 自动化身份校验必须继续与人工 `.env`、`./data` 和 Compose project 隔离。
 
 涉及待决事项时，在实现前创建 ADR，至少记录背景、选项、决策、后果和验证方案。不要以临时代码默默固化产品或安全决策。
 

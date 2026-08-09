@@ -19,7 +19,7 @@ P1-08 WebSocket 恢复与输入去重
 ## 1. 任务结论
 
 P1-02 要把当前“任意用户名都能进入”的展示前端变为以邮箱认证的本地多用户登录系统，并建立后续
-所有 Game、GameVersion、Session、Save 和管理员端点必须调用的服务端资源授权边界与追加式
+所有 Game、Session、Save 和管理员端点必须调用的服务端资源授权边界与追加式
 审计能力。
 
 本步骤完成后应能证明：
@@ -126,7 +126,7 @@ token 存储、轮换和浏览器暴露面。未来非浏览器客户端需要 t
 - 不创建 `AspNetUsers`、roles、claims、logins、tokens 等默认 Identity 表；单角色继续存于
   `users.role`；
 - 不把 auth session 存在 API 内存、Redis、浏览器 storage 或进程内 singleton 中；
-- 不实现 Game/GameVersion、Session、Save 正式 CRUD；只实现可供它们复用的授权器；
+- 不实现 Game、Session、Save 正式 CRUD；只实现可供它们复用的授权器；
 - 不允许管理员通过通用“超级用户”规则读取私有存档、提交玩家输入或修改玩家私有 Game；
 - 不实现 P1-08 的 WebSocket envelope、snapshot/resume 数据流或输入协议；
 - 不把 CSRF token 当作身份凭据，也不以 CORS 代替 CSRF；
@@ -553,8 +553,7 @@ Cookie 的响应不被共享缓存。
 建议稳定 action：
 
 ```text
-GAME_READ, GAME_MUTATE, GAME_PUBLISH, GAME_BLOCK
-GAME_VERSION_READ, GAME_VERSION_MUTATE
+GAME_READ, GAME_MUTATE, GAME_VALIDATE, GAME_ACTIVATE, GAME_BLOCK
 SESSION_READ, SESSION_CONTROL, SESSION_FORCE_STOP, SESSION_RESUME
 SAVE_LIST, SAVE_DOWNLOAD, SAVE_MUTATE
 USER_ADMINISTER, AUDIT_READ
@@ -564,9 +563,9 @@ USER_ADMINISTER, AUDIT_READ
 
 | 资源/动作 | Owner PLAYER | 其他 PLAYER | ADMIN |
 | --- | --- | --- | --- |
-| 私有 Game/Version 读取 | 允许 | 隐藏 | 默认隐藏；除非也是 owner |
-| SERVER_SHARED Game/Version 读取 | 允许 | 允许 | 允许 |
-| Game/Version 编辑、发布 | owner 允许 | 隐藏 | 默认不允许；安全 BLOCK 使用独立动作 |
+| 私有 Game/current/workspace 读取 | owner 按 scope 允许 | 隐藏 | 默认隐藏；除非也是 owner |
+| SERVER_SHARED Game current 读取 | 允许 | 允许 | 允许 |
+| Game workspace 编辑、验证、启用 | owner 允许 | 隐藏 | 默认不允许；安全 BLOCK 使用独立动作 |
 | Session 元数据/连接/输入/关闭 | owner 允许 | 隐藏 | 默认隐藏；force-stop 使用独立 admin 动作 |
 | Save 列表/下载/修改 | owner 按状态允许 | 隐藏 | 默认隐藏，不授予内容访问 |
 | Worker/Session 运维摘要 | 不允许 | 不允许 | 独立 admin endpoint 允许 |
@@ -626,7 +625,7 @@ SYSTEM_ADMIN_BOOTSTRAPPED
 ```
 
 后续任务把 `SESSION_CREATED/CONNECTED/CLOSED/CRASHED/FORCE_STOPPED`、
-`GAME_VERSION_PUBLISHED`、`SAVE_DELETED` 等追加到同一 catalog。
+`GAME_ACTIVATED`、`SAVE_DELETED` 等追加到同一 catalog。
 
 ### 10.2 内容最小化
 

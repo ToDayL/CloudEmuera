@@ -2,6 +2,9 @@
 
 状态：DONE
 
+术语迁移：本文中的 `GameVersion/GameVersionRoot` 是历史复制源术语。ADR-0010 后 Worker 只消费
+由 Game current content 物化的 SessionRoot；P1-04 负责代码符号重命名，IPC 仍不得接收库内容根。
+
 计划日期：2026-08-05
 
 对应开发步骤：`P0-06 — 单 Session Worker 与 IPC 冒烟链路`

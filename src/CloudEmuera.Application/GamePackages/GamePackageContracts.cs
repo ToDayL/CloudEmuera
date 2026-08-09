@@ -139,6 +139,12 @@ public interface IGamePackageIngestionService
         string expectedContentDigest,
         CancellationToken cancellationToken = default);
 
+    Task<DateTimeOffset> RenewConsumeAsync(
+        string ingestionId,
+        string ownerUserId,
+        string expectedContentDigest,
+        CancellationToken cancellationToken = default);
+
     Task CompleteConsumeAsync(string ingestionId, string ownerUserId, CancellationToken cancellationToken = default);
 
     Task AbandonAsync(string ingestionId, string ownerUserId, CancellationToken cancellationToken = default);

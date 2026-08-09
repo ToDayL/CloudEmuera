@@ -37,7 +37,7 @@ public sealed class SqliteConfigurationTests
         Assert.DoesNotContain(entityTypes.SelectMany(entity => entity.GetProperties()), property => property.IsShadowProperty());
         Assert.All(entityTypes.SelectMany(entity => entity.GetForeignKeys()), foreignKey => Assert.NotEqual(DeleteBehavior.Cascade, foreignKey.DeleteBehavior));
         Assert.Equal(
-            11,
+            14,
             entityTypes.Count(entity => entity.GetTableName() is not null));
     }
 
@@ -48,7 +48,7 @@ public sealed class SqliteConfigurationTests
         using TemporarySqliteDatabase database = new();
         Assert.True((await database.MigrateAsync()).Succeeded);
         await using DbContextScope scope = database.OpenContext();
-        const string sql = "SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('users') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('games') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('game_versions') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('sessions') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('worker_leases') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('idempotency_records') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('game_package_ingestions');";
+        const string sql = "SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('users') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('games') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('sessions') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('worker_leases') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('idempotency_records') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('game_package_ingestions') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('game_content_operations') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('game_files') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('compatibility_diagnostics');";
         await using Microsoft.Data.Sqlite.SqliteCommand command = scope.Connection.CreateCommand();
         command.CommandText = sql;
         await using Microsoft.Data.Sqlite.SqliteDataReader reader = await command.ExecuteReaderAsync();
@@ -56,10 +56,10 @@ public sealed class SqliteConfigurationTests
         while (await reader.ReadAsync())
         {
             count++;
-            Assert.Equal("RESTRICT:RESTRICT", reader.GetString(0));
+            Assert.True(reader.GetString(0) is "RESTRICT:RESTRICT" or "NO ACTION:RESTRICT");
         }
 
-        Assert.True(count >= 9);
+        Assert.True(count >= 12);
     }
 
     [Fact]

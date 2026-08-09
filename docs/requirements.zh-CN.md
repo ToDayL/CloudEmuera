@@ -28,7 +28,7 @@ CloudEmuera 将使用 Emuera.EM+EE 作为运行时基线，并保留面向 `Emue
 ### 3.1 产品目标
 
 - 通过现代桌面和移动浏览器游玩 Era/Emuera 游戏。
-- 支持玩家上传、管理和版本化自己拥有的 ERB/CSV/资源游戏包。
+- 支持玩家上传、管理和编辑自己拥有的 ERB/CSV/资源游戏包。
 - 支持同一用户为同一或不同游戏启动多个并行 Session。
 - 让 Session 脱离浏览器连接独立存活，并能够恢复到最新显示与输入状态。
 - 为不同用户和 Session 隔离存档、配置、临时文件和运行时状态。
@@ -38,7 +38,7 @@ CloudEmuera 将使用 Emuera.EM+EE 作为运行时基线，并保留面向 `Emue
 ### 3.2 MVP 范围
 
 - 本地账户或单一外部身份提供商登录。
-- 游戏包上传、校验、查看、编辑与版本化。
+- 游戏包上传、校验、查看、编辑与启用。
 - Session 创建、列表、连接、重连和显式关闭。
 - 文字、样式、按钮、基础 HTML、图片、Sprite 和基础音频事件。
 - 用户输入、超时输入和移动端软键盘。
@@ -79,9 +79,8 @@ CloudEmuera 将使用 Emuera.EM+EE 作为运行时基线，并保留面向 `Emue
 | 实体 | 说明 |
 | --- | --- |
 | User | 身份、角色、配额与偏好 |
-| Game | 游戏的稳定身份、玩家所有者和可见性 |
-| GameVersion | 不可变的 ERB/CSV/资源快照及运行时要求 |
-| Session | 用户针对某一 GameVersion 创建的可重连游戏会话 |
+| Game | 游戏的稳定身份、所有者、可见性、可编辑工作区、当前可运行内容及运行时要求 |
+| Session | 用户针对某一 Game 创建的可重连游戏会话；SessionRoot 固定创建时的内容快照 |
 | WorkerLease | Session 当前有效 Worker 的路由、租约与 fencing epoch |
 | ConsoleSnapshot | 当前有界显示树、输入提示与输出序号 |
 | OutputEvent | 对 ConsoleSnapshot 的有序增量 |
@@ -89,7 +88,8 @@ CloudEmuera 将使用 Emuera.EM+EE 作为运行时基线，并保留面向 `Emue
 关系约束：
 
 ```text
-User 1 ── N Session N ── 1 GameVersion N ── 1 Game
+User 1 ── N Game
+User 1 ── N Session N ── 1 Game
 Session 1 ── 0..1 Active WorkerLease
 Session 1 ── 1 私有 SessionRoot
 ```
@@ -112,21 +112,21 @@ Session 1 ── 1 私有 SessionRoot
 - **GAME-001**：系统必须支持上传包含 `ERB`、`CSV`、配置及资源文件的游戏包。
 - **GAME-002**：上传过程必须拒绝路径穿越、绝对路径、非法符号链接、压缩炸弹和超过配额的文件。
 - **GAME-003**：系统必须识别并记录文本文件编码，至少覆盖 Shift-JIS、UTF-8 BOM 和 UTF-8 无 BOM。
-- **GAME-004**：每个已发布 GameVersion 必须不可变，并记录内容校验和、创建者、创建时间和运行时配置。
-- **GAME-005**：对已发布版本的浏览器编辑必须生成草稿或新版本，不得改变活动 Session 已固定的文件内容。
+- **GAME-004**：每个 Game 只保留一个当前可运行内容；该内容在被替换前必须不可变，并记录内容校验和、启用者、启用时间和运行时配置。系统不得提供 GameVersion、版本标签、版本列表或历史回滚资源。
+- **GAME-005**：浏览器编辑必须写入 Game 的独立工作区；验证并原子启用前不得改变当前可运行内容，也不得改变任何既有 Session 已复制的文件内容。
 - **GAME-006**：系统必须提供目录浏览、文本查看、ERB/CSV 文本编辑、搜索和文件下载能力。
-- **GAME-007**：发布前必须执行基础验证，包括目录结构、编码、解析错误、缺失资源和已禁止功能的诊断。
-- **GAME-008**：创建 Session 时必须固定到明确的 GameVersion；后续发布不能隐式改变正在运行的 Session。
+- **GAME-007**：把 workspace 启用为当前内容前必须执行基础验证，包括目录结构、编码、解析错误、缺失资源和已禁止功能的诊断。
+- **GAME-008**：创建 Session 时必须完整复制 Game 当时的当前可运行内容到私有 SessionRoot，并记录源内容摘要和运行时清单快照；Game 后续编辑或重新启用不能隐式改变既有 Session。
 - **GAME-009**：游戏可见性至少支持私有和服务器共享；公开市场式发布不在 MVP 范围内。
-- **GAME-010**：删除仍被 Session 或存档引用的版本时必须拒绝删除，或执行可恢复的逻辑删除。
+- **GAME-010**：删除仍被任意 Session 引用的 Game 时必须拒绝；未被引用的 Game 先执行可恢复的逻辑删除，不在普通请求中立即递归删除内容。
 
 ### 6.3 Session 管理
 
-- **SESS-001**：用户可以为同一或不同 GameVersion 创建任意数量的 Session；系统不得因已创建的 Session 总数而拒绝创建请求，但必须限制同时处于活动运行状态并占用 Worker 的 Session 数量。
+- **SESS-001**：用户可以为同一或不同 Game 创建任意数量的 Session；系统不得因已创建的 Session 总数而拒绝创建请求，但必须限制同时处于活动运行状态并占用 Worker 的 Session 数量。
 - **SESS-002**：每个活动 Session 必须由且仅由一个有效 Runtime 所有；切换 Worker 时必须使用递增 epoch 防止旧 Worker 继续接受输入。
 - **SESS-003**：浏览器断开不得自动关闭 Session，也不得清除运行时状态。
 - **SESS-004**：Session 在无浏览器连接时必须继续处理已经开始的执行、计时输入和内部计时器。
-- **SESS-005**：用户必须能查看 Session 名称、游戏版本、状态、创建时间、最后活动时间和当前是否等待输入。
+- **SESS-005**：用户必须能查看 Session 名称、游戏、源内容摘要、状态、创建时间、最后活动时间和当前是否等待输入。
 - **SESS-006**：用户必须能够显式关闭 Session。关闭流程必须停止新输入、刷新文件、可选生成最终自动存档、终止 Worker，并把状态置为 `CLOSED`。
 - **SESS-007**：API 必须具备幂等的创建和关闭语义，以防网络重试重复创建或重复关闭资源。
 - **SESS-008**：除管理员操作、安全策略、资源故障或明确配置的部署策略外，系统不得仅因连接空闲而自动关闭 Session。
@@ -154,15 +154,15 @@ Session 1 ── 1 私有 SessionRoot
 - **SAVE-002**：Worker 不得通过游戏提供的相对路径越过分配的存档或临时目录。
 - **SAVE-003**：用户必须能够按 Session 列出和下载自己的原生存档，并在 Session 没有活动 Worker 时上传、重命名和删除。
 - **SAVE-004**：Emuera 必须直接在当前 SessionRoot 中按原生行为写入存档；CloudEmuera 不在运行链路中增加 generation、提交队列或第二份权威存档副本。
-- **SAVE-005**：Session 元数据必须记录其 GameVersion、Runtime 版本和私有 SessionRoot；原生存档文件作为该 Session 的不透明内容管理，不建立逐次保存 generation。
-- **SAVE-006**：导入存档前必须验证文件大小、路径、格式、目标 GameVersion 和 Session 的权限，并再次确认目标 Session 没有活动 Worker。
+- **SAVE-005**：Session 元数据必须记录其 Game、创建时源内容摘要、Runtime 版本、运行时清单快照和私有 SessionRoot；原生存档文件作为该 Session 的不透明内容管理，不建立逐次保存 generation。
+- **SAVE-006**：导入存档前必须验证文件大小、路径、格式、目标 Game/源内容摘要和 Session 的权限，并再次确认目标 Session 没有活动 Worker。
 - **SAVE-007**：从一个 Session 复制存档到另一个 Session 时必须显式执行，不得让多个活动 Worker 同时写同一物理文件。
 - **SAVE-008**：自动保存和覆盖行为遵循游戏及 Emuera 原生语义；系统级历史保留由整个 SessionRoot 的外部备份策略提供，不介入每次运行时保存。
 - **SAVE-009**：删除存档必须要求确认；活动 Session 的存档不得由 Worker 以外的进程并发修改。
 - **SAVE-010**：存档内容的序列化和反序列化必须使用 Emuera 运行时的原生实现；CloudEmuera 不得为了 Web 存档管理而另行定义不兼容的游戏存档格式。
 - **SAVE-011**：每个 Session 必须向 Emuera 提供独立的实际 SessionRoot，并保持原版可见的 `CSV/`、`ERB/`、资源、配置及存档目录结构。
-- **SAVE-012**：Session 管理方必须在首次启动 Worker 前，把不可变 GameVersion 中经过发布校验的完整普通文件树复制到私有 SessionRoot。Worker 只读写该副本；原始 GameVersion 不得挂入运行目录或与 Session 共享可写 inode。
-- **SAVE-013**：兼容层必须支持 Emuera 的两种原生存档布局：GameRoot 下的 `save*.sav`/`global.sav`，以及 `UseSaveFolder:YES` 时 GameRoot 下的 `sav/` 目录；布局只由游戏版本的 `emuera.config` 决定，文件直接保存在当前 SessionRoot 的对应位置。
+- **SAVE-012**：Session 管理方必须在首次启动 Worker 前，把 Game 当前经过验证的完整普通文件树复制到私有 SessionRoot。Worker 只读写该副本；Game 的当前内容不得挂入运行目录或与 Session 共享可写 inode。
+- **SAVE-013**：兼容层必须支持 Emuera 的两种原生存档布局：GameRoot 下的 `save*.sav`/`global.sav`，以及 `UseSaveFolder:YES` 时 GameRoot 下的 `sav/` 目录；布局只由 Session 创建时复制内容中的 `emuera.config` 决定，文件直接保存在当前 SessionRoot 的对应位置。
 - **SAVE-014**：原版语义中的 Global 存档必须按 `User + Game + Session` 隔离，不能成为服务器级或同一用户跨 Session 共享文件。
 - **SAVE-015**：SessionRoot 自创建起就是该 Session 的持久运行目录并位于挂载数据目录中；Worker 重启时必须复用该目录，不得在启动或退出时把存档复制到另一套提交存储。
 
@@ -172,8 +172,8 @@ Session 1 ── 1 私有 SessionRoot
 - **OPS-002**：系统必须允许配置每用户活动运行 Session 数量、每 Session 内存/CPU/磁盘、游戏包大小、存档大小和输出速率上限；不得配置 Session 创建总数上限。
 - **OPS-003**：API 必须提供健康检查、就绪检查和版本信息。
 - **OPS-004**：日志必须包含可关联的 `requestId`、`sessionId`、`workerId` 和 `workerEpoch`，但不得记录密码或默认记录用户输入全文。
-- **OPS-005**：必须记录 Session 创建、连接、关闭、崩溃、管理员终止、游戏发布和存档删除等审计事件。
-- **OPS-006**：管理员必须能够阻止已知不安全的游戏版本继续创建新 Session，同时不直接破坏现有存档。
+- **OPS-005**：必须记录 Session 创建、连接、关闭、崩溃、管理员终止、Game 内容启用和存档删除等审计事件。
+- **OPS-006**：管理员必须能够阻止已知不安全的 Game 继续创建新 Session，同时不直接破坏既有 SessionRoot 和存档。
 
 ## 7. 兼容性需求
 
@@ -253,13 +253,13 @@ Worker 层建议区分：
 
 Session Worker 必须在 API 进程暂时重启或本地 IPC 暂时中断时继续运行，并保留有界输出。控制通道恢复后应使用 `sessionId + workerEpoch` 重新注册。
 
-每个 Session Worker 必须以实际的 `SessionRoot` 作为进程工作目录和 Emuera 的 GameRoot。Session 管理方在创建时完整复制已发布 GameVersion 的合法普通文件树；配置、游戏自定义目录、存档和临时文件都直接位于 Session 自己的物理目录：
+每个 Session Worker 必须以实际的 `SessionRoot` 作为进程工作目录和 Emuera 的 GameRoot。Session 管理方在创建时完整复制 Game 当前已验证的合法普通文件树；配置、游戏自定义目录、存档和临时文件都直接位于 Session 自己的物理目录：
 
 ```text
 SessionRoot/
-├── CSV/              ← GameVersion 的 Session 私有副本
-├── ERB/              ← GameVersion 的 Session 私有副本
-├── resources/        ← GameVersion 的 Session 私有副本
+├── CSV/              ← Game 当前内容的 Session 私有副本
+├── ERB/              ← Game 当前内容的 Session 私有副本
+├── resources/        ← Game 当前内容的 Session 私有副本
 ├── any-game-dir/     ← 其他合法目录也完整复制
 ├── sav/              ← Session 私有目录，可写
 ├── save*.sav         → Session 私有存档文件，可写
@@ -365,7 +365,7 @@ RUNNING/DETACHED → SUSPENDING → SUSPENDED → RESUMING  （未来能力）
 保存：
 
 - 用户、角色与配额
-- Game 与不可变 GameVersion 元数据
+- Game 元数据、可编辑工作区、当前内容摘要和运行时清单
 - Session 状态与当前 WorkerLease
 - SessionRoot 路径、Session 生命周期和存档管理审计数据
 - 管理策略与兼容性报告摘要
@@ -379,7 +379,8 @@ RUNNING/DETACHED → SUSPENDING → SUSPENDED → RESUMING  （未来能力）
 ```text
 /data/
 ├── cloudemuera.db
-├── games/{gameId}/{version}/       ← 不可变 GameVersion 文件树，Session 复制来源
+├── games/{gameId}/workspace/       ← Game 的唯一可编辑工作区
+├── games/{gameId}/content/         ← 当前不可变复制来源，不保留历史版本
 ├── sessions/{sessionId}/
 │   ├── root/                       ← SessionRoot 实际运行目录
 │   └── metadata/
@@ -387,13 +388,13 @@ RUNNING/DETACHED → SUSPENDING → SUSPENDED → RESUMING  （未来能力）
 └── backups/
 ```
 
-Session 管理方必须复制发布清单中的全部合法普通文件和目录，不按已知目录白名单丢弃未知内容。游戏包自带的软链接、硬链接和特殊文件仍必须拒绝。普通字节复制是基线；支持时可以使用保持写时复制语义的 reflink，并在不可用时回退普通复制。不得使用硬链接。每个 SessionRoot 必须私有、持久且相互隔离，Emuera 直接读写其中的完整游戏副本、配置、临时文件和原生存档。不得使用对象存储、远程文件系统或外部文件服务作为运行时或持久化依赖。备份必须通过宿主机文件系统快照、目录复制或等价的本地备份工具完成。
+Session 管理方必须复制 Game 当前清单中的全部合法普通文件和目录，不按已知目录白名单丢弃未知内容。游戏包自带的软链接、硬链接和特殊文件仍必须拒绝。普通字节复制是基线；支持时可以使用保持写时复制语义的 reflink，并在不可用时回退普通复制。不得使用硬链接。每个 SessionRoot 必须私有、持久且相互隔离，Emuera 直接读写其中的完整游戏副本、配置、临时文件和原生存档。不得使用对象存储、远程文件系统或外部文件服务作为运行时或持久化依赖。备份必须通过宿主机文件系统快照、目录复制或等价的本地备份工具完成。
 
 ## 12. 安全需求
 
 - **SEC-001**：所有游戏包均视为不受信任输入。
 - **SEC-002**：Session Worker 默认不得访问公网、宿主密钥、其他用户文件和容器管理接口。
-- **SEC-003**：原始 GameVersion 不提供给 Worker；Worker 只能访问并写入分配给它的完整 SessionRoot 副本，不能访问其他 GameVersion 或 SessionRoot。
+- **SEC-003**：Game 的 workspace 和 current content 不提供给 Worker；Worker 只能访问并写入分配给它的完整 SessionRoot 副本，不能访问任何 Game 库目录或其他 SessionRoot。
 - **SEC-004**：必须对 Worker 实施 CPU、内存、进程数、打开文件数、磁盘和输出速率限制。
 - **SEC-005**：必须防止归档路径穿越、符号链接逃逸、大小写碰撞和超量解压。
 - **SEC-006**：浏览器渲染必须对文本和属性编码；Emuera HTML 必须转换为受支持的结构化节点。
@@ -409,7 +410,7 @@ Session 管理方必须复制发布清单中的全部合法普通文件和目录
 - **NFR-001**：正常负载下，已运行 Session 的重连及初始快照显示目标为 P95 不超过 2 秒，不含用户外部网络异常。
 - **NFR-002**：API 进程重启不得主动终止健康的 Session Worker；Worker Supervisor 必须继续管理这些进程。
 - **NFR-003**：本地 IPC 暂时中断时 Session Worker 必须继续运行并尝试重新注册；输出缓冲达到上限后必须保留最新 ConsoleSnapshot。
-- **NFR-004**：Worker 崩溃必须保留其 SessionRoot 现场且不得影响 GameVersion 或其他 Session；Session 必须清晰标记为 `CRASHED`。不承诺正在被原生 writer 覆盖的文件仍然有效。
+- **NFR-004**：Worker 崩溃必须保留其 SessionRoot 现场且不得影响 Game 当前内容、workspace 或其他 Session；Session 必须清晰标记为 `CRASHED`。不承诺正在被原生 writer 覆盖的文件仍然有效。
 - **NFR-005**：第一阶段不把任意执行点或每次保存的事务性恢复作为 SLA；仅保证 SessionRoot 持久存在和诊断信息可用。
 
 ### 13.2 性能与容量
@@ -443,7 +444,7 @@ Session 管理方必须复制发布清单中的全部合法普通文件和目录
 | API 进程重启 | Worker Supervisor 和 Session Worker 保持运行；API 通过持久元数据找回 Session |
 | API 与 Worker 本地 IPC 短时中断 | Worker 有界缓冲并重连；恢复后核对 epoch 与序号 |
 | Worker 崩溃 | Session 标记 CRASHED；原样保留 SessionRoot；不承诺正在写入的文件或指令级恢复 |
-| Docker 容器或宿主机重启 | 活动 Worker 按故障处理；挂载数据目录中的 GameVersion 与 SessionRoot 保留 |
+| Docker 容器或宿主机重启 | 活动 Worker 按故障处理；挂载数据目录中的 Game 内容、workspace 与 SessionRoot 保留 |
 | 挂载数据目录不可用 | 禁止新建 Session 和写入存档，并明确报告持久化故障 |
 | 客户端重复输入 | 通过 promptId 和 clientMessageId 去重 |
 | 旧 Worker 恢复连接 | 因 epoch 落后被 fencing，不能继续产生有效状态 |
@@ -453,7 +454,7 @@ Session 管理方必须复制发布清单中的全部合法普通文件和目录
 - **AC-001**：一个用户同时启动同一游戏的两个 Session，两者变量、显示、输入和存档互不影响。
 - **AC-002**：用户在等待输入时关闭网页，至少在配置的测试间隔后重新登录，能够看到最新显示并继续同一 prompt。
 - **AC-003**：API 服务重启期间 Worker 不退出；API 恢复后用户可以重新连接。
-- **AC-004**：两个用户使用同一 GameVersion 时，不能访问或覆盖彼此存档和 Session。
+- **AC-004**：两个用户使用同一 Game 当前内容创建 Session 时，不能访问或覆盖彼此存档和 Session。
 - **AC-005**：重复提交同一输入消息只执行一次。
 - **AC-006**：用户显式关闭 Session 后 Worker 在限定时间内退出，Session 状态变为 CLOSED，随后输入被拒绝。
 - **AC-007**：强制终止 Worker 后，Session 在心跳窗口内变为 CRASHED，SessionRoot 不被清理，其中现存原生存档仍可检查或下载。
@@ -463,7 +464,7 @@ Session 管理方必须复制发布清单中的全部合法普通文件和目录
 - **AC-011**：桌面和移动浏览器均可完成创建 Session、游戏输入、断线重连和存档下载。
 - **AC-012**：持续大量输出时，Worker 与浏览器内存保持在配置边界内，重连仍能获得一致快照。
 - **AC-013**：代表性游戏在根目录存档模式和 `sav/` 模式下均可用 Emuera 原生逻辑完成保存与加载；物理存档只出现在对应 Session 的私有区域。
-- **AC-014**：两个用户以及同一用户的两个 Session 使用相同 GameVersion 时，GameVersion 文件保持只读，Global 存档按 `User + Game + Session` 隔离，不会跨用户或跨 Session 共享。
+- **AC-014**：两个用户以及同一用户的两个 Session 使用同一 Game 当前内容时，Game 库内容保持不被 Worker 修改，Global 存档按 `User + Game + Session` 隔离，不会跨用户或跨 Session 共享；Game 后续编辑不改变这些 SessionRoot。
 
 ## 16. 分阶段交付建议
 
@@ -479,7 +480,7 @@ Session 管理方必须复制发布清单中的全部合法普通文件和目录
 - 单 Docker 容器、单 API 进程、单 Worker Supervisor、SQLite 和挂载的数据目录。
 - 容器内一个 API 进程、一个 Worker Supervisor 进程，以及每 Session 一个独立子进程。
 - WebSocket 重连、ConsoleSnapshot、存档隔离和基础 Web 渲染。
-- 游戏包上传、编辑、不可变发布与基础诊断。
+- 游戏包上传、单一工作区编辑、当前内容原子启用与基础诊断。
 
 ### Phase 2：自托管完善
 

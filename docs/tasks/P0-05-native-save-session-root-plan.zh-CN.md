@@ -2,6 +2,10 @@
 
 状态：DONE
 
+术语迁移：本文记录的 `GameVersion/GameVersionRoot` 仅表示 ADR-0010 前的 Game 内容复制源。
+P1-04 将代码重命名为 `Game current content/GameContentRoot`；P0-05 的完整复制、私有
+SessionRoot、无共享可写 inode 和原生存档语义保持不变。
+
 计划日期：2026-08-05
 
 完成日期：2026-08-05

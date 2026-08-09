@@ -30,47 +30,34 @@ internal static class PersistenceFixtures
         UpdatedAt = CreatedAt,
     };
 
-    public static GameRow CreateGame(string id = "game_fixture", string ownerId = "usr_fixture", string name = "Fixture Game") => new()
+    public static GameRow CreateGame(string id = "game_fixture", string ownerId = "usr_fixture", string name = "Fixture Game", bool withContent = true) => new()
     {
         Id = id,
         OwnerUserId = ownerId,
         Name = name,
         Visibility = GameVisibility.Private,
         Status = GameStatus.Active,
+        WorkspaceStatus = GameWorkspaceStatus.None,
+        CurrentContentPath = withContent ? $"games/{id}/content" : null,
+        ContentDigest = withContent ? "sha256:" + new string('a', 64) : null,
+        ContentRevision = withContent ? 1 : 0,
+        ActivatedBy = withContent ? ownerId : null,
+        ActivatedAt = withContent ? CreatedAt : null,
         CreatedAt = CreatedAt,
         UpdatedAt = CreatedAt,
-    };
-
-    public static GameVersionRow CreateVersion(
-        string id = "gver_fixture",
-        string gameId = "game_fixture",
-        string? digest = null,
-        GameVersionStatus status = GameVersionStatus.Draft) => new()
-    {
-        Id = id,
-        GameId = gameId,
-        VersionLabel = id,
-        Status = status,
-        ContentDigest = digest,
-        ContentPath = $"games/{gameId}/{id}/content",
-        ManifestJson = "{}",
-        RuntimeConfigJson = "{}",
-        CompatibilitySummaryJson = "{}",
-        CreatedBy = "usr_fixture",
-        CreatedAt = CreatedAt,
-        PublishedAt = status is GameVersionStatus.Published or GameVersionStatus.Blocked ? CreatedAt : null,
     };
 
     public static SessionRow CreateSession(
         string id = "sess_fixture",
         string gameId = "game_fixture",
-        string gameVersionId = "gver_fixture",
         long workerEpoch = 0) => new()
     {
         Id = id,
         OwnerUserId = "usr_fixture",
         GameId = gameId,
-        GameVersionId = gameVersionId,
+        SourceContentDigest = "sha256:" + new string('a', 64),
+        SourceContentRevision = 1,
+        RuntimeManifestJson = "{}",
         RuntimeVersion = "headless-test",
         SessionRootPath = $"sessions/{id}/root",
         Name = "Fixture Session",
@@ -116,5 +103,19 @@ internal static class PersistenceFixtures
         ResponseJson = "{}",
         CreatedAt = CreatedAt,
         ExpiresAt = CreatedAt.AddHours(1),
+    };
+
+    public static GameContentOperationRow CreateGameContentOperation(string id = "gop_fixture", GameContentOperationStatus status = GameContentOperationStatus.Running) => new()
+    {
+        Id = id,
+        GameId = "game_fixture",
+        OperationType = GameContentOperationType.Validate,
+        Status = status,
+        ExpectedGameStateVersion = 0,
+        ExpectedContentRevision = 1,
+        LeaseExpiresAt = CreatedAt.AddMinutes(15),
+        CreatedAt = CreatedAt,
+        UpdatedAt = CreatedAt,
+        CompletedAt = status is GameContentOperationStatus.Committed or GameContentOperationStatus.Failed ? CreatedAt : null,
     };
 }

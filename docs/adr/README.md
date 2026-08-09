@@ -11,3 +11,5 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0006：CI runtime compatibility fixtures](0006-ci-runtime-compatibility-fixtures.md)
 - [ADR-0007：SessionRoot 直接持有 Emuera 原生存档](0007-session-root-native-save-ownership.md)
 - [ADR-0008：安全 ZIP 摄取边界与配额口径](0008-secure-zip-ingestion-policy.md)
+- [ADR-0009：草稿发布事务与不可变版本身份（已被 ADR-0010 取代）](0009-draft-publication-and-immutable-version-identity.md)
+- [ADR-0010：单一 Game 内容模型，不建立 GameVersion 实体](0010-single-game-content-without-version-entities.md)

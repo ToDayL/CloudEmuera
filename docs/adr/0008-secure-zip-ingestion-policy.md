@@ -51,9 +51,9 @@ local header 不一致、external attributes、extra field、重复与 file/dir 
 - 所有可竞争状态转换匹配预期 status 与 `state_version`；`state_version` 同时配置为 EF 并发令牌，
   Abandon 不得通过跟踪实体的无条件更新覆盖并发 Complete。
 - `BeginConsumeAsync` 在 READY CAS 前打开并校验 manifest 和 content 目录句柄，返回值不暴露物理
-  或相对路径。CONSUMING 使用有限 watchdog lease；P1-04 接入长操作时必须续租并在启用正式发布
-  前增加 GameVersion 提交对账，不能依赖无限期 CONSUMING。
-- P1-03 不创建 Game/GameVersion 或最终内容目录。正式 HTTP adapter 和 DRAFT 绑定由 P1-04 完成。
+  或相对路径。CONSUMING 使用有限 watchdog lease；P1-04 接入长操作时必须续租，并在接入正式
+  Game workspace 提交前增加持久对账，不能依赖无限期 CONSUMING。
+- P1-03 不创建 Game 或最终内容目录。正式 HTTP adapter 和 workspace 绑定由 P1-04 完成。
 
 ## 备选方案
 
@@ -94,10 +94,10 @@ local header 不一致、external attributes、extra field、重复与 file/dir 
   未公开行为。
 - 原包与展开树会在摄取期间同时占空间；悲观预留会降低并发度，换取可预测的磁盘上界。
 - 2 GiB classic ZIP 不需要 ZIP64，但接近格式上限的包仍受中央目录和条目数限制。
-- 同内容不同压缩方式得到相同 content digest，便于 P1-04 建立不可变内容身份。
+- 同内容不同压缩方式得到相同 content digest，便于 P1-04 核验 Game workspace/current content。
 - NFC 规范化可能改变原始 entry name 的码点序列；manifest、物理路径和后续编辑统一使用规范名，
   并产生信息诊断。
-- P1-04 必须实现 CONSUMING 与 GameVersion 提交对账，不能绕开 lease 直接按 staging 字符串寻址。
+- P1-04 必须实现 CONSUMING 与 Game workspace 提交对账，不能绕开 lease 直接按 staging 字符串寻址。
 
 ## 验证
 

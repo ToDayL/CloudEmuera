@@ -12,6 +12,30 @@ public sealed class GameRow
 
     public GameStatus Status { get; set; }
 
+    public GameWorkspaceStatus WorkspaceStatus { get; set; }
+
+    public string? WorkspacePath { get; set; }
+
+    public string? CurrentContentPath { get; set; }
+
+    public string? ContentDigest { get; set; }
+
+    public long ContentRevision { get; set; }
+
+    public string ManifestJson { get; set; } = "{}";
+
+    public string RuntimeConfigJson { get; set; } = "{}";
+
+    public string CompatibilitySummaryJson { get; set; } = "{}";
+
+    public string? ActivatedBy { get; set; }
+
+    public DateTimeOffset? ActivatedAt { get; set; }
+
+    public string? DeletedBy { get; set; }
+
+    public DateTimeOffset? DeletedAt { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }
@@ -19,8 +43,6 @@ public sealed class GameRow
     public int StateVersion { get; set; }
 
     public CloudEmueraUser? OwnerUser { get; set; }
-
-    public ICollection<GameVersionRow> Versions { get; } = new List<GameVersionRow>();
 
     public ICollection<SessionRow> Sessions { get; } = new List<SessionRow>();
 }

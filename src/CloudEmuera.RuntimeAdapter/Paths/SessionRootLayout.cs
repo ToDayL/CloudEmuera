@@ -79,7 +79,7 @@ public sealed class SessionRootLayout
 
     public string SessionWorkspaceRoot => RuntimePaths.SessionWorkspaceRoot;
 
-    public string GameVersionRoot => RuntimePaths.GameVersionRoot;
+    public string GameContentRoot => RuntimePaths.GameContentRoot;
 
     public RuntimeSaveLayout SaveLayout => RuntimePaths.SaveLayout;
 

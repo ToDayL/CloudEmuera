@@ -27,8 +27,11 @@ public sealed class InitialMigrationTests
                 "__EFMigrationsLock",
                 "audit_events",
                 "auth_sessions",
+                "compatibility_diagnostics",
+                "game_content_copy_leases",
+                "game_content_operations",
+                "game_files",
                 "game_package_ingestions",
-                "game_versions",
                 "games",
                 "idempotency_records",
                 "instance_state",
@@ -41,12 +44,12 @@ public sealed class InitialMigrationTests
             tables.Order(StringComparer.Ordinal));
         Assert.Contains("trg_audit_events_append_only_update", triggers);
         Assert.Contains("trg_audit_events_append_only_delete", triggers);
-        Assert.Contains("ux_game_versions_content_digest", indexes);
+        Assert.Contains("ux_games_current_content_path", indexes);
         Assert.Contains("ux_worker_leases_worker_id", indexes);
         Assert.DoesNotContain(tables, name => name.StartsWith("AspNet", StringComparison.Ordinal));
         Assert.DoesNotContain(tables, name => name.Contains("save", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(tables, name => name == "__EFMigrationsHistory");
-        Assert.Equal(4, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(9, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -56,7 +59,7 @@ public sealed class InitialMigrationTests
         using TemporarySqliteDatabase database = new();
         Assert.True((await database.MigrateAsync()).Succeeded);
 
-        await using (DbContextScope scope = database.OpenContext())
+        await using (DbContextScope scope = database.OpenContext(SqliteConnectionAccess.ReadWriteCreate))
         {
             scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
             await scope.Context.SaveChangesAsync();
@@ -70,7 +73,7 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(4, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(9, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -95,7 +98,38 @@ public sealed class InitialMigrationTests
         Assert.Null(user.PasswordChangedAt);
         Assert.False(user.MustChangePassword);
         Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
-        Assert.Equal(4, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(9, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task LegacyPublishedContentAndSession_AreCollapsedIntoGameAndSnapshotMetadata()
+    {
+        using TemporarySqliteDatabase database = new();
+        string digest = "sha256:" + new string('d', 64);
+        await using (DbContextScope initial = database.OpenContext(SqliteConnectionAccess.ReadWriteCreate))
+        {
+            await initial.Context.Database.MigrateAsync("20260807071428_InitialMetadata");
+            await ExecuteAsync(initial.Connection, "INSERT INTO quota_profiles (id,name,max_active_sessions,max_game_package_bytes,max_session_bytes,max_output_bytes_per_second,created_at,updated_at,state_version) VALUES ('qtp_legacy','Legacy',1,1024,2048,512,1,1,0);");
+            await ExecuteAsync(initial.Connection, "INSERT INTO users (id,login_name,normalized_login_name,role,status,quota_profile_id,preferences_json,created_at,updated_at,state_version,password_hash,security_stamp,access_failed_count) VALUES ('usr_legacy','legacy','LEGACY','PLAYER','ACTIVE','qtp_legacy','{}',1,1,0,NULL,'stamp',0);");
+            await ExecuteAsync(initial.Connection, "INSERT INTO games (id,owner_user_id,name,visibility,status,created_at,updated_at,state_version) VALUES ('game_legacy','usr_legacy','Legacy Game','PRIVATE','ACTIVE',1,1,0);");
+            await ExecuteAsync(initial.Connection, $"INSERT INTO game_versions (id,game_id,version_label,status,content_digest,content_path,manifest_json,runtime_config_json,compatibility_summary_json,created_by,created_at,published_at,state_version) VALUES ('gver_legacy','game_legacy','current','PUBLISHED','{digest}','games/game_legacy/content','{{}}','{{}}','{{}}','usr_legacy',1,2,0);");
+            await ExecuteAsync(initial.Connection, "INSERT INTO sessions (id,owner_user_id,game_id,game_version_id,runtime_version,session_root_path,name,state,state_version,worker_epoch,waiting_for_input,last_output_sequence,created_at,last_activity_at) VALUES ('sess_legacy','usr_legacy','game_legacy','gver_legacy','runtime','sessions/sess_legacy/root','Legacy Session','CREATING',0,0,0,0,2,2);");
+        }
+
+        await using (DbContextScope upgrade = database.OpenContext())
+            await upgrade.Context.Database.MigrateAsync();
+        await using DbContextScope verify = database.OpenContext();
+        GameRow game = await verify.Context.Games.SingleAsync();
+        SessionRow session = await verify.Context.Sessions.SingleAsync();
+        Assert.Equal(digest, game.ContentDigest);
+        Assert.Equal(1, game.ContentRevision);
+        Assert.Equal("games/game_legacy/content", game.CurrentContentPath);
+        Assert.Equal(digest, session.SourceContentDigest);
+        Assert.Equal(1, session.SourceContentRevision);
+        Assert.Contains("contentManifest", session.RuntimeManifestJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("game_versions", await ReadObjectsAsync(verify.Connection, "table"));
+        Assert.Equal(0, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM pragma_foreign_key_check;"));
     }
 
     [Fact]
@@ -131,9 +165,9 @@ public sealed class InitialMigrationTests
     public async Task InitialMigration_Down_RemovesOwnedSchemaOnly()
     {
         using TemporarySqliteDatabase database = new();
-        Assert.True((await database.MigrateAsync()).Succeeded);
-        await using (DbContextScope scope = database.OpenContext())
+        await using (DbContextScope scope = database.OpenContext(SqliteConnectionAccess.ReadWriteCreate))
         {
+            await scope.Context.Database.MigrateAsync("20260809141320_AddGamePackageIngestions");
             await ExecuteAsync(scope.Connection, "CREATE TABLE probe (id INTEGER PRIMARY KEY, value TEXT NOT NULL);");
             await ExecuteAsync(scope.Connection, "INSERT INTO probe (id, value) VALUES (1, 'keep');");
             await scope.Context.Database.MigrateAsync("0");
@@ -176,7 +210,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(5, await CountHistoryRowsAsync(database));
+        Assert.Equal(10, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>

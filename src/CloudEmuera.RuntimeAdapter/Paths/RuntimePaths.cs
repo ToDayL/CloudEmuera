@@ -3,17 +3,17 @@ namespace CloudEmuera.RuntimeAdapter;
 /// <summary>
 /// Immutable, session-scoped physical roots used by the runtime adapter.
 ///
-/// A SessionRoot is a complete, private copy of one published GameVersion. It
+/// A SessionRoot is a complete, private copy of one published GameContent. It
 /// is the actual Emuera GameRoot: configuration, game files, temporary data
 /// and native saves all live below this one ordinary directory. The
-/// GameVersionRoot property is retained for supervisor/diagnostic binding and
+/// GameContentRoot property is retained for supervisor/diagnostic binding and
 /// is never used as a runtime content fallback.
 /// </summary>
 public sealed class RuntimePaths
 {
     /// <summary>
     /// Creates the adapter view for a SessionRoot that was materialized by a
-    /// supervisor before the Worker process started. The source GameVersion is
+    /// supervisor before the Worker process started. The source GameContent is
     /// deliberately represented by a non-existent sibling sentinel; no
     /// source path is supplied to the Worker and no content fallback exists.
     /// </summary>
@@ -39,19 +39,19 @@ public sealed class RuntimePaths
             .ToLowerInvariant();
         return new RuntimePaths(
             normalizedSessionRoot,
-            Path.Combine(parent, $".cloudemuera-unavailable-game-version-{suffix}"),
+            Path.Combine(parent, $".cloudemuera-unavailable-game-content-{suffix}"),
             Path.Combine(parent, $".cloudemuera-worker-workspace-{suffix}"),
             saveLayout);
     }
 
     public RuntimePaths(
         string sessionRoot,
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionWorkspaceRoot,
         RuntimeSaveLayout saveLayout)
         : this(
             sessionRoot,
-            gameVersionRoot,
+            gameContentRoot,
             sessionWorkspaceRoot,
             saveLayout,
             csvRoot: null,
@@ -69,7 +69,7 @@ public sealed class RuntimePaths
 
     public RuntimePaths(
         string sessionRoot,
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionWorkspaceRoot,
         RuntimeSaveLayout saveLayout,
         string? csvRoot,
@@ -83,7 +83,7 @@ public sealed class RuntimePaths
         string? savDirectoryRoot = null)
         : this(
             sessionRoot,
-            gameVersionRoot,
+            gameContentRoot,
             sessionWorkspaceRoot,
             saveLayout,
             csvRoot,
@@ -101,13 +101,13 @@ public sealed class RuntimePaths
 
     public RuntimePaths(
         string sessionRoot,
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionWorkspaceRoot,
         RuntimeSaveLayout saveLayout,
         IEnumerable<string> otherSessionWorkspaceRoots)
         : this(
             sessionRoot,
-            gameVersionRoot,
+            gameContentRoot,
             sessionWorkspaceRoot,
             saveLayout,
             csvRoot: null,
@@ -125,7 +125,7 @@ public sealed class RuntimePaths
 
     internal RuntimePaths(
         string sessionRoot,
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionWorkspaceRoot,
         RuntimeSaveLayout saveLayout,
         string? csvRoot,
@@ -147,7 +147,7 @@ public sealed class RuntimePaths
         }
 
         SessionRoot = RuntimePathUtilities.NormalizeAbsolutePath(sessionRoot, nameof(sessionRoot));
-        GameVersionRoot = RuntimePathUtilities.NormalizeAbsolutePath(gameVersionRoot, nameof(gameVersionRoot));
+        GameContentRoot = RuntimePathUtilities.NormalizeAbsolutePath(gameContentRoot, nameof(gameContentRoot));
         SessionWorkspaceRoot = RuntimePathUtilities.NormalizeAbsolutePath(
             sessionWorkspaceRoot,
             nameof(sessionWorkspaceRoot));
@@ -187,7 +187,7 @@ public sealed class RuntimePaths
     /// The immutable source root used to construct this SessionRoot. The
     /// runtime itself must not be given access to this path.
     /// </summary>
-    public string GameVersionRoot { get; }
+    public string GameContentRoot { get; }
 
     /// <summary>
     /// Metadata/workspace parent used for overlap checks. It is not an
@@ -468,8 +468,8 @@ public sealed class RuntimePaths
                 "SessionRoot and SessionWorkspaceRoot must be different.");
         }
 
-        if (RuntimePathUtilities.PathsOverlap(GameVersionRoot, SessionRoot) ||
-            RuntimePathUtilities.PathsOverlap(GameVersionRoot, SessionWorkspaceRoot))
+        if (RuntimePathUtilities.PathsOverlap(GameContentRoot, SessionRoot) ||
+            RuntimePathUtilities.PathsOverlap(GameContentRoot, SessionWorkspaceRoot))
         {
             throw new RuntimePathException(
                 RuntimePathReasonCodes.CrossSessionPath,
@@ -484,7 +484,7 @@ public sealed class RuntimePaths
         }
 
         RuntimePathUtilities.ValidateNoReparsePointsAlongPath(SessionRoot, "<session-root>");
-        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(GameVersionRoot, "<game-version-root>");
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(GameContentRoot, "<game-content-root>");
         RuntimePathUtilities.ValidateNoReparsePointsAlongPath(SessionWorkspaceRoot, "<session-workspace>");
     }
 

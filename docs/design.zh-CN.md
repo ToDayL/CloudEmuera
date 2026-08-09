@@ -49,7 +49,8 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 3. **数据库记录意图，Supervisor 确认事实**：Session 状态是持久化事实；进程是否存活由 Supervisor 观测并回写。
 4. **所有跨进程消息均可重试**：控制命令有 `commandId`，输入有 `clientMessageId`，状态变化有版本号。
 5. **epoch fencing 优先于连接状态**：任何旧 Worker 即使恢复连接，也不能影响当前 Session。
-6. **内容不可变，工作区私有**：GameVersion 发布后不可修改；每个 Session 只有自己的可写区域。
+6. **当前内容原子替换，Session 工作区私有**：Game 只有一份当前可运行内容；编辑发生在独立
+   workspace，验证后原子替换当前内容；每个 Session 只写自己的完整副本。
 7. **显示数据结构化**：浏览器不执行游戏提供的 HTML、脚本或任意 URL。
 8. **有界缓存**：输出历史、连接队列、日志和去重记录均有明确上限及降级方式。
 
@@ -203,7 +204,7 @@ Web/API 进程不得加载 Emuera Runtime，也不得持有只能存在于内存
 | --- | --- | --- |
 | Identity | 登录、登出、Cookie/OIDC 回调、用户状态 | 资源授权判断 |
 | Authorization | 所有资源级访问决策、管理员策略 | 仅依赖前端可见性 |
-| Game Package Service | 上传暂存、解包校验、草稿、发布、文件浏览 | 运行游戏 |
+| Game Package Service | 上传暂存、解包校验、workspace、current content 启用、文件浏览 | 运行游戏 |
 | Compatibility Service | 静态扫描、解析验证、生成能力报告 | 绕过 Blocked 能力 |
 | Session Control Plane | 创建、关闭、查询、配额预留、状态转换 | 解释器执行 |
 | Realtime Gateway | WebSocket 鉴权、恢复、广播、背压、输入转发 | 修改显示事件语义 |
@@ -241,7 +242,7 @@ Supervisor 不解析 ERB，不保存用户认证状态，也不直接向浏览�
 
 ### 3.3 Session Worker 进程
 
-每个 Worker 只加载一个 GameVersion，且在整个生命周期内只服务一个 Session。内部组件如下：
+每个 Worker 只加载一个已经物化的 SessionRoot，且在整个生命周期内只服务一个 Session。内部组件如下：
 
 | 组件 | 职责 |
 | --- | --- |
@@ -281,7 +282,9 @@ API 退出不向 Supervisor 发送全局停止信号。容器整体收到终止�
 
 ### 4.1 标识符
 
-外部可见实体使用不可预测的时间有序 ID，字符串带类型前缀，例如 `usr_`、`game_`、`gver_`、`sess_`、`wrk_`、`save_`。数据库内部可直接以该字符串为主键。不得把连续整数 ID 暴露为资源定位符。
+外部可见实体使用不可预测的时间有序 ID，字符串带类型前缀，例如 `usr_`、`game_`、`sess_`、
+`wrk_`、`save_`。数据库内部可直接以该字符串为主键。不得把连续整数 ID 暴露为资源定位符。
+Game 内容 revision 是内部单调计数，不是外部资源 ID，也不提供历史读取或回滚 API。
 
 时间统一以 UTC 存储为 RFC 3339 字符串或 Unix 毫秒；API 输出 RFC 3339。校验和统一使用 `sha256:<lowercase-hex>`。
 
@@ -289,7 +292,7 @@ API 退出不向 Supervisor 发送全局停止信号。容器整体收到终止�
 
 Session 是状态转换、配额占用和 WorkerLease 的事务边界。核心不变量：
 
-- 一个 Session 固定一个 `gameVersionId`，创建后不可更改；
+- 一个 Session 固定一个 `gameId`、创建时源内容摘要和运行时清单快照，创建后不可更改；
 - 活动状态最多有一个当前 WorkerLease；
 - 当前租约 epoch 只能递增，不能复用；
 - `CLOSED` 是终态；MVP 中 `CRASHED` 不能直接回到 `RUNNING`；
@@ -427,31 +430,26 @@ id TEXT PK
 owner_user_id TEXT NOT NULL FK users
 name TEXT NOT NULL
 visibility TEXT NOT NULL           -- PRIVATE | SERVER_SHARED
-status TEXT NOT NULL               -- ACTIVE | DELETED
+status TEXT NOT NULL               -- ACTIVE | BLOCKED | DELETED
+workspace_status TEXT NOT NULL     -- NONE | DRAFT | VALIDATING
+workspace_path TEXT NULL
+current_content_path TEXT NULL
+content_digest TEXT NULL
+content_revision INTEGER NOT NULL DEFAULT 0
+manifest_json TEXT NOT NULL
+runtime_config_json TEXT NOT NULL
+compatibility_summary_json TEXT NOT NULL
+activated_by TEXT NULL FK users
+activated_at INTEGER NULL
 created_at INTEGER NOT NULL
 updated_at INTEGER NOT NULL
 state_version INTEGER NOT NULL DEFAULT 0
 UNIQUE(owner_user_id, name)
 ```
 
-#### game_versions
-
-```text
-id TEXT PK
-game_id TEXT NOT NULL FK games
-version_label TEXT NOT NULL
-status TEXT NOT NULL               -- DRAFT | VALIDATING | PUBLISHED | BLOCKED | DELETED
-content_digest TEXT NULL (非 NULL 值唯一)
-content_path TEXT NOT NULL
-manifest_json TEXT NOT NULL
-runtime_config_json TEXT NOT NULL
-compatibility_summary_json TEXT NOT NULL
-created_by TEXT NOT NULL FK users
-created_at INTEGER NOT NULL
-published_at INTEGER NULL
-state_version INTEGER NOT NULL
-UNIQUE(game_id, version_label)
-```
+Game 不包含版本标签、版本集合或历史内容引用。`content_revision` 只协调当前内容原子替换和
+Session 创建；同一摘要可以属于不同 Game，不建立全局唯一内容身份。workspace 可以与 current
+content 同时存在，owner 编辑 workspace 时新 Session 仍复制 current content。
 
 #### sessions
 
@@ -459,8 +457,10 @@ UNIQUE(game_id, version_label)
 id TEXT PK
 owner_user_id TEXT NOT NULL FK users
 game_id TEXT NOT NULL FK games
-game_version_id TEXT NOT NULL
--- FOREIGN KEY(game_version_id, game_id) REFERENCES game_versions(id, game_id)
+source_content_digest TEXT NOT NULL
+source_content_revision INTEGER NOT NULL
+runtime_manifest_json TEXT NOT NULL
+runtime_version TEXT NOT NULL
 session_root_path TEXT NOT NULL UNIQUE
 name TEXT NOT NULL
 state TEXT NOT NULL
@@ -474,10 +474,11 @@ created_at INTEGER NOT NULL
 started_at INTEGER NULL
 last_activity_at INTEGER NOT NULL
 closed_at INTEGER NULL
-FOREIGN KEY(game_version_id, game_id) REFERENCES game_versions(id, game_id)
+FOREIGN KEY(game_id) REFERENCES games(id)
 ```
 
-常用索引：`(owner_user_id, created_at DESC)`、`(state, last_activity_at)`、`(game_version_id)`。
+常用索引：`(owner_user_id, created_at DESC)`、`(state, last_activity_at)`、`(game_id)`、
+`(game_id, source_content_digest)`。
 
 #### worker_leases
 
@@ -532,8 +533,8 @@ metadata_json TEXT NOT NULL
 审计表只追加，不通过普通业务 API 修改或删除。
 
 P1-03 新增 `game_package_ingestions` 作为内部摄取状态和全局 staging 字节预留表。它不代表
-GameVersion，也不是对外的上传资源；READY 候选只有在 P1-04 校验 owner、digest 和期限并以 CAS
-进入 CONSUMING 后才能绑定 DRAFT。字段、状态、释放预算和遗留项恢复规则见
+Game，也不是对外的上传资源；READY 候选只有在 P1-04 校验 owner、digest 和期限并以 CAS
+进入 CONSUMING 后才能绑定 Game workspace。字段、状态、释放预算和遗留项恢复规则见
 [`tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md`](tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md)。
 摄取文件树仅通过受保护 dirfd 和 `openat(O_NOFOLLOW)` 访问；终态先由数据库 CAS 线性化，再以
 `cleanup_completed_at` 记录安全后序清理完成。API 的启动及周期 reaper 会回收跨重启遗留项，
@@ -543,9 +544,10 @@ GameVersion，也不是对外的上传资源；READY 候选只有在 P1-04 校�
 
 P1-01 另外建立 EF history 表 `schema_migrations`，并保留 EF Core SQLite provider 使用的
 内部 `__EFMigrationsLock` 表；产品迁移仍必须先持有 CloudEmuera 的
-`<database>.migration.lock` 文件锁。`game_files`、`compatibility_diagnostics` 和短期
-`worker_command_results` 留给后续任务，首版不创建。存档没有独立内容表；其所有权和
-GameVersion 关联由所属 Session 决定，管理操作写入 `audit_events`。
+`<database>.migration.lock` 文件锁。旧 `game_versions` 表由 ADR-0010 的后续 migration 迁移并
+删除；`game_files`、`compatibility_diagnostics`、`game_content_operations` 和短期
+`worker_command_results` 留给后续任务。存档没有独立内容表；其 Game 和源摘要由所属 Session
+决定，管理操作写入 `audit_events`。
 
 ### 5.3 文件系统布局
 
@@ -555,7 +557,11 @@ GameVersion 关联由所属 Session 决定，管理操作写入 `audit_events`�
 ├── keys/                                   # ASP.NET Core Data Protection key ring
 ├── games/
 │   ├── staging/{uploadId}/                 # 未信任，禁止 Worker 使用
-│   └── {gameId}/{gameVersionId}/content/   # 发布后不可变
+│   └── {gameId}/
+│       ├── workspace/                      # Game 的唯一可编辑工作区
+│       ├── content/                        # 当前只读 Session 复制来源
+│       ├── runtime-manifest.json
+│       └── operations/{operationId}/       # 冻结校验/启用暂存
 ├── sessions/{sessionId}/
 │   ├── root/                               # Worker 可见 GameRoot
 │   └── metadata/
@@ -573,27 +579,40 @@ GameVersion 关联由所属 Session 决定，管理操作写入 `audit_events`�
 Session 管理方在首次启动 Worker 前构造持久、独占的运行目录：
 
 ```text
-root/CSV/          # GameVersion 的 Session 私有副本
-root/ERB/          # GameVersion 的 Session 私有副本
-root/resources/    # GameVersion 的 Session 私有副本
+root/CSV/          # Game 当前内容的 Session 私有副本
+root/ERB/          # Game 当前内容的 Session 私有副本
+root/resources/    # Game 当前内容的 Session 私有副本
 root/sound、font/  # 存在时原样复制
 root/<其他目录>/   # 所有合法未知目录也原样复制
-root/emuera.config # GameVersion 配置的 Session 私有副本
+root/emuera.config # Game 当前配置的 Session 私有副本
 root/save*.sav     # 根目录模式，Emuera 直接读写
 root/global.sav    # 根目录模式，Emuera 直接读写
 root/sav/          # UseSaveFolder:YES 时，Emuera 直接读写
 root/tmp/          # Session 私有临时内容
 ```
 
-Session 管理方按已发布 manifest 复制完整文件树，不为 CSV/ERB/resources 建立特殊分类，也不静默丢弃未知合法内容。基线实现使用普通字节复制；底层文件系统支持时可以尝试 reflink，但必须保持写时复制语义并在不支持时回退普通复制。禁止硬链接，因为它会让 Session 与 GameVersion 或其他 Session 共享可写 inode。上传阶段已经拒绝软链接、硬链接、FIFO、设备和 socket，复制阶段仍需再次核对实际条目，防止检查与复制之间被替换。
+Session 管理方按 Game 当前 manifest 复制完整文件树，不为 CSV/ERB/resources 建立特殊分类，也不
+静默丢弃未知合法内容。基线实现使用普通字节复制；底层文件系统支持时可以尝试 reflink，但必须
+保持写时复制语义并在不支持时回退普通复制。禁止硬链接，因为它会让 Session 与 Game current
+content 或其他 Session 共享可写 inode。上传阶段已经拒绝软链接、硬链接、FIFO、设备和 socket，
+复制阶段仍需再次核对实际条目，防止检查与复制之间被替换。
 
-复制成功前先在同一 sessions 父目录下建立 staging root；只有文件数、总字节数、逐项类型和清单摘要全部通过后，才原子重命名为最终 SessionRoot。失败只清理本次 staging，不触碰已存在 SessionRoot。Worker 的 mount namespace 隐藏原始 GameVersion 和其他 Session，只暴露它自己的完整副本及必要系统路径。
+复制成功前先在同一 sessions 父目录下建立 staging root；只有文件数、总字节数、逐项类型和清单
+摘要全部通过后，才原子重命名为最终 SessionRoot。失败只清理本次 staging，不触碰已存在
+SessionRoot。Worker 的 mount namespace 隐藏 Game 库目录和其他 Session，只暴露它自己的完整
+副本及必要系统路径。
 
 SessionRoot 位于挂载数据目录中，本身就是存档的唯一权威副本。Worker 重启复用同一路径；正常退出和崩溃都不触发复制、generation 发布或第二套存档提交协议。
 
 同一容器内的 API/Supervisor 可拥有管理权限，Worker 必须降权，清除不需要的 capabilities，并应用 `no_new_privs`。不同 Session 的工作目录不能通过路径枚举互访。
 
-## 6. 游戏包与版本设计
+## 6. 游戏包与 Game 内容设计
+
+P1-04 的单一 workspace、逐文件清单、持久 operation、Validator、内容启用崩溃对账、授权和逻辑删除
+细节见
+[`tasks/P1-04-simple-game-library-plan.zh-CN.md`](tasks/P1-04-simple-game-library-plan.zh-CN.md)，
+对应决策由
+[`ADR-0010`](adr/0010-single-game-content-without-version-entities.md) 冻结。
 
 ### 6.1 上传流水线
 
@@ -603,8 +622,8 @@ P1-03 的 ZIP 子集、暂存预留、路径规范化、双阶段配额、一次
 
 ```text
 Upload → Quarantine → Archive scan → Safe extract → File scan
-       → Encoding/case analysis → Runtime validation → Draft
-       → Publish transaction → Immutable content
+       → Encoding/case analysis → Game workspace
+       → Runtime validation → Atomic activation of current content
 ```
 
 1. API 流式接收上传内容到随机命名临时文件，同时计算 SHA-256 并执行压缩前大小限制；
@@ -614,22 +633,25 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 5. 对 ERB/CSV/配置文件检测 BOM，并以确定性顺序尝试 UTF-8 与 Shift-JIS；模糊结果产生诊断，不依赖系统 locale；
 6. 静态扫描禁止能力、资源引用和文件名大小写；
 7. 在受限验证 Worker 中执行解析验证，验证超时或超资源则失败；
-8. 发布时计算规范清单摘要，将内容移动到最终目录，改为只读，再在数据库事务中将版本置为 `PUBLISHED`。
+8. 启用时计算规范清单摘要，将冻结 workspace 原子替换为 Game current content，改为只读，再在
+   数据库事务中更新 Game 的摘要、清单和 `content_revision`。
 
 若文件移动成功而数据库事务失败，后台清理器根据“数据库无引用且超过安全期”回收孤儿目录。不得在请求失败时立即递归删除尚未核对的路径。
 
-### 6.2 草稿与编辑
+### 6.2 Game workspace 与编辑
 
-- 发布版本不可原地编辑；
-- “编辑已发布版本”先创建引用该版本的新草稿；
+- current content 不可原地编辑；
+- 编辑已有 Game 时先把 current content 独立复制到唯一 workspace；
 - 写文件使用 `If-Match`/文件版本避免覆盖并发修改；
 - 保存时保留原始编码，用户明确转换编码时才更新编码元数据；
-- 文本搜索限制在允许的文本文件、当前 GameVersion 和资源配额内；
-- 发布生成新的内容摘要，Session 永远固定发布版本 ID。
+- 文本搜索限制在允许的文本文件、当前 Game workspace/content 和资源配额内；
+- 启用生成新的内容摘要和内部 revision；Session 只固定 `gameId + sourceContentDigest`，完整内容
+  已复制到自己的 SessionRoot；
+- Game 不保留用户可见历史版本、版本标签或回滚入口。
 
 ### 6.3 运行时清单
 
-每个发布版本记录：
+每个 Game current content 记录：
 
 ```json
 {
@@ -646,7 +668,7 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 }
 ```
 
-存在错误或 Blocked 能力时默认禁止发布；管理员只能对明确允许覆盖的诊断项作有审计的例外，不能覆盖平台级禁止项。
+存在错误或 Blocked 能力时默认禁止启用；管理员只能对明确允许覆盖的诊断项作有审计的例外，不能覆盖平台级禁止项。
 
 ## 7. Session 生命周期详细流程
 
@@ -654,11 +676,12 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 
 客户端必须发送 `Idempotency-Key`。处理流程：
 
-1. API 验证用户、GameVersion 可见性、版本状态和兼容策略；
+1. API 验证用户、Game 可见性、ACTIVE/BLOCKED 状态、current content 摘要和兼容策略；
 2. 在 `BEGIN IMMEDIATE` 短事务中读取活动配额，插入 `CREATING` Session 和幂等记录；
 3. API 向 Supervisor 发送带 `commandId` 的 `worker.start`；
 4. Supervisor 以 `commandId` 去重，在事务中递增 epoch 并写入 `STARTING` 租约；
-5. Supervisor 首次完整复制 GameVersion 或校验已有 SessionRoot、施加限制并启动 Worker；
+5. Supervisor 按事务记录的 Game content revision/digest 完整复制 current content，或校验已有
+   SessionRoot，随后施加限制并启动 Worker；
 6. Worker 使用启动令牌注册，加载 Runtime，发送 `worker.ready`；
 7. Supervisor 验证 epoch 并将 Session 更新为 `RUNNING` 或 `DETACHED`；
 8. API 返回 Session 资源。若同步等待超时，返回 `202`，客户端查询状态，不重复创建。
@@ -703,7 +726,8 @@ Prompt(promptId, inputType, timeoutAt, defaultValue, constraints)
 Clear(scope)
 ```
 
-所有颜色、尺寸、枚举、文本长度、资源 ID 和层级深度在 Worker 与浏览器两端校验。资源只使用由 GameVersion 清单解析出的 `assetId`，不能使用游戏提供的任意 URL。
+所有颜色、尺寸、枚举、文本长度、资源 ID 和层级深度在 Worker 与浏览器两端校验。资源只使用由
+Session 创建时保存的 Game runtime manifest 解析出的 `assetId`，不能使用游戏提供的任意 URL。
 
 ### 8.2 序号与快照
 
@@ -786,7 +810,7 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 
 - 基础路径：`/api/v1`；
 - JSON 字段使用 `camelCase`，枚举值使用大写下划线；
-- 创建、关闭、发布、导入等可重试写操作要求 `Idempotency-Key`；
+- 创建、关闭、Game 内容启用、导入等可重试写操作要求 `Idempotency-Key`；
 - 乐观更新使用 `If-Match: "<stateVersion>"`；
 - 列表使用稳定游标分页，不使用不稳定的大偏移分页；
 - 错误体统一包含 `code`、`message`、`requestId`、可选 `details`；
@@ -801,11 +825,12 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 | `POST /auth/logout` | 注销当前会话 | 使服务端会话失效 |
 | `GET /games` | 列出可见游戏 | 私有所有者或共享游戏 |
 | `POST /games` | 创建 Game | 玩家 |
-| `POST /games/{id}/versions:upload` | 上传为草稿 | 所有者，流式 |
-| `GET /game-versions/{id}/files` | 浏览目录 | 授权后访问 |
-| `GET/PUT /game-versions/{id}/files/{path}` | 查看/编辑草稿文本 | 严格规范化路径 |
-| `POST /game-versions/{id}:validate` | 启动验证 | 返回任务状态 |
-| `POST /game-versions/{id}:publish` | 发布不可变版本 | 幂等、要求无阻断错误 |
+| `PUT /games/{id}/package` | 上传/替换唯一 workspace | 所有者，流式、幂等 |
+| `POST /games/{id}:edit` | 从 current content 建立 workspace | 所有者，无历史版本 |
+| `GET /games/{id}/files` | 浏览 workspace 或 current | 授权后访问 |
+| `GET/PUT /games/{id}/file?path=...` | 查看/编辑 workspace 文本 | 严格规范化路径 |
+| `POST /games/{id}:validate` | 验证 workspace | 返回持久 operation |
+| `POST /games/{id}:activate` | 原子启用 workspace 为 current | 幂等、要求无阻断错误 |
 | `GET /sessions` | 列出自己的 Session | 支持状态过滤 |
 | `POST /sessions` | 创建 Session | 幂等、预留活动配额 |
 | `GET /sessions/{id}` | Session 详情 | 所有者/管理员 |
@@ -872,7 +897,9 @@ Runtime 只调用 Emuera 原生序列化与反序列化逻辑。SessionRoot 就�
 - `UseSaveFolder:NO`：Emuera 直接读写 `SessionRoot/save*.sav` 和 `SessionRoot/global.sav`；
 - `UseSaveFolder:YES`：Emuera 直接读写 `SessionRoot/sav/*`。
 
-布局由该游戏版本的 `emuera.config` 决定，不由用户、API 或 Worker 启动参数另行选择。宿主可把检测结果记录在 manifest 中用于提前校验，但若它与运行时实际读取的 `UseSaveFolder` 不一致，Worker 必须拒绝启动，不能同时搜索两处或改写配置。
+布局由 Session 创建时复制内容中的 `emuera.config` 决定，不由用户、API 或 Worker 启动参数另行
+选择。宿主可把检测结果记录在 Session 的 manifest 快照中用于提前校验，但若它与运行时实际读取
+的 `UseSaveFolder` 不一致，Worker 必须拒绝启动，不能同时搜索两处或改写配置。
 
 `global.sav` 只在一个 Session 内是“全局”。每个 SessionRoot 都是独立的普通目录，因此两个用户或同一用户的两个 Session 不共享 `global.sav`、slot 文件、目录 inode 或可写父目录。
 
@@ -911,7 +938,8 @@ CloudEmuera 不包装每次原生保存，不改变上游 `FileMode`、flush、�
 目标控制：
 
 - 非 root 运行，`no_new_privs`，最小 capabilities；
-- 独立进程和文件系统视图，只暴露本 Session 的完整可写副本，不暴露原始 GameVersion 或其他 Session；
+- 独立进程和文件系统视图，只暴露本 Session 的完整可写副本，不暴露 Game workspace、current
+  content 或其他 Session；
 - 默认无网络；若实现确需本地 IPC，仅允许指定 UDS；
 - seccomp/等价策略禁止创建额外进程、挂载、ptrace 和危险系统调用；
 - cgroup v2 或容器内等价控制限制 CPU、内存和进程数；
@@ -956,7 +984,8 @@ timestamp, level, service, eventName, requestId,
 sessionId?, workerId?, workerEpoch?, userIdHash?, durationMs?, result
 ```
 
-API 请求、Session 创建/连接/关闭、Worker 注册/崩溃、游戏发布和存档删除都有稳定事件名。日志按大小和时间轮转，保留策略可配置。
+API 请求、Session 创建/连接/关闭、Worker 注册/崩溃、Game 内容启用和存档删除都有稳定事件名。
+日志按大小和时间轮转，保留策略可配置。
 
 ### 13.2 指标
 
@@ -1006,7 +1035,7 @@ API 启动后从 SQLite 读取活动 Session，再向 Supervisor 请求当前 `(
 发现 `/data` 不可写、空间低于保留阈值或 SQLite 出现完整性错误时：
 
 - readiness 失败；
-- 禁止新建 Session、发布版本和通过 API 修改存档；
+- 禁止新建 Session、启用 Game 内容和通过 API 修改存档；
 - 已运行 Worker 可继续到安全点，但任何持久化失败都必须明确反馈，不能声称保存成功；
 - 管理员获得高优先级告警；
 - 不自动删除用户数据来尝试恢复空间。
@@ -1017,7 +1046,7 @@ MVP 不恢复指令级内存状态。重启后所有先前活动 Session 在对�
 
 ## 15. 前端设计
 
-前端按领域分为游戏库、游戏版本编辑器、Session 列表、游戏控制台、存档管理和管理员控制台。
+前端按领域分为游戏库、单一 Game 编辑器、Session 列表、游戏控制台、存档管理和管理员控制台。
 
 游戏控制台维护：
 
@@ -1124,7 +1153,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 
 ### 18.2 Phase 1：端到端 MVP
 
-1. SQLite schema、游戏上传/发布和本地账户；
+1. SQLite schema、Game workspace/内容启用和本地账户；
 2. Supervisor、Worker IPC、epoch 和 Session 状态机；
 3. 结构化 Console、Snapshot、WebSocket 恢复和输入去重；
 4. SessionRoot 隔离和停止态原生存档文件管理；
@@ -1146,10 +1175,12 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 3. `ADR-003`：ConsoleSnapshot 的序列化格式、大小上限和压缩策略；
 4. `ADR-004`：Emuera HTML、Sprite、CBG 和音频的 MVP 允许列表；
 5. `ADR-0008`：安全 ZIP 摄取边界、上传/展开配额和 staging 预算（已完成）；
-6. 待编号：默认活动 Session、Worker CPU/内存/磁盘、输出和存档配额；
-7. 待编号：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
-8. 待编号：字体文件保留、服务和授权策略；
-9. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
+6. `ADR-0009`：草稿发布事务与不可变版本身份（已被 ADR-0010 取代）；
+7. `ADR-0010`：单一 Game 内容模型和旧 GameVersion schema 迁移（已完成）；
+8. 待编号：默认活动 Session、Worker CPU/内存/磁盘、输出和存档配额；
+9. 待编号：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
+10. 待编号：字体文件保留、服务和授权策略；
+11. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
 
 ## 20. 设计完成定义
 

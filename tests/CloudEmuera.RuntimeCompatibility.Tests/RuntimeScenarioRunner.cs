@@ -54,7 +54,7 @@ internal static class RuntimeScenarioRunner
         try
         {
             Directory.CreateDirectory(workspaceRoot);
-            CopyPublishedGameVersion(fixtureRoot, publishedGameRoot);
+            CopyPublishedGameContent(fixtureRoot, publishedGameRoot);
             SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
                 publishedGameRoot,
                 fixtureId);
@@ -136,7 +136,7 @@ internal static class RuntimeScenarioRunner
             Check(!fileSystem.FileExists(new RuntimeFilePath(RuntimeFileArea.Save, "global.sav")), "P0-04 created global.sav.", errors, ref assertions);
             IReadOnlyList<SequencedConsoleEvent> history = console.StateStore.History;
             Check(history.Select(item => item.Sequence).SequenceEqual(Enumerable.Range(1, history.Count).Select(value => (long)value)), "Console event sequence was not continuous.", errors, ref assertions);
-            Check(string.Equals(beforeDigest, DigestDirectory(publishedGameRoot), StringComparison.Ordinal), "Published GameVersion changed during execution.", errors, ref assertions);
+            Check(string.Equals(beforeDigest, DigestDirectory(publishedGameRoot), StringComparison.Ordinal), "Published GameContent changed during execution.", errors, ref assertions);
             return Report(result.Status.ToString());
         }
         catch (Exception exception)
@@ -196,7 +196,7 @@ internal static class RuntimeScenarioRunner
         try
         {
             Directory.CreateDirectory(workspaceRoot);
-            CopyPublishedGameVersion(fixtureRoot, publishedGameRoot);
+            CopyPublishedGameContent(fixtureRoot, publishedGameRoot);
             SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(publishedGameRoot, fixtureId);
             string beforeDigest = DigestDirectory(publishedGameRoot);
             NativeSaveScenario scenario = ReadNativeSaveScenario(Path.Combine(fixtureRoot, "save-scenario.json"));
@@ -318,7 +318,7 @@ internal static class RuntimeScenarioRunner
             Check(IsNonEmptyRegularFile(selectedGlobal), "The native global save disappeared after Host disposal.", errors, ref assertions);
             Check(
                 string.Equals(beforeDigest, DigestDirectory(publishedGameRoot), StringComparison.Ordinal),
-                "Published GameVersion changed during native save/load.",
+                "Published GameContent changed during native save/load.",
                 errors,
                 ref assertions);
             return Report("Completed", "save-and-restart-load");
@@ -493,7 +493,7 @@ internal static class RuntimeScenarioRunner
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
-    private static void CopyPublishedGameVersion(string fixtureRoot, string publishedRoot)
+    private static void CopyPublishedGameContent(string fixtureRoot, string publishedRoot)
     {
         Directory.CreateDirectory(publishedRoot);
         foreach (FileSystemInfo entry in new DirectoryInfo(fixtureRoot).EnumerateFileSystemInfos())

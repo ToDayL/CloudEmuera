@@ -11,8 +11,6 @@ public sealed class CloudEmueraDbContext(DbContextOptions<CloudEmueraDbContext> 
 
     public DbSet<GameRow> Games => Set<GameRow>();
 
-    public DbSet<GameVersionRow> GameVersions => Set<GameVersionRow>();
-
     public DbSet<SessionRow> Sessions => Set<SessionRow>();
 
     public DbSet<WorkerLeaseRow> WorkerLeases => Set<WorkerLeaseRow>();
@@ -23,6 +21,10 @@ public sealed class CloudEmueraDbContext(DbContextOptions<CloudEmueraDbContext> 
     public DbSet<AuthSessionRow> AuthSessions => Set<AuthSessionRow>();
     public DbSet<InstanceStateRow> InstanceStates => Set<InstanceStateRow>();
     public DbSet<GamePackageIngestionRow> GamePackageIngestions => Set<GamePackageIngestionRow>();
+    public DbSet<GameContentOperationRow> GameContentOperations => Set<GameContentOperationRow>();
+    public DbSet<GameFileRow> GameFiles => Set<GameFileRow>();
+    public DbSet<CompatibilityDiagnosticRow> CompatibilityDiagnostics => Set<CompatibilityDiagnosticRow>();
+    public DbSet<GameContentCopyLeaseRow> GameContentCopyLeases => Set<GameContentCopyLeaseRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

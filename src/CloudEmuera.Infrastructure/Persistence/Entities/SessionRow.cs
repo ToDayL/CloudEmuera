@@ -10,7 +10,11 @@ public sealed class SessionRow
 
     public string GameId { get; set; } = string.Empty;
 
-    public string GameVersionId { get; set; } = string.Empty;
+    public string SourceContentDigest { get; set; } = string.Empty;
+
+    public long SourceContentRevision { get; set; }
+
+    public string RuntimeManifestJson { get; set; } = "{}";
 
     public string RuntimeVersion { get; set; } = string.Empty;
 
@@ -43,8 +47,6 @@ public sealed class SessionRow
     public CloudEmueraUser? OwnerUser { get; set; }
 
     public GameRow? Game { get; set; }
-
-    public GameVersionRow? GameVersion { get; set; }
 
     public WorkerLeaseRow? WorkerLease { get; set; }
 }

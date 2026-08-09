@@ -10,7 +10,6 @@ public static class SqliteStorageConventions
     public const string QuotaProfilesTable = "quota_profiles";
     public const string UsersTable = "users";
     public const string GamesTable = "games";
-    public const string GameVersionsTable = "game_versions";
     public const string SessionsTable = "sessions";
     public const string WorkerLeasesTable = "worker_leases";
     public const string IdempotencyRecordsTable = "idempotency_records";
@@ -18,6 +17,10 @@ public static class SqliteStorageConventions
     public const string AuthSessionsTable = "auth_sessions";
     public const string InstanceStateTable = "instance_state";
     public const string GamePackageIngestionsTable = "game_package_ingestions";
+    public const string GameContentOperationsTable = "game_content_operations";
+    public const string GameFilesTable = "game_files";
+    public const string CompatibilityDiagnosticsTable = "compatibility_diagnostics";
+    public const string GameContentCopyLeasesTable = "game_content_copy_leases";
 }
 
 public static class PersistenceLimits
@@ -75,17 +78,19 @@ public enum GameVisibility
 public enum GameStatus
 {
     Active,
-    Deleted,
-}
-
-public enum GameVersionStatus
-{
-    Draft,
-    Validating,
-    Published,
     Blocked,
     Deleted,
 }
+
+public enum GameWorkspaceStatus
+{
+    None,
+    Draft,
+    Validating,
+}
+
+public enum GameContentOperationType { Import, ResetWorkspace, Validate, Activate }
+public enum GameContentOperationStatus { Pending, Running, ContentReady, Committed, Failed }
 
 public enum WorkerLeaseStatus
 {

@@ -558,7 +558,7 @@ public sealed class WorkerProcessIsolationTests
             Directory.CreateDirectory(supervisorRoot);
             if (OperatingSystem.IsLinux())
                 File.SetUnixFileMode(supervisorRoot, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            CopyPublishedGameVersion(fixtureRoot, publishedRoot);
+            CopyPublishedGameContent(fixtureRoot, publishedRoot);
             SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(publishedRoot, fixtureId);
             string publishedDigest = DigestDirectory(publishedRoot);
             _ = new SessionRootLayoutBuilder(publishedRoot, sessionRoot, workspaceRoot, saveLayout)
@@ -595,7 +595,7 @@ public sealed class WorkerProcessIsolationTests
             throw new InvalidOperationException("The repository root could not be located.");
         }
 
-        private static void CopyPublishedGameVersion(string source, string destination)
+        private static void CopyPublishedGameContent(string source, string destination)
         {
             Directory.CreateDirectory(destination);
             foreach (FileSystemInfo entry in new DirectoryInfo(source).EnumerateFileSystemInfos())
@@ -604,7 +604,7 @@ public sealed class WorkerProcessIsolationTests
                     continue;
                 string target = Path.Combine(destination, entry.Name);
                 if (entry is DirectoryInfo)
-                    CopyPublishedGameVersion(entry.FullName, target);
+                    CopyPublishedGameContent(entry.FullName, target);
                 else if (entry is FileInfo)
                     File.Copy(entry.FullName, target);
             }

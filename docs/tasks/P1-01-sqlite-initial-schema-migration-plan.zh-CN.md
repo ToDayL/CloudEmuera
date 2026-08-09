@@ -2,6 +2,12 @@
 
 状态：DONE（2026-08-07 已实现并通过验收）
 
+后续变更：本计划记录 ADR-0010 之前实际交付的历史 schema，其中 `game_versions`、`gver_` 和
+`sessions.game_version_id` 已被
+[`ADR-0010`](../adr/0010-single-game-content-without-version-entities.md) 取代。不得回改本计划对应的
+已提交 migration；P1-04 必须通过新增 migration 把元数据合并进 `games`、为 Session 保存源摘要/
+manifest 快照并删除旧表。以下旧字段说明只用于理解升级起点，不再是目标领域模型。
+
 计划日期：2026-08-07
 
 对应开发步骤：`P1-01 — SQLite 首版 schema 与迁移`

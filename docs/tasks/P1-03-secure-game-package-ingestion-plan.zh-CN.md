@@ -10,7 +10,7 @@
 对应开发步骤：`P1-03 — 安全游戏包摄取`
 
 前置条件：P1-01 SQLite 首版 schema 与独占 Migrator 已完成；P1-02 本地身份、资源授权与审计
-已完成；P0-05 已定义发布 GameVersion 与 SessionRoot 之间的完整普通文件树复制约束
+已完成；P0-05 已定义 Game current content 与 SessionRoot 之间的完整普通文件树复制约束
 
 后续步骤：P1-04 草稿编辑与不可变发布；P1-06 Session 创建；P1-12 Worker 沙箱与资源限制
 
@@ -42,11 +42,11 @@ P1-03 交付一个传输无关、可由 P1-04 的正式上传 API 直接调用�
 - 同一用户或多个用户并发摄取时，SQLite 中的暂存预算预留防止以并发请求绕过全局 staging
   上限；API 重启后可以识别和安全回收遗留摄取；
 - 任一拒绝、取消、超时、磁盘错误或进程中断都不会产生 P1-04 可消费的 `ready/` 内容目录，
-  更不会写入最终 `/data/games/{gameId}/{gameVersionId}/content/`。
+  更不会写入最终 `/data/games/{gameId}/workspace/` 或 `content/`。
 
-P1-03 不创建 Game 或 GameVersion，不发布不可变内容，也不增加面向产品的临时“扫描上传”
-HTTP 资源。P1-04 的 `POST /games/{id}/versions:upload` 在同一请求中调用本摄取事务，随后把
-候选内容绑定为授权用户拥有的 DRAFT；在此之前以 Application 服务测试、非 seek 流测试和真实
+P1-03 不创建 Game，不启用 current content，也不增加面向产品的临时“扫描上传” HTTP 资源。
+P1-04 的 `PUT /games/{id}/package` 在同一请求中调用本摄取事务，随后把候选内容绑定为授权用户
+拥有的 workspace；在此之前以 Application 服务测试、非 seek 流测试和真实
 Linux 文件系统集成测试完成验收。
 
 ## 2. 范围
@@ -75,7 +75,7 @@ Linux 文件系统集成测试完成验收。
 - 不相信 MIME、扩展名、`Content-Length`、ZIP 中央目录大小或 CRC 作为唯一安全依据；
 - 不保留 ZIP 内的权限、可执行位、owner、group、时间戳、ACL、xattr、稀疏文件或链接语义；
 - 不自动剥离“唯一顶层目录”、不自动重命名大小写、不修复非法路径；
-- 不在本步骤提供 Game/GameVersion CRUD、草稿编辑、文件搜索、发布或逻辑删除；
+- 不在本步骤提供 Game CRUD、workspace 编辑、文件搜索、内容启用或逻辑删除；
 - 不运行真实 Emuera parser/Worker，不解析资源引用，不允许诊断绕过平台级禁止项；
 - 不做杀毒产品集成或版权/字体授权判断；这些不属于归档边界正确性的替代品；
 - 不把 staging 路径、ZIP 原始文件名、ERB/CSV 正文或完整用户文件名写入普通日志/审计；
@@ -228,7 +228,7 @@ state_version INTEGER NOT NULL DEFAULT 0
 - 仅 ACTIVE 用户可以新建预留；用户删除继续 `RESTRICT`；
 - 索引 `(status, expires_at)` 供 reaper 使用，`(owner_user_id, created_at DESC)` 供诊断；
 - `summary_json` 只保存计数和稳定诊断码，不保存原始文件名列表；完整 manifest 随 staging
-  候选存在，P1-04 消费时写入 `game_versions.manifest_json`。
+  候选存在，P1-04 消费时写入 Game workspace 文件索引和摘要元数据。
 
 预留在 `BEGIN IMMEDIATE` 中读取用户 quota，并计算：
 
@@ -488,7 +488,7 @@ SHA256(
 mode、nlink、size 和 SHA-256；检测到与首次提取结果不同即 `STAGED_CONTENT_CHANGED` 硬失败。
 
 archive digest 用于上传重复观测，content digest 用于内容身份。两个不同 ZIP 可拥有相同 content
-digest；P1-04 是否复用物理内容仍须保证 GameVersion 不变性和授权，不能仅凭 digest 越权引用
+digest；P1-04 是否复用物理内容仍须保证 Game current content 不变性和授权，不能仅凭 digest 越权引用
 另一用户的 staging 目录。
 
 ## 12. 清理、崩溃恢复与 TOCTOU
@@ -509,9 +509,9 @@ reaper 只领取已过期的非终态行或超过保留期的终态行：
 4. 以不跟随链接的后序遍历删除接受类型；异常类型停止并审计；
 5. 删除根目录成功后再删除/归档数据库行并释放预算。
 
-READY lease 过期也回收，P1-04 必须在期限内 BeginConsume。P1-03 尚不存在 GameVersion 提交目标，
+READY lease 过期也回收，P1-04 必须在期限内 BeginConsume。P1-03 尚不存在 Game workspace 提交目标，
 因此超时 CONSUMING 由 watchdog CAS 为 ABANDONED 并回收，避免进程崩溃后永久占用预算。P1-04
-引入正式提交事务时必须先增加续租和 GameVersion 提交对账，再允许可能超过 watchdog 的消费。
+引入正式提交事务时必须先增加续租和 Game workspace 提交对账，再允许可能超过 watchdog 的消费。
 
 ### 12.3 攻击者可写假设
 
@@ -537,7 +537,7 @@ archive/expanded bytes、entry count、durationMs、digest 前 12 hex（仅在�
 禁止字段：原始文件名、物理 staging 路径、完整 digest 默认值、ERB/CSV 内容、Cookie/token、异常
 中可能带出的 entry 正文或绝对路径。
 
-P1-03 记录上传摄取结果审计；P1-04 把 GameVersion 与发布审计放在自己的事务。审计失败是否使
+P1-03 记录上传摄取结果审计；P1-04 把 Game workspace/activate 审计放在自己的事务。审计失败是否使
 READY 失败遵循 P1-02 的敏感操作原子性：面向用户的摄取完成必须能留下最小审计事实，否则
 候选不可消费并进入失败清理。
 
@@ -547,16 +547,16 @@ ingestion duration、compression ratio histogram、diagnostic counts、reaper ba
 
 ## 14. API 接线约束（P1-04 消费）
 
-P1-04 的正式 endpoint 仍为：
+P1-04 的正式 endpoint 为：
 
 ```text
-POST /api/v1/games/{gameId}/versions:upload
+PUT /api/v1/games/{gameId}/package
 Content-Type: application/zip
 Idempotency-Key: ...
 ```
 
 接线时必须：先认证和授权 Game owner → 检查 CSRF/rate limit → 建立摄取预留 → 把
-`HttpRequest.Body` 直接传给服务 → READY 后在同一用例内消费为 DRAFT。不得先 `MemoryStream`
+`HttpRequest.Body` 直接传给服务 → READY 后在同一用例内消费为 Game workspace。不得先 `MemoryStream`
 缓冲，也不得使用 `IFormFile.CopyTo` 的默认临时位置。`Content-Length` 缺失可接受但仍计数；大于
 上限可提前 413，小于上限不能免除实际计数。
 
@@ -702,13 +702,13 @@ P1-03 只有同时满足以下条件才完成：
 2. 章节 15 的恶意 corpus 每类至少一个测试，稳定返回预期 rejection code；
 3. 声明和实际配额均覆盖 exactly-limit 与 limit+1；压缩炸弹不会先写出超限内容；
 4. 所有 path/link/special/collision 失败均不在 staging 外创建或修改文件；
-5. 任一失败在请求清理或跨重启 reaper 对账完成后不留下 `ready/content`，最终 GameVersion 目录
+5. 任一失败在请求清理或跨重启 reaper 对账完成后不留下 `ready/content`，最终 Game workspace
    始终保持不存在；
 6. 并发预算只有一个胜者，跨重启 reaper 不依赖 API 内存恢复预留；
 7. TOCTOU、取消、超时、磁盘满和 SQLite/rename 失败有自动化覆盖；
 8. staging 最终树只含服务账户拥有的普通文件/目录，文件 `nlink == 1`，无共享 inode；
 9. diagnostics 有界、日志和审计不泄露内容、绝对路径或认证秘密；
-10. Domain/Application 依赖方向和 P0-05 GameVersion 完整复制契约未被破坏；
+10. Domain/Application 依赖方向和 P0-05 Game current content 完整复制契约未被破坏；
 11. migration 可从 P1-02 数据库升级并保持数据，失败不留下部分 schema；
 12. 定向测试、`./scripts/check.sh`、第三方校验和 diff check 全部通过；
 13. 开发计划记录实际测试数量、命令、恶意 corpus 范围和剩余 P1-04 接线事项。
@@ -719,11 +719,11 @@ P1-04 只能在以下 P1-03 契约上继续：
 
 - 上传 adapter 传原始 request body stream、actor、requestId 和 idempotency context；
 - 只有 READY 且 owner/digest/expiry 匹配的 lease 能进入 CONSUMING；
-- DRAFT 创建必须复制或原子移动完整 `ready/content` 和 manifest，不能按已知目录丢弃文件；
-- GameVersion 数据库事务失败时调用 Abandon/对账，不暴露无 DB 引用的目录；
+- workspace 创建必须复制或原子移动完整 `ready/content` 和 manifest，不能按已知目录丢弃文件；
+- Game workspace 数据库事务失败时调用 Abandon/对账，不暴露无 DB 引用的目录；
 - P1-04 可以追加 parser/resource/capability diagnostics，但不能降低 P1-03 安全 rejection；
 - 发布时重新验证 manifest、文件类型和摘要并转只读；不得相信数小时前的 staging 检查替代发布
   时的 TOCTOU 复核；
-- P1-04 决定 idempotency response 和版本标签，P1-03 不创建业务版本身份；
-- P1-04 必须在正式 DRAFT/GameVersion 提交接入前增加 CONSUMING 续租与提交对账，不能把 P1-03
+- P1-04 决定 idempotency response，P1-03 不创建业务 Game 或内容 revision；
+- P1-04 必须在正式 Game workspace 提交接入前增加 CONSUMING 续租与提交对账，不能把 P1-03
   “尚无业务提交目标时超时即放弃”的 watchdog 规则原样用于长事务。

@@ -190,11 +190,33 @@ public sealed class GamePackageIngestionService(
         return new(ingestionId, ownerUserId, expectedContentDigest, content, manifest);
     }
 
+    public async Task<DateTimeOffset> RenewConsumeAsync(string ingestionId, string ownerUserId, string expectedContentDigest, CancellationToken cancellationToken = default)
+    {
+        DateTimeOffset now = timeProvider.GetUtcNow();
+        DateTimeOffset expiresAt = now + storageOptions.ConsumptionLifetime;
+        int changed = await db.GamePackageIngestions
+            .Where(item => item.Id == ingestionId && item.OwnerUserId == ownerUserId
+                && item.ContentDigest == expectedContentDigest
+                && item.Status == GamePackageIngestionStatus.Consuming
+                && item.ExpiresAt > now)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.ExpiresAt, expiresAt)
+                .SetProperty(item => item.UpdatedAt, now)
+                .SetProperty(item => item.StateVersion, item => item.StateVersion + 1), cancellationToken)
+            .ConfigureAwait(false);
+        if (changed != 1)
+            throw new GamePackageIngestionException("INGESTION_LEASE_EXPIRED", "The package consumption lease is no longer renewable.");
+        return expiresAt;
+    }
+
     public async Task CompleteConsumeAsync(string ingestionId, string ownerUserId, CancellationToken cancellationToken = default)
     {
-        GamePackageIngestionRow row = await db.GamePackageIngestions.AsNoTracking()
-            .SingleOrDefaultAsync(item => item.Id == ingestionId && item.OwnerUserId == ownerUserId && item.Status == GamePackageIngestionStatus.Consuming, cancellationToken).ConfigureAwait(false)
-            ?? throw new GamePackageIngestionException("INGESTION_STATE_CONFLICT", "The package ingestion is not being consumed.");
+        GamePackageIngestionRow? row = await db.GamePackageIngestions.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == ingestionId && item.OwnerUserId == ownerUserId, cancellationToken).ConfigureAwait(false);
+        if (row is null) throw new GamePackageIngestionException("INGESTION_STATE_CONFLICT", "The package ingestion is not being consumed.");
+        if (row.Status == GamePackageIngestionStatus.Consumed) return;
+        if (row.Status != GamePackageIngestionStatus.Consuming)
+            throw new GamePackageIngestionException("INGESTION_STATE_CONFLICT", "The package ingestion is not being consumed.");
         ValidateStagingPath(row, ingestionId);
         await FinishAsync(ingestionId, ownerUserId, GamePackageIngestionStatus.Consuming,
             row.StateVersion, GamePackageIngestionStatus.Consumed, cancellationToken).ConfigureAwait(false);

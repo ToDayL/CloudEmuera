@@ -11,15 +11,15 @@ public sealed class SessionRootLayoutBuilderTests
     public void BuilderCopiesEveryManifestEntryIncludingUnknownDirectories()
     {
         using var workspace = new RuntimeTestWorkspace();
-        string unknown = Path.Combine(workspace.GameVersionRoot, "custom-data", "nested", "state.bin");
+        string unknown = Path.Combine(workspace.GameContentRoot, "custom-data", "nested", "state.bin");
         Directory.CreateDirectory(Path.GetDirectoryName(unknown)!);
         File.WriteAllBytes(unknown, [1, 2, 3, 4]);
         SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             "v18-test");
 
         SessionRootLayout layout = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
             manifest,
             new SessionRootCopyLimits());
@@ -27,7 +27,7 @@ public sealed class SessionRootLayoutBuilderTests
         Assert.Equal(manifest.ManifestDigest, layout.CopiedManifestDigest);
         Assert.Equal([1, 2, 3, 4], File.ReadAllBytes(Path.Combine(layout.SessionRoot, "custom-data", "nested", "state.bin")));
         Assert.Equal(
-            File.ReadAllText(Path.Combine(workspace.GameVersionRoot, "emuera.config")),
+            File.ReadAllText(Path.Combine(workspace.GameContentRoot, "emuera.config")),
             File.ReadAllText(Path.Combine(layout.SessionRoot, "emuera.config")));
         Assert.Empty(layout.ContentLinks);
         Assert.Contains(layout.Mappings, mapping => mapping.LogicalTarget == "root");
@@ -41,10 +41,10 @@ public sealed class SessionRootLayoutBuilderTests
         using var workspace = new RuntimeTestWorkspace();
         string sessionRoot = Path.Combine(workspace.SessionWorkspaceRoot, "session-a");
         SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             "v18-test");
         SessionRootLayout first = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             sessionRoot,
             manifest,
             new SessionRootCopyLimits());
@@ -57,7 +57,7 @@ public sealed class SessionRootLayoutBuilderTests
         File.WriteAllText(Path.Combine(first.SessionRoot, "global.sav"), "native-global");
 
         SessionRootLayout second = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             sessionRoot,
             manifest,
             new SessionRootCopyLimits());
@@ -73,18 +73,18 @@ public sealed class SessionRootLayoutBuilderTests
     public void BuilderCreatesOnlyRegularSessionEntriesAndKeepsUnknownCopiesPrivate()
     {
         using var workspace = new RuntimeTestWorkspace();
-        string sourceUnknown = Path.Combine(workspace.GameVersionRoot, "custom-data", "state.bin");
+        string sourceUnknown = Path.Combine(workspace.GameContentRoot, "custom-data", "state.bin");
         Directory.CreateDirectory(Path.GetDirectoryName(sourceUnknown)!);
         File.WriteAllText(sourceUnknown, "source");
-        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot);
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot);
 
         SessionRootLayout first = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
             manifest,
             new SessionRootCopyLimits());
         SessionRootLayout second = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             Path.Combine(workspace.SessionWorkspaceRoot, "session-b"),
             manifest,
             new SessionRootCopyLimits());
@@ -109,20 +109,20 @@ public sealed class SessionRootLayoutBuilderTests
         using var workspace = new RuntimeTestWorkspace();
         string sessionRoot = Path.Combine(workspace.SessionWorkspaceRoot, "session-a");
         SessionRootPublishedManifest firstManifest = SessionRootPublishedManifest.FromDirectory(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             "version-a");
         _ = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             sessionRoot,
             firstManifest,
             new SessionRootCopyLimits());
 
         SessionRootPublishedManifest otherManifest = SessionRootPublishedManifest.FromDirectory(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             "version-b");
         RuntimePathException exception = Assert.Throws<RuntimePathException>(() =>
             SessionRootLayoutBuilder.Build(
-                workspace.GameVersionRoot,
+                workspace.GameContentRoot,
                 sessionRoot,
                 otherManifest,
                 new SessionRootCopyLimits()));
@@ -136,13 +136,13 @@ public sealed class SessionRootLayoutBuilderTests
         using var workspace = new RuntimeTestWorkspace();
         string sessionRoot = Path.Combine(workspace.SessionWorkspaceRoot, "session-a");
         SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             "version-a");
-        File.AppendAllText(Path.Combine(workspace.GameVersionRoot, "ERB", "START.ERB"), "\n; changed\n");
+        File.AppendAllText(Path.Combine(workspace.GameContentRoot, "ERB", "START.ERB"), "\n; changed\n");
 
         RuntimePathException exception = Assert.Throws<RuntimePathException>(() =>
             SessionRootLayoutBuilder.Build(
-                workspace.GameVersionRoot,
+                workspace.GameContentRoot,
                 sessionRoot,
                 manifest,
                 new SessionRootCopyLimits()));
@@ -163,20 +163,20 @@ public sealed class SessionRootLayoutBuilderTests
         using var workspace = new RuntimeTestWorkspace();
         string sessionRoot = Path.Combine(workspace.SessionWorkspaceRoot, "session-a");
         SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             "version-a");
         SessionRootLayout layout = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             sessionRoot,
             manifest,
             new SessionRootCopyLimits());
         string marker = Path.Combine(layout.SessionRoot, "save00.sav");
         File.WriteAllText(marker, "must-survive");
 
-        File.AppendAllText(Path.Combine(workspace.GameVersionRoot, "ERB", "START.ERB"), "\n; source changed\n");
+        File.AppendAllText(Path.Combine(workspace.GameContentRoot, "ERB", "START.ERB"), "\n; source changed\n");
         RuntimePathException exception = Assert.Throws<RuntimePathException>(() =>
             SessionRootLayoutBuilder.Build(
-                workspace.GameVersionRoot,
+                workspace.GameContentRoot,
                 sessionRoot,
                 manifest,
                 new SessionRootCopyLimits()));
@@ -190,17 +190,17 @@ public sealed class SessionRootLayoutBuilderTests
     public void BuilderRejectsOverlappingAllocatedSessionRoots()
     {
         using var workspace = new RuntimeTestWorkspace();
-        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot);
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot);
         string firstRoot = Path.Combine(workspace.SessionWorkspaceRoot, "session-a");
         _ = SessionRootLayoutBuilder.Build(
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             firstRoot,
             manifest,
             new SessionRootCopyLimits());
 
         RuntimePathException exception = Assert.Throws<RuntimePathException>(() =>
             SessionRootLayoutBuilder.Build(
-                workspace.GameVersionRoot,
+                workspace.GameContentRoot,
                 Path.Combine(firstRoot, "nested"),
                 manifest,
                 new SessionRootCopyLimits(),
@@ -213,10 +213,10 @@ public sealed class SessionRootLayoutBuilderTests
     public void BuilderEnforcesCopyLimitsDuringCopy()
     {
         using var workspace = new RuntimeTestWorkspace();
-        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot);
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot);
         RuntimePathException exception = Assert.Throws<RuntimePathException>(() =>
             SessionRootLayoutBuilder.Build(
-                workspace.GameVersionRoot,
+                workspace.GameContentRoot,
                 Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
                 manifest,
                 new SessionRootCopyLimits(maxTotalBytes: 1)));
@@ -229,13 +229,13 @@ public sealed class SessionRootLayoutBuilderTests
     {
         using var workspace = new RuntimeTestWorkspace();
         File.WriteAllText(
-            Path.Combine(workspace.GameVersionRoot, "emuera.config"),
+            Path.Combine(workspace.GameContentRoot, "emuera.config"),
             "Use sav folder:YES\nUse sav folder:NO\n");
-        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot);
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot);
 
         RuntimePathException exception = Assert.Throws<RuntimePathException>(() =>
             SessionRootLayoutBuilder.Build(
-                workspace.GameVersionRoot,
+                workspace.GameContentRoot,
                 Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
                 manifest,
                 new SessionRootCopyLimits()));
@@ -255,15 +255,15 @@ public sealed class SessionRootLayoutBuilderTests
         using var workspace = new RuntimeTestWorkspace();
         string outside = Path.Combine(workspace.Root, "outside.bin");
         File.WriteAllText(outside, "outside");
-        string link = Path.Combine(workspace.GameVersionRoot, "custom-link.bin");
+        string link = Path.Combine(workspace.GameContentRoot, "custom-link.bin");
         File.CreateSymbolicLink(link, outside);
 
         RuntimePathException linkException = Assert.ThrowsAny<RuntimePathException>(() =>
-            SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot));
+            SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot));
         Assert.Equal(RuntimePathReasonCodes.SymbolicLinkRejected, linkException.ReasonCode);
 
         File.Delete(link);
-        string hardLink = Path.Combine(workspace.GameVersionRoot, "hard-link.bin");
+        string hardLink = Path.Combine(workspace.GameContentRoot, "hard-link.bin");
         var hardLinkStartInfo = new ProcessStartInfo
         {
             FileName = "ln",
@@ -278,11 +278,11 @@ public sealed class SessionRootLayoutBuilderTests
             Assert.Equal(0, hardLinkProcess.ExitCode);
         }
         RuntimePathException hardLinkException = Assert.ThrowsAny<RuntimePathException>(() =>
-            SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot));
+            SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot));
         Assert.Equal(RuntimePathReasonCodes.UnsupportedRuntimeFile, hardLinkException.ReasonCode);
 
         File.Delete(hardLink);
-        string fifo = Path.Combine(workspace.GameVersionRoot, "runtime.fifo");
+        string fifo = Path.Combine(workspace.GameContentRoot, "runtime.fifo");
         using Process process = Process.Start(new ProcessStartInfo
         {
             FileName = "mkfifo",
@@ -293,7 +293,7 @@ public sealed class SessionRootLayoutBuilderTests
         process.WaitForExit();
         Assert.Equal(0, process.ExitCode);
         RuntimePathException fifoException = Assert.ThrowsAny<RuntimePathException>(() =>
-            SessionRootPublishedManifest.FromDirectory(workspace.GameVersionRoot));
+            SessionRootPublishedManifest.FromDirectory(workspace.GameContentRoot));
         Assert.Equal(RuntimePathReasonCodes.UnsupportedRuntimeFile, fifoException.ReasonCode);
     }
 
@@ -308,7 +308,7 @@ public sealed class SessionRootLayoutBuilderTests
 
         using var savWorkspace = new RuntimeTestWorkspace();
         File.WriteAllText(
-            Path.Combine(savWorkspace.GameVersionRoot, "emuera.config"),
+            Path.Combine(savWorkspace.GameContentRoot, "emuera.config"),
             "Use sav folder:YES\n");
         RuntimePaths sav = savWorkspace.BuildPaths(RuntimeSaveLayout.SavDirectory);
         Assert.Equal(RuntimeSaveLayout.SavDirectory, sav.SaveLayout);

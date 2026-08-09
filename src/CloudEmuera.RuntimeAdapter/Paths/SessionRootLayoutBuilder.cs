@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace CloudEmuera.RuntimeAdapter;
 
 /// <summary>
-/// Materializes one published GameVersion into a persistent SessionRoot.
+/// Materializes one published GameContent into a persistent SessionRoot.
 /// Session management remains the caller's responsibility: this component
 /// only applies the supplied manifest, limits and already-authorized roots.
 /// </summary>
@@ -14,7 +14,7 @@ public sealed class SessionRootLayoutBuilder
 {
     public const string BindingMetadataFileName = ".cloudemuera-binding.json";
 
-    private readonly string gameVersionRootInput;
+    private readonly string gameContentRootInput;
     private readonly string sessionRootInput;
     private readonly string? sessionWorkspaceRootInput;
     private readonly bool deriveSessionRoot;
@@ -23,65 +23,65 @@ public sealed class SessionRootLayoutBuilder
     private SessionRootPublishedManifest? publishedManifest;
     private SessionRootCopyLimits copyLimits = new();
 
-    public SessionRootLayoutBuilder(string gameVersionRoot, string sessionWorkspaceRoot)
+    public SessionRootLayoutBuilder(string gameContentRoot, string sessionWorkspaceRoot)
     {
-        gameVersionRootInput = gameVersionRoot;
+        gameContentRootInput = gameContentRoot;
         sessionWorkspaceRootInput = sessionWorkspaceRoot;
         sessionRootInput = string.Empty;
         deriveSessionRoot = true;
     }
 
     public SessionRootLayoutBuilder(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionWorkspaceRoot,
         RuntimeSaveLayout saveLayout)
-        : this(gameVersionRoot, sessionWorkspaceRoot)
+        : this(gameContentRoot, sessionWorkspaceRoot)
     {
         expectedSaveLayout = saveLayout;
     }
 
     public SessionRootLayoutBuilder(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionWorkspaceRoot,
         IEnumerable<string> otherSessionWorkspaceRoots)
-        : this(gameVersionRoot, sessionWorkspaceRoot)
+        : this(gameContentRoot, sessionWorkspaceRoot)
     {
         WithOtherSessionWorkspaceRoots(otherSessionWorkspaceRoots);
     }
 
     public SessionRootLayoutBuilder(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionRoot,
         string sessionWorkspaceRoot)
     {
-        gameVersionRootInput = gameVersionRoot;
+        gameContentRootInput = gameContentRoot;
         sessionRootInput = sessionRoot;
         sessionWorkspaceRootInput = sessionWorkspaceRoot;
         deriveSessionRoot = false;
     }
 
     public SessionRootLayoutBuilder(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionRoot,
         string sessionWorkspaceRoot,
         RuntimeSaveLayout saveLayout)
-        : this(gameVersionRoot, sessionRoot, sessionWorkspaceRoot)
+        : this(gameContentRoot, sessionRoot, sessionWorkspaceRoot)
     {
         expectedSaveLayout = saveLayout;
     }
 
     public SessionRootLayoutBuilder(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionRoot,
         string sessionWorkspaceRoot,
         IEnumerable<string> otherSessionWorkspaceRoots)
-        : this(gameVersionRoot, sessionRoot, sessionWorkspaceRoot)
+        : this(gameContentRoot, sessionRoot, sessionWorkspaceRoot)
     {
         WithOtherSessionWorkspaceRoots(otherSessionWorkspaceRoots);
     }
 
     public static SessionRootLayoutBuilder ForSessionRoot(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionRoot,
         IEnumerable<string>? allocatedOtherSessionRoots = null)
     {
@@ -91,7 +91,7 @@ public sealed class SessionRootLayoutBuilder
             ?? throw new RuntimePathException(
                 RuntimePathReasonCodes.LayoutConflict,
                 "A SessionRoot must have a workspace parent.");
-        var builder = new SessionRootLayoutBuilder(gameVersionRoot, fullSessionRoot, workspace);
+        var builder = new SessionRootLayoutBuilder(gameContentRoot, fullSessionRoot, workspace);
         if (allocatedOtherSessionRoots is not null)
         {
             builder.WithOtherSessionWorkspaceRoots(allocatedOtherSessionRoots);
@@ -135,7 +135,7 @@ public sealed class SessionRootLayoutBuilder
     }
 
     public SessionRootLayout Build() => BuildInternal(publishedManifest ??
-        SessionRootPublishedManifest.FromDirectory(gameVersionRootInput));
+        SessionRootPublishedManifest.FromDirectory(gameContentRootInput));
 
     public SessionRootLayout Build(
         SessionRootPublishedManifest manifest,
@@ -150,7 +150,7 @@ public sealed class SessionRootLayoutBuilder
     /// published manifest and limits; no Session manager state is inferred.
     /// </summary>
     public static SessionRootLayout Build(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionRoot,
         SessionRootPublishedManifest publishedManifest,
         SessionRootCopyLimits copyLimits,
@@ -158,7 +158,7 @@ public sealed class SessionRootLayoutBuilder
     {
         ArgumentNullException.ThrowIfNull(publishedManifest);
         ArgumentNullException.ThrowIfNull(copyLimits);
-        return ForSessionRoot(gameVersionRoot, sessionRoot, allocatedOtherSessionRoots)
+        return ForSessionRoot(gameContentRoot, sessionRoot, allocatedOtherSessionRoots)
             .WithPublishedManifest(publishedManifest)
             .WithCopyLimits(copyLimits)
             .Build();
@@ -167,25 +167,25 @@ public sealed class SessionRootLayoutBuilder
     public SessionRootLayout BuildLayout() => Build();
 
     public static SessionRootLayout Create(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionWorkspaceRoot,
         RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root) =>
-        new SessionRootLayoutBuilder(gameVersionRoot, sessionWorkspaceRoot, saveLayout).Build();
+        new SessionRootLayoutBuilder(gameContentRoot, sessionWorkspaceRoot, saveLayout).Build();
 
     public static SessionRootLayout CreateForSessionRoot(
-        string gameVersionRoot,
+        string gameContentRoot,
         string sessionRoot,
         IEnumerable<string>? allocatedOtherSessionRoots = null) =>
-        ForSessionRoot(gameVersionRoot, sessionRoot, allocatedOtherSessionRoots).Build();
+        ForSessionRoot(gameContentRoot, sessionRoot, allocatedOtherSessionRoots).Build();
 
     private SessionRootLayout BuildInternal(
         SessionRootPublishedManifest manifest,
         SessionRootCopyLimits? requestedLimits = null)
     {
         SessionRootCopyLimits limits = requestedLimits ?? copyLimits;
-        string gameVersionRoot = RuntimePathUtilities.NormalizeAbsolutePath(
-            gameVersionRootInput,
-            nameof(gameVersionRootInput));
+        string gameContentRoot = RuntimePathUtilities.NormalizeAbsolutePath(
+            gameContentRootInput,
+            nameof(gameContentRootInput));
         string sessionRoot = deriveSessionRoot
             ? Path.Combine(
                 RuntimePathUtilities.NormalizeAbsolutePath(
@@ -197,8 +197,8 @@ public sealed class SessionRootLayoutBuilder
             sessionWorkspaceRootInput ?? Directory.GetParent(sessionRoot)!.FullName,
             nameof(sessionWorkspaceRootInput));
 
-        ValidatePublishedGameVersion(gameVersionRoot, manifest);
-        RuntimeSaveLayout saveLayout = InspectSaveLayout(Path.Combine(gameVersionRoot, "emuera.config"));
+        ValidatePublishedGameContent(gameContentRoot, manifest);
+        RuntimeSaveLayout saveLayout = InspectSaveLayout(Path.Combine(gameContentRoot, "emuera.config"));
         if (expectedSaveLayout is RuntimeSaveLayout expected && expected != saveLayout)
         {
             throw new RuntimePathException(
@@ -210,7 +210,7 @@ public sealed class SessionRootLayoutBuilder
 
         var paths = new RuntimePaths(
             sessionRoot,
-            gameVersionRoot,
+            gameContentRoot,
             sessionWorkspaceRoot,
             saveLayout,
             csvRoot: Path.Combine(sessionRoot, "CSV"),
@@ -259,12 +259,12 @@ public sealed class SessionRootLayoutBuilder
 
         SessionRootBindingMetadata metadata = ReadBindingMetadata(metadataPath);
         if (metadata.SchemaVersion != 1 ||
-            !string.Equals(metadata.GameVersionIdentity, manifest.GameVersionIdentity, StringComparison.Ordinal) ||
+            !string.Equals(metadata.GameContentIdentity, manifest.GameContentIdentity, StringComparison.Ordinal) ||
             !string.Equals(metadata.ManifestDigest, manifest.ManifestDigest, StringComparison.Ordinal) ||
             metadata.SaveLayout != saveLayout)
         {
             throw LayoutConflict(
-                "The existing SessionRoot is bound to a different GameVersion or manifest.",
+                "The existing SessionRoot is bound to a different GameContent or manifest.",
                 BindingMetadataFileName);
         }
 
@@ -313,7 +313,7 @@ public sealed class SessionRootLayoutBuilder
                          .OrderBy(item => item.RelativePath, StringComparer.Ordinal))
             {
                 CopyFile(
-                    paths.GameVersionRoot,
+                    paths.GameContentRoot,
                     staging,
                     entry,
                     state);
@@ -327,7 +327,7 @@ public sealed class SessionRootLayoutBuilder
 
             var stagingPaths = new RuntimePaths(
                 staging,
-                paths.GameVersionRoot,
+                paths.GameContentRoot,
                 paths.SessionWorkspaceRoot,
                 paths.SaveLayout,
                 csvRoot: Path.Combine(staging, "CSV"),
@@ -374,7 +374,7 @@ public sealed class SessionRootLayoutBuilder
         RuntimePathUtilities.ThrowIfHardLink(source, manifestEntry.RelativePath, RuntimeFileArea.GameContent);
         if (!File.Exists(source))
         {
-            throw LayoutConflict("A manifest file is missing from the GameVersion.", manifestEntry.RelativePath);
+            throw LayoutConflict("A manifest file is missing from the GameContent.", manifestEntry.RelativePath);
         }
 
         var sourceInfo = new FileInfo(source);
@@ -428,7 +428,7 @@ public sealed class SessionRootLayoutBuilder
         if (sourceLength != manifestEntry.Length ||
             !string.Equals(sourceDigest, manifestEntry.Sha256, StringComparison.OrdinalIgnoreCase))
         {
-            throw LayoutConflict("The GameVersion changed while it was being copied.", manifestEntry.RelativePath);
+            throw LayoutConflict("The GameContent changed while it was being copied.", manifestEntry.RelativePath);
         }
 
         SetSafeFileMode(target);
@@ -475,26 +475,26 @@ public sealed class SessionRootLayoutBuilder
             $"saveLayout={saveLayout}; content=complete-copy; manifest={manifest.ManifestDigest}; atomicPublish=true");
     }
 
-    private static void ValidatePublishedGameVersion(
-        string gameVersionRoot,
+    private static void ValidatePublishedGameContent(
+        string gameContentRoot,
         SessionRootPublishedManifest manifest)
     {
         RuntimePathUtilities.ThrowIfReparsePoint(
-            gameVersionRoot,
-            "<game-version-root>",
+            gameContentRoot,
+            "<game-content-root>",
             RuntimeFileArea.GameContent,
             missingIsAllowed: false);
-        if (!Directory.Exists(gameVersionRoot))
+        if (!Directory.Exists(gameContentRoot))
         {
-            throw LayoutConflict("The GameVersion root does not exist.", "<game-version-root>");
+            throw LayoutConflict("The GameContent root does not exist.", "<game-content-root>");
         }
 
-        Dictionary<string, SessionRootManifestEntry> actual = ScanTree(gameVersionRoot);
+        Dictionary<string, SessionRootManifestEntry> actual = ScanTree(gameContentRoot);
         var expected = manifest.Entries.ToDictionary(entry => entry.RelativePath, StringComparer.Ordinal);
         if (actual.Count != expected.Count || actual.Keys.Except(expected.Keys, StringComparer.Ordinal).Any() ||
             expected.Keys.Except(actual.Keys, StringComparer.Ordinal).Any())
         {
-            throw LayoutConflict("The GameVersion entries do not exactly match the published manifest.", "<game-version-root>");
+            throw LayoutConflict("The GameContent entries do not exactly match the published manifest.", "<game-content-root>");
         }
 
         foreach ((string path, SessionRootManifestEntry expectedEntry) in expected)
@@ -504,13 +504,13 @@ public sealed class SessionRootLayoutBuilder
                 actualEntry.Length != expectedEntry.Length ||
                 !string.Equals(actualEntry.Sha256, expectedEntry.Sha256, StringComparison.OrdinalIgnoreCase))
             {
-                throw LayoutConflict("A GameVersion entry does not match the published manifest.", path);
+                throw LayoutConflict("A GameContent entry does not match the published manifest.", path);
             }
         }
 
-        ValidateRequiredSourceEntry(gameVersionRoot, "CSV", directory: true);
-        ValidateRequiredSourceEntry(gameVersionRoot, "ERB", directory: true);
-        ValidateRequiredSourceEntry(gameVersionRoot, "emuera.config", directory: false);
+        ValidateRequiredSourceEntry(gameContentRoot, "CSV", directory: true);
+        ValidateRequiredSourceEntry(gameContentRoot, "ERB", directory: true);
+        ValidateRequiredSourceEntry(gameContentRoot, "emuera.config", directory: false);
     }
 
     private static Dictionary<string, SessionRootManifestEntry> ScanTree(string root)
@@ -557,7 +557,7 @@ public sealed class SessionRootLayoutBuilder
             {
                 throw new RuntimeFileAccessException(
                     RuntimePathReasonCodes.UnsupportedRuntimeFile,
-                    "The GameVersion contains a non-regular filesystem entry.",
+                    "The GameContent contains a non-regular filesystem entry.",
                     relative,
                     RuntimeFileArea.GameContent);
             }
@@ -572,7 +572,7 @@ public sealed class SessionRootLayoutBuilder
         if (!exists)
         {
             throw LayoutConflict(
-                directory ? "A required GameVersion directory is missing." : "The GameVersion configuration is missing.",
+                directory ? "A required GameContent directory is missing." : "The GameContent configuration is missing.",
                 name);
         }
     }
@@ -587,7 +587,7 @@ public sealed class SessionRootLayoutBuilder
         {
             throw new RuntimePathException(
                 RuntimePathReasonCodes.LayoutConflict,
-                "The GameVersion emuera.config does not contain a valid save layout.",
+                "The GameContent emuera.config does not contain a valid save layout.",
                 "emuera.config",
                 RuntimeFileArea.Configuration,
                 exception);
@@ -662,7 +662,7 @@ public sealed class SessionRootLayoutBuilder
         var metadata = new SessionRootBindingMetadata
         {
             SchemaVersion = 1,
-            GameVersionIdentity = manifest.GameVersionIdentity,
+            GameContentIdentity = manifest.GameContentIdentity,
             ManifestDigest = manifest.ManifestDigest,
             SaveLayout = saveLayout
         };
@@ -811,7 +811,7 @@ public sealed class SessionRootLayoutBuilder
             DirectoryCount++;
             if (DirectoryCount > Limits.MaxDirectoryCount)
             {
-                throw LayoutConflict("The GameVersion exceeds the directory-count copy limit.", "<manifest>");
+                throw LayoutConflict("The GameContent exceeds the directory-count copy limit.", "<manifest>");
             }
         }
 
@@ -820,13 +820,13 @@ public sealed class SessionRootLayoutBuilder
             FileCount++;
             if (FileCount > Limits.MaxFileCount || length > Limits.MaxSingleFileBytes)
             {
-                throw LayoutConflict("The GameVersion exceeds the file-count or single-file copy limit.", logicalPath);
+                throw LayoutConflict("The GameContent exceeds the file-count or single-file copy limit.", logicalPath);
             }
 
             TotalBytes = checked(TotalBytes + length);
             if (TotalBytes > Limits.MaxTotalBytes)
             {
-                throw LayoutConflict("The GameVersion exceeds the total-byte copy limit.", logicalPath);
+                throw LayoutConflict("The GameContent exceeds the total-byte copy limit.", logicalPath);
             }
         }
     }
@@ -835,7 +835,7 @@ public sealed class SessionRootLayoutBuilder
     {
         public int SchemaVersion { get; set; }
 
-        public string? GameVersionIdentity { get; set; }
+        public string? GameContentIdentity { get; set; }
 
         public string? ManifestDigest { get; set; }
 

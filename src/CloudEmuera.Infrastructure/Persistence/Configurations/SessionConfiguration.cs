@@ -13,7 +13,9 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             table.HasCheckConstraint("ck_sessions_id", SqliteCheckExpressions.IdentifierPrefix("id", "sess_"));
             table.HasCheckConstraint("ck_sessions_owner_id", SqliteCheckExpressions.IdentifierPrefix("owner_user_id", "usr_"));
             table.HasCheckConstraint("ck_sessions_game_id", SqliteCheckExpressions.IdentifierPrefix("game_id", "game_"));
-            table.HasCheckConstraint("ck_sessions_game_version_id", SqliteCheckExpressions.IdentifierPrefix("game_version_id", "gver_"));
+            table.HasCheckConstraint("ck_sessions_source_digest", "length(source_content_digest) = 71 AND substr(source_content_digest, 1, 7) = 'sha256:' AND lower(source_content_digest) = source_content_digest AND substr(source_content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(source_content_digest, 8)) = 64");
+            table.HasCheckConstraint("ck_sessions_source_revision", "source_content_revision > 0");
+            table.HasCheckConstraint("ck_sessions_runtime_manifest_json", SqliteCheckExpressions.ValidJson("runtime_manifest_json"));
             table.HasCheckConstraint("ck_sessions_runtime_version", "length(runtime_version) BETWEEN 1 AND 128 AND instr(runtime_version, char(0)) = 0");
             table.HasCheckConstraint("ck_sessions_root_path", SqliteCheckExpressions.RelativePath("session_root_path"));
             table.HasCheckConstraint("ck_sessions_name", "length(name) BETWEEN 1 AND 200 AND instr(name, char(0)) = 0");
@@ -30,7 +32,9 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
         builder.Property(row => row.Id).HasColumnName("id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IdMaxLength).IsRequired();
         builder.Property(row => row.OwnerUserId).HasColumnName("owner_user_id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IdMaxLength).IsRequired();
         builder.Property(row => row.GameId).HasColumnName("game_id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IdMaxLength).IsRequired();
-        builder.Property(row => row.GameVersionId).HasColumnName("game_version_id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IdMaxLength).IsRequired();
+        builder.Property(row => row.SourceContentDigest).HasColumnName("source_content_digest").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.DigestLength).IsRequired();
+        builder.Property(row => row.SourceContentRevision).HasColumnName("source_content_revision").HasColumnType("INTEGER").IsRequired();
+        builder.Property(row => row.RuntimeManifestJson).HasColumnName("runtime_manifest_json").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.JsonMaxLength).HasDefaultValue("{}").IsRequired();
         builder.Property(row => row.RuntimeVersion).HasColumnName("runtime_version").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.RuntimeVersionMaxLength).IsRequired();
         builder.Property(row => row.SessionRootPath).HasColumnName("session_root_path").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.PathMaxLength).IsRequired();
         builder.Property(row => row.Name).HasColumnName("name").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.NameMaxLength).IsRequired();
@@ -48,12 +52,10 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
 
         builder.HasIndex(row => new { row.OwnerUserId, row.CreatedAt }).HasDatabaseName("ix_sessions_owner_created").IsDescending(false, true);
         builder.HasIndex(row => new { row.State, row.LastActivityAt }).HasDatabaseName("ix_sessions_state_activity");
-        builder.HasIndex(row => row.GameVersionId).HasDatabaseName("ix_sessions_game_version");
         builder.HasIndex(row => row.GameId).HasDatabaseName("ix_sessions_game");
-        builder.HasIndex(row => new { row.GameVersionId, row.GameId }).HasDatabaseName("ix_sessions_game_version_game");
+        builder.HasIndex(row => new { row.GameId, row.SourceContentDigest }).HasDatabaseName("ix_sessions_game_content_digest");
         builder.HasOne(row => row.OwnerUser).WithMany().HasForeignKey(row => row.OwnerUserId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_sessions_owner_user");
         builder.HasOne(row => row.Game).WithMany(game => game.Sessions).HasForeignKey(row => row.GameId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_sessions_game");
-        builder.HasOne(row => row.GameVersion).WithMany(version => version.Sessions).HasForeignKey(row => new { row.GameVersionId, row.GameId }).HasPrincipalKey(version => new { version.Id, version.GameId }).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_sessions_game_version_game");
     }
 
     private static void ConfigureTime(PropertyBuilder<DateTimeOffset> property, string name) =>

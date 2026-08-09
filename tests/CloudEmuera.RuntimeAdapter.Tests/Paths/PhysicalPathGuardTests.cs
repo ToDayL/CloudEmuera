@@ -14,7 +14,7 @@ public sealed class PhysicalPathGuardTests
         string prefixWorkspace = Path.Combine(workspace.Root, "session-10");
         RuntimePaths paths = new(
             Path.Combine(firstWorkspace, "root"),
-            workspace.GameVersionRoot,
+            workspace.GameContentRoot,
             firstWorkspace,
             RuntimeSaveLayout.Root);
         var guard = new PhysicalPathGuard(paths);
@@ -44,7 +44,7 @@ public sealed class PhysicalPathGuardTests
             guard.Resolve(RuntimeFilePath.Parse(RuntimeFileArea.Save, "save00.sav")));
 
         Assert.Equal(RuntimePathReasonCodes.SymbolicLinkRejected, exception.ReasonCode);
-        Assert.DoesNotContain(paths.GameVersionRoot, exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(paths.GameContentRoot, exception.Message, StringComparison.Ordinal);
         Assert.Equal("save00.sav", exception.LogicalPath);
     }
 
