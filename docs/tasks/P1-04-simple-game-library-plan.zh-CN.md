@@ -75,6 +75,27 @@ P1-04 收尾（2026-08-09 完成）：
   RUNNING operation 标 FAILED 并清理 work。连同既有覆盖（CONTENT_READY 树不匹配恢复、retired
   安全期/租约、共享 current 隔离、BLOCK/DELETE 引用保护、大清单入口上限）组成完整故障矩阵。
 
+2026-08-09 review 收尾（535239b 之后）：
+
+- 修复签名搜索游标篡改测试的不稳定：base64url 末字符只编码 4 个有效位（'w'→'x' 解码出相同尾
+  字节），原测试约 6% 运行把"被篡改"游标解码成原签名而不抛异常；测试改为篡改完全有效的中间
+  字符后 `check.sh` 重新稳定；
+- Game 错误码按 §15 对齐：新增 GAME_NAME_CONFLICT、GAME_IN_USE、GAME_HAS_NO_CURRENT_CONTENT、
+  WORKSPACE_NOT_FOUND、WORKSPACE_ALREADY_EXISTS、FILE_NOT_FOUND、FILE_TYPE_NOT_EDITABLE、
+  FILE_TOO_LARGE_TO_EDIT、TEXT_ENCODING_UNSUPPORTED、TEXT_NOT_REPRESENTABLE、
+  VALIDATION_IN_PROGRESS、ACTIVATION_IN_PROGRESS、ACTIVATION_VALIDATION_FAILED；冲突码改为
+  GAME_STATE_CONFLICT；Validator 协议错误码改为 VALIDATOR_PROTOCOL_ERROR；
+- 审计动作改为计划清单：GAME_CREATE/GAME_UPDATE/GAME_DELETE/GAME_BLOCK/GAME_UNBLOCK/
+  GAME_PACKAGE_UPLOAD/GAME_WORKSPACE_CREATE/GAME_WORKSPACE_DISCARD/GAME_FILE_UPDATE/
+  GAME_FILE_DELETE/GAME_VALIDATE/GAME_ACTIVATE/GAME_DIAGNOSTIC_OVERRIDE；删除未使用的
+  `VersionLabelMaxLength` 常量；
+- API 暴露 ASP.NET Core OpenAPI 文档端点 `/openapi/v1.json`（设计文档"HTTP 契约由 OpenAPI 生成"
+  在 P1-04 的落地部分），契约测试断言 games 路径存在且全文不含 GameVersion；生成式 TypeScript
+  客户端与 WebSocket JSON Schema 类型生成推迟到 P1-10 浏览器游戏库任务，作为 P1-04 遗留接口
+  记录；
+- §12 的 Session 创建/启用并发完整集成测试按计划属于 P1-06；P1-04 交付 copy lease 端口和
+  rename 后 dirfd 读取测试。
+
 ## 1. 目标结果
 
 P1-04 完成后，产品和公开契约中只有 Game，没有 GameVersion：

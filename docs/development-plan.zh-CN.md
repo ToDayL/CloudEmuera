@@ -375,7 +375,11 @@ validation snapshot、owner inode marker、内容复制/发布/删除的 Linux d
 签名搜索游标，以及迁移计划/选择/物理 journal 已完成。当前已通过 `check.sh`、开发用户映射、
 第三方声明和 diff check；故障矩阵（真实 SIGKILL 进程终止、DB 提交窗口、lease 过期对账）、只读
 遍历 TOCTOU 审计与非 Linux managed fallback 平台差异验证于 2026-08-09 完成并补测试
-（Infrastructure 77 项），本步骤标记为 DONE。
+（Infrastructure 77 项），本步骤标记为 DONE。 2026-08-09 review 收尾：修复签名游标篡改测试的末字符解码抖动并重跑 `check.sh` 稳定通过；
+Game 错误码与审计动作对齐计划 §15；API 暴露 OpenAPI 文档端点 `/openapi/v1.json`（契约测试断言
+无 GameVersion）；生成式 TypeScript 客户端与 WebSocket JSON Schema 类型生成推迟到 P1-10；
+Session 创建/启用并发完整集成测试按 P1-04 计划 §12 属 P1-06，本步交付 copy lease 端口及
+rename 钉住测试。
 
 ### P1-05 — Supervisor、租约、epoch 与状态机（TODO）
 
