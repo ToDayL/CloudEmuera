@@ -92,7 +92,8 @@ public sealed class GamePackageIngestionService(
                 GamePackageIngestionLimits effectiveLimits = limits with { MaxArchiveBytes = effectiveArchiveLimit, MaxExpandedBytes = effectiveExpandedLimit };
                 using SafeFileHandle archiveSource = LinuxGamePackageStagingStore.OpenFile(ingestionRoot, ArchiveFileName);
                 IReadOnlyList<ValidatedZipEntry> inspected = ZipStructureInspector.Inspect(LinuxGamePackageStagingStore.DescriptorPath(archiveSource), effectiveLimits);
-                IReadOnlyDictionary<string, PreparedEntry> prepared = Preflight(inspected, effectiveLimits);
+                string? wrapperPrefix = SingleRootDirectoryPrefix(inspected);
+                IReadOnlyDictionary<string, PreparedEntry> prepared = Preflight(inspected, effectiveLimits, wrapperPrefix);
                 await TransitionAsync(ingestionId, GamePackageIngestionStatus.Inspecting, GamePackageIngestionStatus.Extracting, deadline.Token).ConfigureAwait(false);
 
                 using SafeFileHandle candidate = LinuxGamePackageStagingStore.CreateDirectory(ingestionRoot, CandidateDirectoryName);
@@ -278,7 +279,7 @@ public sealed class GamePackageIngestionService(
                 .SetProperty(row => row.StateVersion, row => row.StateVersion + 1), token).ConfigureAwait(false);
     }
 
-    private static Dictionary<string, PreparedEntry> Preflight(IReadOnlyList<ValidatedZipEntry> entries, GamePackageIngestionLimits limits)
+    private static Dictionary<string, PreparedEntry> Preflight(IReadOnlyList<ValidatedZipEntry> entries, GamePackageIngestionLimits limits, string? wrapperPrefix)
     {
         var pathPolicy = new ZipEntryPathPolicy(limits);
         var result = new Dictionary<string, PreparedEntry>(StringComparer.Ordinal);
@@ -286,7 +287,9 @@ public sealed class GamePackageIngestionService(
         foreach (ValidatedZipEntry entry in entries)
         {
             bool directory = entry.RawName.EndsWith('/');
-            string path = pathPolicy.Add(entry.RawName, directory);
+            string logical = StripWrapper(entry.RawName, wrapperPrefix);
+            if (logical.Length == 0) continue; // the single-root wrapper directory entry itself
+            string path = pathPolicy.Add(logical, directory);
             if (!directory)
             {
                 if (entry.ExpandedBytes > limits.MaxSingleFileBytes) Reject(GamePackageRejectionCodes.EntryTooLarge, "ZIP entry exceeds the single-file limit.", path);
@@ -295,10 +298,59 @@ public sealed class GamePackageIngestionService(
                 double ratio = entry.ExpandedBytes == 0 ? 1 : entry.CompressedBytes == 0 ? double.PositiveInfinity : (double)entry.ExpandedBytes / entry.CompressedBytes;
                 if (ratio > limits.MaxCompressionRatio) Reject(GamePackageRejectionCodes.CompressionRatioExceeded, "ZIP entry compression ratio exceeds the limit.", path);
             }
-            string rawLogical = directory ? entry.RawName.TrimEnd('/') : entry.RawName;
+            string rawLogical = directory ? logical.TrimEnd('/') : logical;
             result.Add(entry.RawName, new(entry, path, directory, !string.Equals(path, rawLogical, StringComparison.Ordinal)));
         }
         return result;
+    }
+
+    /// <summary>
+    /// Many era-game ZIPs wrap the game in a single top-level folder. When every
+    /// entry shares exactly one top-level directory and that directory contains at
+    /// least one file, treat it as a distribution wrapper and strip the prefix so
+    /// ERB/CSV/emuera.config land at the workspace root. Multiple top-level entries
+    /// (for example __MACOSX/ next to the game) are never flattened.
+    /// </summary>
+    private static string? SingleRootDirectoryPrefix(IReadOnlyList<ValidatedZipEntry> entries)
+    {
+        string? wrapper = null;
+        bool hasNestedFile = false;
+        foreach (ValidatedZipEntry entry in entries)
+        {
+            string raw = entry.RawName;
+            int slash = raw.IndexOf('/');
+            string top = slash < 0 ? raw : raw[..slash];
+            if (!IsUsableWrapperSegment(top)) return null;
+            if (wrapper is null) wrapper = top;
+            else if (!string.Equals(wrapper, top, StringComparison.Ordinal)) return null;
+            if (slash >= 0 && !raw.EndsWith('/')) hasNestedFile = true;
+        }
+        return wrapper is null || !hasNestedFile ? null : $"{wrapper}/";
+    }
+
+    /// <summary>
+    /// A distribution wrapper must be a plain directory name. Traversal or
+    /// absolute-style segments (".", "..", "C:", backslashes, control characters)
+    /// are never treated as a wrapper so the path policy still rejects them.
+    /// </summary>
+    private static bool IsUsableWrapperSegment(string segment)
+    {
+        if (segment.Length == 0 || segment is "." or "..") return false;
+        foreach (char character in segment)
+        {
+            if (char.IsControl(character) || character is '/' or '\\' or ':' or '\0') return false;
+        }
+        return true;
+    }
+
+    private static string StripWrapper(string rawName, string? wrapperPrefix)
+    {
+        if (wrapperPrefix is null) return rawName;
+        if (rawName.Length <= wrapperPrefix.Length)
+        {
+            return rawName.Length == wrapperPrefix.Length && rawName.StartsWith(wrapperPrefix, StringComparison.Ordinal) ? string.Empty : rawName;
+        }
+        return rawName.StartsWith(wrapperPrefix, StringComparison.Ordinal) ? rawName[wrapperPrefix.Length..] : rawName;
     }
 
     private static async Task<ExtractionResult> ExtractAsync(string archivePath, SafeFileHandle contentRoot, IReadOnlyDictionary<string, PreparedEntry> prepared, GamePackageIngestionLimits limits, CancellationToken token)

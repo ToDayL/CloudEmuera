@@ -87,6 +87,54 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
         await Service().CompleteConsumeAsync(result.IngestionId, userId);
     }
 
+    [Fact]
+    [Trait("Category", "ArchiveSecurity")]
+    public async Task FlattensSingleTopLevelDirectory()
+    {
+        byte[] zip = CreateZip(
+            ("game-folder/ERB/START.ERB", "@SYSTEM_TITLE\n"u8.ToArray(), null),
+            ("game-folder/CSV/GAMEBASE.CSV", "title,x\n"u8.ToArray(), null),
+            ("game-folder/emuera.config", "Use sav folder:NO\n"u8.ToArray(), null));
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new NonSeekableReadStream(zip)), Limits());
+
+        Assert.Equal(3, result.Manifest.FileCount);
+        Assert.Contains(result.Manifest.Files, file => file.Path == "ERB/START.ERB");
+        Assert.Contains(result.Manifest.Files, file => file.Path == "CSV/GAMEBASE.CSV");
+        Assert.DoesNotContain(result.Manifest.Files, file => file.Path.StartsWith("game-folder/", StringComparison.Ordinal));
+        string contentRoot = Path.Combine(root, "games", "staging", result.IngestionId, "ready", "content");
+        Assert.True(File.Exists(Path.Combine(contentRoot, "ERB", "START.ERB")));
+        Assert.True(File.Exists(Path.Combine(contentRoot, "emuera.config")));
+        Assert.False(Directory.Exists(Path.Combine(contentRoot, "game-folder")));
+    }
+
+    [Fact]
+    [Trait("Category", "ArchiveSecurity")]
+    public async Task DoesNotFlattenMultipleTopLevelEntries()
+    {
+        byte[] zip = CreateZip(
+            ("game-folder/ERB/START.ERB", "@SYSTEM_TITLE\n"u8.ToArray(), null),
+            ("README.txt", "readme\n"u8.ToArray(), null));
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new NonSeekableReadStream(zip)), Limits());
+
+        Assert.Equal(2, result.Manifest.FileCount);
+        Assert.Contains(result.Manifest.Files, file => file.Path == "game-folder/ERB/START.ERB");
+        Assert.Contains(result.Manifest.Files, file => file.Path == "README.txt");
+    }
+
+    [Fact]
+    [Trait("Category", "ArchiveSecurity")]
+    public async Task DoesNotFlattenSingleTopLevelFileOrEmptyWrapper()
+    {
+        byte[] fileOnly = CreateZip(("START.ERB", "@SYSTEM_TITLE\n"u8.ToArray(), null));
+        IngestedGamePackage fileResult = await Service().IngestAsync(new(userId, new NonSeekableReadStream(fileOnly)), Limits());
+        Assert.Contains(fileResult.Manifest.Files, file => file.Path == "START.ERB");
+
+        // A directory that wraps nothing is not flattened into a malformed root.
+        byte[] emptyWrapper = CreateZip(("wrapper/", Array.Empty<byte>(), null));
+        IngestedGamePackage emptyResult = await Service().IngestAsync(new(userId, new NonSeekableReadStream(emptyWrapper)), Limits());
+        Assert.Equal(0, emptyResult.Manifest.FileCount);
+    }
+
     [Theory]
     [Trait("Category", "ArchiveSecurity")]
     [InlineData("../escape.txt", GamePackageRejectionCodes.PathInvalid)]
