@@ -32,7 +32,6 @@ public static class PersistenceLimits
     public const int RoleMaxLength = 16;
     public const int StatusMaxLength = 16;
     public const int NameMaxLength = 200;
-    public const int VersionLabelMaxLength = 100;
     public const int RuntimeVersionMaxLength = 128;
     public const int PathMaxLength = 512;
     public const int DigestLength = 71;
