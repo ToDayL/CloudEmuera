@@ -15,6 +15,8 @@ internal static class LinuxFileOperations
     private const int OpenDirectoryFlag = 0x10000;
     private const int OpenCloseOnExec = 0x80000;
     private const int OpenNoFollow = 0x20000;
+    private const int OpenPath = 0x200000;
+    private const int AtRemoveDirectory = 0x200;
     private const int AtEmptyPath = 0x1000;
     private const int LockExclusive = 2;
     private const int LockNonBlocking = 4;
@@ -138,6 +140,31 @@ internal static class LinuxFileOperations
         return created;
     }
 
+    public static SafeFileHandle CreateDirectoryAt(SafeFileHandle parentDirectory, string name)
+    {
+        ValidateLeafName(name);
+        if (NativeMethods.MkdirAt(parentDirectory, name, 0x1C0) != 0)
+        {
+            throw CreateError("mkdirat exclusive", Marshal.GetLastPInvokeError());
+        }
+
+        SafeFileHandle created = TryOpenDirectoryAt(parentDirectory, name)
+            ?? throw new IOException("The directory disappeared during creation.");
+        try
+        {
+            if (NativeMethods.Fchmod(created, 0x1C0) != 0)
+            {
+                throw CreateError("fchmod directory", Marshal.GetLastPInvokeError());
+            }
+            return created;
+        }
+        catch
+        {
+            created.Dispose();
+            throw;
+        }
+    }
+
     public static SafeFileHandle? TryOpenDirectoryAt(SafeFileHandle parentDirectory, string name)
     {
         ValidateLeafName(name);
@@ -169,6 +196,12 @@ internal static class LinuxFileOperations
             handle.Dispose();
             throw;
         }
+    }
+
+    public static SafeFileHandle DuplicateDirectory(SafeFileHandle directory)
+    {
+        int descriptor = NativeMethods.OpenAt(directory, ".", OpenReadOnly | OpenDirectoryFlag | OpenCloseOnExec | OpenNoFollow, 0);
+        return CreateHandle(descriptor, "openat duplicate directory");
     }
 
     public static SafeFileHandle OpenRegularFileAt(
@@ -254,8 +287,91 @@ internal static class LinuxFileOperations
         }
     }
 
-    public static FileStream CreateFileStream(SafeFileHandle handle, FileAccess access, int bufferSize = 4096) =>
-        new(handle, access, bufferSize, isAsync: false);
+    public static FileStream CreateFileStream(SafeFileHandle handle, FileAccess access, int bufferSize = 4096, bool isAsync = false) =>
+        new(handle, access, bufferSize, isAsync);
+
+    public static void RenameAt(SafeFileHandle directory, string oldName, string newName)
+    {
+        ValidateLeafName(oldName);
+        ValidateLeafName(newName);
+        if (NativeMethods.RenameAt(directory, oldName, directory, newName) != 0)
+        {
+            throw CreateError("renameat", Marshal.GetLastPInvokeError());
+        }
+    }
+
+    public static void DeleteTreeAt(
+        SafeFileHandle parentDirectory,
+        string name,
+        int maxDepth = 64,
+        FileIdentity? expectedIdentity = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDepth);
+        ValidateLeafName(name);
+        using SafeFileHandle entry = OpenPathAt(parentDirectory, name);
+        FileIdentity identity = ReadIdentity(entry);
+        if (expectedIdentity is FileIdentity expected
+            && (identity.DeviceMajor != expected.DeviceMajor || identity.DeviceMinor != expected.DeviceMinor || identity.Inode != expected.Inode))
+            throw new IOException("Refusing to remove a staging directory whose identity changed after validation.");
+        if (identity.UserId != CurrentUserId) throw new IOException("Refusing to remove a staging entry owned by another user.");
+        if (identity.IsRegularFile)
+        {
+            if ((identity.Mode & 0x1FF) != 0x180) throw new IOException("Refusing to remove a staging file with unsafe permissions.");
+            if (identity.LinkCount != 1) throw new IOException("Refusing to remove a multiply-linked staging file.");
+            UnlinkAtChecked(parentDirectory, name, isDirectory: false);
+            return;
+        }
+        if (!identity.IsDirectory) throw new IOException("Refusing to remove a link or special staging entry.");
+        if ((identity.Mode & 0x1FF) != 0x1C0) throw new IOException("Refusing to remove a staging directory with unsafe permissions.");
+
+        using SafeFileHandle directory = TryOpenDirectoryAt(parentDirectory, name)
+            ?? throw new IOException("The staging directory disappeared during cleanup.");
+        DeleteDirectoryContents(directory, maxDepth - 1);
+        EnsureSameIdentity(entry, directory);
+        UnlinkAtChecked(parentDirectory, name, isDirectory: true);
+    }
+
+    public static bool TryDeleteTreeAt(
+        SafeFileHandle parentDirectory,
+        string name,
+        int maxDepth = 64,
+        FileIdentity? expectedIdentity = null)
+    {
+        try
+        {
+            DeleteTreeAt(parentDirectory, name, maxDepth, expectedIdentity);
+            return true;
+        }
+        catch (LinuxFileOperationException exception) when (exception.Error == ErrnoNoEntry)
+        {
+            return true;
+        }
+    }
+
+    private static void DeleteDirectoryContents(SafeFileHandle directory, int remainingDepth)
+    {
+        if (remainingDepth < 0) throw new IOException("Staging cleanup exceeded its maximum depth.");
+        string descriptorPath = GetProcFileDescriptorPath(directory);
+        foreach (string path in Directory.EnumerateFileSystemEntries(descriptorPath))
+        {
+            string leaf = Path.GetFileName(path);
+            DeleteTreeAt(directory, leaf, remainingDepth);
+        }
+    }
+
+    private static SafeFileHandle OpenPathAt(SafeFileHandle parentDirectory, string name)
+    {
+        int descriptor = NativeMethods.OpenAt(parentDirectory, name, OpenPath | OpenCloseOnExec | OpenNoFollow, 0);
+        return CreateHandle(descriptor, "openat cleanup entry");
+    }
+
+    private static void UnlinkAtChecked(SafeFileHandle directory, string name, bool isDirectory)
+    {
+        if (NativeMethods.UnlinkAt(directory, name, isDirectory ? AtRemoveDirectory : 0) != 0)
+        {
+            throw CreateError("unlinkat cleanup entry", Marshal.GetLastPInvokeError());
+        }
+    }
 
     public static string GetProcFileDescriptorPath(SafeFileHandle handle)
     {
@@ -317,7 +433,9 @@ internal static class LinuxFileOperations
                 stat.FileSystemDeviceMajor,
                 stat.FileSystemDeviceMinor,
                 stat.Inode,
-                stat.Mode);
+                stat.Mode,
+                stat.LinkCount,
+                stat.UserId);
         }
         finally
         {
@@ -396,7 +514,9 @@ internal static class LinuxFileOperations
     private static LinuxFileOperationException CreateError(string operation, int error) =>
         new LinuxFileOperationException(operation, error);
 
-    internal readonly record struct FileIdentity(uint DeviceMajor, uint DeviceMinor, ulong Inode, ushort Mode)
+    public static uint CurrentUserId => NativeMethods.GetUserId();
+
+    internal readonly record struct FileIdentity(uint DeviceMajor, uint DeviceMinor, ulong Inode, ushort Mode, uint LinkCount, uint UserId)
     {
         public bool IsRegularFile => (Mode & 0xF000) == RegularFileType;
 
@@ -404,7 +524,10 @@ internal static class LinuxFileOperations
     }
 
     private sealed class LinuxFileOperationException(string operation, int error)
-        : IOException($"{operation} failed with errno {error}.");
+        : IOException($"{operation} failed with errno {error}.")
+    {
+        public int Error { get; } = error;
+    }
 
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
     private struct LinuxStatx
@@ -481,5 +604,14 @@ internal static class LinuxFileOperations
         [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux unlinkat removes only a validated leaf below an open directory handle.")]
         [SuppressMessage("Interoperability", "CA2101", Justification = "Linux path arguments are explicitly marshaled as UTF-8.")]
         public static extern int UnlinkAt(SafeFileHandle directory, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
+
+        [DllImport("libc", EntryPoint = "renameat", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux renameat publishes a bundle below an already-open staging directory.")]
+        [SuppressMessage("Interoperability", "CA2101", Justification = "Validated leaf names are explicitly marshaled as UTF-8.")]
+        public static extern int RenameAt(SafeFileHandle oldDirectory, [MarshalAs(UnmanagedType.LPUTF8Str)] string oldPath, SafeFileHandle newDirectory, [MarshalAs(UnmanagedType.LPUTF8Str)] string newPath);
+
+        [DllImport("libc", EntryPoint = "getuid")]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux getuid has no parameters or marshaling concerns.")]
+        public static extern uint GetUserId();
     }
 }

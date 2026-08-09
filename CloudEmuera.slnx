@@ -22,5 +22,6 @@
     <Project Path="tests/CloudEmuera.Infrastructure.Tests/CloudEmuera.Infrastructure.Tests.csproj" />
     <Project Path="tests/CloudEmuera.Application.Tests/CloudEmuera.Application.Tests.csproj" />
     <Project Path="tests/CloudEmuera.Api.IntegrationTests/CloudEmuera.Api.IntegrationTests.csproj" />
+    <Project Path="tests/CloudEmuera.GamePackages.Tests/CloudEmuera.GamePackages.Tests.csproj" />
   </Folder>
 </Solution>

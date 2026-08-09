@@ -22,6 +22,7 @@ public sealed class CloudEmueraDbContext(DbContextOptions<CloudEmueraDbContext> 
     public DbSet<AuditEventRow> AuditEvents => Set<AuditEventRow>();
     public DbSet<AuthSessionRow> AuthSessions => Set<AuthSessionRow>();
     public DbSet<InstanceStateRow> InstanceStates => Set<InstanceStateRow>();
+    public DbSet<GamePackageIngestionRow> GamePackageIngestions => Set<GamePackageIngestionRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

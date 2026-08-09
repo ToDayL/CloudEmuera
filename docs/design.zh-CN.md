@@ -531,6 +531,16 @@ metadata_json TEXT NOT NULL
 
 审计表只追加，不通过普通业务 API 修改或删除。
 
+P1-03 新增 `game_package_ingestions` 作为内部摄取状态和全局 staging 字节预留表。它不代表
+GameVersion，也不是对外的上传资源；READY 候选只有在 P1-04 校验 owner、digest 和期限并以 CAS
+进入 CONSUMING 后才能绑定 DRAFT。字段、状态、释放预算和遗留项恢复规则见
+[`tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md`](tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md)。
+摄取文件树仅通过受保护 dirfd 和 `openat(O_NOFOLLOW)` 访问；终态先由数据库 CAS 线性化，再以
+`cleanup_completed_at` 记录安全后序清理完成。API 的启动及周期 reaper 会回收跨重启遗留项，
+消费方只取得已校验的 content 目录句柄，不取得可重新解析的 staging 路径。每个 staging 根的
+`lease.json` 绑定 ingestion ID 与目录 inode，所有清理前必须验证；竞争状态转换同时匹配 status
+和 `state_version`。
+
 P1-01 另外建立 EF history 表 `schema_migrations`，并保留 EF Core SQLite provider 使用的
 内部 `__EFMigrationsLock` 表；产品迁移仍必须先持有 CloudEmuera 的
 `<database>.migration.lock` 文件锁。`game_files`、`compatibility_diagnostics` 和短期
@@ -586,6 +596,10 @@ SessionRoot 位于挂载数据目录中，本身就是存档的唯一权威副�
 ## 6. 游戏包与版本设计
 
 ### 6.1 上传流水线
+
+P1-03 的 ZIP 子集、暂存预留、路径规范化、双阶段配额、一次性候选内容和故障恢复细节见
+[`tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md`](tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md)，
+相关决策由 [`ADR-0008`](adr/0008-secure-zip-ingestion-policy.md) 冻结。
 
 ```text
 Upload → Quarantine → Archive scan → Safe extract → File scan
@@ -1131,10 +1145,11 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 2. `ADR-002`：所选 Linux namespace/cgroup/seccomp 沙箱在目标发行版和 Docker 配置下的能力验证、降级与拒绝就绪条件；
 3. `ADR-003`：ConsoleSnapshot 的序列化格式、大小上限和压缩策略；
 4. `ADR-004`：Emuera HTML、Sprite、CBG 和音频的 MVP 允许列表；
-5. `ADR-005`：默认活动 Session、CPU、内存、磁盘、上传和存档配额；
-6. `ADR-006`：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
-7. `ADR-008`：字体文件保留、服务和授权策略；
-8. `ADR-009`：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
+5. `ADR-0008`：安全 ZIP 摄取边界、上传/展开配额和 staging 预算（已完成）；
+6. 待编号：默认活动 Session、Worker CPU/内存/磁盘、输出和存档配额；
+7. 待编号：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
+8. 待编号：字体文件保留、服务和授权策略；
+9. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
 
 ## 20. 设计完成定义
 

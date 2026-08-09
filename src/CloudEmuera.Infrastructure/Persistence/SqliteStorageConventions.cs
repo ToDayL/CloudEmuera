@@ -17,6 +17,7 @@ public static class SqliteStorageConventions
     public const string AuditEventsTable = "audit_events";
     public const string AuthSessionsTable = "auth_sessions";
     public const string InstanceStateTable = "instance_state";
+    public const string GamePackageIngestionsTable = "game_package_ingestions";
 }
 
 public static class PersistenceLimits

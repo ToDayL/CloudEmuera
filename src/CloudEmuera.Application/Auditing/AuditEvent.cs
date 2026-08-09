@@ -18,4 +18,6 @@ public static class AuditActions
     public const string UserRoleChanged = "USER_ROLE_CHANGED";
     public const string UserStatusChanged = "USER_STATUS_CHANGED";
     public const string PasswordReset = "USER_PASSWORD_RESET";
+    public const string GamePackageIngested = "GAME_PACKAGE_INGESTED";
+    public const string GamePackageRejected = "GAME_PACKAGE_REJECTED";
 }

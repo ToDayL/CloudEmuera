@@ -37,7 +37,7 @@ public sealed class SqliteConfigurationTests
         Assert.DoesNotContain(entityTypes.SelectMany(entity => entity.GetProperties()), property => property.IsShadowProperty());
         Assert.All(entityTypes.SelectMany(entity => entity.GetForeignKeys()), foreignKey => Assert.NotEqual(DeleteBehavior.Cascade, foreignKey.DeleteBehavior));
         Assert.Equal(
-            10,
+            11,
             entityTypes.Count(entity => entity.GetTableName() is not null));
     }
 
@@ -48,7 +48,7 @@ public sealed class SqliteConfigurationTests
         using TemporarySqliteDatabase database = new();
         Assert.True((await database.MigrateAsync()).Succeeded);
         await using DbContextScope scope = database.OpenContext();
-        const string sql = "SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('users') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('games') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('game_versions') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('sessions') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('worker_leases') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('idempotency_records');";
+        const string sql = "SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('users') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('games') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('game_versions') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('sessions') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('worker_leases') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('idempotency_records') UNION ALL SELECT on_update || ':' || on_delete FROM pragma_foreign_key_list('game_package_ingestions');";
         await using Microsoft.Data.Sqlite.SqliteCommand command = scope.Connection.CreateCommand();
         command.CommandText = sql;
         await using Microsoft.Data.Sqlite.SqliteDataReader reader = await command.ExecuteReaderAsync();

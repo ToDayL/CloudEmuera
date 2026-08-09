@@ -302,21 +302,46 @@ Protection owner/type/link/mode 校验。新增 P1-01 带数据升级、并发�
 开发启动脚本同时改为在 API 启动前独占运行 Migrator；登录页会区分未迁移/未初始化、限流、服务
 故障与真实凭据错误，避免把 `503 SERVICE_NOT_READY` 误报为邮箱或密码错误。
 
-### P1-03 — 安全游戏包摄取（NEXT）
+### P1-03 — 安全游戏包摄取（DONE）
 
 需求映射：GAME-001～003、GAME-007、AC-010。
+
+详细设计：[`tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md`](tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md)，架构决策见 [`ADR-0008`](adr/0008-secure-zip-ingestion-policy.md)。
 
 交付物：流式上传、配额、隔离暂存、安全解包、编码检测、内容哈希和诊断模型；恶意归档语料库。
 
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.GamePackages.Tests --filter 'Category=ArchiveSecurity|Category=Encoding'
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.GamePackages.Tests --no-restore \
+  --configuration Release --filter 'Category=ArchiveSecurity|Category=Encoding'
 ```
 
 通过条件：正常 Shift-JIS/UTF-8 包可摄取；路径穿越、绝对路径、符号/硬链接、大小写或 Unicode 碰撞、压缩炸弹和超配额输入被拒绝；失败输入不会在目标目录留下文件。
 
-### P1-04 — 草稿编辑与不可变发布（TODO）
+实施记录（2026-08-09）：交付传输无关的非 seek 流摄取服务、classic ZIP 中央/local header
+预检、Stored/Deflate allowlist、NFC/portable path 与碰撞检查、声明/实际双重配额、CRC32、逐文件
+SHA-256 与规范 content digest、UTF-8 BOM/无 BOM 和 CP932 检测、一次性 READY/CONSUMING
+消费、追加式成功/拒绝审计，以及 SQLite 持久 staging 预算和过期 reaper。新增标准 EF migration
+`AddGamePackageIngestions`、模型快照、API DI 接线和 locked `CloudEmuera.GamePackages.Tests` 项目。
+整改复核后，摄取、分析、消费和清理全部锚定受保护 dirfd，使用 `openat(O_NOFOLLOW)`、`renameat`
+和安全后序 `unlinkat`，不再以 `GetFullPath + StartsWith` 或递归 `Directory.Delete` 作为边界。
+READY 消费在 CAS 前校验 manifest/content 句柄，CONSUMED/FAILED/ABANDONED 以
+`cleanup_completed_at` 跨重启收敛；API 注册启动及周期 reaper，超时 CONSUMING 有 watchdog。
+结构化诊断补齐 messageKey/arguments、NFC、UTF-16/32、NUL/control 与截断汇总；Unicode Path
+extra `0x7075` 按 legacy-name CRC 和严格 UTF-8 验证。
+
+44 项游戏包测试覆盖非 seek UTF-8/CP932 正常包、路径/碰撞/链接、ZIP64、加密、未知 method、
+overlap、truncated Deflate、FIFO/socket/device、Unicode Path extra、声明/实际配额、内容摘要、
+TOCTOU、取消、模拟磁盘写满、rename/CAS/audit 故障、过期 CONSUMING、终态清理重试、reaper 与
+消费竞争、Abandon/Complete CAS、lease 归属篡改、可配置中央目录边界及并发预算唯一胜者；API
+后台注册 3 项与 Migration/PersistenceConstraint 34 项回归通过。
+`./scripts/check.sh` 通过 locked restore、Release 0 warning/0 error、全部 .NET 与 Web 测试、Web
+typecheck 和 production build；`./scripts/verify-third-party.sh` 与 `git diff --check` 通过。
+
+### P1-04 — 草稿编辑与不可变发布（NEXT）
 
 需求映射：GAME-004～010。
 
@@ -482,6 +507,6 @@ Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只
 
 ## 6. 近期执行队列
 
-1. 执行 P1-03，落地安全游戏包摄取、隔离暂存与恶意归档防御。
+1. 执行 P1-04，落地 Game/GameVersion API、草稿编辑、验证和不可变发布。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。
