@@ -177,6 +177,32 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
+  it("surfaces persisted blocking diagnostics after a failed activation", async () => {
+    const draft = game({ workspaceStatus: "DRAFT", stateVersion: 2 });
+    const blocking = [
+      { id: "diag-1", code: "ERB_ENTRYPOINT_MISSING", severity: "ERROR", path: "ERB", message: "ERB directory must contain at least one .ERB file at the package root.", messageKey: "game.validation.erb_entrypoint_missing", activationBlocking: true, overridePolicy: "NEVER", overriddenBy: null, overriddenAt: null },
+    ];
+    mockFetch((url, init) => {
+      if (url === "/api/v1/games/g1") return jsonResponse(draft);
+      if (url === "/api/v1/games/g1/diagnostics") return jsonResponse({ items: blocking });
+      if (url.endsWith(":activate") && init?.method === "POST") {
+        return jsonResponse({ code: "ACTIVATION_VALIDATION_FAILED", message: "The workspace has activation-blocking diagnostics.", requestId: "req-1" }, 422);
+      }
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games/g1");
+    expect(await screen.findByRole("heading", { name: "ERA: The World" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "验证并启用" }));
+    expect(await screen.findByText(/1 条阻断诊断/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "兼容性" }));
+    expect(await screen.findByText("ERB directory must contain at least one .ERB file at the package root.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /重新验证/ })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("shows reconnect state without closing the session", () => {
     renderAt("/sessions/sess-world");
 

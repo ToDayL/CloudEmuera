@@ -65,6 +65,19 @@ export interface GameValidationResult {
   stateVersion: number;
 }
 
+export interface GameDiagnosticItem {
+  id: string;
+  code: string;
+  severity: string;
+  path: string | null;
+  message: string;
+  messageKey: string;
+  activationBlocking: boolean;
+  overridePolicy: string;
+  overriddenBy: string | null;
+  overriddenAt: string | null;
+}
+
 export type ContentOperationType = "IMPORT" | "RESET_WORKSPACE" | "VALIDATE" | "ACTIVATE";
 export type ContentOperationStatus = "PENDING" | "RUNNING" | "CONTENT_READY" | "COMMITTED" | "FAILED";
 
@@ -278,6 +291,11 @@ export async function searchFiles(
   const params = new URLSearchParams({ scope, q: query, limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
   return apiRequest<GameSearchPage>(`/games/${encodeURIComponent(gameId)}/search?${params.toString()}`);
+}
+
+export async function listDiagnostics(gameId: string): Promise<GameDiagnosticItem[]> {
+  const page = await apiRequest<{ items: GameDiagnosticItem[] }>(`/games/${encodeURIComponent(gameId)}/diagnostics`);
+  return page.items;
 }
 
 export async function validateGame(gameId: string, stateVersion: number): Promise<GameValidationResult> {

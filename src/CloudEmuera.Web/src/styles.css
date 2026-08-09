@@ -338,6 +338,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .hero-actions .play-button { min-width: 152px; }
 .hero-actions .secondary-button, .hero-actions .danger-button { min-height: 34px; font-size: 10px; }
 .error-banner { display: flex; align-items: center; gap: 9px; margin-top: 18px; padding: 12px 15px; border: 1px solid #e6c8c2; border-radius: 10px; color: #a24236; background: #fbeeeb; font-size: 11px; }
+.error-banner small { display: block; margin-top: 2px; color: #8d625a; font-size: 10px; }
 .busy-banner { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding: 12px 15px; border: 1px solid #dfe2da; border-radius: 10px; color: #5b6057; background: #f3f4ef; font-size: 11px; }
 .loading-panel, .error-panel { display: flex; min-height: 170px; align-items: center; justify-content: center; gap: 13px; padding: 24px; }
 .loading-panel p, .error-panel p { margin: 0; }

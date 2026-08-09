@@ -10,8 +10,10 @@ import {
   useParams,
 } from "react-router-dom";
 import { CreateUserInput, CurrentUser, UpdateUserInput, useAuth } from "./auth";
+import { ApiError } from "./api";
 import {
   ContentScope,
+  GameDiagnosticItem,
   GameFileItem,
   GameLibraryItem,
   GameSearchMatch,
@@ -29,6 +31,7 @@ import {
   formatDateTime,
   getGame,
   ingestGamePackage,
+  listDiagnostics,
   listFiles,
   listGames,
   readTextFile,
@@ -153,6 +156,16 @@ function coverColor(name: string): string {
   let hash = 0;
   for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return coverPalette[hash % coverPalette.length];
+}
+
+function actionErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "ACTIVATION_VALIDATION_FAILED") return "验证未通过：工作区存在阻断启用的诊断。";
+    if (err.code === "GAME_VALIDATION_FAILED") return "验证失败，无法完成启用。";
+    if (err.code === "VALIDATION_IN_PROGRESS") return "验证正在进行中，请稍后刷新查看结果。";
+    if (err.code === "ACTIVATION_IN_PROGRESS") return "启用正在进行中，请稍后刷新查看结果。";
+  }
+  return err instanceof Error ? err.message : "操作失败。";
 }
 
 function GamesPage() {
@@ -362,6 +375,7 @@ function GameDetailPage() {
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [validation, setValidation] = useState<GameValidationResult | null>(null);
+  const [diagnostics, setDiagnostics] = useState<GameDiagnosticItem[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -373,7 +387,12 @@ function GameDetailPage() {
     finally { setLoading(false); }
   }, [gameId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  const loadDiagnostics = useCallback(async () => {
+    try { setDiagnostics(await listDiagnostics(gameId)); }
+    catch { /* diagnostics are best-effort; the tab falls back to the in-session result */ }
+  }, [gameId]);
+
+  useEffect(() => { void refresh(); void loadDiagnostics(); }, [refresh, loadDiagnostics]);
 
   const run = useCallback(async (label: string, action: () => Promise<GameLibraryItem | GameValidationResult | void>) => {
     setBusy(label); setActionError(null);
@@ -381,16 +400,22 @@ function GameDetailPage() {
       const result = await action();
       if (result && typeof result === "object" && "canActivate" in result) setValidation(result as GameValidationResult);
       await refresh();
+      await loadDiagnostics();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "操作失败。");
+      setActionError(actionErrorMessage(err));
+      // Failed validation/activation persists diagnostics; surface them so the
+      // reason is never hidden behind a generic message.
+      if (err instanceof ApiError && ["ACTIVATION_VALIDATION_FAILED", "GAME_VALIDATION_FAILED", "VALIDATION_IN_PROGRESS"].includes(err.code)) {
+        await loadDiagnostics();
+      }
     } finally { setBusy(""); }
-  }, [refresh]);
+  }, [refresh, loadDiagnostics]);
 
   const deleteGameAction = async () => {
     if (!game) return;
     setBusy("正在删除"); setActionError(null);
     try { await deleteGame(game.id, game.stateVersion); navigate("/games", { replace: true }); }
-    catch (err) { setActionError(err instanceof Error ? err.message : "删除失败。"); setBusy(""); }
+    catch (err) { setActionError(actionErrorMessage(err)); setBusy(""); }
   };
 
   if (loading || (!game && !loadError)) return <>
@@ -404,6 +429,11 @@ function GameDetailPage() {
 
   const canEdit = game.workspaceStatus === "DRAFT";
   const canPlay = game.hasCurrentContent && game.status === "ACTIVE";
+  const displayDiagnostics: Array<{ id: string; code: string; severity: string; path: string | null; message: string; activationBlocking: boolean }> =
+    diagnostics.length > 0
+      ? diagnostics
+      : (validation?.diagnostics ?? []).map((diagnostic, index) => ({ id: `validation-${index}`, code: diagnostic.code, severity: diagnostic.severity, path: diagnostic.path, message: diagnostic.message, activationBlocking: diagnostic.activationBlocking }));
+  const blockingCount = displayDiagnostics.filter(diagnostic => diagnostic.activationBlocking).length;
 
   return <>
     <div className="backline"><Link to="/games">← 返回游戏库</Link></div>
@@ -428,7 +458,7 @@ function GameDetailPage() {
       </div>
     </section>
     <div className="detail-tabs">{(["内容", "文件", "兼容性"] as const).map(item => <button className={tab === item ? "active" : ""} onClick={() => setTab(item)} key={item}>{item}</button>)}</div>
-    {actionError && <div className="error-banner" role="alert"><Icon name="warning"/><span>{actionError}</span></div>}
+    {actionError && <div className="error-banner" role="alert"><Icon name="warning"/><span>{actionError}{blockingCount > 0 && <small> · {blockingCount} 条阻断诊断，详见「兼容性」</small>}</span></div>}
     {busy && <div className="busy-banner" role="status"><span className="mini-spinner"/><span>{busy}…</span></div>}
 
     {tab === "内容" && <section className="panel">
@@ -458,20 +488,21 @@ function GameDetailPage() {
       </div>}
       {!game.hasCurrentContent && !canEdit && <div className="content-list empty-list"><article><span className="timeline-dot"/><div><h3>这个游戏还没有内容</h3><p>导入一个游戏包开始。</p></div><button className="secondary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>导入游戏包</button></article></div>}
       {canEdit && <div className="panel-foot-actions"><button className="secondary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>上传新游戏包替换工作区</button></div>}
-      {validation && <div className={`validation-banner ${validation.canActivate ? "ok" : "bad"}`}><Icon name={validation.canActivate ? "check" : "warning"}/><p><strong>{validation.canActivate ? "最近一次验证通过" : "最近一次验证存在阻断诊断"}</strong><small>{validation.diagnostics.length} 条诊断 · 摘要 {shortDigest(validation.contentDigest)}</small></p><button className="text-button" onClick={() => setTab("兼容性")}>查看详情 <Icon name="arrow"/></button></div>}
+      {(validation || displayDiagnostics.length > 0) && <div className={`validation-banner ${blockingCount === 0 ? "ok" : "bad"}`}><Icon name={blockingCount === 0 ? "check" : "warning"}/><p><strong>{blockingCount === 0 ? "验证通过" : "存在阻断启用的诊断"}</strong><small>{validation ? `${validation.diagnostics.length} 条诊断 · 摘要 ${shortDigest(validation.contentDigest)}` : `${displayDiagnostics.length} 条诊断`}</small></p><button className="text-button" onClick={() => setTab("兼容性")}>查看详情 <Icon name="arrow"/></button></div>}
     </section>}
 
     {tab === "文件" && <GameFilesPanel game={game} onChanged={() => void refresh()}/>}
 
     {tab === "兼容性" && <section className="panel diagnostics">
-      {validation ? <>
-        <div className="diagnostic-summary">
-          <span className={`score ${validation.canActivate ? "ok" : "bad"}`}>{validation.canActivate ? "✓" : "!"}</span>
-          <div><h2>{validation.canActivate ? "验证通过，可以启用" : "存在阻断启用的诊断"}</h2><p>{validation.fileCount} 个文件 · {formatBytes(validation.totalBytes)} · 摘要 {shortDigest(validation.contentDigest)}</p></div>
-        </div>
-        {validation.diagnostics.length === 0 ? <p className="diagnostic-none">没有诊断。</p>
-          : validation.diagnostics.map((diagnostic, index) => <div className={`diagnostic-row ${diagnostic.activationBlocking ? "blocking" : ""}`} key={index}><Icon name={diagnostic.activationBlocking ? "warning" : "check"}/><span><strong>{diagnostic.code}</strong>{diagnostic.path && <small> · {diagnostic.path}</small>}<p>{diagnostic.message}</p></span><small>{diagnostic.severity}</small></div>)}
-      </> : <div className="diagnostic-empty"><Icon name="spark" size={26}/><h2>尚未运行验证</h2><p>运行一次验证以检查目录结构、编码、解析错误与禁止能力。</p><button className="primary-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>运行验证</button></div>}
+      {!validation && displayDiagnostics.length === 0 ? <div className="diagnostic-empty"><Icon name="spark" size={26}/><h2>尚未运行验证</h2><p>运行一次验证以检查目录结构、编码、解析错误与禁止能力。</p><button className="primary-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>运行验证</button></div>
+        : <>
+          <div className="diagnostic-summary">
+            <span className={`score ${blockingCount === 0 ? "ok" : "bad"}`}>{blockingCount === 0 ? "✓" : "!"}</span>
+            <div><h2>{blockingCount === 0 ? "验证通过，可以启用" : "存在阻断启用的诊断"}</h2><p>{validation ? `${validation.fileCount} 个文件 · ${formatBytes(validation.totalBytes)} · 摘要 ${shortDigest(validation.contentDigest)}` : `${displayDiagnostics.length} 条诊断 · 工作区草稿`}</p></div>
+          </div>
+          {displayDiagnostics.length === 0 ? <p className="diagnostic-none">没有诊断。</p>
+            : displayDiagnostics.map(diagnostic => <div className={`diagnostic-row ${diagnostic.activationBlocking ? "blocking" : ""}`} key={diagnostic.id}><Icon name={diagnostic.activationBlocking ? "warning" : "check"}/><span><strong>{diagnostic.code}</strong>{diagnostic.path && <small> · {diagnostic.path}</small>}<p>{diagnostic.message}</p></span><small>{diagnostic.severity}</small></div>)}
+        </>}
       {canEdit && <div className="diagnostic-foot"><button className="secondary-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>{busy === "正在验证" ? "验证中…" : "重新验证"}</button></div>}
     </section>}
 
