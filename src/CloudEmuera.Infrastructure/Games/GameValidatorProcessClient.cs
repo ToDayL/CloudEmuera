@@ -8,7 +8,7 @@ public sealed record GameValidatorProcessOptions
 {
     public required string ExecutablePath { get; init; }
     public string? AssemblyPath { get; init; }
-    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(20);
+    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(120);
     public int MaxOutputBytes { get; init; } = 64 * 1024;
 }
 

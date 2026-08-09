@@ -20,6 +20,11 @@ internal static class ValidatorProcess
             SessionRootLayout layout = new SessionRootLayoutBuilder(root, Path.Combine(temporary, "session"), temporary).Build();
             var fileSystem = new LocalRuntimeFileSystem(layout.RuntimePaths);
             var console = new StructuredGameConsole();
+            double initTimeoutSeconds = double.TryParse(
+                Environment.GetEnvironmentVariable("CLOUDEMUERA_VALIDATOR_INIT_TIMEOUT_SECONDS"),
+                System.Globalization.NumberStyles.AllowDecimalPoint,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out double configured) && configured > 0 ? configured : 60;
             var options = new EmueraRuntimeOptions(
                 layout.RuntimePaths,
                 console,
@@ -28,7 +33,7 @@ internal static class ValidatorProcess
                 new RuntimeImageMetadataPort(fileSystem),
                 new NoOpRuntimeAudioPort(),
                 EmueraCompatibilityProfiles.V18Compatible,
-                TimeSpan.FromSeconds(12),
+                TimeSpan.FromSeconds(initTimeoutSeconds),
                 TimeSpan.FromSeconds(1));
             await using EmueraRuntimeHost host = EmueraRuntimeHost.Create(options);
             EmueraRuntimeResult result = await host.InitializeAsync().ConfigureAwait(false);

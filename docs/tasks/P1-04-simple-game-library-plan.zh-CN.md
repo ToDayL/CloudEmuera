@@ -19,6 +19,21 @@ NFR-011/013、AC-008～010/014。
 [`ADR-0008`](../adr/0008-secure-zip-ingestion-policy.md)；SessionRoot 所有权见
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)。
 
+## 0.7 2026-08-10 Validator 超时与失败重试的状态版本冲突
+
+- 现象：大游戏验证超时；失败后立即重试报 “The game was changed by another request.”，
+  过一会儿又能验证但仍超时。
+- 原因：Validator 初始化 deadline 硬编码 12s、进程超时默认 20s，对大型游戏偏紧；且每次验证
+  都会持久化推进 `state_version` 并把工作区置为 VALIDATING，失败路径不恢复——前端保留旧
+  `stateVersion` 重试即 412，工作区要等后台 reaper（1 分钟）才恢复 DRAFT。
+- 修复：
+  - Validator 初始化 deadline 默认 60s（`CLOUDEMUERA_VALIDATOR_INIT_TIMEOUT_SECONDS`），
+    进程超时默认 120s（`CloudEmuera:ValidatorTimeoutSeconds`）；
+  - `ValidateAsync` 失败时立即把工作区恢复为 DRAFT（best-effort，reaper 兜底）；
+  - 前端在任何失败动作后刷新游戏状态（重试不再用陈旧版本），并把 `GAME_STATE_CONFLICT`
+    映射为清晰提示。
+- 验证：Infrastructure 新增失败验证恢复工作区测试；API GameLibrary 5 项通过；`check.sh` 全绿。
+
 ## 0.6 2026-08-10 删除后的游戏名称可复用（修复“删除似乎没有清理数据库”）
 
 - 现象：删除游戏后同名重建报 “A game with the same name already exists…”；

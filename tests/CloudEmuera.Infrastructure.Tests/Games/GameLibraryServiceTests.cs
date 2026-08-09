@@ -461,6 +461,43 @@ public sealed class GameLibraryServiceTests
 
     [Fact]
     [Trait("Category", "GameLibrary")]
+    public async Task FailedValidationRestoresEditableWorkspaceImmediately()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        string gameDirectory = Path.Combine(database.RootPath, "games", "game_fixture");
+        string workspace = Path.Combine(gameDirectory, "workspace");
+        Directory.CreateDirectory(Path.Combine(workspace, "ERB"));
+        File.WriteAllText(Path.Combine(workspace, "ERB", "START.ERB"), "@SYSTEM_TITLE\n");
+        File.WriteAllText(Path.Combine(workspace, "emuera.config"), "Use sav folder:NO\n");
+        GameStorageOwnerMarker.Initialize(gameDirectory, "game_fixture", "usr_fixture");
+
+        await using DbContextScope scope = database.OpenContext();
+        scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
+        scope.Context.Users.Add(PersistenceFixtures.CreateUser());
+        GameRow game = PersistenceFixtures.CreateGame(withContent: false);
+        game.WorkspaceStatus = GameWorkspaceStatus.Draft;
+        game.WorkspacePath = "games/game_fixture/workspace";
+        scope.Context.Games.Add(game);
+        await scope.Context.SaveChangesAsync();
+
+        int expectedStateVersion = game.StateVersion + 1;
+        var service = new GameLibraryService(scope.Context, new UnusedIngestionService(), new ThrowingValidator(), database.Options, TimeProvider.System);
+        CurrentActor actor = new("usr_fixture", "PLAYER", "auths_fixture");
+        GameLibraryException failure = await Assert.ThrowsAsync<GameLibraryException>(() =>
+            service.ValidateAsync(actor, game.Id, game.StateVersion));
+        Assert.Equal(GameLibraryErrorCodes.ValidationFailed, failure.Code);
+
+        scope.Context.ChangeTracker.Clear();
+        GameRow after = await scope.Context.Games.SingleAsync(row => row.Id == game.Id);
+        Assert.Equal(GameWorkspaceStatus.Draft, after.WorkspaceStatus);
+        Assert.Equal(expectedStateVersion, after.StateVersion);
+        Assert.Equal(GameContentOperationStatus.Failed,
+            (await scope.Context.GameContentOperations.AsNoTracking().SingleAsync()).Status);
+    }
+
+    [Fact]
+    [Trait("Category", "GameLibrary")]
     public async Task ValidatorCrashIsConvertedToBlockingDiagnosticAndKeepsWorkspaceEditable()
     {
         using TemporarySqliteDatabase database = new();
@@ -658,6 +695,12 @@ public sealed class GameLibraryServiceTests
         public Task<DateTimeOffset> RenewConsumeAsync(string ingestionId, string ownerUserId, string expectedContentDigest, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CompleteConsumeAsync(string ingestionId, string ownerUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task AbandonAsync(string ingestionId, string ownerUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingValidator : IGameContentValidator
+    {
+        public Task<GameParserValidationResult> ValidateAsync(string snapshotRoot, CancellationToken cancellationToken = default) =>
+            throw new GameLibraryException(GameLibraryErrorCodes.ValidationFailed, "simulated validator failure");
     }
 
     private sealed class CrashReportingValidator : IGameContentValidator

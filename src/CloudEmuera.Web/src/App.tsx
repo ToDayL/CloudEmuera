@@ -165,6 +165,7 @@ function actionErrorMessage(err: unknown): string {
     if (err.code === "GAME_VALIDATION_FAILED") return "验证失败，无法完成启用。";
     if (err.code === "VALIDATION_IN_PROGRESS") return "验证正在进行中，请稍后刷新查看结果。";
     if (err.code === "ACTIVATION_IN_PROGRESS") return "启用正在进行中，请稍后刷新查看结果。";
+    if (err.code === "GAME_STATE_CONFLICT") return "游戏状态已变化（可能是验证/启用刚完成），已刷新，请重试。";
   }
   return err instanceof Error ? err.message : "操作失败。";
 }
@@ -416,8 +417,10 @@ function GameDetailPage() {
       await loadDiagnostics();
     } catch (err) {
       setActionError(actionErrorMessage(err));
-      // Failed validation/activation persists diagnostics; surface them so the
-      // reason is never hidden behind a generic message.
+      // Failed actions still bump the server-side state version (the operation
+      // transition is durable); refresh so a retry never fails with a stale
+      // version, and surface persisted diagnostics for validation failures.
+      await refresh();
       if (err instanceof ApiError && ["ACTIVATION_VALIDATION_FAILED", "GAME_VALIDATION_FAILED", "VALIDATION_IN_PROGRESS"].includes(err.code)) {
         await loadDiagnostics();
       }

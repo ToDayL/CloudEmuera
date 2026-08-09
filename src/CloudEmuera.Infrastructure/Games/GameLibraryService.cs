@@ -501,6 +501,17 @@ public sealed class GameLibraryService(
         catch
         {
             await FailOperationAsync(operation.Id, GameLibraryErrorCodes.ValidationFailed).ConfigureAwait(false);
+            // A failed validation must not leave the workspace stuck in VALIDATING
+            // until the background reaper runs; restore DRAFT so the user can edit
+            // or retry immediately. Best effort - the reaper reconciles anyway.
+            try
+            {
+                row.WorkspaceStatus = GameWorkspaceStatus.Draft;
+                await db.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is DbUpdateException or DbUpdateConcurrencyException)
+            {
+            }
             throw;
         }
         finally

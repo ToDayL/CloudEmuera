@@ -44,10 +44,12 @@ builder.Services.AddScoped<IGamePackageIngestionService, GamePackageIngestionSer
 builder.Services.AddScoped<IGameLibraryService, GameLibraryService>();
 string validatorAssembly = builder.Configuration["CloudEmuera:ValidatorAssembly"]
     ?? ValidatorAssemblyResolver.Resolve(builder.Environment.ContentRootPath, builder.Environment.IsDevelopment() ? "Debug" : "Release");
+double validatorTimeoutSeconds = builder.Configuration.GetValue<double?>("CloudEmuera:ValidatorTimeoutSeconds") ?? 120;
 builder.Services.AddSingleton(new GameValidatorProcessOptions
 {
     ExecutablePath = "dotnet",
     AssemblyPath = validatorAssembly,
+    Timeout = TimeSpan.FromSeconds(validatorTimeoutSeconds > 0 ? validatorTimeoutSeconds : 120),
 });
 builder.Services.AddSingleton<IGameContentValidator, GameValidatorProcessClient>();
 builder.Services.AddScoped<IGameContentCopyLeaseStore, GameContentCopyLeaseStore>();
