@@ -92,3 +92,20 @@ requirements/ADR references, and verification commands.
 - Verification: the NativeSave compatibility scenario uses two fully
   released hosts and checks root and `sav/` layouts, while SessionRoot tests
   cover copy isolation and headless migration fail-closed behavior.
+
+## 2026-08-09 — P1-04 Validator parity across Debug/Release
+
+- Headless glue change: `UpstreamHeadless/HeadlessEmueraConsole.cs` no longer
+  records `PrintSystemLine` status output into `RuntimeMessages`. The pinned
+  upstream DEBUG build emits elapsed-time status lines through this channel,
+  and the headless session treats any recorded message as a fatal script
+  diagnostic. System/progress lines are informational; only `PrintError` and
+  `PrintWarning` now gate activation. No `Upstream/` source files changed.
+- Scope: P1-04 GAME-007 and the one-shot parser Validator; this keeps the
+  Debug build used by the development API consistent with the Release build
+  used by CI.
+- Verification: `GameValidatorProcessIntegrationTests` and the new
+  `GameLibraryApiContractTests.CreateIngestBindValidateActivateFlowWorksOverHttp`
+  pass; `HeadlessRuntimeFixtureTests.HeadlessSystemLinesAreNotRecordedAsScriptDiagnostics`
+  covers the recording rule; the Validator Debug and Release DLLs both return
+  `canActivate: true` for the minimal controlled package.

@@ -27,5 +27,6 @@
     <Compile Include="HeadlessPlatformStubs.cs" />
     <Compile Include="HeadlessEmueraConsole.cs" />
     <Compile Include="UpstreamRuntimeSession.cs" />
+    <Compile Include="Properties/AssemblyInfo.cs" />
   </ItemGroup>
 </Project>

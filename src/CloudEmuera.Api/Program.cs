@@ -42,8 +42,7 @@ builder.Services.AddSingleton(new GamePackageStorageOptions { DataRoot = dataRoo
 builder.Services.AddScoped<IGamePackageIngestionService, GamePackageIngestionService>();
 builder.Services.AddScoped<IGameLibraryService, GameLibraryService>();
 string validatorAssembly = builder.Configuration["CloudEmuera:ValidatorAssembly"]
-    ?? Path.Combine(builder.Environment.ContentRootPath, "src", "CloudEmuera.Validator", "bin",
-        builder.Environment.IsDevelopment() ? "Debug" : "Release", "net10.0", "CloudEmuera.Validator.dll");
+    ?? ValidatorAssemblyResolver.Resolve(builder.Environment.ContentRootPath, builder.Environment.IsDevelopment() ? "Debug" : "Release");
 builder.Services.AddSingleton(new GameValidatorProcessOptions
 {
     ExecutablePath = "dotnet",
@@ -439,6 +438,32 @@ app.MapFallbackToFile("index.html");
 app.Run();
 
 public partial class Program;
+
+internal static class ValidatorAssemblyResolver
+{
+    /// <summary>
+    /// Dev/test containers run with the API project directory as the content root;
+    /// walk up to the repository root to locate the pinned Validator project. Prefer
+    /// the build configuration matching the host environment and fall back to the
+    /// other configuration so tests can run against whichever DLL exists. Published
+    /// production layouts place the validator side-by-side with the API.
+    /// </summary>
+    public static string Resolve(string contentRoot, string preferredConfiguration)
+    {
+        string[] configurations = preferredConfiguration == "Release" ? ["Release", "Debug"] : ["Debug", "Release"];
+        DirectoryInfo? current = new DirectoryInfo(contentRoot);
+        while (current is not null)
+        {
+            foreach (string configuration in configurations)
+            {
+                string candidate = Path.Combine(current.FullName, "src", "CloudEmuera.Validator", "bin", configuration, "net10.0", "CloudEmuera.Validator.dll");
+                if (File.Exists(candidate)) return candidate;
+            }
+            current = current.Parent;
+        }
+        return Path.Combine(AppContext.BaseDirectory, "CloudEmuera.Validator.dll");
+    }
+}
 
 internal static class ApiIdentity
 {

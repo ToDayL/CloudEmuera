@@ -1,6 +1,7 @@
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
+using MinorShift.Emuera.GameView;
 using Xunit;
 
 namespace CloudEmuera.RuntimeCompatibility.Tests;
@@ -8,6 +9,22 @@ namespace CloudEmuera.RuntimeCompatibility.Tests;
 [Trait("Category", "RuntimeCompatibility")]
 public sealed class HeadlessRuntimeFixtureTests
 {
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HeadlessSystemLinesAreNotRecordedAsScriptDiagnostics()
+    {
+        // P1-04 GAME-007: the pinned upstream DEBUG build emits elapsed-time
+        // status lines through PrintSystemLine. They are informational and must
+        // never gate activation; only warnings and errors may become diagnostics.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.PrintSystemLine("経過時間:1234.5ms");
+        Assert.Empty(headless.RuntimeMessages);
+        headless.PrintError("real error");
+        Assert.Contains(headless.RuntimeMessages, message => message.Contains("real error", StringComparison.Ordinal));
+    }
+
+
     [Theory]
     [InlineData("v18-core")]
     [InlineData("em-ee-core")]

@@ -89,7 +89,10 @@ internal sealed class EmueraConsole
     public void Print(string value, bool lineEnd = true) => EmitText(value);
     public void PrintSingleLine(string value) => PrintSingleLine(value, false);
     public void PrintSingleLine(string value, bool temporary) => EmitLine(value);
-    public void PrintSystemLine(string value) => RecordMessage(value);
+    // Upstream status/progress output (for example the DEBUG-only elapsed-time
+    // reports) must not be treated as script diagnostics. Only warnings and errors
+    // are recorded so the headless session can gate activation on real problems.
+    public void PrintSystemLine(string value) { }
     public void PrintError(string value) => RecordMessage(value);
     public void PrintWarning(string value, ScriptPosition? position, int level) =>
         RecordMessage(FormatDiagnostic(value, position));
