@@ -252,6 +252,50 @@ public sealed class GameLibraryServiceTests
 
     [Fact]
     [Trait("Category", "GameLibrary")]
+    public async Task ListDiagnosticsReturnsResolvedMessagesOnlyToOwner()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        string gameDirectory = Path.Combine(database.RootPath, "games", "game_fixture");
+        Directory.CreateDirectory(gameDirectory);
+        GameStorageOwnerMarker.Initialize(gameDirectory, "game_fixture", "usr_fixture");
+        await using DbContextScope scope = database.OpenContext();
+        scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
+        scope.Context.Users.Add(PersistenceFixtures.CreateUser());
+        GameRow game = PersistenceFixtures.CreateGame(withContent: false);
+        scope.Context.Games.Add(game);
+        scope.Context.CompatibilityDiagnostics.Add(new CompatibilityDiagnosticRow
+        {
+            Id = "diag_list",
+            GameId = game.Id,
+            WorkspaceRevision = game.StateVersion,
+            Stage = "STRUCTURE",
+            Severity = "ERROR",
+            Code = "ERB_ENTRYPOINT_MISSING",
+            LogicalPath = "ERB",
+            MessageKey = "game.validation.erb_entrypoint_missing",
+            ActivationBlocking = true,
+            OverridePolicy = "NEVER",
+            CreatedAt = PersistenceFixtures.CreatedAt,
+        });
+        await scope.Context.SaveChangesAsync();
+
+        var service = new GameLibraryService(scope.Context, new UnusedIngestionService(), new AcceptingValidator(), database.Options, TimeProvider.System);
+        IReadOnlyList<GameDiagnosticItem> diagnostics = await service.ListDiagnosticsAsync(
+            new CurrentActor("usr_fixture", "PLAYER", "auths_fixture"), game.Id);
+
+        GameDiagnosticItem item = Assert.Single(diagnostics);
+        Assert.Equal("ERB_ENTRYPOINT_MISSING", item.Code);
+        Assert.True(item.ActivationBlocking);
+        Assert.Contains("at the package root", item.Message, StringComparison.Ordinal);
+
+        GameLibraryException hidden = await Assert.ThrowsAsync<GameLibraryException>(() =>
+            service.ListDiagnosticsAsync(new CurrentActor("usr_other", "PLAYER", "auths_other"), game.Id));
+        Assert.Equal(GameLibraryErrorCodes.NotFound, hidden.Code);
+    }
+
+    [Fact]
+    [Trait("Category", "GameLibrary")]
     public async Task SharedGameExposesCurrentButNeverOwnerWorkspace()
     {
         using TemporarySqliteDatabase database = new();

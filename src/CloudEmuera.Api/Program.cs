@@ -385,6 +385,11 @@ games.MapGet("/{id}/download", async (string id, string? scope, string path, Htt
     return await ApiIdentity.GameResultAsync(() => library.OpenDownloadAsync(actor, id, scope, path, context.RequestAborted),
         download => ApiIdentity.SetDownloadHeaders(context, download)).ConfigureAwait(false);
 }).RequireRateLimiting("game-read");
+games.MapGet("/{id}/diagnostics", async (string id, HttpContext context, IGameLibraryService library) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    return await ApiIdentity.GameResultAsync(() => library.ListDiagnosticsAsync(actor, id, context.RequestAborted), items => Results.Ok(new { items })).ConfigureAwait(false);
+}).RequireRateLimiting("game-read");
 games.MapGet("/{id}/operations/{operationId}", async (string id, string operationId, HttpContext context, IGameLibraryService library) =>
 {
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);

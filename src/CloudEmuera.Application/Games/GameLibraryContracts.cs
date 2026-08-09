@@ -21,7 +21,7 @@ public sealed record GameSearchPage(IReadOnlyList<GameSearchMatch> Items, string
 public sealed record GameTextFile(string Path, string Content, string Encoding, bool HasBom, long Bytes, string ETag, int StateVersion);
 public sealed record GameFileDownload(string FileName, long Bytes, string ETag, Stream Content);
 public sealed record GameContentOperationItem(string Id, string Type, string Status, string? ContentDigest, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt);
-public sealed record GameDiagnosticItem(string Id, string Code, string Severity, string? Path, string MessageKey, bool ActivationBlocking, string OverridePolicy, string? OverriddenBy, DateTimeOffset? OverriddenAt);
+public sealed record GameDiagnosticItem(string Id, string Code, string Severity, string? Path, string Message, string MessageKey, bool ActivationBlocking, string OverridePolicy, string? OverriddenBy, DateTimeOffset? OverriddenAt);
 
 public sealed record GameValidationDiagnostic(
     string Code,
@@ -97,6 +97,7 @@ public interface IGameLibraryService
     Task<GameLibraryItem> WriteTextFileAsync(CurrentActor actor, string gameId, string path, string content, int expectedStateVersion, string? expectedFileETag = null, bool requireAbsent = false, CancellationToken cancellationToken = default);
     Task<GameLibraryItem> DeletePathAsync(CurrentActor actor, string gameId, string path, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<GameDiagnosticItem> OverrideDiagnosticAsync(CurrentActor actor, string gameId, string diagnosticId, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<GameDiagnosticItem>> ListDiagnosticsAsync(CurrentActor actor, string gameId, CancellationToken cancellationToken = default);
     Task<GameValidationResult> ValidateAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<GameLibraryItem> ActivateAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
 }

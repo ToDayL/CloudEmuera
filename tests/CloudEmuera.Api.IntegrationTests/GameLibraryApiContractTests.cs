@@ -102,6 +102,78 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.NotNull(download.Content.Headers.ContentDisposition);
     }
 
+    [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task FailedActivationPersistsReadableBlockingDiagnostics()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
+        _factory = new IdentityFactory(_dataRoot);
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+
+        string csrf = await GetCsrfAsync(client);
+        Assert.True((await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf)).IsSuccessStatusCode);
+        csrf = await GetCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Nested Folder Fixture", "PRIVATE"), csrf))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
+        csrf = await GetCsrfAsync(client);
+        using MemoryStream nestedArchive = CreateNestedFolderArchive();
+        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", nestedArchive.ToArray(), "application/zip", csrf, $"ingest-{Guid.NewGuid():N}"))
+            .Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
+            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, $"bind-{Guid.NewGuid():N}"))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
+        Assert.Equal("DRAFT", draft.WorkspaceStatus);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage validated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, $"validate-{Guid.NewGuid():N}");
+        GameValidationResult validation = await validated.Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
+        Assert.Equal(HttpStatusCode.OK, validated.StatusCode);
+        Assert.False(validation.CanActivate);
+        Assert.Contains(validation.Diagnostics, diagnostic => diagnostic.Code == "ERB_ENTRYPOINT_MISSING" && diagnostic.ActivationBlocking);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage activated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, $"activate-{Guid.NewGuid():N}");
+        ApiError error = await activated.Content.ReadFromJsonAsync<ApiError>() ?? throw new Xunit.Sdk.XunitException("Activation error was missing.");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, activated.StatusCode);
+        Assert.Equal("ACTIVATION_VALIDATION_FAILED", error.Code);
+
+        HttpResponseMessage diagnostics = await client.GetAsync($"/api/v1/games/{game.Id}/diagnostics");
+        GameDiagnosticListResponse listing = await diagnostics.Content.ReadFromJsonAsync<GameDiagnosticListResponse>() ?? throw new Xunit.Sdk.XunitException("Diagnostics response was missing.");
+        Assert.Equal(HttpStatusCode.OK, diagnostics.StatusCode);
+        GameDiagnosticItem entrypoint = Assert.Single(listing.Items, item => item.Code == "ERB_ENTRYPOINT_MISSING");
+        Assert.True(entrypoint.ActivationBlocking);
+        Assert.False(string.IsNullOrWhiteSpace(entrypoint.Message));
+    }
+
+    private static MemoryStream CreateNestedFolderArchive()
+    {
+        var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            // A single top-level wrapper folder is a common distribution layout; the
+            // controlled structure check rejects it because ERB/CSV are not at the root.
+            ZipArchiveEntry entry = archive.CreateEntry("game-folder/CSV/GAMEBASE.CSV");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("title,validator-test\n");
+            entry = archive.CreateEntry("game-folder/ERB/START.ERB");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("@SYSTEM_TITLE\nINPUT\nQUIT\n");
+            entry = archive.CreateEntry("game-folder/emuera.config");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("Use sav folder:NO\n");
+        }
+        stream.Position = 0;
+        return stream;
+    }
+
     public void Dispose()
     {
         _factory?.Dispose();
@@ -208,5 +280,6 @@ public sealed class GameLibraryApiContractTests : IDisposable
 
     private sealed record GameFileListResponse(IReadOnlyList<GameFileItem> Items);
     private sealed record GameSearchPageResponse(IReadOnlyList<GameSearchMatch> Items, string? NextCursor);
+    private sealed record GameDiagnosticListResponse(IReadOnlyList<GameDiagnosticItem> Items);
     private sealed record CsrfResponse(string Token);
 }

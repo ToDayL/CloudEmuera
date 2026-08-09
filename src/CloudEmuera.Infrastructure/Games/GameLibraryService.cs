@@ -452,6 +452,16 @@ public sealed class GameLibraryService(
         return ToDiagnosticItem(diagnostic);
     }
 
+    public async Task<IReadOnlyList<GameDiagnosticItem>> ListDiagnosticsAsync(CurrentActor actor, string gameId, CancellationToken cancellationToken = default)
+    {
+        GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
+        CompatibilityDiagnosticRow[] diagnostics = await db.CompatibilityDiagnostics.AsNoTracking()
+            .Where(diagnostic => diagnostic.GameId == row.Id)
+            .OrderBy(diagnostic => diagnostic.CreatedAt)
+            .ToArrayAsync(cancellationToken).ConfigureAwait(false);
+        return diagnostics.Select(ToDiagnosticItem).ToArray();
+    }
+
     public async Task<GameValidationResult> ValidateAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default)
     {
         await using FileStream mutationLock = AcquireMutationLock(gameId);
@@ -774,7 +784,9 @@ public sealed class GameLibraryService(
         "MISSING_RESOURCE" or "OPTIONAL_RESOURCE_MISSING" or "RESOURCE_CASE_MISMATCH";
 
     private static GameDiagnosticItem ToDiagnosticItem(CompatibilityDiagnosticRow diagnostic) => new(
-        diagnostic.Id, diagnostic.Code, diagnostic.Severity, diagnostic.LogicalPath, diagnostic.MessageKey,
+        diagnostic.Id, diagnostic.Code, diagnostic.Severity, diagnostic.LogicalPath,
+        GameDiagnosticMessages.Resolve(diagnostic.Code, diagnostic.LogicalPath, diagnostic.MessageKey),
+        diagnostic.MessageKey,
         diagnostic.ActivationBlocking, diagnostic.OverridePolicy, diagnostic.OverriddenBy, diagnostic.OverriddenAt);
 
     private static string DiagnosticStage(string code) => code.StartsWith("TEXT_", StringComparison.Ordinal) ? "ENCODING"
