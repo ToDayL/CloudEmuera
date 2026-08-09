@@ -11,15 +11,18 @@ public sealed class HeadlessRuntimeFixtureTests
 {
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public void HeadlessSystemLinesAreNotRecordedAsScriptDiagnostics()
+    public void HeadlessSystemLinesAndWarningsAreNotBlockingScriptDiagnostics()
     {
         // P1-04 GAME-007: the pinned upstream DEBUG build emits elapsed-time
-        // status lines through PrintSystemLine. They are informational and must
-        // never gate activation; only warnings and errors may become diagnostics.
+        // status lines through PrintSystemLine and non-fatal parser warnings via
+        // PrintWarning. Both are informational and must never gate activation;
+        // only errors become fatal runtime messages.
         var console = new StructuredGameConsole();
         var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
         headless.PrintSystemLine("経過時間:1234.5ms");
+        headless.PrintWarning("システム関数\"@COM1000\"に引数は設定できません", null, 2);
         Assert.Empty(headless.RuntimeMessages);
+        Assert.Contains(headless.RuntimeWarnings, message => message.Contains("COM1000", StringComparison.Ordinal));
         headless.PrintError("real error");
         Assert.Contains(headless.RuntimeMessages, message => message.Contains("real error", StringComparison.Ordinal));
     }

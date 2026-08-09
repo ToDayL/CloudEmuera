@@ -109,3 +109,21 @@ requirements/ADR references, and verification commands.
   pass; `HeadlessRuntimeFixtureTests.HeadlessSystemLinesAreNotRecordedAsScriptDiagnostics`
   covers the recording rule; the Validator Debug and Release DLLs both return
   `canActivate: true` for the minimal controlled package.
+
+## 2026-08-10 — P1-04 real-game compatibility (flattening, fixed-case, warnings)
+
+- Headless glue changes (no `Upstream/` source files changed):
+  - `UpstreamHeadless/HeadlessEmueraConsole.cs`: `PrintWarning` is recorded
+    separately from `PrintError`; only errors are fatal runtime messages, so
+    non-fatal parser warnings no longer reject a valid game.
+  - `UpstreamHeadless/UpstreamRuntimeSession.cs`: `@SYSTEM_TITLE` is optional
+    (matching upstream `callFunction` fallback), and `InitializationWarnings`
+    exposes parser warnings.
+  - `Headless/EmueraRuntimeHost.cs`: initialization warnings are surfaced as
+    non-fatal `runtime_warning` diagnostics (bounded to 128).
+- Scope: ADR-0011, P1-03/P1-04 GAME-001/006/007 compatibility with real
+  era-game distributions.
+- Verification: RuntimeCompatibility 27, RuntimeAdapter 140, GamePackages 47,
+  API GameLibrary 4 and Infrastructure GameLibrary 28 tests pass; the user's
+  eraJK package (single wrapper folder + `GameBase.csv` + COM-function warnings,
+  no `@SYSTEM_TITLE`) validates with `canActivate: true` after flattening.

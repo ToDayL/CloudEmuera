@@ -36,6 +36,67 @@ public sealed class SessionRootLayoutBuilderTests
     }
 
     [Fact]
+    public void BuilderMaterializesFixedCaseAliasForUniqueCaseVariant()
+    {
+        using var workspace = new RuntimeTestWorkspace();
+        string exact = Path.Combine(workspace.GameContentRoot, "CSV", "GAMEBASE.CSV");
+        File.Delete(exact);
+        File.WriteAllText(Path.Combine(workspace.GameContentRoot, "CSV", "GameBase.csv"), "; case variant\n");
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
+            workspace.GameContentRoot,
+            "v18-test");
+
+        SessionRootLayout layout = SessionRootLayoutBuilder.Build(
+            workspace.GameContentRoot,
+            Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
+            manifest,
+            new SessionRootCopyLimits());
+
+        Assert.Equal("; case variant\n", File.ReadAllText(Path.Combine(layout.SessionRoot, "CSV", "GAMEBASE.CSV")));
+        Assert.True(File.Exists(Path.Combine(layout.SessionRoot, "CSV", "GameBase.csv")));
+        layout.RuntimePaths.ValidateSessionRoot();
+    }
+
+    [Fact]
+    public void BuilderDoesNotDuplicateExactFixedCaseName()
+    {
+        using var workspace = new RuntimeTestWorkspace();
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
+            workspace.GameContentRoot,
+            "v18-test");
+
+        SessionRootLayout layout = SessionRootLayoutBuilder.Build(
+            workspace.GameContentRoot,
+            Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
+            manifest,
+            new SessionRootCopyLimits());
+
+        Assert.Single(Directory.GetFiles(Path.Combine(layout.SessionRoot, "CSV")));
+        Assert.Equal("; test\n", File.ReadAllText(Path.Combine(layout.SessionRoot, "CSV", "GAMEBASE.CSV")));
+    }
+
+    [Fact]
+    public void BuilderAcceptsCaseVariantConfigurationViaAlias()
+    {
+        using var workspace = new RuntimeTestWorkspace();
+        string exact = Path.Combine(workspace.GameContentRoot, "emuera.config");
+        File.Delete(exact);
+        File.WriteAllText(Path.Combine(workspace.GameContentRoot, "Emuera.Config"), "Use sav folder:NO\n");
+        SessionRootPublishedManifest manifest = SessionRootPublishedManifest.FromDirectory(
+            workspace.GameContentRoot,
+            "v18-test");
+
+        SessionRootLayout layout = SessionRootLayoutBuilder.Build(
+            workspace.GameContentRoot,
+            Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
+            manifest,
+            new SessionRootCopyLimits());
+
+        Assert.True(File.Exists(Path.Combine(layout.SessionRoot, "emuera.config")));
+        layout.RuntimePaths.ValidateSessionRoot();
+    }
+
+    [Fact]
     public void BuilderIsIdempotentAndPreservesRuntimeChangesAndNativeSaves()
     {
         using var workspace = new RuntimeTestWorkspace();

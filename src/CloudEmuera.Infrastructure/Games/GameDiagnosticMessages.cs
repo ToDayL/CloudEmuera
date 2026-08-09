@@ -20,6 +20,7 @@ internal static class GameDiagnosticMessages
         ["MISSING_RESOURCE"] = "A resource referenced by the game is missing.",
         ["OPTIONAL_RESOURCE_MISSING"] = "An optional resource referenced by the game is missing.",
         ["RESOURCE_CASE_MISMATCH"] = "A resource reference differs only in letter case.",
+        ["RUNTIME_WARNING"] = "The Emuera parser reported a non-fatal script warning.",
     };
 
     public static string Resolve(string code, string? path, string fallback)

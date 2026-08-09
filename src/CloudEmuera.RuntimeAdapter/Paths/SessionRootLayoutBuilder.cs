@@ -278,6 +278,7 @@ public sealed class SessionRootLayoutBuilder
                 "emuera.config");
         }
 
+        MaterializeFixedCaseAliases(paths.GameContentRoot, paths.SessionRoot, manifest, state: null);
         return CreateLayout(paths, manifest, saveLayout);
     }
 
@@ -318,6 +319,8 @@ public sealed class SessionRootLayoutBuilder
                     entry,
                     state);
             }
+
+            MaterializeFixedCaseAliases(paths.GameContentRoot, staging, manifest, state);
 
             EnsureDirectory(Path.Combine(staging, "tmp"), "tmp");
             if (paths.SaveLayout == RuntimeSaveLayout.SavDirectory)
@@ -567,6 +570,10 @@ public sealed class SessionRootLayoutBuilder
     private static void ValidateRequiredSourceEntry(string root, string name, bool directory)
     {
         string path = Path.Combine(root, name);
+        if (!directory)
+        {
+            path = ResolveFixedCaseFile(path) ?? path;
+        }
         RuntimePathUtilities.ThrowIfReparsePoint(path, name, RuntimeFileArea.GameContent, missingIsAllowed: false);
         bool exists = directory ? Directory.Exists(path) : File.Exists(path);
         if (!exists)
@@ -579,9 +586,10 @@ public sealed class SessionRootLayoutBuilder
 
     private static RuntimeSaveLayout InspectSaveLayout(string configurationFile)
     {
+        string resolved = ResolveFixedCaseFile(configurationFile) ?? configurationFile;
         try
         {
-            return EmueraSaveLayoutInspector.InspectFile(configurationFile);
+            return EmueraSaveLayoutInspector.InspectFile(resolved);
         }
         catch (RuntimeSaveLayoutInspectionException exception)
         {
@@ -592,6 +600,102 @@ public sealed class SessionRootLayoutBuilder
                 RuntimeFileArea.Configuration,
                 exception);
         }
+    }
+
+    /// <summary>
+    /// Fixed-name files the pinned upstream loader reads by exact case on Linux.
+    /// The session copy is private and disposable, so a missing exact name with a
+    /// unique case-insensitive match is materialized as an alias; ambiguous case
+    /// variants never create an alias.
+    /// </summary>
+    private static readonly (string FixedPath, string DisplayName)[] FixedCaseNames =
+    [
+        ("CSV/GAMEBASE.CSV", "GAMEBASE.CSV"),
+        ("CSV/_Rename.csv", "_Rename.csv"),
+        ("CSV/_Replace.csv", "_Replace.csv"),
+        ("emuera.config", "emuera.config"),
+    ];
+
+    private static void MaterializeFixedCaseAliases(
+        string sourceRoot,
+        string stagingRoot,
+        SessionRootPublishedManifest manifest,
+        CopyState? state)
+    {
+        HashSet<string> exactFiles = new(
+            manifest.Entries.Where(entry => entry.Kind == SessionRootManifestEntryKind.File)
+                .Select(entry => entry.RelativePath),
+            StringComparer.Ordinal);
+        foreach ((string fixedPath, string displayName) in FixedCaseNames)
+        {
+            if (exactFiles.Contains(fixedPath)) continue;
+            string? match = null;
+            foreach (SessionRootManifestEntry entry in manifest.Entries)
+            {
+                if (entry.Kind != SessionRootManifestEntryKind.File
+                    || !string.Equals(entry.RelativePath, fixedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (match is not null) { match = null; break; } // ambiguous case variants
+                match = entry.RelativePath;
+            }
+            if (match is null) continue;
+            string target = CombineRelative(stagingRoot, fixedPath);
+            if (File.Exists(target)) continue;
+            CopyAliasFile(sourceRoot, stagingRoot, match, fixedPath, state);
+        }
+    }
+
+    private static void CopyAliasFile(
+        string sourceRoot,
+        string stagingRoot,
+        string sourceRelative,
+        string targetRelative,
+        CopyState? state)
+    {
+        string source = CombineRelative(sourceRoot, sourceRelative);
+        string target = CombineRelative(stagingRoot, targetRelative);
+        RuntimePathUtilities.ThrowIfReparsePoint(source, sourceRelative, RuntimeFileArea.GameContent, missingIsAllowed: false);
+        RuntimePathUtilities.ThrowIfHardLink(source, sourceRelative, RuntimeFileArea.GameContent);
+        var sourceInfo = new FileInfo(source);
+        if (!sourceInfo.Exists)
+        {
+            throw LayoutConflict("A fixed-case alias source is missing from the GameContent.", sourceRelative);
+        }
+        state?.AddFile(sourceInfo.Length, targetRelative);
+        string? parent = Directory.GetParent(target)?.FullName;
+        if (parent is null)
+        {
+            throw LayoutConflict("A fixed-case alias has no target parent.", targetRelative);
+        }
+        EnsureDirectory(parent, Path.GetRelativePath(stagingRoot, parent).Replace('\\', '/'));
+        byte[] buffer = new byte[64 * 1024];
+        using var sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length, FileOptions.SequentialScan);
+        using var targetStream = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length, FileOptions.SequentialScan);
+        sourceStream.CopyTo(targetStream, buffer.Length);
+        targetStream.Flush(flushToDisk: true);
+        SetSafeFileMode(target);
+    }
+
+    /// <summary>
+    /// Resolves a fixed-name file case-insensitively when the exact name is absent
+    /// and a unique case-insensitive match exists on the (Linux) filesystem.
+    /// </summary>
+    private static string? ResolveFixedCaseFile(string path)
+    {
+        if (File.Exists(path)) return path;
+        string? directory = Path.GetDirectoryName(path);
+        string filename = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return null;
+        string? match = null;
+        foreach (string candidate in Directory.EnumerateFiles(directory))
+        {
+            if (!string.Equals(Path.GetFileName(candidate), filename, StringComparison.OrdinalIgnoreCase)) continue;
+            if (match is not null) return null; // ambiguous
+            match = candidate;
+        }
+        return match;
     }
 
     private static void ValidateManifestEntries(

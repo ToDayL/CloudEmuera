@@ -30,6 +30,7 @@ internal sealed class EmueraConsole
     private int generation;
     private StringStyle stringStyle;
     private readonly List<string> runtimeMessages = [];
+    private readonly List<string> runtimeWarnings = [];
     private bool outputEnabled;
 
     public EmueraConsole(
@@ -85,17 +86,19 @@ internal sealed class EmueraConsole
     public int ClientWidth => 0;
     public int ClientHeight => 0;
     public IReadOnlyList<string> RuntimeMessages => runtimeMessages;
+    public IReadOnlyList<string> RuntimeWarnings => runtimeWarnings;
 
     public void Print(string value, bool lineEnd = true) => EmitText(value);
     public void PrintSingleLine(string value) => PrintSingleLine(value, false);
     public void PrintSingleLine(string value, bool temporary) => EmitLine(value);
     // Upstream status/progress output (for example the DEBUG-only elapsed-time
-    // reports) must not be treated as script diagnostics. Only warnings and errors
-    // are recorded so the headless session can gate activation on real problems.
+    // reports) must not be treated as script diagnostics. Warnings are recorded
+    // separately from errors so the headless session only gates activation on
+    // real errors; warnings are surfaced as non-blocking diagnostics.
     public void PrintSystemLine(string value) { }
     public void PrintError(string value) => RecordMessage(value);
     public void PrintWarning(string value, ScriptPosition? position, int level) =>
-        RecordMessage(FormatDiagnostic(value, position));
+        RecordWarning(FormatDiagnostic(value, position));
     public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) =>
         RecordMessage(FormatDiagnostic(value, position));
     public void PrintTemporaryLine(string value) => EmitLine(value);
@@ -261,6 +264,12 @@ internal sealed class EmueraConsole
     {
         if (!string.IsNullOrWhiteSpace(value))
             runtimeMessages.Add(value.Trim());
+    }
+
+    private void RecordWarning(string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            runtimeWarnings.Add(value.Trim());
     }
 
     private static string FormatDiagnostic(string value, ScriptPosition? position) =>

@@ -101,11 +101,9 @@ public sealed class UpstreamRuntimeSession : IDisposable
             throw new InvalidDataException($"The pinned upstream Emuera loader reported script diagnostics. {details}");
         }
 
-        if (process.LabelDictionary.GetNonEventLabel("SYSTEM_TITLE") is null)
-        {
-            string details = string.Join(" | ", console.RuntimeMessages);
-            throw new InvalidDataException($"The upstream ERB loader did not produce SYSTEM_TITLE. {details}");
-        }
+        // Stock Emuera treats @SYSTEM_TITLE as optional: when the label is absent it
+        // falls back to the GAMEBASE-derived title screen. The headless session must
+        // not reject games that legitimately omit it (P1-04 GAME-007 compatibility).
         initializationMessageCount = console.RuntimeMessages.Count;
         console.BeginExecutionOutput();
         return initialized;
@@ -129,6 +127,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
     }
 
     public IReadOnlyList<string> InitializationMessages => console?.RuntimeMessages ?? Array.Empty<string>();
+    public IReadOnlyList<string> InitializationWarnings => console?.RuntimeWarnings ?? Array.Empty<string>();
 
     public void Dispose()
     {

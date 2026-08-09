@@ -9,6 +9,7 @@ namespace CloudEmuera.EmueraRuntime.Headless;
 public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
 {
     private static readonly TimeSpan DeadlineCancellationGrace = TimeSpan.FromSeconds(1);
+    private const int MaxInitializationWarnings = 128;
     private static readonly HashSet<string> UnsupportedHeadlessIdentifiers = new(StringComparer.OrdinalIgnoreCase)
     {
         "CALLSHARP", "GETKEY", "GETKEYTRIGGERED", "MOUSEX", "MOUSEY", "MOUSEB", "GETTEXTBOX", "SETTEXTBOX",
@@ -73,6 +74,10 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 state = HostState.Initialized;
             }
 
+            foreach (string warning in loaded.Session.InitializationWarnings.Take(MaxInitializationWarnings))
+            {
+                AddDiagnostic("runtime_warning", EmueraRuntimePhase.Initialization, warning, fatal: false);
+            }
             return Result(EmueraRuntimeStatus.Completed);
         }
         catch (RuntimeDeadlineException)
