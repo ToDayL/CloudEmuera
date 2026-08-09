@@ -172,7 +172,14 @@ public sealed class GameLibraryServiceTests
         Assert.NotEmpty(second.Items);
         Assert.Null(second.NextCursor);
 
-        string tamperedCursor = first.NextCursor![..^1] + (first.NextCursor[^1] == 'x' ? 'y' : 'x');
+        // Tamper a fully significant middle character of the signed cursor. The
+        // final base64url character only encodes four significant bits, so
+        // replacing it can decode to the same trailing byte (e.g. 'w' -> 'x')
+        // and must not be used as the tamper point.
+        string signedCursor = first.NextCursor!;
+        int tamperIndex = signedCursor.Length / 2;
+        char replacement = signedCursor[tamperIndex] == 'A' ? 'B' : 'A';
+        string tamperedCursor = signedCursor[..tamperIndex] + replacement + signedCursor[(tamperIndex + 1)..];
         GameLibraryException cursor = await Assert.ThrowsAsync<GameLibraryException>(() =>
             service.SearchAsync(actor, game.Id, "WORKSPACE", "needle", tamperedCursor, 1));
         Assert.Equal(GameLibraryErrorCodes.SearchCursorInvalid, cursor.Code);
