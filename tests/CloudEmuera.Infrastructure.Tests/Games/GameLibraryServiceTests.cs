@@ -399,6 +399,68 @@ public sealed class GameLibraryServiceTests
 
     [Fact]
     [Trait("Category", "GameLibrary")]
+    public async Task DeletedGameFreesItsNameForRecreation()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        string gameDirectory = Path.Combine(database.RootPath, "games", "game_fixture");
+        Directory.CreateDirectory(gameDirectory);
+        GameStorageOwnerMarker.Initialize(gameDirectory, "game_fixture", "usr_fixture");
+        await using DbContextScope scope = database.OpenContext();
+        scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
+        scope.Context.Users.Add(PersistenceFixtures.CreateUser());
+        GameRow game = PersistenceFixtures.CreateGame(withContent: false);
+        scope.Context.Games.Add(game);
+        await scope.Context.SaveChangesAsync();
+
+        var service = new GameLibraryService(scope.Context, new UnusedIngestionService(), new AcceptingValidator(), database.Options, TimeProvider.System);
+        CurrentActor actor = new("usr_fixture", "PLAYER", "auths_fixture");
+
+        GameLibraryException conflict = await Assert.ThrowsAsync<GameLibraryException>(() =>
+            service.CreateAsync(actor, "Fixture Game", "PRIVATE"));
+        Assert.Equal(GameLibraryErrorCodes.NameConflict, conflict.Code);
+        Assert.Equal("同名游戏已存在。", conflict.Message);
+
+        await service.DeleteAsync(actor, game.Id, game.StateVersion);
+        GameLibraryItem recreated = await service.CreateAsync(actor, "Fixture Game", "PRIVATE");
+        Assert.Equal("Fixture Game", recreated.Name);
+        Assert.NotEqual(game.Id, recreated.Id);
+    }
+
+    [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task RenameToDeletedNameSucceedsButActiveNameConflicts()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        foreach (string id in new[] { "game_first", "game_second", "game_third" })
+        {
+            Directory.CreateDirectory(Path.Combine(database.RootPath, "games", id));
+            GameStorageOwnerMarker.Initialize(Path.Combine(database.RootPath, "games", id), id, "usr_fixture");
+        }
+        await using DbContextScope scope = database.OpenContext();
+        scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
+        scope.Context.Users.Add(PersistenceFixtures.CreateUser());
+        GameRow first = PersistenceFixtures.CreateGame("game_first", name: "Alpha", withContent: false);
+        GameRow second = PersistenceFixtures.CreateGame("game_second", name: "Beta", withContent: false);
+        GameRow third = PersistenceFixtures.CreateGame("game_third", name: "Gamma", withContent: false);
+        scope.Context.Games.AddRange(first, second, third);
+        await scope.Context.SaveChangesAsync();
+
+        var service = new GameLibraryService(scope.Context, new UnusedIngestionService(), new AcceptingValidator(), database.Options, TimeProvider.System);
+        CurrentActor actor = new("usr_fixture", "PLAYER", "auths_fixture");
+        await service.DeleteAsync(actor, first.Id, first.StateVersion);
+
+        GameLibraryItem renamed = await service.UpdateAsync(actor, second.Id, "Alpha", null, second.StateVersion);
+        Assert.Equal("Alpha", renamed.Name);
+
+        GameLibraryException conflict = await Assert.ThrowsAsync<GameLibraryException>(() =>
+            service.UpdateAsync(actor, second.Id, "Gamma", null, renamed.StateVersion));
+        Assert.Equal(GameLibraryErrorCodes.NameConflict, conflict.Code);
+    }
+
+    [Fact]
+    [Trait("Category", "GameLibrary")]
     public async Task ValidatorCrashIsConvertedToBlockingDiagnosticAndKeepsWorkspaceEditable()
     {
         using TemporarySqliteDatabase database = new();

@@ -248,6 +248,40 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal("NONE", current.WorkspaceStatus);
     }
 
+    [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task CreateAfterDeleteReusesTheName()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
+        _factory = new IdentityFactory(_dataRoot);
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+
+        string csrf = await GetCsrfAsync(client);
+        Assert.True((await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf)).IsSuccessStatusCode);
+        csrf = await GetCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem first = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Reusable Name", "PRIVATE"), csrf))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage duplicate = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Reusable Name", "PRIVATE"), csrf);
+        ApiError conflict = await duplicate.Content.ReadFromJsonAsync<ApiError>() ?? throw new Xunit.Sdk.XunitException("Conflict error was missing.");
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        Assert.Equal("GAME_NAME_CONFLICT", conflict.Code);
+
+        csrf = await GetCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Delete, $"/api/v1/games/{first.Id}", new { }, csrf, first.StateVersion)).StatusCode);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage recreated = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Reusable Name", "PRIVATE"), csrf);
+        Assert.Equal(HttpStatusCode.Created, recreated.StatusCode);
+        GameLibraryItem second = await recreated.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Recreated game response was missing.");
+        Assert.NotEqual(first.Id, second.Id);
+    }
+
     public void Dispose()
     {
         _factory?.Dispose();

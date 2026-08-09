@@ -19,6 +19,15 @@ NFR-011/013、AC-008～010/014。
 [`ADR-0008`](../adr/0008-secure-zip-ingestion-policy.md)；SessionRoot 所有权见
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)。
 
+## 0.6 2026-08-10 删除后的游戏名称可复用（修复“删除似乎没有清理数据库”）
+
+- 现象：删除游戏后同名重建报 “A game with the same name already exists…”；
+  原因为逻辑删除（GAME-010）保留 `DELETED` 行，而唯一索引把已删除行也计入名称占用。
+- 修复：`ux_games_owner_name` 改为部分唯一索引 `WHERE status != 'DELETED'`（迁移
+  `AddGameNameReuseAfterDelete`）；`CreateAsync`/`UpdateAsync` 显式预检并返回清晰的
+  `GAME_NAME_CONFLICT`（“同名游戏已存在。”），不再透出 EF 底层异常（ADR-0013）。
+- 验证：约束/服务/HTTP 三级测试覆盖；`check.sh` 全绿。
+
 ## 0.5 2026-08-10 暂存配额按实际大小结算（修复“进入 staging 后无法再次上传”）
 
 - 现象：同一/多个包上传几次后，新上传在“安全检查”前即失败，错误被折叠成

@@ -33,6 +33,9 @@ public sealed class GameLibraryService(
         string normalizedName = NormalizeName(name);
         GameVisibility parsedVisibility = ParseVisibility(visibility);
         DateTimeOffset now = timeProvider.GetUtcNow();
+        bool nameTaken = await db.Games.AnyAsync(game => game.OwnerUserId == actor.UserId && game.Name == normalizedName
+            && game.Status != GameStatus.Deleted, cancellationToken).ConfigureAwait(false);
+        if (nameTaken) throw new GameLibraryException(GameLibraryErrorCodes.NameConflict, "同名游戏已存在。");
         var row = new GameRow
         {
             Id = $"game_{Guid.CreateVersion7():N}",
@@ -49,10 +52,10 @@ public sealed class GameLibraryService(
         db.Games.Add(row);
         AddAudit(actor, "GAME_CREATE", row.Id, now);
         try { await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); }
-        catch (DbUpdateException exception)
+        catch (DbUpdateException)
         {
             Directory.Move(gameDirectory, $"{gameDirectory}.failed-{Guid.NewGuid():N}");
-            throw new GameLibraryException(GameLibraryErrorCodes.NameConflict, $"A game with the same name already exists. {exception.Message}");
+            throw new GameLibraryException(GameLibraryErrorCodes.NameConflict, "同名游戏已存在。");
         }
         return ToItem(row);
     }
@@ -68,7 +71,14 @@ public sealed class GameLibraryService(
         await using FileStream mutationLock = AcquireMutationLock(gameId);
         GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
         EnsureVersion(row, expectedStateVersion);
-        if (name is not null) row.Name = NormalizeName(name);
+        if (name is not null)
+        {
+            string normalizedName = NormalizeName(name);
+            bool nameTaken = await db.Games.AnyAsync(game => game.OwnerUserId == actor.UserId && game.Name == normalizedName
+                && game.Id != gameId && game.Status != GameStatus.Deleted, cancellationToken).ConfigureAwait(false);
+            if (nameTaken) throw new GameLibraryException(GameLibraryErrorCodes.NameConflict, "同名游戏已存在。");
+            row.Name = normalizedName;
+        }
         if (visibility is not null) row.Visibility = ParseVisibility(visibility);
         Touch(row);
         AddAudit(actor, "GAME_UPDATE", row.Id, row.UpdatedAt);

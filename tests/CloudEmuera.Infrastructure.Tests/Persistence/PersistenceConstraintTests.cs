@@ -38,6 +38,40 @@ public sealed class PersistenceConstraintTests
 
     [Fact]
     [Trait("Category", "PersistenceConstraint")]
+    public async Task DeletedGamesMayShareANameButActiveNameStaysUnique()
+    {
+        using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync();
+        string indexSql = (await ExecuteScalarAsync(database, "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'ux_games_owner_name';") as string)
+            ?? throw new Xunit.Sdk.XunitException("ux_games_owner_name index is missing.");
+        Assert.Contains("status != 'DELETED'", indexSql, StringComparison.Ordinal);
+
+        await using DbContextScope scope = database.OpenContext();
+        // Two ACTIVE games with the same name stay rejected.
+        scope.Context.Games.Add(PersistenceFixtures.CreateGame("game_second", name: "Fixture Game"));
+        await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
+
+        // Once both are deleted (recoverable tombstones), the same name is free.
+        scope.Context.ChangeTracker.Clear();
+        GameRow first = await scope.Context.Games.SingleAsync(game => game.Id == "game_fixture");
+        first.Status = GameStatus.Deleted;
+        first.DeletedBy = "usr_fixture";
+        first.DeletedAt = DateTimeOffset.UtcNow;
+        GameRow second = PersistenceFixtures.CreateGame("game_deleted_second", name: "Fixture Game");
+        second.Status = GameStatus.Deleted;
+        second.DeletedBy = "usr_fixture";
+        second.DeletedAt = DateTimeOffset.UtcNow;
+        scope.Context.Games.Add(second);
+        await scope.Context.SaveChangesAsync();
+
+        // A brand-new ACTIVE game may reuse the freed name.
+        scope.Context.ChangeTracker.Clear();
+        scope.Context.Games.Add(PersistenceFixtures.CreateGame("game_recreated", name: "Fixture Game"));
+        await scope.Context.SaveChangesAsync();
+        Assert.Equal(1, await CountAsync(scope.Connection, "SELECT COUNT(*) FROM games WHERE status = 'ACTIVE' AND name = 'Fixture Game';"));
+    }
+
+    [Fact]
+    [Trait("Category", "PersistenceConstraint")]
     public async Task DraftWorkspaceMayExistWithoutCurrentContent()
     {
         using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync(includeContent: false, includeSession: false);
@@ -239,6 +273,15 @@ public sealed class PersistenceConstraintTests
         await using SqliteCommand command = connection.CreateCommand();
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<object?> ExecuteScalarAsync(TemporarySqliteDatabase database, string sql)
+    {
+        using SqliteConnection connection = new(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = database.DatabasePath }.ToString());
+        await connection.OpenAsync();
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        return await command.ExecuteScalarAsync();
     }
 
     private static async Task<int> CountAsync(SqliteConnection connection, string sql)

@@ -49,7 +49,7 @@ public sealed class InitialMigrationTests
         Assert.DoesNotContain(tables, name => name.StartsWith("AspNet", StringComparison.Ordinal));
         Assert.DoesNotContain(tables, name => name.Contains("save", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(tables, name => name == "__EFMigrationsHistory");
-        Assert.Equal(9, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(10, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(9, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(10, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -98,7 +98,7 @@ public sealed class InitialMigrationTests
         Assert.Null(user.PasswordChangedAt);
         Assert.False(user.MustChangePassword);
         Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
-        Assert.Equal(9, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(10, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -210,7 +210,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(10, await CountHistoryRowsAsync(database));
+        Assert.Equal(11, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>

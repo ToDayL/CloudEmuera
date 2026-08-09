@@ -49,7 +49,11 @@ internal sealed class GameConfiguration : IEntityTypeConfiguration<GameRow>
         ConfigureTime(builder.Property(row => row.UpdatedAt), "updated_at");
         builder.Property(row => row.StateVersion).HasColumnName("state_version").HasColumnType("INTEGER").HasDefaultValue(0).IsConcurrencyToken().IsRequired();
 
-        builder.HasIndex(row => new { row.OwnerUserId, row.Name }).IsUnique().HasDatabaseName("ux_games_owner_name");
+        // A deleted game is a recoverable tombstone (GAME-010); its name must not
+        // stay reserved forever, so the uniqueness filter excludes DELETED rows.
+        builder.HasIndex(row => new { row.OwnerUserId, row.Name }).IsUnique()
+            .HasDatabaseName("ux_games_owner_name")
+            .HasFilter("status != 'DELETED'");
         builder.HasIndex(row => row.WorkspacePath).IsUnique().HasDatabaseName("ux_games_workspace_path");
         builder.HasIndex(row => row.CurrentContentPath).IsUnique().HasDatabaseName("ux_games_current_content_path");
         builder.HasOne(row => row.OwnerUser).WithMany().HasForeignKey(row => row.OwnerUserId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_games_owner_user");
