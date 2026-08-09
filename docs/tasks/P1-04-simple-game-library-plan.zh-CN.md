@@ -19,6 +19,20 @@ NFR-011/013、AC-008～010/014。
 [`ADR-0008`](../adr/0008-secure-zip-ingestion-policy.md)；SessionRoot 所有权见
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)。
 
+## 0.3 2026-08-10 单根目录展平、固定名大小写别名与真实游戏兼容
+
+- 摄取展平：`GamePackageIngestionService` 检测“唯一顶层目录”分布（如
+  `eraJK.../ERB|CSV`），剥离包装前缀后再做路径策略校验与展开，manifest/文件索引/诊断/
+  运行时布局一致；多顶层条目、单顶层文件、`.`/`..`/绝对段等不展平。
+- 固定名大小写别名：`SessionRootLayoutBuilder` 在私有 SessionRoot/Validator 快照物化时，
+  为缺失的 `CSV/GAMEBASE.CSV`、`CSV/_Rename.csv`、`CSV/_Replace.csv`、`emuera.config`
+  创建唯一大小写变体别名（计入复制限额）；歧义不创建；`emuera.config` 的布局检查与
+  必需源校验同步大小写不敏感。
+- 真实游戏兼容：headless 会话把解析警告与非致命 `@SYSTEM_TITLE` 缺失从阻断中剥离
+  （仅错误阻断），警告作为非阻断 `RUNTIME_WARNING` 诊断返回。
+- 实测：用户 eraJK 包（单顶层文件夹 + `GameBase.csv` + 系统函数警告、无 `@SYSTEM_TITLE`）
+  展平后经真实 parser 验证 `canActivate: true`。
+
 ## 0.2 2026-08-10 诊断可见性与失败原因展示
 
 - 新增 `GET /api/v1/games/{id}/diagnostics`（仅 owner）：读取持久化的
