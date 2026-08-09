@@ -128,6 +128,7 @@ builder.Services.AddRateLimiter(options =>
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 6, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });
 builder.Services.AddAntiforgery(options => options.HeaderName = "X-CSRF-TOKEN");
+builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks().AddCheck<BootstrapHealthCheck>("identity_bootstrap", tags: ["ready"]);
 
 var app = builder.Build();
@@ -155,6 +156,7 @@ app.UseRateLimiter();
 
 app.MapGet("/api/v1/version", () => Results.Ok(new BuildInfo("CloudEmuera", typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0-dev", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription, 1, 1, 1)));
 app.MapHealthChecks("/health/live", new() { Predicate = _ => false });
+app.MapOpenApi();
 app.MapHealthChecks("/health/ready", new() { Predicate = check => check.Tags.Contains("ready"), ResponseWriter = async (context, report) =>
 {
     context.Response.ContentType = "application/json";
