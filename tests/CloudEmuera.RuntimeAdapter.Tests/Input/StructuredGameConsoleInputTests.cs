@@ -15,7 +15,7 @@ public sealed class StructuredGameConsoleInputTests
         GameConsoleInput? input = null;
         Task runtime = Task.Run(() => input = console.Read(new ConsolePrompt(ConsoleInputType.Integer, "Number")));
 
-        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
         string promptId = console.CurrentPrompt!.PromptId;
         ConsoleInputResult result = console.SubmitInput(new ConsoleInputCommand(promptId, "client-1", "7"));
         await runtime;
@@ -49,8 +49,10 @@ public sealed class StructuredGameConsoleInputTests
                 "Name",
                 timeout: TimeSpan.FromSeconds(5))));
 
-        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
-        Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(2)));
+        // The setup waits are only reaching a state, not timing the runtime: keep a
+        // generous wall-clock budget so the manual-clock assertion stays load-safe.
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
+        Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(10)));
         clock.Advance(TimeSpan.FromSeconds(5));
 
         await Assert.ThrowsAsync<ConsolePromptTimeoutException>(async () => await runtime);
@@ -68,11 +70,11 @@ public sealed class StructuredGameConsoleInputTests
                 "Name",
                 timeout: TimeSpan.FromSeconds(5))));
 
-        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
         string promptId = console.CurrentPrompt!.PromptId;
-        Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(2)));
+        Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(10)));
         clock.Advance(TimeSpan.FromSeconds(5));
-        Assert.True(SpinWait.SpinUntil(() => console.InputCoordinator.CurrentPrompt is null, TimeSpan.FromSeconds(2)));
+        Assert.True(SpinWait.SpinUntil(() => console.InputCoordinator.CurrentPrompt is null, TimeSpan.FromSeconds(10)));
 
         ConsoleInputResult late = console.SubmitInput(new ConsoleInputCommand(promptId, "late", "too-late"));
 
@@ -92,9 +94,9 @@ public sealed class StructuredGameConsoleInputTests
                 new ConsolePrompt(ConsoleInputType.Text, timeout: TimeSpan.FromSeconds(5)),
                 cancellation.Token));
 
-        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
         string promptId = console.CurrentPrompt!.PromptId;
-        Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(2)));
+        Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(10)));
 
         var barrier = new Barrier(4);
         ConsoleInputResult? inputResult = null;
