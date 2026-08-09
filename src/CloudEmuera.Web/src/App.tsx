@@ -15,6 +15,7 @@ import {
   ContentScope,
   GameDiagnosticItem,
   GameFileItem,
+  GamePackageDiagnostic,
   GameLibraryItem,
   GameSearchMatch,
   GameTextFile,
@@ -271,6 +272,7 @@ function UploadDialog({ onClose, games, initialGameId }: { onClose: () => void; 
   const [fileName, setFileName] = useState("");
   const [ingestion, setIngestion] = useState<IngestedGamePackage | null>(null);
   const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [createMode, setCreateMode] = useState(!initialGameId);
   const [gameName, setGameName] = useState("");
@@ -290,6 +292,7 @@ function UploadDialog({ onClose, games, initialGameId }: { onClose: () => void; 
       .catch(err => {
         // A transport-level failure (e.g. "Failed to fetch") usually means the
         // server aborted the body: the archive exceeded the server/network limit.
+        setErrorCode(err instanceof ApiError ? err.code : null);
         setError(err instanceof ApiError ? err.message : "网络错误：上传未能完成。请确认文件未超过大小限制，并检查网络后重试。");
         setStep("error");
       });
@@ -307,7 +310,8 @@ function UploadDialog({ onClose, games, initialGameId }: { onClose: () => void; 
       setBoundGameId(fresh.id);
       setStep("done");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "绑定失败。");
+      setErrorCode(err instanceof ApiError ? err.code : null);
+      setError(err instanceof ApiError ? err.message : "绑定失败。");
       setPending(false);
     }
   };
@@ -330,6 +334,10 @@ function UploadDialog({ onClose, games, initialGameId }: { onClose: () => void; 
         <div><h3>游戏包已安全解压</h3><p>{ingestion.manifest.fileCount} 个文件 · {ingestion.manifest.directoryCount} 个目录 · {formatBytes(ingestion.manifest.contentBytes)}</p><small>摘要 sha256:{shortDigest(ingestion.manifest.contentDigest)}</small></div>
       </div>
       {blocking > 0 && <div className="ingest-warning"><Icon name="warning"/><p><strong>{blocking} 条阻断提醒</strong><small>绑定后仍可查看与编辑草稿；验证通过前不会启用为当前内容。</small></p></div>}
+      {blocking > 0 && <ul className="ingest-blocking-list" aria-label="阻断提醒明细">
+        {ingestion.manifest.diagnostics.filter(diagnostic => diagnostic.publishBlocking).slice(0, 6).map((diagnostic: GamePackageDiagnostic, index) => <li key={index}><span>{diagnostic.code}</span>{diagnostic.logicalPath && <small>{diagnostic.logicalPath}</small>}</li>)}
+        {blocking > 6 && <li className="ingest-blocking-more">…另有 {blocking - 6} 条</li>}
+      </ul>}
       <form className="form-panel modal-form" onSubmit={bind}>
         {!initialGameId && <label className="radio-row"><input type="radio" name="target" checked={createMode} onChange={() => setCreateMode(true)}/><span><strong>创建新游戏并绑定</strong><small>新游戏会立即拥有此工作区草稿</small></span></label>}
         {createMode && <><label><span>游戏名称</span><input value={gameName} onChange={(e) => setGameName(e.target.value)} required/></label><label><span>可见性</span><select value={visibility} onChange={(e) => setVisibility(e.target.value as GameVisibility)}><option value="PRIVATE">私有</option><option value="SERVER_SHARED">服务器共享</option></select></label></>}
@@ -340,7 +348,7 @@ function UploadDialog({ onClose, games, initialGameId }: { onClose: () => void; 
       </form>
     </>}
     {step === "done" && boundGameId && <div className="scan-state done"><span className="success-ring"><Icon name="check" size={30}/></span><h3>游戏包已绑定到工作区</h3><p>草稿尚未启用为当前内容；验证通过后原子启用。</p><Link className="primary-button" to={`/games/${boundGameId}`} onClick={onClose}>查看草稿并启用<Icon name="arrow"/></Link></div>}
-    {step === "error" && <div className="scan-state error"><span className="error-ring"><Icon name="warning" size={30}/></span><h3>游戏包未通过安全检查</h3><p>{error}</p><button className="secondary-button" onClick={() => setStep("choose")}>重新选择文件</button></div>}
+    {step === "error" && <div className="scan-state error"><span className="error-ring"><Icon name="warning" size={30}/></span><h3>游戏包未通过安全检查</h3><p>{error}</p>{errorCode && <code className="error-code">{errorCode}</code>}<button className="secondary-button" onClick={() => { setError(""); setErrorCode(null); setStep("choose"); }}>重新选择文件</button></div>}
   </section></div>;
 }
 

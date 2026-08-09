@@ -203,6 +203,42 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows blocking ingestion diagnostics after a successful upload", async () => {
+    const ingestion = {
+      ingestionId: "ing-1",
+      ownerUserId: "usr_test",
+      expiresAt: "2026-08-10T00:00:00Z",
+      manifest: {
+        schemaVersion: 1, archiveBytes: 100, archiveDigest: "sha256:aa", contentBytes: 50,
+        fileCount: 1, directoryCount: 0, contentDigest: "sha256:bb", files: [], directories: [],
+        diagnostics: [
+          { code: "TEXT_CONTROL_CHARACTER", severity: 2, stage: "ENCODING", logicalPath: "Readme.txt", messageKey: "gamePackage.diagnostic.textControlCharacter", arguments: {}, publishBlocking: true, suppressedCount: 0 },
+        ],
+      },
+    };
+    mockFetch((url, init) => {
+      if (url === "/api/v1/games" && init?.method === "POST") return jsonResponse(game({ id: "g-new", name: "My Game", workspaceStatus: "DRAFT", contentRevision: 0, hasCurrentContent: false, contentDigest: null }), 201);
+      if (url === "/api/v1/games/g-new/package" && init?.method === "PUT") return jsonResponse(game({ id: "g-new", workspaceStatus: "DRAFT", contentRevision: 0, hasCurrentContent: false, contentDigest: null }));
+      if (url === "/api/v1/game-package-ingestions") return jsonResponse(ingestion, 201);
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/games") return jsonResponse({ items: [] });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games");
+    expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "导入游戏" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "导入游戏包" });
+    const fileInput = dialog.querySelector('input[type="file"]');
+    fireEvent.change(fileInput as HTMLInputElement, { target: { files: [new File(["zip"], "my-game.zip", { type: "application/zip" })] } });
+
+    expect(await within(dialog).findByText("游戏包已安全解压")).toBeInTheDocument();
+    expect(within(dialog).getByRole("list", { name: "阻断提醒明细" })).toBeInTheDocument();
+    expect(within(dialog).getByText("TEXT_CONTROL_CHARACTER")).toBeInTheDocument();
+    expect(within(dialog).getByText("Readme.txt")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("reports a friendly message when the package upload fails at the transport level", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
