@@ -295,7 +295,7 @@ app.MapPost("/api/v1/game-package-ingestions", async (HttpContext context, IAnti
         return Results.Created($"/api/v1/game-package-ingestions/{result.IngestionId}", result);
     }
     catch (GameLibraryException exception) { return ApiIdentity.Error(exception.Code, exception.Message, exception.Code == GameLibraryErrorCodes.Conflict ? 409 : 400); }
-    catch (GamePackageIngestionException exception) { return ApiIdentity.Error(exception.Code, "游戏包不安全或不受支持。", 400); }
+    catch (GamePackageIngestionException exception) { return ApiIdentity.Error(exception.Code, GamePackageRejectionMessages.Resolve(exception.Code, exception.LogicalPath), 400); }
 }).RequireAuthorization().RequireRateLimiting("game-write");
 
 var games = app.MapGroup("/api/v1/games").RequireAuthorization();
@@ -348,7 +348,7 @@ games.MapPut("/{id}/package", async (string id, HttpContext context, BindGamePac
     }
     catch (GamePackageIngestionException exception)
     {
-        return ApiIdentity.Error(exception.Code, "游戏包不安全或不受支持。", 400);
+        return ApiIdentity.Error(exception.Code, GamePackageRejectionMessages.Resolve(exception.Code, exception.LogicalPath), 400);
     }
 }).RequireRateLimiting("game-write");
 games.MapPost("/{id}:edit", async (string id, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library) =>
