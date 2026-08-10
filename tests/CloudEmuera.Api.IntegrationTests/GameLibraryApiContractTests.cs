@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net;
+using System.Text;
 using System.Net.Http.Json;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Application.GamePackages;
@@ -280,6 +281,66 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.Created, recreated.StatusCode);
         GameLibraryItem second = await recreated.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Recreated game response was missing.");
         Assert.NotEqual(first.Id, second.Id);
+    }
+
+    [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task Utf16TextFileConvertsOnIngestionAndValidates()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
+        _factory = new IdentityFactory(_dataRoot);
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+
+        string csrf = await GetCsrfAsync(client);
+        Assert.True((await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf)).IsSuccessStatusCode);
+        csrf = await GetCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Utf16 Fixture", "PRIVATE"), csrf))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
+        csrf = await GetCsrfAsync(client);
+        using MemoryStream archive = CreateUtf16Archive();
+        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", archive.ToArray(), "application/zip", csrf, $"ingest-{Guid.NewGuid():N}"))
+            .Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
+        Assert.DoesNotContain(package.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_UTF16_OR_UTF32_UNSUPPORTED");
+        Assert.Contains(package.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_ENCODING_CONVERTED");
+        Assert.Contains(package.Manifest.Files, file => file.Path == "ERB/START.ERB" && file.Encoding == GamePackageTextEncoding.Utf8);
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
+            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, $"bind-{Guid.NewGuid():N}"))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage validated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, $"validate-{Guid.NewGuid():N}");
+        GameValidationResult validation = await validated.Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
+        Assert.True(validation.CanActivate, string.Join(',', validation.Diagnostics.Select(item => item.Code)));
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage activated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, $"activate-{Guid.NewGuid():N}");
+        Assert.Equal(HttpStatusCode.OK, activated.StatusCode);
+    }
+
+    private static MemoryStream CreateUtf16Archive()
+    {
+        var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            byte[] utf16Erb = [0xFF, 0xFE, .. Encoding.Unicode.GetBytes("@SYSTEM_TITLE\nINPUT\nQUIT\n")];
+            ZipArchiveEntry entry = archive.CreateEntry("ERB/START.ERB");
+            using (Stream writer = entry.Open()) writer.Write(utf16Erb, 0, utf16Erb.Length);
+            entry = archive.CreateEntry("CSV/GAMEBASE.CSV");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("title,validator-test\n");
+            entry = archive.CreateEntry("emuera.config");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("Use sav folder:NO\n");
+        }
+        stream.Position = 0;
+        return stream;
     }
 
     public void Dispose()

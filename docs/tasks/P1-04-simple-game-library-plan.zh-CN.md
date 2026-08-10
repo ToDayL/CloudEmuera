@@ -19,6 +19,18 @@ NFR-011/013、AC-008～010/014。
 [`ADR-0008`](../adr/0008-secure-zip-ingestion-policy.md)；SessionRoot 所有权见
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)。
 
+## 0.8 2026-08-10 摄取时自动把 UTF-16/UTF-32 文本文件转换为 UTF-8
+
+- 背景：部分 era 游戏包文本文件为 UTF-16/UTF-32（带 BOM）；运行时
+  `EncodingHandler.DetectEncoding` 已能自动识别，但静态校验层只接受 UTF-8/CP932，导致
+  UTF-16 游戏无法启用。
+- 修复：摄取展开后、分析前，把带 BOM 的 UTF-16 LE/BE、UTF-32 LE/BE 文本文件严格解码并
+  重写为 UTF-8（无 BOM，同目录临时文件 + renameat + fsync），更新摘要/字节数，记录非阻断
+  `TEXT_ENCODING_CONVERTED`；转换失败或超限保留原文并沿用阻断诊断；Shift-JIS/UTF-8 不转换
+  （运行时已自动识别）（ADR-0014）。
+- 验证：GamePackages 51 项通过（含 UTF-16 转换、Shift-JIS/UTF-8 不转换）；API GameLibrary
+  6 项通过（含 UTF-16 包摄取→绑定→验证→启用端到端）；`check.sh` 全绿。
+
 ## 0.7 2026-08-10 Validator 超时与失败重试的状态版本冲突
 
 - 现象：大游戏验证超时；失败后立即重试报 “The game was changed by another request.”，

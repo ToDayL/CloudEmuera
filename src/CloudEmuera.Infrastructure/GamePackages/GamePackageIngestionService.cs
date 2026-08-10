@@ -101,7 +101,14 @@ public sealed class GamePackageIngestionService(
                 ExtractionResult extraction = await ExtractAsync(LinuxGamePackageStagingStore.DescriptorPath(archiveSource), content, prepared, effectiveLimits, deadline.Token).ConfigureAwait(false);
                 await TransitionAsync(ingestionId, GamePackageIngestionStatus.Extracting, GamePackageIngestionStatus.Analyzing, deadline.Token).ConfigureAwait(false);
                 if (faultInjector is not null) await faultInjector.InjectAsync(GamePackageIngestionFaultPoint.BeforeAnalyze, deadline.Token).ConfigureAwait(false);
+                var encodingDiagnostics = new DiagnosticCollector(effectiveLimits.MaxDiagnostics);
+                extraction = ConvertTextEncodings(content, extraction, effectiveLimits, encodingDiagnostics);
+                List<GamePackageDiagnostic> conversionDiagnostics = encodingDiagnostics.Build();
                 GamePackageManifest manifest = Analyze(archiveBytes, archiveDigest, content, extraction, effectiveLimits);
+                if (conversionDiagnostics.Count > 0)
+                {
+                    manifest = manifest with { Diagnostics = manifest.Diagnostics.Concat(conversionDiagnostics).ToArray() };
+                }
                 await AdjustReservationAsync(ingestionId, archiveBytes, extraction.TotalBytes, deadline.Token).ConfigureAwait(false);
                 string manifestJson = JsonSerializer.Serialize(manifest, JsonOptions);
                 using (SafeFileHandle manifestHandle = LinuxGamePackageStagingStore.CreateFile(candidate, "manifest.json"))
@@ -411,6 +418,116 @@ public sealed class GamePackageIngestionService(
         if (metadataMismatchPath is not null)
             Reject(GamePackageRejectionCodes.ArchiveCorrupt, "ZIP entry actual size or CRC32 differs from its declaration.", metadataMismatchPath);
         return new(total, files, directories.Order(StringComparer.Ordinal).ToArray(), normalizedPaths.Order(StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>
+    /// Normalizes UTF-16/UTF-32 text files (with BOM) to UTF-8 inside the private
+    /// staging copy so validation, the editor, the runtime and the content digest
+    /// all agree on a canonical encoding (ADR-0014). Shift-JIS and UTF-8 files are
+    /// left untouched because the upstream runtime auto-detects them.
+    /// </summary>
+    private static ExtractionResult ConvertTextEncodings(
+        SafeFileHandle contentRoot,
+        ExtractionResult extraction,
+        GamePackageIngestionLimits limits,
+        DiagnosticCollector diagnostics)
+    {
+        bool convertedAny = false;
+        var files = new List<ExtractedFile>(extraction.Files.Count);
+        long total = 0;
+        foreach (ExtractedFile file in extraction.Files)
+        {
+            if (IsText(file.Path)
+                && TryConvertUtf16Or32ToUtf8(contentRoot, file.Path, limits, out (long Bytes, string Digest) rewritten))
+            {
+                files.Add(file with { Bytes = rewritten.Bytes, Digest = rewritten.Digest });
+                total = checked(total + rewritten.Bytes);
+                convertedAny = true;
+                diagnostics.Add("TEXT_ENCODING_CONVERTED", GamePackageDiagnosticSeverity.Info, "ENCODING", file.Path,
+                    "gamePackage.diagnostic.textEncodingConverted", publishBlocking: false);
+            }
+            else
+            {
+                files.Add(file);
+                total = checked(total + file.Bytes);
+            }
+        }
+        return convertedAny
+            ? new ExtractionResult(total, files, extraction.Directories, extraction.NormalizedPaths)
+            : extraction;
+    }
+
+    private static bool TryConvertUtf16Or32ToUtf8(
+        SafeFileHandle contentRoot,
+        string logicalPath,
+        GamePackageIngestionLimits limits,
+        out (long Bytes, string Digest) rewritten)
+    {
+        rewritten = default;
+        byte[] source = ReadAll(contentRoot, logicalPath);
+        Encoding? sourceEncoding = DetectUtf16Or32(source);
+        if (sourceEncoding is null) return false;
+        byte[] utf8;
+        try
+        {
+            string text = sourceEncoding.GetString(source);
+            if (text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
+            utf8 = new UTF8Encoding(false, true).GetBytes(text);
+        }
+        catch (Exception exception) when (exception is DecoderFallbackException or EncoderFallbackException)
+        {
+            return false;
+        }
+        if (utf8.Length == 0 || utf8.Length > limits.MaxSingleFileBytes) return false;
+        RewriteUtf8(contentRoot, logicalPath, utf8);
+        rewritten = (utf8.Length, Digest(SHA256.HashData(utf8)));
+        return true;
+    }
+
+    private static Encoding? DetectUtf16Or32(byte[] source)
+    {
+        if (source.Length < 2) return null;
+        if (source.Length >= 4 && source[0] == 0x00 && source[1] == 0x00 && source[2] == 0xFE && source[3] == 0xFF)
+            return new UTF32Encoding(bigEndian: true, byteOrderMark: true, throwOnInvalidCharacters: true);
+        if (source.Length >= 4 && source[0] == 0xFF && source[1] == 0xFE && source[2] == 0x00 && source[3] == 0x00)
+            return new UTF32Encoding(bigEndian: false, byteOrderMark: true, throwOnInvalidCharacters: true);
+        if (source[0] == 0xFF && source[1] == 0xFE)
+            return new UnicodeEncoding(bigEndian: false, byteOrderMark: true, throwOnInvalidBytes: true);
+        if (source[0] == 0xFE && source[1] == 0xFF)
+            return new UnicodeEncoding(bigEndian: true, byteOrderMark: true, throwOnInvalidBytes: true);
+        return null;
+    }
+
+    private static byte[] ReadAll(SafeFileHandle contentRoot, string logicalPath)
+    {
+        using SafeFileHandle handle = LinuxGamePackageStagingStore.OpenFilePath(contentRoot, logicalPath, create: false);
+        using FileStream stream = LinuxGamePackageStagingStore.Stream(handle, FileAccess.Read);
+        var buffer = new byte[stream.Length];
+        int offset = 0;
+        while (offset < buffer.Length)
+        {
+            int read = stream.Read(buffer, offset, buffer.Length - offset);
+            if (read == 0) break;
+            offset += read;
+        }
+        return buffer;
+    }
+
+    private static void RewriteUtf8(SafeFileHandle contentRoot, string logicalPath, byte[] utf8)
+    {
+        string normalized = logicalPath.Replace('\\', '/');
+        int slash = normalized.LastIndexOf('/');
+        string parentPath = slash < 0 ? string.Empty : normalized[..slash];
+        string name = slash < 0 ? normalized : normalized[(slash + 1)..];
+        using SafeFileHandle parent = LinuxGamePackageStagingStore.OpenDirectoryPath(contentRoot, parentPath, create: false);
+        string tmpName = $".{name}.utf8-{Guid.NewGuid():N}";
+        using (SafeFileHandle tmp = LinuxGamePackageStagingStore.CreateFile(parent, tmpName))
+        using (FileStream stream = LinuxGamePackageStagingStore.Stream(tmp, FileAccess.Write))
+        {
+            stream.Write(utf8, 0, utf8.Length);
+            stream.Flush(flushToDisk: true);
+        }
+        LinuxGamePackageStagingStore.Rename(parent, tmpName, name);
     }
 
     private static GamePackageManifest Analyze(long archiveBytes, string archiveDigest, SafeFileHandle contentRoot, ExtractionResult extraction, GamePackageIngestionLimits limits)

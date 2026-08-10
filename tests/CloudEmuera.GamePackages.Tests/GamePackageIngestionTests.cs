@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Buffers.Binary;
 using System.Text;
 using CloudEmuera.Application.GamePackages;
@@ -85,6 +86,47 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
         Assert.Equal(result.Manifest.ContentDigest, consumption.ContentDigest);
         await Assert.ThrowsAsync<GamePackageIngestionException>(() => Service().BeginConsumeAsync(result.IngestionId, userId, result.Manifest.ContentDigest));
         await Service().CompleteConsumeAsync(result.IngestionId, userId);
+    }
+
+    [Fact]
+    [Trait("Category", "Encoding")]
+    public async Task ConvertsUtf16TextFilesToUtf8OnIngestion()
+    {
+        byte[] utf16Body = Encoding.Unicode.GetBytes("@SYSTEM_TITLE\nINPUT\nQUIT\n");
+        byte[] utf16Erb = [0xFF, 0xFE, .. utf16Body]; // UTF-16 LE with BOM
+        byte[] zip = CreateZip(
+            ("ERB/START.ERB", utf16Erb, null),
+            ("CSV/GAMEBASE.CSV", Encoding.UTF8.GetBytes("title,test\n"), null),
+            ("emuera.config", Encoding.UTF8.GetBytes("Use sav folder:NO\n"), null));
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+
+        string staged = Path.Combine(root, "games", "staging", result.IngestionId, "ready", "content", "ERB", "START.ERB");
+        byte[] onDisk = await File.ReadAllBytesAsync(staged);
+        Assert.Equal("@SYSTEM_TITLE\nINPUT\nQUIT\n", new UTF8Encoding(false, true).GetString(onDisk));
+        GamePackageFileManifest erb = result.Manifest.Files.Single(file => file.Path == "ERB/START.ERB");
+        Assert.Equal("sha256:" + Convert.ToHexStringLower(SHA256.HashData(onDisk)), erb.Digest);
+        Assert.Equal(GamePackageTextEncoding.Utf8, erb.Encoding);
+        Assert.DoesNotContain(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_UTF16_OR_UTF32_UNSUPPORTED");
+        Assert.Contains(result.Manifest.Diagnostics, diagnostic =>
+            diagnostic.Code == "TEXT_ENCODING_CONVERTED" && diagnostic.LogicalPath == "ERB/START.ERB" && !diagnostic.PublishBlocking);
+        Assert.DoesNotContain(result.Manifest.Diagnostics, diagnostic =>
+            diagnostic.Code == "TEXT_ENCODING_CONVERTED" && diagnostic.LogicalPath != "ERB/START.ERB");
+    }
+
+    [Fact]
+    [Trait("Category", "Encoding")]
+    public async Task ShiftJisAndUtf8FilesAreNotConverted()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        byte[] zip = CreateZip(
+            ("ERB/START.ERB", Encoding.UTF8.GetBytes("@SYSTEM_TITLE\nQUIT\n"), null),
+            ("CSV/GAMEBASE.CSV", Encoding.GetEncoding(932).GetBytes("名前,値\n"), null),
+            ("emuera.config", Encoding.UTF8.GetBytes("Use sav folder:NO\n"), null));
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+
+        Assert.DoesNotContain(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_ENCODING_CONVERTED");
+        Assert.Contains(result.Manifest.Files, file => file.Path == "CSV/GAMEBASE.CSV" && file.Encoding == GamePackageTextEncoding.ShiftJis);
+        Assert.Contains(result.Manifest.Files, file => file.Path == "ERB/START.ERB" && file.Encoding == GamePackageTextEncoding.Utf8);
     }
 
     [Fact]
@@ -386,18 +428,21 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
             && diagnostic.MessageKey.Length > 0 && diagnostic.Arguments is not null);
         GamePackageDiagnostic truncated = Assert.Single(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "DIAGNOSTICS_TRUNCATED");
         Assert.True(truncated.PublishBlocking);
-        Assert.True(truncated.SuppressedCount >= 2);
+        Assert.True(truncated.SuppressedCount >= 1);
+        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_ENCODING_CONVERTED");
     }
 
     [Fact]
     [Trait("Category", "Encoding")]
-    public async Task EmitsBlockingUtf16AndNulDiagnosticsWithoutTranscoding()
+    public async Task ConvertsUtf16AndKeepsNulDiagnosticBlocking()
     {
         byte[] zip = CreateZip(
             ("utf16.txt", new byte[] { 0xFF, 0xFE, 0x41, 0x00 }, null),
             ("zero.txt", new byte[] { (byte)'a', 0, (byte)'b' }, null));
         IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
-        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_UTF16_OR_UTF32_UNSUPPORTED" && diagnostic.PublishBlocking);
+        Assert.DoesNotContain(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_UTF16_OR_UTF32_UNSUPPORTED");
+        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_ENCODING_CONVERTED"
+            && diagnostic.LogicalPath == "utf16.txt" && !diagnostic.PublishBlocking);
         Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_NUL_CHARACTER" && diagnostic.PublishBlocking);
         Assert.All(result.Manifest.Diagnostics, diagnostic => Assert.StartsWith("gamePackage.diagnostic.", diagnostic.MessageKey, StringComparison.Ordinal));
     }
