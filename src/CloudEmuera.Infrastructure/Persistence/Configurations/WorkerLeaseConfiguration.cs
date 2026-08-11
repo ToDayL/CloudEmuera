@@ -12,8 +12,11 @@ internal sealed class WorkerLeaseConfiguration : IEntityTypeConfiguration<Worker
             table.HasCheckConstraint("ck_worker_leases_session_id", SqliteCheckExpressions.IdentifierPrefix("session_id", "sess_"));
             table.HasCheckConstraint("ck_worker_leases_worker_id", "substr(worker_id, 1, 4) = 'wrk_' AND length(worker_id) BETWEEN 5 AND 128 AND instr(worker_id, char(0)) = 0");
             table.HasCheckConstraint("ck_worker_leases_epoch", "epoch > 0");
-            table.HasCheckConstraint("ck_worker_leases_status", "status IN ('STARTING', 'ACTIVE', 'STOPPING', 'EXPIRED')");
+            table.HasCheckConstraint("ck_worker_leases_status", "status IN ('STARTING', 'ACTIVE', 'STOPPING')");
             table.HasCheckConstraint("ck_worker_leases_pid", "pid IS NULL OR pid > 0");
+            table.HasCheckConstraint("ck_worker_leases_control_plane", "substr(control_plane_instance_id, 1, 4) = 'ctl_' AND length(control_plane_instance_id) BETWEEN 5 AND 128 AND instr(control_plane_instance_id, char(0)) = 0");
+            table.HasCheckConstraint("ck_worker_leases_process_identity", "((pid IS NULL AND process_boot_id IS NULL AND process_start_ticks IS NULL) OR (pid IS NOT NULL AND process_boot_id IS NOT NULL AND process_start_ticks IS NOT NULL AND process_start_ticks > 0)) AND (status = 'STARTING' OR (pid IS NOT NULL AND process_boot_id IS NOT NULL AND process_start_ticks IS NOT NULL))");
+            table.HasCheckConstraint("ck_worker_leases_process_boot_id", "process_boot_id IS NULL OR (length(process_boot_id) = 36 AND instr(process_boot_id, char(0)) = 0)");
             table.HasCheckConstraint("ck_worker_leases_ipc_endpoint", "length(ipc_endpoint) BETWEEN 1 AND 512 AND substr(ipc_endpoint, 1, 1) <> '/' AND instr(ipc_endpoint, char(92)) = 0 AND instr(ipc_endpoint, char(0)) = 0 AND instr(ipc_endpoint, '://') = 0 AND instr(ipc_endpoint, '//') = 0");
             table.HasCheckConstraint("ck_worker_leases_runtime_version", "length(runtime_version) BETWEEN 1 AND 128 AND instr(runtime_version, char(0)) = 0");
             table.HasCheckConstraint("ck_worker_leases_protocol_version", "protocol_version > 0");
@@ -26,6 +29,9 @@ internal sealed class WorkerLeaseConfiguration : IEntityTypeConfiguration<Worker
         builder.Property(row => row.Epoch).HasColumnName("epoch").HasColumnType("INTEGER").IsRequired();
         builder.Property(row => row.Status).HasColumnName("status").HasColumnType("TEXT").HasConversion(SqliteValueConverters.CreateEnumConverter<WorkerLeaseStatus>(), SqliteValueConverters.CreateEnumComparer<WorkerLeaseStatus>()).IsRequired();
         builder.Property(row => row.Pid).HasColumnName("pid").HasColumnType("INTEGER");
+        builder.Property(row => row.ControlPlaneInstanceId).HasColumnName("control_plane_instance_id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.WorkerIdMaxLength).IsRequired();
+        builder.Property(row => row.ProcessBootId).HasColumnName("process_boot_id").HasColumnType("TEXT").HasMaxLength(64);
+        builder.Property(row => row.ProcessStartTicks).HasColumnName("process_start_ticks").HasColumnType("INTEGER");
         builder.Property(row => row.IpcEndpoint).HasColumnName("ipc_endpoint").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IpcEndpointMaxLength).IsRequired();
         builder.Property(row => row.RuntimeVersion).HasColumnName("runtime_version").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.RuntimeVersionMaxLength).IsRequired();
         builder.Property(row => row.ProtocolVersion).HasColumnName("protocol_version").HasColumnType("INTEGER").IsRequired();

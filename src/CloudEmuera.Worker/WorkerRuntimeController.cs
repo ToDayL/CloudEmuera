@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V1;
+using CloudEmuera.Ipc.V2;
 using CloudEmuera.RuntimeAdapter;
 using Microsoft.Extensions.Logging;
 
@@ -49,6 +49,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         binding = bootstrap.Binding;
         this.connection = connection ?? throw new ArgumentNullException(nameof(connection));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        lastSentSequence = bootstrap.InitialOutputSequence;
     }
 
     public Task<int> Completion => completion.Task;
@@ -89,21 +90,21 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         }
     }
 
-    public async Task HandleCommandAsync(SupervisorEnvelope command, CancellationToken cancellationToken)
+    public async Task HandleCommandAsync(WorkerCommandEnvelope command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         switch (command.PayloadCase)
         {
-            case SupervisorEnvelope.PayloadOneofCase.StartRuntime:
+            case WorkerCommandEnvelope.PayloadOneofCase.StartRuntime:
                 await HandleStartAsync(command, cancellationToken).ConfigureAwait(false);
                 break;
-            case SupervisorEnvelope.PayloadOneofCase.SubmitInput:
+            case WorkerCommandEnvelope.PayloadOneofCase.SubmitInput:
                 await HandleInputAsync(command, cancellationToken).ConfigureAwait(false);
                 break;
-            case SupervisorEnvelope.PayloadOneofCase.Stop:
+            case WorkerCommandEnvelope.PayloadOneofCase.Stop:
                 await HandleStopAsync(command, cancellationToken).ConfigureAwait(false);
                 break;
-            case SupervisorEnvelope.PayloadOneofCase.RegistrationResult:
+            case WorkerCommandEnvelope.PayloadOneofCase.RegistrationResult:
                 // RegistrationResult is consumed by WorkerConnectionLoop.
                 break;
             default:
@@ -130,7 +131,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         runtimeCancellation?.Dispose();
     }
 
-    private async Task HandleStartAsync(SupervisorEnvelope envelope, CancellationToken cancellationToken)
+    private async Task HandleStartAsync(WorkerCommandEnvelope envelope, CancellationToken cancellationToken)
     {
         StartReceipt? cached;
         lock (sync)
@@ -212,7 +213,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         }
     }
 
-    private async Task HandleInputAsync(SupervisorEnvelope envelope, CancellationToken cancellationToken)
+    private async Task HandleInputAsync(WorkerCommandEnvelope envelope, CancellationToken cancellationToken)
     {
         WorkerInputResult inputResult;
         lock (sync)
@@ -274,6 +275,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             SessionId = binding.SessionId,
             WorkerId = binding.WorkerId,
             WorkerEpoch = binding.WorkerEpoch,
+            ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
             InputResult = new InputResult
             {
                 PromptId = envelope.SubmitInput.PromptId,
@@ -287,7 +289,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         LogLifecycle("input_result", inputResult.ReasonCode);
     }
 
-    private async Task HandleStopAsync(SupervisorEnvelope envelope, CancellationToken cancellationToken)
+    private async Task HandleStopAsync(WorkerCommandEnvelope envelope, CancellationToken cancellationToken)
     {
         bool alreadyStopping;
         lock (sync)
@@ -363,6 +365,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 }
             }
 
+            console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
+
             await connection.SendControlAsync(new WorkerEnvelope
             {
                 ProtocolVersion = IpcProtocol.CurrentVersion,
@@ -370,6 +374,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 SessionId = binding.SessionId,
                 WorkerId = binding.WorkerId,
                 WorkerEpoch = binding.WorkerEpoch,
+                ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
                 Ready = new WorkerReady
                 {
                     RuntimeIntegrationVersion = initialized.IntegrationVersion,
@@ -444,7 +449,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         string root = Path.GetFullPath(bootstrap.SessionRoot);
         if (!Path.IsPathFullyQualified(root) ||
             string.Equals(root, Path.GetPathRoot(root), StringComparison.Ordinal) ||
-            PathsOverlap(root, bootstrap.SupervisorSocketPath))
+            PathsOverlap(root, bootstrap.ControlSocketPath))
         {
             throw new WorkerSessionRootException("session_root_invalid", "The bound SessionRoot is invalid.");
         }
@@ -530,11 +535,11 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         if (result is ConsoleSnapshotWithDeltasResult snapshotResult &&
             snapshotResult.Snapshot.SnapshotSequence > Interlocked.Read(ref lastSentSequence))
         {
-            List<CloudEmuera.Ipc.V1.ConsoleOperation> snapshotOperations = [];
-            snapshotOperations.Add(new CloudEmuera.Ipc.V1.ConsoleOperation { ClearConsole = new ClearConsole() });
+            List<CloudEmuera.Ipc.V2.ConsoleOperation> snapshotOperations = [];
+            snapshotOperations.Add(new CloudEmuera.Ipc.V2.ConsoleOperation { ClearConsole = new ClearConsole() });
             if (snapshotResult.Snapshot.VisibleNodes.Count != 0)
             {
-                snapshotOperations.Add(new CloudEmuera.Ipc.V1.ConsoleOperation
+                snapshotOperations.Add(new CloudEmuera.Ipc.V2.ConsoleOperation
                 {
                     AppendNodes = new AppendNodes()
                 }.WithNodes(snapshotResult.Snapshot.VisibleNodes));
@@ -542,7 +547,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
             if (snapshotResult.Snapshot.CurrentPrompt is not null)
             {
-                snapshotOperations.Add(new CloudEmuera.Ipc.V1.ConsoleOperation
+                snapshotOperations.Add(new CloudEmuera.Ipc.V2.ConsoleOperation
                 {
                     OpenPrompt = new OpenPrompt { Prompt = ConsoleWireMapper.ToProto(snapshotResult.Snapshot.CurrentPrompt) }
                 });
@@ -596,6 +601,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             SessionId = binding.SessionId,
             WorkerId = binding.WorkerId,
             WorkerEpoch = binding.WorkerEpoch,
+            ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
             DisplayBatch = batch
         }, cancellationToken);
 
@@ -612,12 +618,14 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 SessionId = binding.SessionId,
                 WorkerId = binding.WorkerId,
                 WorkerEpoch = binding.WorkerEpoch,
+                ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
                 Heartbeat = new WorkerHeartbeat
                 {
                     MonotonicTimestampTicks = Stopwatch.GetTimestamp(),
                     OutputSequence = gameConsole?.StateStore.CurrentSequence ?? 0,
                     WaitingForInput = gameConsole?.CurrentPrompt is not null,
-                    ResidentMemoryBytes = Environment.WorkingSet
+                    ResidentMemoryBytes = Environment.WorkingSet,
+                    CurrentPromptId = gameConsole?.CurrentPrompt?.PromptId ?? string.Empty
                 }
             }, cancellationToken).ConfigureAwait(false);
         }
@@ -634,6 +642,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 SessionId = binding.SessionId,
                 WorkerId = binding.WorkerId,
                 WorkerEpoch = binding.WorkerEpoch,
+                ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
                 RuntimeCompleted = new RuntimeCompleted
                 {
                     Status = result.Status.ToString().ToLowerInvariant(),
@@ -671,6 +680,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             SessionId = binding.SessionId,
             WorkerId = binding.WorkerId,
             WorkerEpoch = binding.WorkerEpoch,
+            ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
             RuntimeFailed = new RuntimeFailed
             {
                 StableCode = NormalizeCode(code),
@@ -724,6 +734,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 SessionId = binding.SessionId,
                 WorkerId = binding.WorkerId,
                 WorkerEpoch = binding.WorkerEpoch,
+                ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
                 WorkerStopped = new WorkerStopped
                 {
                     ReasonCode = NormalizeCode(reason),
@@ -741,7 +752,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     }
 
     private async Task SendCommandResultAsync(
-        SupervisorEnvelope command,
+        WorkerCommandEnvelope command,
         bool accepted,
         string reasonCode,
         CancellationToken cancellationToken)
@@ -754,13 +765,14 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             SessionId = binding.SessionId,
             WorkerId = binding.WorkerId,
             WorkerEpoch = binding.WorkerEpoch,
-            CommandResult = new CloudEmuera.Ipc.V1.WorkerCommandResult
+            ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+            CommandResult = new CloudEmuera.Ipc.V2.WorkerCommandResult
             {
                 CommandType = command.PayloadCase switch
                 {
-                    SupervisorEnvelope.PayloadOneofCase.StartRuntime => "start_runtime",
-                    SupervisorEnvelope.PayloadOneofCase.SubmitInput => "submit_input",
-                    SupervisorEnvelope.PayloadOneofCase.Stop => "stop_worker",
+                    WorkerCommandEnvelope.PayloadOneofCase.StartRuntime => "start_runtime",
+                    WorkerCommandEnvelope.PayloadOneofCase.SubmitInput => "submit_input",
+                    WorkerCommandEnvelope.PayloadOneofCase.Stop => "stop_worker",
                     _ => "unsupported_command"
                 },
                 Accepted = accepted,
@@ -780,7 +792,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     private string SafeMessage(string message)
     {
         string safe = message ?? string.Empty;
-        foreach (string path in new[] { bootstrap.SessionRoot, bootstrap.SupervisorSocketPath })
+        foreach (string path in new[] { bootstrap.SessionRoot, bootstrap.ControlSocketPath })
         {
             safe = safe.Replace(path, "<runtime-path>", StringComparison.Ordinal);
         }
@@ -841,8 +853,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
 internal static class WorkerProtoCollectionExtensions
 {
-    public static CloudEmuera.Ipc.V1.ConsoleOperation WithNodes(
-        this CloudEmuera.Ipc.V1.ConsoleOperation operation,
+    public static CloudEmuera.Ipc.V2.ConsoleOperation WithNodes(
+        this CloudEmuera.Ipc.V2.ConsoleOperation operation,
         IEnumerable<CloudEmuera.RuntimeAdapter.ConsoleNode> nodes)
     {
         operation.AppendNodes.Nodes.AddRange(nodes.Select(ConsoleWireMapper.ToProto));

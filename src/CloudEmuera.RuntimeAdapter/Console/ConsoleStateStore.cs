@@ -17,6 +17,7 @@ public sealed class ConsoleStateStore
     private bool wasTruncated;
     private long droppedNodeCount;
     private ConsoleSnapshot baselineSnapshot = ConsoleSnapshot.Empty;
+    private bool sequenceInitialized;
 
     public ConsoleStateStore()
         : this(ConsoleHistoryOptions.Default)
@@ -116,6 +117,28 @@ public sealed class ConsoleStateStore
             {
                 return Array.AsReadOnly(history.ToArray());
             }
+        }
+    }
+
+    /// <summary>
+    /// Starts a fresh runtime's console sequence after a persisted Session
+    /// sequence. This must be called before the first operation; it preserves
+    /// Session-level monotonicity across a cold reopen without replaying the
+    /// previous runtime's history.
+    /// </summary>
+    public void InitializeSequence(long initialSequence)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(initialSequence);
+        ArgumentOutOfRangeException.ThrowIfEqual(initialSequence, long.MaxValue);
+
+        lock (sync)
+        {
+            if (sequenceInitialized || currentSequence != 0 || history.Count != 0 || visibleNodes.Count != 0 || currentPrompt is not null)
+                throw new InvalidOperationException("The console sequence must be initialized before the first operation.");
+
+            currentSequence = initialSequence;
+            baselineSnapshot = CreateSnapshot(initialSequence, visibleNodes, currentPrompt);
+            sequenceInitialized = true;
         }
     }
 

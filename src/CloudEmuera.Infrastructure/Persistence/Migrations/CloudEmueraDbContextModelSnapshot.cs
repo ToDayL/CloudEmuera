@@ -1293,6 +1293,9 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .IsDescending(false, true)
                         .HasDatabaseName("ix_sessions_owner_created");
 
+                    b.HasIndex("OwnerUserId", "State")
+                        .HasDatabaseName("ix_sessions_owner_state");
+
                     b.HasIndex("State", "LastActivityAt")
                         .HasDatabaseName("ix_sessions_state_activity");
 
@@ -1300,7 +1303,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_sessions_close_reason", "close_reason IS NULL OR (length(close_reason) BETWEEN 1 AND 256 AND instr(close_reason, char(0)) = 0)");
 
-                            t.HasCheckConstraint("ck_sessions_closed_fields", "(state = 'CLOSED' AND closed_at IS NOT NULL) OR (state <> 'CLOSED' AND closed_at IS NULL)");
+                            t.HasCheckConstraint("ck_sessions_closed_fields", "((state IN ('CLOSED', 'CRASHED') AND closed_at IS NOT NULL) OR (state NOT IN ('CLOSED', 'CRASHED') AND closed_at IS NULL)) AND ((state IN ('CREATING', 'CLOSED', 'CRASHED') AND waiting_for_input = 0 AND current_prompt_id IS NULL) OR state NOT IN ('CREATING', 'CLOSED', 'CRASHED'))");
 
                             t.HasCheckConstraint("ck_sessions_counters", "state_version >= 0 AND worker_epoch >= 0 AND last_output_sequence >= 0");
 
@@ -1363,6 +1366,21 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("pid");
 
+                    b.Property<string>("ControlPlaneInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("control_plane_instance_id");
+
+                    b.Property<string>("ProcessBootId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("process_boot_id");
+
+                    b.Property<long?>("ProcessStartTicks")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("process_start_ticks");
+
                     b.Property<int>("ProtocolVersion")
                         .HasColumnType("INTEGER")
                         .HasColumnName("protocol_version");
@@ -1397,11 +1415,17 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                     b.ToTable("worker_leases", null, t =>
                         {
+                            t.HasCheckConstraint("ck_worker_leases_control_plane", "substr(control_plane_instance_id, 1, 4) = 'ctl_' AND length(control_plane_instance_id) BETWEEN 5 AND 128 AND instr(control_plane_instance_id, char(0)) = 0");
+
                             t.HasCheckConstraint("ck_worker_leases_epoch", "epoch > 0");
 
                             t.HasCheckConstraint("ck_worker_leases_ipc_endpoint", "length(ipc_endpoint) BETWEEN 1 AND 512 AND substr(ipc_endpoint, 1, 1) <> '/' AND instr(ipc_endpoint, char(92)) = 0 AND instr(ipc_endpoint, char(0)) = 0 AND instr(ipc_endpoint, '://') = 0 AND instr(ipc_endpoint, '//') = 0");
 
                             t.HasCheckConstraint("ck_worker_leases_pid", "pid IS NULL OR pid > 0");
+
+                            t.HasCheckConstraint("ck_worker_leases_process_boot_id", "process_boot_id IS NULL OR (length(process_boot_id) = 36 AND instr(process_boot_id, char(0)) = 0)");
+
+                            t.HasCheckConstraint("ck_worker_leases_process_identity", "((pid IS NULL AND process_boot_id IS NULL AND process_start_ticks IS NULL) OR (pid IS NOT NULL AND process_boot_id IS NOT NULL AND process_start_ticks IS NOT NULL AND process_start_ticks > 0)) AND (status = 'STARTING' OR (pid IS NOT NULL AND process_boot_id IS NOT NULL AND process_start_ticks IS NOT NULL))");
 
                             t.HasCheckConstraint("ck_worker_leases_protocol_version", "protocol_version > 0");
 
@@ -1409,7 +1433,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_worker_leases_session_id", "substr(session_id, 1, 5) = 'sess_' AND length(session_id) BETWEEN 5 AND 64 AND instr(session_id, char(0)) = 0");
 
-                            t.HasCheckConstraint("ck_worker_leases_status", "status IN ('STARTING', 'ACTIVE', 'STOPPING', 'EXPIRED')");
+                            t.HasCheckConstraint("ck_worker_leases_status", "status IN ('STARTING', 'ACTIVE', 'STOPPING')");
 
                             t.HasCheckConstraint("ck_worker_leases_time_order", "acquired_at >= 0 AND heartbeat_at >= acquired_at AND expires_at > heartbeat_at");
 

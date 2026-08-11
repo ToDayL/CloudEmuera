@@ -1,16 +1,16 @@
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using CloudEmuera.Supervisor;
+using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;
 using Xunit;
 
 namespace CloudEmuera.Worker.IntegrationTests;
 
 [Trait("Category", "ProcessIsolation")]
-public sealed class SupervisorSecurityTests
+public sealed class WorkerControlSecurityTests
 {
     [Fact]
-    public async Task SupervisorUsesPrivateUdsAndRemovesOnlyItsSocket()
+    public async Task WorkerManagerUsesPrivateUdsAndRemovesOnlyItsSocket()
     {
         if (!OperatingSystem.IsLinux())
             return;
@@ -18,22 +18,22 @@ public sealed class SupervisorSecurityTests
         string root = NewRoot();
         try
         {
-            await using (SupervisorHost supervisor = await SupervisorHost.StartAsync(
-                             new SupervisorOptions(root, typeof(ConsoleWireMapper).Assembly.Location)))
+            WorkerManagerOptions options = CreateOptions(root);
+            await using (WorkerManagerHost manager = await WorkerManagerHost.StartAsync(options))
             {
                 Assert.Equal(
                     UnixFileMode.UserRead | UnixFileMode.UserWrite,
-                    File.GetUnixFileMode(supervisor.SocketPath));
+                    File.GetUnixFileMode(manager.SocketPath));
                 Assert.Equal(
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
                     File.GetUnixFileMode(root));
                 Assert.Equal(
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
-                    File.GetUnixFileMode(Path.Combine(root, "bootstrap")));
-                Assert.True(IsUnixSocket(supervisor.SocketPath));
+                    File.GetUnixFileMode(options.BootstrapDirectory));
+                Assert.True(IsUnixSocket(manager.SocketPath));
             }
 
-            Assert.False(File.Exists(Path.Combine(root, "supervisor.sock")));
+            Assert.False(File.Exists(options.ControlSocketPath));
         }
         finally
         {
@@ -45,13 +45,16 @@ public sealed class SupervisorSecurityTests
     public async Task ExistingOrdinarySocketEntryIsNotDeleted()
     {
         string root = NewRoot();
-        string socketPath = Path.Combine(root, "supervisor.sock");
+        WorkerManagerOptions options = CreateOptions(root);
+        string socketPath = options.ControlSocketPath;
         const string marker = "keep-me";
+        Directory.CreateDirectory(options.RuntimeDirectory);
+        if (OperatingSystem.IsLinux())
+            File.SetUnixFileMode(options.RuntimeDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         File.WriteAllText(socketPath, marker);
         try
         {
-            await Assert.ThrowsAsync<IOException>(() => SupervisorHost.StartAsync(
-                new SupervisorOptions(root, typeof(ConsoleWireMapper).Assembly.Location)));
+            await Assert.ThrowsAsync<IOException>(() => WorkerManagerHost.StartAsync(options));
             Assert.Equal(marker, File.ReadAllText(socketPath));
         }
         finally
@@ -67,16 +70,19 @@ public sealed class SupervisorSecurityTests
             return;
 
         string root = NewRoot();
-        string socketPath = Path.Combine(root, "supervisor.sock");
+        WorkerManagerOptions options = CreateOptions(root);
+        string socketPath = options.ControlSocketPath;
         string targetPath = Path.Combine(root, "stale-target.sock");
         try
         {
+            Directory.CreateDirectory(options.RuntimeDirectory);
+            File.SetUnixFileMode(options.RuntimeDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            targetPath = Path.Combine(options.RuntimeDirectory, "stale-target.sock");
             using (var stale = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified))
                 stale.Bind(new UnixDomainSocketEndPoint(targetPath));
             File.CreateSymbolicLink(socketPath, targetPath);
 
-            await Assert.ThrowsAsync<IOException>(() => SupervisorHost.StartAsync(
-                new SupervisorOptions(root, typeof(ConsoleWireMapper).Assembly.Location)));
+            await Assert.ThrowsAsync<IOException>(() => WorkerManagerHost.StartAsync(options));
 
             Assert.NotNull(new FileInfo(socketPath).LinkTarget);
             Assert.True(File.Exists(targetPath) || IsUnixSocket(targetPath));
@@ -91,12 +97,15 @@ public sealed class SupervisorSecurityTests
     public async Task ExistingSocketDirectoryIsNotDeleted()
     {
         string root = NewRoot();
-        string socketPath = Path.Combine(root, "supervisor.sock");
+        WorkerManagerOptions options = CreateOptions(root);
+        string socketPath = options.ControlSocketPath;
+        Directory.CreateDirectory(options.RuntimeDirectory);
+        if (OperatingSystem.IsLinux())
+            File.SetUnixFileMode(options.RuntimeDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         Directory.CreateDirectory(socketPath);
         try
         {
-            await Assert.ThrowsAsync<IOException>(() => SupervisorHost.StartAsync(
-                new SupervisorOptions(root, typeof(ConsoleWireMapper).Assembly.Location)));
+            await Assert.ThrowsAsync<IOException>(() => WorkerManagerHost.StartAsync(options));
             Assert.True(Directory.Exists(socketPath));
         }
         finally
@@ -112,16 +121,15 @@ public sealed class SupervisorSecurityTests
             return;
 
         string root = NewRoot();
-        string socketPath = Path.Combine(root, "supervisor.sock");
+        WorkerManagerOptions options = CreateOptions(root);
+        Directory.CreateDirectory(options.RuntimeDirectory);
+        string socketPath = options.ControlSocketPath;
         try
         {
-            using (var stale = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified))
-                stale.Bind(new UnixDomainSocketEndPoint(socketPath));
-            File.SetUnixFileMode(root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.OtherRead);
+            File.SetUnixFileMode(options.RuntimeDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.OtherRead);
 
-            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => SupervisorHost.StartAsync(
-                new SupervisorOptions(root, typeof(ConsoleWireMapper).Assembly.Location)));
-            Assert.True(IsUnixSocket(socketPath));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => WorkerManagerHost.StartAsync(options));
+            Assert.True(Directory.Exists(options.RuntimeDirectory));
         }
         finally
         {
@@ -135,16 +143,17 @@ public sealed class SupervisorSecurityTests
         if (!OperatingSystem.IsLinux())
             return;
 
-        string root = NewRoot();
+        string root = Path.Combine(Path.GetTempPath(), $"l{Guid.NewGuid().ToString("N")[..8]}");
+        Directory.CreateDirectory(root);
+        File.SetUnixFileMode(root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         string realParent = Path.Combine(root, "real");
         string linkParent = Path.Combine(root, "link");
         Directory.CreateDirectory(realParent);
         Directory.CreateSymbolicLink(linkParent, realParent);
-        string runtimeDirectory = Path.Combine(linkParent, "runtime");
         try
         {
-            await Assert.ThrowsAsync<IOException>(() => SupervisorHost.StartAsync(
-                new SupervisorOptions(runtimeDirectory, typeof(ConsoleWireMapper).Assembly.Location)));
+            await Assert.ThrowsAsync<IOException>(() => WorkerManagerHost.StartAsync(
+                new WorkerManagerOptions(linkParent, typeof(ConsoleWireMapper).Assembly.Location)));
             Assert.False(Directory.Exists(Path.Combine(realParent, "runtime")));
         }
         finally
@@ -161,12 +170,12 @@ public sealed class SupervisorSecurityTests
         Directory.CreateDirectory(outside);
         try
         {
-            SupervisorOptions options = new(root, typeof(ConsoleWireMapper).Assembly.Location)
+            WorkerManagerOptions options = new(root, typeof(ConsoleWireMapper).Assembly.Location)
             {
-                SocketPath = Path.Combine(outside, "supervisor.sock")
+                ControlSocketPath = Path.Combine(outside, "worker-control.sock")
             };
-            await Assert.ThrowsAsync<ArgumentException>(() => SupervisorHost.StartAsync(options));
-            Assert.False(File.Exists(options.SocketPath));
+            await Assert.ThrowsAsync<ArgumentException>(() => WorkerManagerHost.StartAsync(options));
+            Assert.False(File.Exists(options.ControlSocketPath));
         }
         finally
         {
@@ -180,8 +189,8 @@ public sealed class SupervisorSecurityTests
         if (!OperatingSystem.IsLinux() || GetEffectiveUserId() == 0)
             return;
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => SupervisorHost.StartAsync(
-            new SupervisorOptions(Path.GetPathRoot(Path.GetTempPath())!, typeof(ConsoleWireMapper).Assembly.Location)));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(Path.GetPathRoot(Path.GetTempPath())!, typeof(ConsoleWireMapper).Assembly.Location)));
     }
 
     [Fact]
@@ -191,20 +200,21 @@ public sealed class SupervisorSecurityTests
             return;
 
         string root = NewRoot();
-        string socketPath = Path.Combine(root, "supervisor.sock");
+        WorkerManagerOptions options = CreateOptions(root);
+        string socketPath = options.ControlSocketPath;
         try
         {
+            Directory.CreateDirectory(options.RuntimeDirectory);
+            File.SetUnixFileMode(options.RuntimeDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             using (var stale = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified))
             {
                 stale.Bind(new UnixDomainSocketEndPoint(socketPath));
             }
 
-            await using (SupervisorHost supervisor = await SupervisorHost.StartAsync(
-                             new SupervisorOptions(root, typeof(ConsoleWireMapper).Assembly.Location)))
+            await using (WorkerManagerHost manager = await WorkerManagerHost.StartAsync(options))
             {
-                Assert.True(IsUnixSocket(supervisor.SocketPath));
-                await Assert.ThrowsAsync<IOException>(() => SupervisorHost.StartAsync(
-                    new SupervisorOptions(root, typeof(ConsoleWireMapper).Assembly.Location)));
+                Assert.True(IsUnixSocket(manager.SocketPath));
+                await Assert.ThrowsAsync<IOException>(() => WorkerManagerHost.StartAsync(options));
             }
         }
         finally
@@ -215,12 +225,15 @@ public sealed class SupervisorSecurityTests
 
     private static string NewRoot()
     {
-        string root = Path.Combine(Path.GetTempPath(), "cloudemuera-supervisor-security", Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "s", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         if (OperatingSystem.IsLinux())
             File.SetUnixFileMode(root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         return root;
     }
+
+    private static WorkerManagerOptions CreateOptions(string root) =>
+        new(root, typeof(ConsoleWireMapper).Assembly.Location);
 
     private static void DeleteRoot(string root)
     {
@@ -243,7 +256,7 @@ public sealed class SupervisorSecurityTests
         }
         catch (SocketException exception) when (exception.SocketErrorCode is SocketError.ConnectionRefused or SocketError.AddressNotAvailable)
         {
-            // The Supervisor listener is not accepting test probes; the path
+            // The Worker Manager listener is not accepting test probes; the path
             // is nevertheless a socket if the connect reached the endpoint.
             return true;
         }

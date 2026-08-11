@@ -1,7 +1,7 @@
 using Google.Protobuf;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V1;
-using ProtoConsoleColor = CloudEmuera.Ipc.V1.ConsoleColor;
+using CloudEmuera.Ipc.V2;
+using ProtoConsoleColor = CloudEmuera.Ipc.V2.ConsoleColor;
 using System.Runtime.InteropServices;
 using System.Diagnostics.CodeAnalysis;
 using Xunit;
@@ -14,7 +14,7 @@ public sealed class IpcContractTests
     private static readonly WorkerBinding Binding = new("sess_contract", "wrk_contract", 7);
 
     [Fact]
-    public void V1EnvelopeRoundTripsStructuredDisplayAndInputPayloads()
+    public void V2EnvelopeRoundTripsStructuredDisplayAndInputPayloads()
     {
         var original = new WorkerEnvelope
         {
@@ -59,7 +59,7 @@ public sealed class IpcContractTests
     }
 
     [Fact]
-    public void UnknownFieldIsPreservedByV1ParserAndSerializer()
+    public void UnknownFieldIsPreservedByV2ParserAndSerializer()
     {
         var original = new WorkerEnvelope
         {
@@ -82,7 +82,7 @@ public sealed class IpcContractTests
 
     [Theory]
     [InlineData(0, "unsupported_protocol_version")]
-    [InlineData(2, "unsupported_protocol_version")]
+    [InlineData(3, "unsupported_protocol_version")]
     public void UnsupportedProtocolVersionIsRejectedBeforePayloadRouting(uint version, string reason)
     {
         WorkerEnvelope envelope = CreateRegistration(version);
@@ -146,7 +146,7 @@ public sealed class IpcContractTests
         Assert.Equal(6, WorkerEnvelope.Descriptor.FindFieldByName("correlation_id").FieldNumber);
         Assert.Equal(10, WorkerEnvelope.Descriptor.FindFieldByName("registration").FieldNumber);
         Assert.Equal(13, WorkerEnvelope.Descriptor.FindFieldByName("display_batch").FieldNumber);
-        Assert.Equal(13, SupervisorEnvelope.Descriptor.FindFieldByName("submit_input").FieldNumber);
+        Assert.Equal(13, WorkerCommandEnvelope.Descriptor.FindFieldByName("submit_input").FieldNumber);
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public sealed class IpcContractTests
         if (!OperatingSystem.IsLinux())
             return;
 
-        string root = Path.Combine(Path.GetTempPath(), "cloudemuera-ipc-contract", Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "ce-c", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         string path = Path.Combine(root, "bootstrap.json");
         string hardLink = Path.Combine(root, "bootstrap-link.json");
@@ -184,7 +184,7 @@ public sealed class IpcContractTests
         if (!OperatingSystem.IsLinux())
             return;
 
-        string root = Path.Combine(Path.GetTempPath(), "cloudemuera-ipc-bootstrap-security", Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(Path.GetTempPath(), "ce-b", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         File.SetUnixFileMode(root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         string path = Path.Combine(root, "bootstrap.json");
@@ -247,7 +247,9 @@ public sealed class IpcContractTests
         WorkerEpoch = 1,
         SessionRoot = Path.Combine(Path.GetTempPath(), "session-root"),
         CompatibilityProfile = "v18-compatible",
-        SupervisorSocketPath = Path.Combine(Path.GetTempPath(), "supervisor.sock"),
+        ControlSocketPath = Path.Combine(Path.GetTempPath(), "worker-control.sock"),
+        ControlPlaneInstanceId = "ctl_contract",
+        ExpectedParentProcessId = Environment.ProcessId,
         BootstrapToken = IpcProtocol.CreateBootstrapToken(),
         ConnectDeadlineUnixMilliseconds = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeMilliseconds(),
         HeartbeatIntervalMilliseconds = 500,

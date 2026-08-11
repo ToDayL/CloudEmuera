@@ -338,6 +338,7 @@
         "dependencies": {
           "CloudEmuera.Application": "[1.0.0, )",
           "CloudEmuera.Domain": "[1.0.0, )",
+          "CloudEmuera.RuntimeAdapter": "[1.0.0, )",
           "Microsoft.AspNetCore.Identity.EntityFrameworkCore": "[10.0.10, )",
           "Microsoft.EntityFrameworkCore.Sqlite": "[10.0.10, )",
           "SQLitePCLRaw.lib.e_sqlite3": "[2.1.12, )"
@@ -348,6 +349,9 @@
         "dependencies": {
           "CloudEmuera.Infrastructure": "[1.0.0, )"
         }
+      },
+      "cloudemuera.runtimeadapter": {
+        "type": "Project"
       },
       "Microsoft.AspNetCore.Identity.EntityFrameworkCore": {
         "type": "CentralTransitive",

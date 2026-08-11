@@ -96,7 +96,6 @@ public enum WorkerLeaseStatus
     Starting,
     Active,
     Stopping,
-    Expired,
 }
 
 public enum AuditActorType

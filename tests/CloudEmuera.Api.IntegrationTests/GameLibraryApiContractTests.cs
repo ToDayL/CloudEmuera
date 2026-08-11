@@ -19,7 +19,7 @@ namespace CloudEmuera.Api.IntegrationTests;
 /// UI drives through validate/activate.</summary>
 public sealed class GameLibraryApiContractTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"cloudemuera-game-api-{Guid.NewGuid():N}");
+    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid():N}");
     private IdentityFactory? _factory;
 
     [Fact]

@@ -1,7 +1,7 @@
 using System.Net.Sockets;
 using System.Threading.Channels;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V1;
+using CloudEmuera.Ipc.V2;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
@@ -23,7 +23,7 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
     private readonly WorkerBootstrapDocument bootstrap;
     private readonly WorkerBinding binding;
     private readonly ILogger logger;
-    private readonly Func<SupervisorEnvelope, CancellationToken, Task> commandHandler;
+    private readonly Func<WorkerCommandEnvelope, CancellationToken, Task> commandHandler;
     private readonly Channel<PendingWorkerMessage> controlMessages = Channel.CreateBounded<PendingWorkerMessage>(
         new BoundedChannelOptions(128)
         {
@@ -44,16 +44,18 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? loopTask;
     private long lastOutputSequence;
+    private int registrationAttempted;
 
     public WorkerConnectionLoop(
         WorkerBootstrapDocument bootstrap,
         ILogger logger,
-        Func<SupervisorEnvelope, CancellationToken, Task> commandHandler)
+        Func<WorkerCommandEnvelope, CancellationToken, Task> commandHandler)
     {
         this.bootstrap = bootstrap ?? throw new ArgumentNullException(nameof(bootstrap));
         binding = bootstrap.Binding;
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.commandHandler = commandHandler ?? throw new ArgumentNullException(nameof(commandHandler));
+        lastOutputSequence = bootstrap.InitialOutputSequence;
     }
 
     public Task RegistrationAccepted => registrationAccepted.Task;
@@ -120,6 +122,7 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
             bootstrap.ConnectDeadlineUnixMilliseconds);
         TimeSpan backoff = TimeSpan.FromMilliseconds(25);
         bool hadConnection = false;
+        DateTimeOffset? reconnectDeadline = null;
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -127,6 +130,7 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
             {
                 await ConnectAndServeAsync(cancellationToken).ConfigureAwait(false);
                 hadConnection = true;
+                reconnectDeadline = null;
                 backoff = TimeSpan.FromMilliseconds(25);
             }
             catch (WorkerRegistrationRejectedException exception)
@@ -151,6 +155,15 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
                     registrationAccepted.TrySetException(
                         new TimeoutException(IpcReasonCodes.UnsupportedMessage));
                     return;
+                }
+                if (hadConnection)
+                {
+                    reconnectDeadline ??= DateTimeOffset.UtcNow.AddMilliseconds(bootstrap.DisconnectGracePeriodMilliseconds);
+                    if (DateTimeOffset.UtcNow >= reconnectDeadline.Value)
+                    {
+                        LogLifecycle("connection_grace_expired", IpcReasonCodes.WorkerStopping, LogLevel.Warning);
+                        return;
+                    }
                 }
             }
 
@@ -178,19 +191,19 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
                 MaxSendMessageSize = IpcLimits.MaxEnvelopeBytes
             });
         var client = new WorkerControl.WorkerControlClient(channel);
-        using AsyncDuplexStreamingCall<WorkerEnvelope, SupervisorEnvelope> call = client.Connect(
+        using AsyncDuplexStreamingCall<WorkerEnvelope, WorkerCommandEnvelope> call = client.Connect(
             cancellationToken: cancellationToken);
 
         LogLifecycle("registration_sent", string.Empty, LogLevel.Information);
         await call.RequestStream.WriteAsync(CreateRegistration(), cancellationToken).ConfigureAwait(false);
         if (!await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
-            throw new IOException("The Supervisor closed the registration stream.");
+            throw new IOException("The API control stream closed during registration.");
         }
 
-        SupervisorEnvelope registrationEnvelope = call.ResponseStream.Current;
-        IpcValidationResult validation = IpcValidator.ValidateSupervisorEnvelope(registrationEnvelope, binding);
-        if (!validation.IsValid || registrationEnvelope.PayloadCase != SupervisorEnvelope.PayloadOneofCase.RegistrationResult)
+        WorkerCommandEnvelope registrationEnvelope = call.ResponseStream.Current;
+        IpcValidationResult validation = IpcValidator.ValidateWorkerCommandEnvelope(registrationEnvelope, binding, bootstrap.ControlPlaneInstanceId);
+        if (!validation.IsValid || registrationEnvelope.PayloadCase != WorkerCommandEnvelope.PayloadOneofCase.RegistrationResult)
         {
             throw new WorkerRegistrationRejectedException(validation.ReasonCode);
         }
@@ -221,8 +234,8 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
         {
             while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
             {
-                SupervisorEnvelope command = call.ResponseStream.Current;
-                IpcValidationResult commandValidation = IpcValidator.ValidateSupervisorEnvelope(command, binding);
+                WorkerCommandEnvelope command = call.ResponseStream.Current;
+                IpcValidationResult commandValidation = IpcValidator.ValidateWorkerCommandEnvelope(command, binding, bootstrap.ControlPlaneInstanceId);
                 if (!commandValidation.IsValid)
                 {
                     throw new InvalidDataException(commandValidation.ReasonCode);
@@ -316,13 +329,16 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
         SessionId = binding.SessionId,
         WorkerId = binding.WorkerId,
         WorkerEpoch = binding.WorkerEpoch,
+        ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
         Registration = new WorkerRegistration
         {
-            StartupToken = bootstrap.BootstrapToken,
+            StartupToken = Interlocked.Exchange(ref registrationAttempted, 1) == 0 ? bootstrap.BootstrapToken : string.Empty,
             RuntimeIntegrationVersion = CloudEmuera.RuntimeAdapter.RuntimeBaseline.CloudEmueraIntegrationVersion,
             UpstreamCommit = CloudEmuera.RuntimeAdapter.RuntimeBaseline.UpstreamCommit,
             ProcessId = Environment.ProcessId,
-            LastOutputSequence = Interlocked.Read(ref lastOutputSequence)
+            LastOutputSequence = Interlocked.Read(ref lastOutputSequence),
+            ProcessBootId = WorkerProcessIdentityProbe.ReadBootId(),
+            ProcessStartTicks = WorkerProcessIdentityProbe.ReadStartTicks(Environment.ProcessId)
         }
     };
 
@@ -337,7 +353,7 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
         try
         {
             await socket.ConnectAsync(
-                new UnixDomainSocketEndPoint(bootstrap.SupervisorSocketPath),
+                new UnixDomainSocketEndPoint(bootstrap.ControlSocketPath),
                 cancellationToken).ConfigureAwait(false);
             return new NetworkStream(socket, ownsSocket: true);
         }

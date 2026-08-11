@@ -10,7 +10,6 @@
     <Project Path="src/CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
     <Project Path="src/CloudEmuera.Migrator/CloudEmuera.Migrator.csproj" />
     <Project Path="src/CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
-    <Project Path="src/CloudEmuera.Supervisor/CloudEmuera.Supervisor.csproj" />
     <Project Path="src/CloudEmuera.Validator/CloudEmuera.Validator.csproj" />
     <Project Path="src/CloudEmuera.Worker/CloudEmuera.Worker.csproj" />
   </Folder>

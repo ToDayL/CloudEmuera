@@ -15,7 +15,7 @@ namespace CloudEmuera.Api.IntegrationTests;
 /// <summary>AUTH-001/006: exercise the HTTP boundary with a migrated, isolated SQLite instance.</summary>
 public sealed class IdentityApiContractTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"cloudemuera-identity-api-{Guid.NewGuid():N}");
+    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid():N}");
     private IdentityFactory? _factory;
 
     [Fact]

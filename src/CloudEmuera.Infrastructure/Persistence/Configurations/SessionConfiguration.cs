@@ -24,7 +24,7 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             table.HasCheckConstraint("ck_sessions_waiting_prompt", "waiting_for_input IN (0, 1) AND ((waiting_for_input = 1 AND current_prompt_id IS NOT NULL AND length(current_prompt_id) BETWEEN 1 AND 256) OR (waiting_for_input = 0 AND current_prompt_id IS NULL))");
             table.HasCheckConstraint("ck_sessions_close_reason", "close_reason IS NULL OR (length(close_reason) BETWEEN 1 AND 256 AND instr(close_reason, char(0)) = 0)");
             table.HasCheckConstraint("ck_sessions_time_order", "created_at >= 0 AND last_activity_at >= created_at AND (started_at IS NULL OR started_at >= created_at) AND (closed_at IS NULL OR closed_at >= created_at)");
-            table.HasCheckConstraint("ck_sessions_closed_fields", "(state = 'CLOSED' AND closed_at IS NOT NULL) OR (state <> 'CLOSED' AND closed_at IS NULL)");
+            table.HasCheckConstraint("ck_sessions_closed_fields", "((state IN ('CLOSED', 'CRASHED') AND closed_at IS NOT NULL) OR (state NOT IN ('CLOSED', 'CRASHED') AND closed_at IS NULL)) AND ((state IN ('CREATING', 'CLOSED', 'CRASHED') AND waiting_for_input = 0 AND current_prompt_id IS NULL) OR state NOT IN ('CREATING', 'CLOSED', 'CRASHED'))");
         });
 
         builder.HasKey(row => row.Id).HasName("pk_sessions");
@@ -51,6 +51,7 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
         builder.Property(row => row.ClosedAt).HasColumnName("closed_at").HasColumnType("INTEGER").HasConversion(SqliteValueConverters.NullableDateTimeOffsetToUnixMilliseconds, SqliteValueConverters.NullableDateTimeOffsetComparer);
 
         builder.HasIndex(row => new { row.OwnerUserId, row.CreatedAt }).HasDatabaseName("ix_sessions_owner_created").IsDescending(false, true);
+        builder.HasIndex(row => new { row.OwnerUserId, row.State }).HasDatabaseName("ix_sessions_owner_state");
         builder.HasIndex(row => new { row.State, row.LastActivityAt }).HasDatabaseName("ix_sessions_state_activity");
         builder.HasIndex(row => row.GameId).HasDatabaseName("ix_sessions_game");
         builder.HasIndex(row => new { row.GameId, row.SourceContentDigest }).HasDatabaseName("ix_sessions_game_content_digest");

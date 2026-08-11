@@ -275,8 +275,9 @@ owner、单链接和 `0700` 父目录后，才通过受保护父目录句柄 `un
 路径越界、权限或属主异常均拒绝。Supervisor/Worker 生命周期日志输出结构化
 `sessionId/workerId/workerEpoch`，并过滤 token、SessionRoot、UDS/bootstrap 路径和输入值。
 这仍是 IPC 与独立 Worker 隔离的有效证据，但独立 Supervisor 拓扑及跨 API 实例重连已由
-[`ADR-0015`](adr/0015-api-owned-worker-lifecycle.md) 取代。P1-05 把可复用实现迁入 API，增加
-持久 WorkerLease、epoch 分配、API 生命周期绑定和启动故障对账，并删除独立 Supervisor 入口。
+[`ADR-0015`](adr/0015-api-owned-worker-lifecycle.md) 取代。P1-05 已把可复用实现迁入 API，增加
+持久 WorkerLease、epoch 分配、API 生命周期绑定和启动故障对账，并删除独立 Supervisor 入口；
+当前生产拓扑只保留 API Worker Manager。
 
 ### 3.4 进程启动顺序
 

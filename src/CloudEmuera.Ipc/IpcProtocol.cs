@@ -3,19 +3,19 @@ using System.Text.Json.Serialization;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Diagnostics.CodeAnalysis;
-using CloudEmuera.Ipc.V1;
+using CloudEmuera.Ipc.V2;
 
 namespace CloudEmuera.Ipc;
 
 /// <summary>
-/// Wire-level constants for the first Worker/Supervisor protocol. Keeping the
+/// Wire-level constants for the API-owned Worker protocol. Keeping the
 /// values here makes protocol decisions auditable and prevents magic limits
 /// from being spread across the two processes.
 /// </summary>
 public static class IpcProtocol
 {
-    public const uint CurrentVersion = 1;
-    public const int BootstrapSchemaVersion = 1;
+    public const uint CurrentVersion = 2;
+    public const int BootstrapSchemaVersion = 2;
 
     public static string NewMessageId(string prefix = "msg")
     {
@@ -63,6 +63,7 @@ public static class IpcReasonCodes
     public const string UnsupportedMessage = "unsupported_message";
     public const string UnsupportedProtocolVersion = "unsupported_protocol_version";
     public const string WorkerStopping = "worker_stopping";
+    public const string ControlPlaneMismatch = "control_plane_mismatch";
 }
 
 public sealed record WorkerBinding
@@ -102,7 +103,7 @@ public readonly record struct IpcValidationResult(bool IsValid, string ReasonCod
     public static IpcValidationResult Invalid(string reasonCode) => new(false, reasonCode);
 }
 
-/// <summary>Small DTO used by the Supervisor to pass one-time Worker state.</summary>
+/// <summary>Small DTO used by the API control plane to pass one-time Worker state.</summary>
 public sealed record WorkerBootstrapDocument
 {
     public int SchemaVersion { get; init; } = IpcProtocol.BootstrapSchemaVersion;
@@ -119,7 +120,11 @@ public sealed record WorkerBootstrapDocument
 
     public string CompatibilityProfile { get; init; } = string.Empty;
 
-    public string SupervisorSocketPath { get; init; } = string.Empty;
+    public string ControlSocketPath { get; init; } = string.Empty;
+
+    public string ControlPlaneInstanceId { get; init; } = string.Empty;
+
+    public long ExpectedParentProcessId { get; init; }
 
     public string BootstrapToken { get; init; } = string.Empty;
 
@@ -128,6 +133,10 @@ public sealed record WorkerBootstrapDocument
     public int HeartbeatIntervalMilliseconds { get; init; }
 
     public int ShutdownGracePeriodMilliseconds { get; init; }
+
+    public int DisconnectGracePeriodMilliseconds { get; init; } = 2_000;
+
+    public long InitialOutputSequence { get; init; }
 
     public int SaveLayout { get; init; }
 
@@ -156,14 +165,16 @@ public sealed record WorkerBootstrapDocument
         IpcValidator.ValidateIdentifier(CompatibilityProfile, nameof(CompatibilityProfile));
         IpcValidator.ValidateToken(BootstrapToken, nameof(BootstrapToken));
         IpcValidator.ValidateAbsolutePath(SessionRoot, nameof(SessionRoot));
-        IpcValidator.ValidateAbsolutePath(SupervisorSocketPath, nameof(SupervisorSocketPath));
-        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1)
+        IpcValidator.ValidateAbsolutePath(ControlSocketPath, nameof(ControlSocketPath));
+        IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
+        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0)
         {
             throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
         }
 
         ValidatePositive(HeartbeatIntervalMilliseconds, nameof(HeartbeatIntervalMilliseconds), 10, 60_000);
         ValidatePositive(ShutdownGracePeriodMilliseconds, nameof(ShutdownGracePeriodMilliseconds), 100, 120_000);
+        ValidatePositive(DisconnectGracePeriodMilliseconds, nameof(DisconnectGracePeriodMilliseconds), 100, 120_000);
         ValidatePositive(RuntimeInitializationTimeoutMilliseconds, nameof(RuntimeInitializationTimeoutMilliseconds), 100, 300_000);
         if (RuntimeExecutionTimeoutMilliseconds == 0 || RuntimeExecutionTimeoutMilliseconds < -1 || RuntimeExecutionTimeoutMilliseconds > 86_400_000)
         {
@@ -417,7 +428,8 @@ public static class IpcValidator
     public static IpcValidationResult ValidateWorkerEnvelope(
         WorkerEnvelope envelope,
         bool registered,
-        WorkerBinding? binding = null)
+        WorkerBinding? binding = null,
+        string? controlPlaneInstanceId = null)
     {
         if (envelope.CalculateSize() > IpcLimits.MaxEnvelopeBytes)
         {
@@ -442,6 +454,17 @@ public static class IpcValidator
             return IpcValidationResult.Invalid(IpcReasonCodes.BindingMismatch);
         }
 
+        if (registered && controlPlaneInstanceId is not null &&
+            !string.Equals(envelope.ControlPlaneInstanceId, controlPlaneInstanceId, StringComparison.Ordinal))
+        {
+            return IpcValidationResult.Invalid(IpcReasonCodes.ControlPlaneMismatch);
+        }
+
+        if (!string.IsNullOrEmpty(envelope.ControlPlaneInstanceId) && !IsIdentifier(envelope.ControlPlaneInstanceId))
+        {
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+        }
+
         if (!registered && envelope.PayloadCase != WorkerEnvelope.PayloadOneofCase.Registration)
         {
             return IpcValidationResult.Invalid(IpcReasonCodes.UnsupportedMessage);
@@ -449,7 +472,7 @@ public static class IpcValidator
 
         return envelope.PayloadCase switch
         {
-            WorkerEnvelope.PayloadOneofCase.Registration => ValidateRegistration(envelope.Registration),
+            WorkerEnvelope.PayloadOneofCase.Registration => ValidateRegistration(envelope.Registration, registered),
             WorkerEnvelope.PayloadOneofCase.Heartbeat => ValidateHeartbeat(envelope.Heartbeat),
             WorkerEnvelope.PayloadOneofCase.Ready => ValidateReady(envelope.Ready),
             WorkerEnvelope.PayloadOneofCase.DisplayBatch => ValidateDisplayBatch(envelope.DisplayBatch),
@@ -462,9 +485,10 @@ public static class IpcValidator
         };
     }
 
-    public static IpcValidationResult ValidateSupervisorEnvelope(
-        SupervisorEnvelope envelope,
-        WorkerBinding binding)
+    public static IpcValidationResult ValidateWorkerCommandEnvelope(
+        WorkerCommandEnvelope envelope,
+        WorkerBinding binding,
+        string controlPlaneInstanceId)
     {
         ArgumentNullException.ThrowIfNull(binding);
         if (envelope.CalculateSize() > IpcLimits.MaxEnvelopeBytes)
@@ -484,12 +508,15 @@ public static class IpcValidator
             return IpcValidationResult.Invalid(IpcReasonCodes.BindingMismatch);
         }
 
+        if (!string.Equals(envelope.ControlPlaneInstanceId, controlPlaneInstanceId, StringComparison.Ordinal))
+            return IpcValidationResult.Invalid(IpcReasonCodes.ControlPlaneMismatch);
+
         return envelope.PayloadCase switch
         {
-            SupervisorEnvelope.PayloadOneofCase.RegistrationResult => ValidateRegistrationResult(envelope.RegistrationResult),
-            SupervisorEnvelope.PayloadOneofCase.StartRuntime => ValidateStartRuntime(envelope.StartRuntime),
-            SupervisorEnvelope.PayloadOneofCase.SubmitInput => ValidateSubmitInput(envelope.SubmitInput),
-            SupervisorEnvelope.PayloadOneofCase.Stop => ValidateStop(envelope.Stop),
+            WorkerCommandEnvelope.PayloadOneofCase.RegistrationResult => ValidateRegistrationResult(envelope.RegistrationResult),
+            WorkerCommandEnvelope.PayloadOneofCase.StartRuntime => ValidateStartRuntime(envelope.StartRuntime),
+            WorkerCommandEnvelope.PayloadOneofCase.SubmitInput => ValidateSubmitInput(envelope.SubmitInput),
+            WorkerCommandEnvelope.PayloadOneofCase.Stop => ValidateStop(envelope.Stop),
             _ => IpcValidationResult.Invalid(IpcReasonCodes.UnsupportedMessage)
         };
     }
@@ -523,11 +550,12 @@ public static class IpcValidator
         value is { Length: > 0 and <= IpcLimits.MaxIdentifierLength } &&
         value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.' or '~');
 
-    private static IpcValidationResult ValidateRegistration(WorkerRegistration value) =>
-        IsToken(value.StartupToken) &&
+    private static IpcValidationResult ValidateRegistration(WorkerRegistration value, bool registered) =>
+        (registered ? string.IsNullOrEmpty(value.StartupToken) || IsToken(value.StartupToken) : IsToken(value.StartupToken)) &&
         IsText(value.RuntimeIntegrationVersion) &&
         IsText(value.UpstreamCommit) &&
-        value.ProcessId > 0 && value.LastOutputSequence >= 0
+        value.ProcessId > 0 && value.LastOutputSequence >= 0 &&
+        IsText(value.ProcessBootId) && value.ProcessStartTicks > 0
             ? IpcValidationResult.Valid()
             : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
 
@@ -599,7 +627,8 @@ public static class IpcValidator
         IsIdentifier(value.ReasonCode) &&
         value.NegotiatedProtocolVersion <= IpcProtocol.CurrentVersion &&
         value.RuntimeIntegrationVersion.Length <= IpcLimits.MaxStringLength &&
-        value.UpstreamCommit.Length <= IpcLimits.MaxStringLength
+        value.UpstreamCommit.Length <= IpcLimits.MaxStringLength &&
+        IsIdentifier(value.ControlPlaneInstanceId)
             ? IpcValidationResult.Valid()
             : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
 
@@ -666,7 +695,7 @@ public static class IpcValidator
         };
     }
 
-    private static bool ValidatePrompt(V1.ConsolePrompt prompt) =>
+    private static bool ValidatePrompt(ConsolePrompt prompt) =>
         IsIdentifier(prompt.PromptId) &&
         prompt.InputType is ConsoleInputType.ConsoleInputText or ConsoleInputType.ConsoleInputInteger &&
         prompt.PromptText.Length <= IpcLimits.MaxStringLength &&

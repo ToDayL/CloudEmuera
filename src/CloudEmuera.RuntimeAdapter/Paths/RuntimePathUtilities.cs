@@ -3,7 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace CloudEmuera.RuntimeAdapter;
 
-internal static partial class RuntimePathUtilities
+public static partial class RuntimePathUtilities
 {
     public static StringComparison PathComparison =>
         OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;

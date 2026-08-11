@@ -2,6 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../CloudEmuera.Application/CloudEmuera.Application.csproj" />
     <ProjectReference Include="../CloudEmuera.Domain/CloudEmuera.Domain.csproj" />
+    <ProjectReference Include="../CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />

@@ -6,7 +6,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
     <ProjectReference Include="../../src/CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
-    <ProjectReference Include="../../src/CloudEmuera.Supervisor/CloudEmuera.Supervisor.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.Api/CloudEmuera.Api.csproj" />
     <ProjectReference Include="../../src/CloudEmuera.Worker/CloudEmuera.Worker.csproj" />
   </ItemGroup>
   <ItemGroup>

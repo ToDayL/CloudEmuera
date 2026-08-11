@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.Text;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V1;
+using CloudEmuera.Ipc.V2;
 using CloudEmuera.RuntimeAdapter;
-using CloudEmuera.Supervisor;
+using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;
-using ProtoConsoleOperation = CloudEmuera.Ipc.V1.ConsoleOperation;
+using ProtoConsoleOperation = CloudEmuera.Ipc.V2.ConsoleOperation;
 using Xunit;
 
 namespace CloudEmuera.Worker.IntegrationTests;
@@ -24,15 +24,15 @@ public sealed class WorkerProcessIsolationTests
     {
         await using var fixture = FixtureWorkspace.Create(fixtureId, saveLayout);
         string workerAssembly = typeof(ConsoleWireMapper).Assembly.Location;
-        await using SupervisorHost supervisor = await SupervisorHost.StartAsync(
-            new SupervisorOptions(fixture.SupervisorRoot, workerAssembly)
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, workerAssembly)
             {
                 RegistrationTimeout = TimeSpan.FromSeconds(15),
                 WorkerShutdownTimeout = TimeSpan.FromSeconds(5)
             });
 
         var binding = new WorkerBinding($"sess_{fixtureId}", $"wrk_{fixtureId}", 1);
-        SupervisorWorkerSession session = await supervisor.LaunchWorkerAsync(
+        ApiWorkerSession session = await manager.LaunchWorkerAsync(
             new WorkerLaunchRequest(
                 binding,
                 fixture.SessionRoot,
@@ -102,10 +102,10 @@ public sealed class WorkerProcessIsolationTests
     public async Task StartIsIdempotentAndStopCancelsWaitingInput()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
-        await using SupervisorHost supervisor = await SupervisorHost.StartAsync(
-            new SupervisorOptions(fixture.SupervisorRoot, typeof(ConsoleWireMapper).Assembly.Location));
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location));
         var binding = new WorkerBinding("sess_stop", "wrk_stop", 4);
-        SupervisorWorkerSession session = await supervisor.LaunchWorkerAsync(
+        ApiWorkerSession session = await manager.LaunchWorkerAsync(
             new WorkerLaunchRequest(binding, fixture.SessionRoot, "v18-compatible", RuntimeSaveLayout.Root,
                 fixture.Manifest.ManifestDigest));
 
@@ -135,15 +135,15 @@ public sealed class WorkerProcessIsolationTests
     }
 
     [Fact]
-    public async Task DisconnectingSupervisorStreamKeepsPromptAndWorkerAlive()
+    public async Task DisconnectingWorkerStreamKeepsPromptAndWorkerAlive()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
-        await using SupervisorHost supervisor = await SupervisorHost.StartAsync(
-            new SupervisorOptions(fixture.SupervisorRoot, typeof(ConsoleWireMapper).Assembly.Location)
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location)
             {
                 RegistrationTimeout = TimeSpan.FromSeconds(15)
             });
-        SupervisorWorkerSession session = await supervisor.LaunchWorkerAsync(new WorkerLaunchRequest(
+        ApiWorkerSession session = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
             new WorkerBinding("sess_reconnect", "wrk_reconnect", 6), fixture.SessionRoot,
             "v18-compatible", RuntimeSaveLayout.Root, fixture.Manifest.ManifestDigest));
 
@@ -183,9 +183,9 @@ public sealed class WorkerProcessIsolationTests
     public async Task IndependentControlClientProcessExitDoesNotStopWorker()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
-        await using SupervisorHost supervisor = await SupervisorHost.StartAsync(
-            new SupervisorOptions(fixture.SupervisorRoot, typeof(ConsoleWireMapper).Assembly.Location));
-        SupervisorWorkerSession session = await supervisor.LaunchWorkerAsync(new WorkerLaunchRequest(
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location));
+        ApiWorkerSession session = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
             new WorkerBinding("sess_control_exit", "wrk_control_exit", 7),
             fixture.SessionRoot,
             "v18-compatible",
@@ -205,10 +205,10 @@ public sealed class WorkerProcessIsolationTests
             .Single(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
             .OpenPrompt.Prompt.PromptId;
 
-        // P0-06 has no formal API↔Supervisor business IPC. This independent
+        // P1-05 has no public API business IPC. This independent
         // probe process exercises the WorkerControl endpoint and exits after
         // its rejected registration; it must not own or cancel the real Worker.
-        string probeBootstrapPath = Path.Combine(fixture.SupervisorRoot, "bootstrap", "control-probe.json");
+        string probeBootstrapPath = Path.Combine(fixture.ControlRuntimeRoot, "bootstrap", "control-probe.json");
         WorkerBootstrapFile.Write(probeBootstrapPath, new WorkerBootstrapDocument
         {
             SessionId = "sess_control_probe",
@@ -216,7 +216,9 @@ public sealed class WorkerProcessIsolationTests
             WorkerEpoch = 1,
             SessionRoot = fixture.SessionRoot,
             CompatibilityProfile = "v18-compatible",
-            SupervisorSocketPath = supervisor.SocketPath,
+            ControlSocketPath = manager.SocketPath,
+            ControlPlaneInstanceId = manager.ControlPlaneInstanceId,
+            ExpectedParentProcessId = Environment.ProcessId,
             BootstrapToken = IpcProtocol.CreateBootstrapToken(),
             ConnectDeadlineUnixMilliseconds = DateTimeOffset.UtcNow.AddSeconds(10).ToUnixTimeMilliseconds(),
             HeartbeatIntervalMilliseconds = 500,
@@ -269,9 +271,9 @@ public sealed class WorkerProcessIsolationTests
     public async Task MismatchedCommandBindingIsRejectedBeforeInputExecution()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
-        await using SupervisorHost supervisor = await SupervisorHost.StartAsync(
-            new SupervisorOptions(fixture.SupervisorRoot, typeof(ConsoleWireMapper).Assembly.Location));
-        SupervisorWorkerSession session = await supervisor.LaunchWorkerAsync(new WorkerLaunchRequest(
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location));
+        ApiWorkerSession session = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
             new WorkerBinding("sess_binding", "wrk_binding", 8), fixture.SessionRoot,
             "v18-compatible", RuntimeSaveLayout.Root, fixture.Manifest.ManifestDigest));
 
@@ -292,7 +294,7 @@ public sealed class WorkerProcessIsolationTests
             .OpenPrompt.Prompt.PromptId;
         int previousConnectionCount = session.ConnectionCount;
 
-        await session.SendRawAsync(new SupervisorEnvelope
+        await session.SendRawAsync(new WorkerCommandEnvelope
         {
             ProtocolVersion = IpcProtocol.CurrentVersion,
             MessageId = "wrong_binding_command",
@@ -325,20 +327,20 @@ public sealed class WorkerProcessIsolationTests
     public async Task WrongBootstrapTokenIsRejectedBeforeRuntimeStarts()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
-        await using SupervisorHost supervisor = await SupervisorHost.StartAsync(
-            new SupervisorOptions(fixture.SupervisorRoot, typeof(ConsoleWireMapper).Assembly.Location)
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location)
             {
                 BootstrapTransformForTest = document => document with { BootstrapToken = "wrong_bootstrap_token" }
             });
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => supervisor.LaunchWorkerAsync(new WorkerLaunchRequest(
+        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.LaunchWorkerAsync(new WorkerLaunchRequest(
             new WorkerBinding("sess_wrong_token", "wrk_wrong_token", 10),
             fixture.SessionRoot,
             "v18-compatible",
             RuntimeSaveLayout.Root,
             fixture.Manifest.ManifestDigest)));
 
-        Assert.Empty(supervisor.Workers);
+        Assert.Empty(manager.Workers);
         Assert.Equal(fixture.PublishedDigest, fixture.ComputePublishedDigest());
     }
 
@@ -346,16 +348,15 @@ public sealed class WorkerProcessIsolationTests
     public async Task WorkerLogsCorrelateLifecycleAndRedactSensitiveValues()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
-        await using SupervisorHost supervisor = await SupervisorHost.StartAsync(
-            new SupervisorOptions(fixture.SupervisorRoot, typeof(ConsoleWireMapper).Assembly.Location));
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location));
         var binding = new WorkerBinding("sess_logging", "wrk_logging", 12);
-        SupervisorWorkerSession session = await supervisor.LaunchWorkerAsync(new WorkerLaunchRequest(
+        ApiWorkerSession session = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
             binding,
             fixture.SessionRoot,
             "v18-compatible",
             RuntimeSaveLayout.Root,
             fixture.Manifest.ManifestDigest));
-        string bootstrapToken = session.BootstrapToken;
         const string secretInput = "sensitive-input-value";
 
         await session.SendStartRuntimeAsync();
@@ -382,9 +383,8 @@ public sealed class WorkerProcessIsolationTests
         Assert.Contains($"sessionId={binding.SessionId}", diagnostics, StringComparison.Ordinal);
         Assert.Contains($"workerId={binding.WorkerId}", diagnostics, StringComparison.Ordinal);
         Assert.Contains($"workerEpoch={binding.WorkerEpoch}", diagnostics, StringComparison.Ordinal);
-        Assert.DoesNotContain(bootstrapToken, diagnostics, StringComparison.Ordinal);
         Assert.DoesNotContain(fixture.SessionRoot, diagnostics, StringComparison.Ordinal);
-        Assert.DoesNotContain(supervisor.SocketPath, diagnostics, StringComparison.Ordinal);
+        Assert.DoesNotContain(manager.SocketPath, diagnostics, StringComparison.Ordinal);
         Assert.DoesNotContain(secretInput, diagnostics, StringComparison.Ordinal);
     }
 
@@ -393,21 +393,21 @@ public sealed class WorkerProcessIsolationTests
     {
         await using var firstFixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
         await using var secondFixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
-        string runtimeRoot = Path.Combine(Path.GetTempPath(), "cloudemuera-ipc-supervisor", Guid.NewGuid().ToString("N"));
+        string runtimeRoot = Path.Combine(Path.GetTempPath(), "i", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(runtimeRoot);
         if (OperatingSystem.IsLinux())
             File.SetUnixFileMode(runtimeRoot, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         try
         {
-            await using SupervisorHost supervisor = await SupervisorHost.StartAsync(
-                new SupervisorOptions(runtimeRoot, typeof(ConsoleWireMapper).Assembly.Location)
+            await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+                new WorkerManagerOptions(runtimeRoot, typeof(ConsoleWireMapper).Assembly.Location)
                 {
                     MaxConcurrentWorkers = 2
                 });
-            SupervisorWorkerSession first = await supervisor.LaunchWorkerAsync(new WorkerLaunchRequest(
+            ApiWorkerSession first = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
                 new WorkerBinding("sess_first", "wrk_first", 1), firstFixture.SessionRoot,
                 "v18-compatible", RuntimeSaveLayout.Root, firstFixture.Manifest.ManifestDigest));
-            SupervisorWorkerSession second = await supervisor.LaunchWorkerAsync(new WorkerLaunchRequest(
+            ApiWorkerSession second = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
                 new WorkerBinding("sess_second", "wrk_second", 9), secondFixture.SessionRoot,
                 "v18-compatible", RuntimeSaveLayout.Root, secondFixture.Manifest.ManifestDigest));
 
@@ -439,7 +439,7 @@ public sealed class WorkerProcessIsolationTests
     }
 
     private static async Task CompleteSessionAsync(
-        SupervisorWorkerSession session,
+        ApiWorkerSession session,
         WorkerEnvelope promptBatch,
         string value)
     {
@@ -458,7 +458,7 @@ public sealed class WorkerProcessIsolationTests
     }
 
     private static async Task WaitForDiagnosticsAsync(
-        SupervisorWorkerSession session,
+        ApiWorkerSession session,
         Func<string, bool> predicate)
     {
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
@@ -532,7 +532,7 @@ public sealed class WorkerProcessIsolationTests
             Root = root;
             PublishedRoot = publishedRoot;
             SessionRoot = sessionRoot;
-            SupervisorRoot = supervisorRoot;
+            ControlRuntimeRoot = supervisorRoot;
             Manifest = manifest;
             PublishedDigest = publishedDigest;
         }
@@ -541,7 +541,7 @@ public sealed class WorkerProcessIsolationTests
         public string Root { get; }
         public string PublishedRoot { get; }
         public string SessionRoot { get; }
-        public string SupervisorRoot { get; }
+        public string ControlRuntimeRoot { get; }
         public SessionRootPublishedManifest Manifest { get; }
         public string PublishedDigest { get; }
 
@@ -549,11 +549,11 @@ public sealed class WorkerProcessIsolationTests
         {
             string repositoryRoot = FindRepositoryRoot();
             string fixtureRoot = Path.Combine(repositoryRoot, "tests", "fixtures", "runtime", fixtureId);
-            string root = Path.Combine(Path.GetTempPath(), "cloudemuera-worker-tests", Guid.NewGuid().ToString("N"));
+            string root = Path.Combine(Path.GetTempPath(), "w", Guid.NewGuid().ToString("N"));
             string publishedRoot = Path.Combine(root, "published-game");
             string sessionRoot = Path.Combine(root, "session-root");
             string workspaceRoot = Path.Combine(root, "session-workspace");
-            string supervisorRoot = Path.Combine(root, "supervisor-runtime");
+            string supervisorRoot = Path.Combine(root, "r");
             Directory.CreateDirectory(workspaceRoot);
             Directory.CreateDirectory(supervisorRoot);
             if (OperatingSystem.IsLinux())

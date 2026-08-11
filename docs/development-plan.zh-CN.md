@@ -394,7 +394,7 @@ API；P1-10 不再处理 Game 的 UI。同时修复开发容器 Validator 程序
 验证启用）、HTTP 集成测试（GameLibrary 类别，含真实 parser 进程）与 RuntimeBridge 回归测试；
 `pnpm --dir src/CloudEmuera.Web typecheck/test/build`、定向 .NET 测试与隔离 e2e 身份套件通过。
 
-### P1-05 — API Worker Manager、租约、epoch 与可重开状态机（NEXT）
+### P1-05 — API Worker Manager、租约、epoch 与可重开状态机（DONE）
 
 需求映射：SESS-001/002/005/009～012、OPS-001/002、AC-003/006/007、ADR-0015/0016。
 
@@ -406,11 +406,26 @@ API；P1-10 不再处理 Game 的 UI。同时修复开发容器 Validator 程序
 `CLOSED/CRASHED → STARTING` 的同 Session 重开状态机。Session 创建只物化一次 SessionRoot，
 open/close 只获取或释放 Worker。
 
+实现记录：API 已成为运行期唯一 SQLite 业务访问者；Worker Manager、UDS gRPC、bootstrap
+凭据、PID/boot ID/start ticks、parent-death、心跳续租、进程退出监视、启动对账和 readiness
+屏障已迁入 API，独立 Supervisor 项目、solution 引用和部署入口已删除。SQLite migration 增加
+control-plane/process identity、活动状态约束和 owner/state 索引；SessionRoot 只在 open 前复核，
+close/crash 不删除目录，重开递增 epoch 并从上次持久输出序列继续。P1-05 不新增公开 Session
+HTTP API；P1-06 通过 Application coordinator 接入。
+
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Api.IntegrationTests --filter 'Category=WorkerLifecycle'
-dotnet test tests/CloudEmuera.Domain.Tests --filter 'Category=Concurrency'
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Application.Tests --no-restore --configuration Release \
+  --filter 'Category=SessionLifecycle'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore --configuration Release \
+  --filter 'Category=SessionLifecycle|Category=WorkerLease'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
+  --filter 'Category=ProcessIsolation'
 ```
 
 通过条件：同一 `CLOSED/CRASHED` Session 并发 open 只产生一个有效 Worker；只剩一个活动名额时
@@ -573,7 +588,7 @@ SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在�
 
 1. ~~完成 P1-04 剩余安全加固：真实 parser-only Validator、dirfd/fsync 内容存储、崩溃恢复/续租、
    copy lease 端口和旧 DataRoot 迁移工具。~~ 已于 2026-08-09 完成，P1-04 标记为 DONE。
-2. 按 ADR-0015/0016 完成 P1-05：把 Worker 管理迁入 API，移除独立 Supervisor，并实现持久
-   SessionRoot 的 open/close/reopen 生命周期。
+2. ~~按 ADR-0015/0016 完成 P1-05：把 Worker 管理迁入 API，移除独立 Supervisor，并实现持久
+   SessionRoot 的 open/close/reopen 生命周期。~~ 已于 2026-08-11 完成，进入 P1-06。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

@@ -2,7 +2,7 @@ namespace CloudEmuera.RuntimeAdapter;
 
 /// <summary>
 /// Access mode requested by a session layout mapping. Applying a mapping is a
-/// future supervisor concern; this object only describes and validates it.
+/// future control-plane concern; this object only describes and validates it.
 /// </summary>
 public enum RuntimeAccessMode
 {
@@ -51,7 +51,7 @@ public sealed record RuntimePathMapping
 
 /// <summary>
 /// A validated SessionRoot mapping plan and its immutable runtime paths.
-/// Physical paths are available to the supervisor and adapter, while
+/// Physical paths are available to the API Worker Manager and adapter, while
 /// <see cref="DiagnosticDescription"/> intentionally contains only stable
 /// layout facts and no host directory names.
 /// </summary>

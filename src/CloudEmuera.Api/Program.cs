@@ -15,6 +15,9 @@ using CloudEmuera.Infrastructure.Authorization;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Application.GamePackages;
 using CloudEmuera.Infrastructure.GamePackages;
+using CloudEmuera.Infrastructure.Sessions;
+using CloudEmuera.Application.Sessions.Runtime;
+using CloudEmuera.Api.Workers;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Antiforgery;
@@ -28,6 +31,22 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 string dataRoot = builder.Configuration["CloudEmuera:DataPath"] ?? Path.Combine(AppContext.BaseDirectory, "data");
+string workerAssemblyPath = builder.Configuration["CloudEmuera:WorkerAssemblyPath"]
+    ?? ValidatorAssemblyResolver.ResolveSiblingAssembly(builder.Environment.ContentRootPath, "CloudEmuera.Worker", "CloudEmuera.Worker.dll");
+var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath);
+workerOptions.Validate();
+var workerSocketLifecycle = new WorkerSocketLifecycle(workerOptions);
+workerSocketLifecycle.Prepare();
+builder.WebHost.ConfigureKestrel(serverOptions =>
+{
+    serverOptions.AddServerHeader = false;
+    serverOptions.ListenUnixSocket(workerOptions.ControlSocketPath, listenOptions => listenOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http2);
+});
+builder.Services.AddGrpc(grpcOptions =>
+{
+    grpcOptions.MaxReceiveMessageSize = CloudEmuera.Ipc.IpcLimits.MaxEnvelopeBytes;
+    grpcOptions.MaxSendMessageSize = CloudEmuera.Ipc.IpcLimits.MaxEnvelopeBytes;
+});
 SqliteDatabaseOptions databaseOptions = new() { DataRoot = dataRoot };
 builder.Services.AddSingleton(databaseOptions);
 builder.Services.AddScoped<CloudEmueraDbContext>(serviceProvider =>
@@ -39,6 +58,20 @@ builder.Services.AddScoped<CloudEmueraDbContext>(serviceProvider =>
     return new CloudEmueraDbContext(options);
 });
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(workerOptions);
+builder.Services.AddSingleton(workerSocketLifecycle);
+builder.Services.AddSingleton(new ApiControlPlaneIdentity(workerOptions.ControlPlaneInstanceId));
+builder.Services.AddSingleton<ISessionRuntimeStore, SqliteSessionRuntimeStore>();
+builder.Services.AddSingleton<WorkerManager>(serviceProvider => new WorkerManager(
+    workerOptions,
+    serviceProvider.GetRequiredService<ILoggerFactory>(),
+    serviceProvider.GetRequiredService<ISessionRuntimeStore>(),
+    serviceProvider.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<WorkerRuntimeReadiness>();
+builder.Services.AddHostedService<WorkerManagerHostedService>();
+builder.Services.AddSingleton<ISessionRootRuntimeInspector, SessionRootRuntimeInspector>();
+builder.Services.AddSingleton<ISessionWorkerControl>(serviceProvider => serviceProvider.GetRequiredService<WorkerManager>());
+builder.Services.AddSingleton<SessionRuntimeCoordinator>();
 builder.Services.AddSingleton(new GamePackageStorageOptions { DataRoot = dataRoot });
 builder.Services.AddScoped<IGamePackageIngestionService, GamePackageIngestionService>();
 builder.Services.AddScoped<IGameLibraryService, GameLibraryService>();
@@ -131,7 +164,9 @@ builder.Services.AddRateLimiter(options =>
 });
 builder.Services.AddAntiforgery(options => options.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddOpenApi();
-builder.Services.AddHealthChecks().AddCheck<BootstrapHealthCheck>("identity_bootstrap", tags: ["ready"]);
+builder.Services.AddHealthChecks()
+    .AddCheck<BootstrapHealthCheck>("identity_bootstrap", tags: ["ready"])
+    .AddCheck<WorkerRuntimeHealthCheck>("worker_runtime", tags: ["ready"]);
 
 var app = builder.Build();
 if (!development)
@@ -155,6 +190,8 @@ app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
+
+app.MapGrpcService<WorkerControlGrpcService>();
 
 app.MapGet("/api/v1/version", () => Results.Ok(new BuildInfo("CloudEmuera", typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0-dev", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription, 1, 1, 1)));
 app.MapHealthChecks("/health/live", new() { Predicate = _ => false });
@@ -454,6 +491,22 @@ public partial class Program;
 
 internal static class ValidatorAssemblyResolver
 {
+    public static string ResolveSiblingAssembly(string contentRoot, string projectName, string assemblyName)
+    {
+        string[] configurations = ["Debug", "Release"];
+        DirectoryInfo? current = new DirectoryInfo(contentRoot);
+        while (current is not null)
+        {
+            foreach (string configuration in configurations)
+            {
+                string candidate = Path.Combine(current.FullName, "src", projectName, "bin", configuration, "net10.0", assemblyName);
+                if (File.Exists(candidate)) return candidate;
+            }
+            current = current.Parent;
+        }
+        return Path.Combine(AppContext.BaseDirectory, assemblyName);
+    }
+
     /// <summary>
     /// Dev/test containers run with the API project directory as the content root;
     /// walk up to the repository root to locate the pinned Validator project. Prefer

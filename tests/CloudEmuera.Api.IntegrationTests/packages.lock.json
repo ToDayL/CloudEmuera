@@ -611,6 +611,8 @@
           "CloudEmuera.Contracts": "[1.0.0, )",
           "CloudEmuera.Infrastructure": "[1.0.0, )",
           "CloudEmuera.Ipc": "[1.0.0, )",
+          "CloudEmuera.RuntimeAdapter": "[1.0.0, )",
+          "Grpc.AspNetCore": "[2.83.0, )",
           "Microsoft.AspNetCore.OpenApi": "[10.0.10, )",
           "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.17.0, )",
           "OpenTelemetry.Extensions.Hosting": "[1.17.0, )"
@@ -633,6 +635,7 @@
         "dependencies": {
           "CloudEmuera.Application": "[1.0.0, )",
           "CloudEmuera.Domain": "[1.0.0, )",
+          "CloudEmuera.RuntimeAdapter": "[1.0.0, )",
           "Microsoft.AspNetCore.Identity.EntityFrameworkCore": "[10.0.10, )",
           "Microsoft.EntityFrameworkCore.Sqlite": "[10.0.10, )",
           "SQLitePCLRaw.lib.e_sqlite3": "[2.1.12, )"
@@ -645,6 +648,9 @@
           "Grpc.AspNetCore": "[2.83.0, )",
           "Grpc.Net.Client": "[2.83.0, )"
         }
+      },
+      "cloudemuera.runtimeadapter": {
+        "type": "Project"
       },
       "Google.Protobuf": {
         "type": "CentralTransitive",
@@ -672,6 +678,12 @@
           "Grpc.Net.Common": "2.83.0",
           "Microsoft.Extensions.Logging.Abstractions": "8.0.0"
         }
+      },
+      "Grpc.Tools": {
+        "type": "CentralTransitive",
+        "requested": "[2.83.0, )",
+        "resolved": "2.83.0",
+        "contentHash": "vK2Go/83W0v2Nn7tTP9fGrX4IjmOa93s3M0SZeFimU1vIIr2wL9yNJlIyK21y85SGm3++JncB8IF751cjoLHuQ=="
       },
       "Microsoft.AspNetCore.Identity.EntityFrameworkCore": {
         "type": "CentralTransitive",

@@ -1,5 +1,5 @@
-using CloudEmuera.Ipc.V1;
-using V1 = CloudEmuera.Ipc.V1;
+using CloudEmuera.Ipc.V2;
+using V2 = CloudEmuera.Ipc.V2;
 using RuntimeConsoleColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
 using RuntimeConsoleInputType = CloudEmuera.RuntimeAdapter.ConsoleInputType;
 using RuntimePromptTimeoutBehavior = CloudEmuera.RuntimeAdapter.ConsolePromptTimeoutBehavior;
@@ -126,7 +126,7 @@ public static class ConsoleWireMapper
         };
     }
 
-    public static CloudEmuera.RuntimeAdapter.ConsolePrompt FromProto(V1.ConsolePrompt prompt)
+    public static CloudEmuera.RuntimeAdapter.ConsolePrompt FromProto(V2.ConsolePrompt prompt)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         RuntimeConsoleInputType inputType = prompt.InputType switch
@@ -170,10 +170,10 @@ public static class ConsoleWireMapper
             timeoutBehavior);
     }
 
-    public static V1.ConsolePrompt ToProto(CloudEmuera.RuntimeAdapter.ConsolePrompt prompt)
+    public static V2.ConsolePrompt ToProto(CloudEmuera.RuntimeAdapter.ConsolePrompt prompt)
     {
         ArgumentNullException.ThrowIfNull(prompt);
-        var result = new V1.ConsolePrompt
+        var result = new V2.ConsolePrompt
         {
             PromptId = prompt.PromptId,
             InputType = prompt.InputType switch
@@ -261,7 +261,7 @@ public static class ConsoleWireMapper
             (CloudEmuera.RuntimeAdapter.ConsoleFontStyle)style.Decorations);
     }
 
-    private static V1.ConsoleColor ToProto(RuntimeConsoleColor color) => new()
+    private static V2.ConsoleColor ToProto(RuntimeConsoleColor color) => new()
     {
         Red = color.Red,
         Green = color.Green,
@@ -269,7 +269,7 @@ public static class ConsoleWireMapper
         Alpha = color.Alpha
     };
 
-    private static RuntimeConsoleColor FromProto(V1.ConsoleColor color) => new(
+    private static RuntimeConsoleColor FromProto(V2.ConsoleColor color) => new(
         checked((byte)color.Red),
         checked((byte)color.Green),
         checked((byte)color.Blue),

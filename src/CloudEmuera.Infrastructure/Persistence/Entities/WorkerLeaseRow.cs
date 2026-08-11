@@ -12,6 +12,12 @@ public sealed class WorkerLeaseRow
 
     public long? Pid { get; set; }
 
+    public string ControlPlaneInstanceId { get; set; } = string.Empty;
+
+    public string? ProcessBootId { get; set; }
+
+    public long? ProcessStartTicks { get; set; }
+
     public string IpcEndpoint { get; set; } = string.Empty;
 
     public string RuntimeVersion { get; set; } = string.Empty;

@@ -12,8 +12,8 @@
 WorkerLease，并额外维护 API—Supervisor 命令、去重、重连、状态同步和两套进程恢复逻辑。
 
 MVP 已明确只部署一个容器、一个 API 实例和一台主机，不要求 API 重启期间保留正在执行的
-Session。P1-05 的持久 Worker 管理尚未实现；当前 `CloudEmuera.Supervisor` 只承载 P0-06 的进程
-隔离和 Worker IPC 证明。因此在进入持久租约实现前收回进程边界，可以降低单机 SQLite 的多进程
+Session。ADR 定稿时 P1-05 的持久 Worker 管理尚未实现；当时的 `CloudEmuera.Supervisor` 只承载
+P0-06 的进程隔离和 Worker IPC 证明。因此在进入持久租约实现前收回进程边界，可以降低单机 SQLite 的多进程
 协调成本，而不牺牲每 Session 独立 Runtime 的安全边界。
 
 ## 决定
@@ -85,7 +85,7 @@ API—Supervisor 命令幂等、事件缓冲、重连和故障恢复协议。若
 - API 拥有启动沙箱进程的权限，故其 Worker Manager、launcher 参数、路径和凭据处理必须单独测试
   和审计；Worker 的 namespace/cgroup/seccomp/rlimit 边界不因进程合并而削弱。
 - P0-06 的 Supervisor/Worker 测试仍是已完成的进程隔离证据，但其独立 Supervisor 拓扑和无限重连
-  语义不再是产品目标。P1-05 负责把可复用的启动、UDS、安全和监视实现迁入 API，并删除独立
+  语义不再是产品目标。P1-05 已把可复用的启动、UDS、安全和监视实现迁入 API，并删除独立
   Supervisor 项目/入口及相应部署配置。
 - 若未来引入多 API、滚动无损升级或多 Worker Host，必须通过新 ADR 重新建立明确的 Worker 所有权
   和外部协调方案，不能直接让多个 API 进程共同管理同一个 SQLite 和 Worker 集合。

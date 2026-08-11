@@ -6,14 +6,14 @@ namespace CloudEmuera.RuntimeAdapter;
 /// A SessionRoot is a complete, private copy of one published GameContent. It
 /// is the actual Emuera GameRoot: configuration, game files, temporary data
 /// and native saves all live below this one ordinary directory. The
-/// GameContentRoot property is retained for supervisor/diagnostic binding and
+/// GameContentRoot property is retained for control-plane/diagnostic binding and
 /// is never used as a runtime content fallback.
 /// </summary>
 public sealed class RuntimePaths
 {
     /// <summary>
     /// Creates the adapter view for a SessionRoot that was materialized by a
-    /// supervisor before the Worker process started. The source GameContent is
+    /// API Worker Manager before the Worker process started. The source GameContent is
     /// deliberately represented by a non-existent sibling sentinel; no
     /// source path is supplied to the Worker and no content fallback exists.
     /// </summary>

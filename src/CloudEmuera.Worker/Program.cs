@@ -32,8 +32,9 @@ internal static class WorkerProcess
         try
         {
             bootstrap = WorkerBootstrapFile.Read(bootstrapPath);
+            ParentDeathGuard.Install(bootstrap.ExpectedParentProcessId);
         }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
         {
             Console.Error.WriteLine($"worker_error code={IpcReasonCodes.BootstrapInvalid}");
             return 10;

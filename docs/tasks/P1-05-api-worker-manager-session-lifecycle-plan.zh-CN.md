@@ -1,6 +1,6 @@
 # P1-05：API Worker Manager、持久租约与可重开 Session 详细开发方案
 
-状态：PLANNED
+状态：DONE（2026-08-11）
 
 日期：2026-08-11
 
@@ -527,7 +527,11 @@ reason、PID identity 摘要和 correlation ID。禁止记录 token、输入值�
 source scripts/lib/dev-env.sh
 docker compose -f compose.dev.yaml run --rm api \
   dotnet test tests/CloudEmuera.Domain.Tests --no-restore \
-  --configuration Release --filter 'Category=Concurrency|Category=SessionLifecycle'
+  --configuration Release --filter 'FullyQualifiedName~SessionStateMachineTests'
+
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Application.Tests --no-restore \
+  --configuration Release --filter 'Category=SessionLifecycle'
 
 docker compose -f compose.dev.yaml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore \
@@ -535,11 +539,11 @@ docker compose -f compose.dev.yaml run --rm api \
 
 docker compose -f compose.dev.yaml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore \
-  --configuration Release --filter 'Category=WorkerLifecycle|Category=IpcSecurity'
+  --configuration Release --filter 'Category=ProcessIsolation'
 
 docker compose -f compose.dev.yaml run --rm api \
-  dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore \
-  --configuration Release --filter 'Category=WorkerLifecycle'
+  dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore \
+  --configuration Release --filter 'Category=ConsoleContract'
 
 ./scripts/check.sh
 ./scripts/verify-dev-user.sh

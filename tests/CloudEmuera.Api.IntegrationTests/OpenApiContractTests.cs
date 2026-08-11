@@ -15,7 +15,7 @@ public sealed class OpenApiContractTests
     [Trait("Category", "Bootstrap")]
     public async Task OpenApiDocumentExposesGameContractWithoutGameVersion()
     {
-        string dataRoot = Path.Combine(Path.GetTempPath(), $"cloudemuera-openapi-{Guid.NewGuid():N}");
+        string dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid():N}");
         using TestConfigurationOverride configuration = new(dataRoot);
         using WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {

@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-option csharp_namespace = "CloudEmuera.Ipc.V1";
+option csharp_namespace = "CloudEmuera.Ipc.V2";
 
-package cloudemuera.ipc.v1;
+package cloudemuera.ipc.v2;
 
 service WorkerControl {
-  // The Supervisor owns the UDS listener. A stream is owned by one Worker
+  // The API control plane owns the UDS listener. A stream is owned by one Worker
   // binding for its whole lifetime; it is never multiplexed between workers.
-  rpc Connect(stream WorkerEnvelope) returns (stream SupervisorEnvelope);
+  rpc Connect(stream WorkerEnvelope) returns (stream WorkerCommandEnvelope);
 }
 
 message WorkerEnvelope {
@@ -17,7 +17,8 @@ message WorkerEnvelope {
   string worker_id = 4;
   uint64 worker_epoch = 5;
   string correlation_id = 6;
-  reserved 7, 8, 9;
+  string control_plane_instance_id = 7;
+  reserved 8, 9;
   oneof payload {
     WorkerRegistration registration = 10;
     WorkerHeartbeat heartbeat = 11;
@@ -37,6 +38,8 @@ message WorkerRegistration {
   string upstream_commit = 3;
   int64 process_id = 4;
   int64 last_output_sequence = 5;
+  string process_boot_id = 6;
+  int64 process_start_ticks = 7;
 }
 
 message WorkerReady {
@@ -53,6 +56,7 @@ message WorkerHeartbeat {
   int64 output_sequence = 2;
   bool waiting_for_input = 3;
   int64 resident_memory_bytes = 4;
+  string current_prompt_id = 5;
 }
 
 message DisplayBatch {
@@ -98,14 +102,15 @@ message WorkerCommandResult {
   string reason_code = 3;
 }
 
-message SupervisorEnvelope {
+message WorkerCommandEnvelope {
   uint32 protocol_version = 1;
   string message_id = 2;
   string correlation_id = 3;
   string session_id = 4;
   uint64 worker_epoch = 5;
   string worker_id = 6;
-  reserved 7, 8, 9;
+  string control_plane_instance_id = 7;
+  reserved 8, 9;
   oneof payload {
     RegistrationResult registration_result = 10;
     StopWorker stop = 11;
@@ -120,6 +125,7 @@ message RegistrationResult {
   uint32 negotiated_protocol_version = 3;
   string runtime_integration_version = 4;
   string upstream_commit = 5;
+  string control_plane_instance_id = 6;
 }
 
 message StartRuntime {
