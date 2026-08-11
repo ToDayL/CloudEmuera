@@ -15,8 +15,8 @@ public sealed class SessionStateMachineTests
     }
 
     [Theory]
-    [InlineData(SessionState.Running, SessionState.Detached)]
-    [InlineData(SessionState.Detached, SessionState.Running)]
+    [InlineData(SessionState.Running, SessionState.Stopping)]
+    [InlineData(SessionState.Running, SessionState.Crashed)]
     [InlineData(SessionState.Stopping, SessionState.Closed)]
     public void DocumentedTransitionsAreAllowed(SessionState current, SessionState next)
     {

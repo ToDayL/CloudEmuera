@@ -5,13 +5,19 @@
 术语迁移：本文中的 `GameVersion/GameVersionRoot` 是历史复制源术语。ADR-0010 后 Worker 只消费
 由 Game current content 物化的 SessionRoot；P1-04 负责代码符号重命名，IPC 仍不得接收库内容根。
 
+拓扑迁移：本文记录 P0-06 已完成的独立 Supervisor/Worker 验证，不回写历史实现与测试结果。
+[`ADR-0015`](../adr/0015-api-owned-worker-lifecycle.md) 已取代独立 Supervisor 和 API 重启期间保留
+Worker 的产品目标；P1-05 把可复用的 UDS、binding、启动和监视实现迁入 API。按
+[`ADR-0016`](../adr/0016-reopenable-session-root-lifecycle.md)，同一 Session 可在 Worker 关闭或
+崩溃后以更大 epoch 复用原 SessionRoot 重新开启。下文相反表述仅描述 P0-06 当时的验收边界。
+
 计划日期：2026-08-05
 
 对应开发步骤：`P0-06 — 单 Session Worker 与 IPC 冒烟链路`
 
 前置条件：P0-01～P0-05 已完成
 
-后续步骤：P1-01 SQLite 首版 schema 与迁移；P1-05 Supervisor、租约、epoch 与状态机
+后续步骤：P1-01 SQLite 首版 schema 与迁移；P1-05 API Worker Manager、租约、epoch 与可重开状态机
 
 需求映射：SESS-002/003/004/010、PLAY-001/004/005/007/008/010/012、OPS-004、
 SEC-007、NFR-002/003/008/011/013、Phase 0 进程隔离

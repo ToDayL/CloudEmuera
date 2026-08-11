@@ -1,7 +1,8 @@
 # CloudEmuera 可验证开发计划
 
-状态：Draft v0.1  
-更新日期：2026-08-08
+状态：Draft v0.2
+
+更新日期：2026-08-11
 依据：`requirements.zh-CN.md`、`design.zh-CN.md`
 
 ## 1. 计划目标
@@ -221,6 +222,11 @@ Worker 第二次 start、错误 binding、Supervisor stream 短断重连、两�
 恶意路径。IPC 契约测试 9 项、ProcessIsolation 测试 18 项，均在 Linux dev Docker 中通过；
 P1-05 的持久 WorkerLease、epoch 分配、Supervisor 重启对账和沙箱限制仍未实现。
 
+2026-08-11 架构修订：上述结果保留为独立 Worker、UDS、binding 和进程隔离的历史证据；
+[`ADR-0015`](adr/0015-api-owned-worker-lifecycle.md) 已取代独立 Supervisor 生产拓扑及 API 退出后
+Worker 继续运行的目标。P1-05 将复用实现迁入 API，并按
+[`ADR-0016`](adr/0016-reopenable-session-root-lifecycle.md) 实现可反复开启的持久 Session。
+
 ## 4. Phase 1：端到端单机 MVP
 
 ### P1-01 — SQLite 首版 schema 与迁移（DONE）
@@ -388,27 +394,37 @@ API；P1-10 不再处理 Game 的 UI。同时修复开发容器 Validator 程序
 验证启用）、HTTP 集成测试（GameLibrary 类别，含真实 parser 进程）与 RuntimeBridge 回归测试；
 `pnpm --dir src/CloudEmuera.Web typecheck/test/build`、定向 .NET 测试与隔离 e2e 身份套件通过。
 
-### P1-05 — Supervisor、租约、epoch 与状态机（TODO）
+### P1-05 — API Worker Manager、租约、epoch 与可重开状态机（NEXT）
 
-需求映射：SESS-001/002/005/009/010、OPS-001/002、AC-006/007。
+需求映射：SESS-001/002/005/009～012、OPS-001/002、AC-003/006/007、ADR-0015/0016。
 
-交付物：Worker Supervisor、WorkerLease 获取/续租/回收、epoch fencing、心跳超时、活动配额和状态转换持久化。
+详细设计：[`tasks/P1-05-api-worker-manager-session-lifecycle-plan.zh-CN.md`](tasks/P1-05-api-worker-manager-session-lifecycle-plan.zh-CN.md)。
+
+交付物：把 P0-06 可复用的 Worker 启动、UDS、安全校验和进程监视迁入 API Worker Manager；删除
+独立 Supervisor 产品进程/入口；API 成为唯一运行期 SQLite 业务访问者；实现 WorkerLease 获取/
+续租/回收、epoch fencing、心跳超时、活动配额、API 退出时有界 Worker 回收，以及
+`CLOSED/CRASHED → STARTING` 的同 Session 重开状态机。Session 创建只物化一次 SessionRoot，
+open/close 只获取或释放 Worker。
 
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Supervisor.IntegrationTests
+dotnet test tests/CloudEmuera.Api.IntegrationTests --filter 'Category=WorkerLifecycle'
 dotnet test tests/CloudEmuera.Domain.Tests --filter 'Category=Concurrency'
 ```
 
-通过条件：同一 Session 并发启动只产生一个有效 Worker；只剩一个活动名额时并发请求最多一个成功；旧 epoch 的心跳和结果全部被拒绝；kill Worker 后 Session 在心跳窗口内变为 CRASHED。
+通过条件：同一 `CLOSED/CRASHED` Session 并发 open 只产生一个有效 Worker；只剩一个活动名额时
+并发 open 最多一个成功；旧 epoch 的心跳和结果全部被拒绝；kill Worker 后 Session 在心跳窗口内
+变为 CRASHED，并可在旧写权限释放后以更大 epoch 复用同一 SessionRoot 重开；正常/强制终止 API
+后 Worker 均在期限内退出，新 API 对账为 CRASHED；无法回收旧 Worker 时 ready 失败且不授予新
+写租约。生产解决方案和容器不再启动独立 Supervisor，Worker 不访问 SQLite。
 
-### P1-06 — 幂等 Session 创建与关闭纵切（TODO）
+### P1-06 — 幂等 Session 创建、开启与关闭纵切（TODO）
 
-需求映射：SESS-001、SESS-005～008、AC-001、AC-006。
+需求映射：SESS-001、SESS-005～008、SESS-011/012、AC-001、AC-003、AC-006/007。
 
-交付物：创建、列表、详情、关闭 HTTP API；幂等键；Game + source content digest/manifest 固定；
-Supervisor 编排；关闭与输入并发语义。
+交付物：创建、列表、详情、open、close HTTP API；创建/open/close 独立幂等键；Game + source
+content digest/manifest 固定；API Worker Manager 编排；关闭与输入、open 与存档写的并发语义。
 
 验证：
 
@@ -416,11 +432,14 @@ Supervisor 编排；关闭与输入并发语义。
 dotnet test tests/CloudEmuera.Api.IntegrationTests --filter 'Category=SessionLifecycle'
 ```
 
-通过条件：相同幂等键并发创建只产生一个 Session；同一游戏可创建两个隔离 Session；重复关闭成功且不重复执行副作用；关闭后输入被拒绝；关闭/输入竞争结果符合设计允许的两种线性化结果。
+通过条件：相同幂等键并发创建只产生一个 `CLOSED` Session 和一棵 SessionRoot，且不占活动配额；
+同一游戏可创建两个隔离 Session；重复 open/close 不重复执行副作用；关闭后输入被拒绝；关闭后、
+Worker 崩溃后和 API 重启对账后都能用同一 Session ID/SessionRoot 重开并加载原生存档；Game current
+更新不改变重开 Session 的内容；关闭/输入及 open/存档写竞争结果符合设计允许的线性化结果。
 
 ### P1-07 — Snapshot、恢复屏障与有界输出（TODO）
 
-需求映射：PLAY-004～006、PLAY-010/012、AC-002/003/012、ADR-003。
+需求映射：PLAY-004～006、PLAY-010/012、AC-002/012、ADR-003。
 
 交付物：`ADR-003`；ConsoleSnapshot 序列化；短期增量环形缓冲；恢复屏障；批处理、背压和快照降级策略。
 
@@ -435,7 +454,7 @@ dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Snapshot|Categor
 
 ### P1-08 — WebSocket 恢复与输入去重（TODO）
 
-需求映射：AUTH-005、PLAY-006～008、PLAY-011、AC-002/003/005。
+需求映射：AUTH-005、PLAY-006～008、PLAY-011、AC-002/005。
 
 交付物：版本化 WebSocket envelope、鉴权握手、断线恢复、ack、`promptId/clientMessageId` 去重和多客户端首个有效输入规则。
 
@@ -445,7 +464,9 @@ dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Snapshot|Categor
 dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Reconnect|Category=InputDeduplication'
 ```
 
-通过条件：断开后从最后 ack 恢复且无丢失窗口；重复消息只执行一次并返回同一结果；两个客户端并发回答只有一个 ACCEPTED；API 重启后可重新发现 Worker 并恢复连接；越权恢复失败。
+通过条件：浏览器断开后从最后 ack 恢复且无丢失窗口；重复消息只执行一次并返回同一结果；两个
+客户端并发回答只有一个 ACCEPTED；同一 API 实例内 Worker IPC 短断可在有界宽限期恢复，超时则
+Session 进入 CRASHED；越权恢复失败。API 重启不恢复旧 Worker 实时连接。
 
 ### P1-09 — Session 原生存档文件 API（TODO）
 
@@ -465,7 +486,8 @@ dotnet test tests/CloudEmuera.Saves.IntegrationTests
 
 需求映射：SESS-005/006、PLAY-002/009、SAVE-003、AC-011。
 
-交付物：登录、Session 列表、结构化 Console、输入控件、重连状态和存档管理页面；移动安全区和键盘处理。
+交付物：登录、Session 列表、Session 创建/open/close/重开、结构化 Console、输入控件、重连状态
+和存档管理页面；移动安全区和键盘处理。
 游戏库、工作区编辑与发布等 Game 管理 UI 已随 P1-04 完成，不再属于 P1-10。
 
 验证：
@@ -512,7 +534,8 @@ dotnet test tests/CloudEmuera.Operations.IntegrationTests
 
 需求映射：MVP 单容器、AC-003/006/007、OPS-003。
 
-交付物：生产镜像中的 API、Supervisor、Migrator 启动/停止编排；非 root 用户；信号转发；数据目录迁移、备份与恢复说明。
+交付物：生产镜像中的 Migrator 前置检查、API 及其 Worker 子进程启动/停止编排；非 root 用户；
+信号转发、parent-death/进程组/cgroup 回收兜底；数据目录迁移、备份与恢复说明。
 
 验证：
 
@@ -521,7 +544,10 @@ dotnet test tests/CloudEmuera.Operations.IntegrationTests
 ./scripts/test-process-recovery.sh
 ```
 
-通过条件：全新数据卷可启动；进程均非 root；SIGTERM 在期限内停止并刷新状态；单独重启 API 不终止 Worker；重启 Supervisor 可对账；备份恢复后元数据和文件校验一致。
+通过条件：全新数据卷可启动；进程均非 root；SIGTERM 在期限内停止 Worker 并把活动 Session 标记
+CRASHED；强制终止 API 后 Worker 在断连宽限期内退出或被回收；新 API 确认旧写权限释放后完成
+CRASHED 对账，同一 Session 可复用原 SessionRoot 重开；遗留 Worker 无法回收时 ready 失败；生产
+镜像不存在独立 Supervisor 服务；备份恢复后元数据和文件校验一致。
 
 ### P1-14 — MVP 验收、安全与性能门（TODO）
 
@@ -539,11 +565,15 @@ dotnet test tests/CloudEmuera.Operations.IntegrationTests
 
 ## 5. Phase 2/3 进入条件
 
-Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只在 P1-14 通过后展开。Phase 3 的 SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在此之前不得让 `DETACHED` 释放 Worker，也不得宣称 Worker 崩溃后能从同一指令恢复。
+Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只在 P1-14 通过后展开。Phase 3 的
+SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在此之前不得因当前没有浏览器连接
+而释放 Worker，也不得宣称 Worker 崩溃后能从同一指令恢复。
 
 ## 6. 近期执行队列
 
 1. ~~完成 P1-04 剩余安全加固：真实 parser-only Validator、dirfd/fsync 内容存储、崩溃恢复/续租、
    copy lease 端口和旧 DataRoot 迁移工具。~~ 已于 2026-08-09 完成，P1-04 标记为 DONE。
+2. 按 ADR-0015/0016 完成 P1-05：把 Worker 管理迁入 API，移除独立 Supervisor，并实现持久
+   SessionRoot 的 open/close/reopen 生命周期。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

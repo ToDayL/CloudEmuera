@@ -736,7 +736,7 @@ public sealed class SupervisorWorkerSession : IAsyncDisposable
             if (ReferenceEquals(connection, value))
             {
                 connection = null;
-                LogLifecycle("worker_connection_detached");
+                LogLifecycle("worker_connection_disconnected");
             }
         }
     }

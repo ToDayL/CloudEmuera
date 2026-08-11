@@ -2,8 +2,8 @@
 
 | Item | Value |
 | --- | --- |
-| Document status | Draft v0.2 |
-| Date | 2026-08-03 |
+| Document status | Draft v0.3 |
+| Date | 2026-08-11 |
 | Chinese counterpart | [requirements.zh-CN.md](./requirements.zh-CN.md) |
 | Intended audience | Product, frontend, backend, runtime, operations, and test engineers |
 
@@ -39,12 +39,12 @@ CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit comp
 
 - Local accounts or one external identity provider.
 - Game package upload, validation, browsing, editing, and activation.
-- Session creation, listing, connection, reconnection, and explicit closure.
+- Session creation, listing, opening, connection, reconnection, explicit closure, and reopening.
 - Text, styles, buttons, basic HTML, images, sprites, and basic audio events.
 - User input, timed input, and mobile soft keyboards.
 - Per-Session isolated save spaces, with save import, export, rename, and deletion.
 - Administrative Worker inspection and termination of unhealthy Sessions.
-- A single Docker container deployment in which Web/API, the Worker Supervisor, and Session Workers run inside the container and persist through a mounted data directory.
+- A single Docker container deployment in which one Web/API control-plane process directly creates and manages an independent Worker process for each active Session, with persistence through a mounted data directory.
 
 ### 3.3 Non-goals
 
@@ -125,11 +125,13 @@ Session 1 ── 1 private SessionRoot
 - **SESS-003**: Browser disconnects must not automatically close a Session or clear runtime state.
 - **SESS-004**: Without an attached browser, a Session must continue already-started execution, timed input, and internal timers.
 - **SESS-005**: A user must be able to view the Session name, Game, source content digest, state, creation time, last activity time, and whether it is waiting for input.
-- **SESS-006**: A user must be able to explicitly close a Session. Closure must stop new input, flush files, optionally produce a final autosave, terminate the Worker, and set the state to `CLOSED`.
-- **SESS-007**: The API must provide idempotent creation and closure semantics so network retries cannot duplicate resource creation or closure.
+- **SESS-006**: A user must be able to explicitly close a Session. Closure must stop new input, flush files, optionally produce a final autosave, terminate the Worker, release active quota, and set the state to `CLOSED`; it must not delete or rebuild the SessionRoot.
+- **SESS-007**: The API must provide separate idempotent creation, opening, and closure semantics so network retries cannot duplicate a Session, start multiple Workers, or repeat closure side effects.
 - **SESS-008**: Except for administrative action, security policy, resource failure, or an explicitly configured deployment policy, the system must not close a Session solely because its connections are idle.
 - **SESS-009**: Administrators must be able to inspect and force-stop runaway, over-quota, or policy-violating Sessions.
 - **SESS-010**: After a Worker exits unexpectedly, the Session must transition to `CRASHED` after the heartbeat timeout and must not remain reported as runnable.
+- **SESS-011**: A `CLOSED` Session, and a `CRASHED` Session whose old Worker is proven to have lost write access, must be reopenable. Every open reuses the existing SessionRoot, increments the Worker epoch, and creates a new Worker; it must not recopy current Game content or require a new Session.
+- **SESS-012**: A Session is a resource that persists from creation until explicit deletion. Opening and closing affect only its Worker and active-runtime quota. Session deletion must be separate from closure and must never occur automatically because of closure, a crash, an API restart, or a browser disconnect.
 
 ### 6.4 Game display and interaction
 
@@ -166,12 +168,12 @@ Session 1 ── 1 private SessionRoot
 
 ### 6.6 Administration and operations
 
-- **OPS-001**: Administrators must be able to inspect the in-container Worker Supervisor, Session Worker processes, Sessions, heartbeats, CPU, memory, disk, and output rates.
+- **OPS-001**: Administrators must be able to inspect the API Worker Manager, Session Worker processes, Sessions, heartbeats, CPU, memory, disk, and output rates.
 - **OPS-002**: The system must support configuration of per-user active runtime Session counts, per-Session memory/CPU/disk, game-package size, save size, and output-rate limits; it must not impose a total Session-creation limit.
 - **OPS-003**: The API must expose health, readiness, and version endpoints.
 - **OPS-004**: Logs must include correlatable `requestId`, `sessionId`, `workerId`, and `workerEpoch` values, but must not log passwords or full user input by default.
 - **OPS-005**: Audit events must be recorded for Session creation, connection, closure, crash, administrative termination, Game-content activation, and save deletion.
-- **OPS-006**: Administrators must be able to prevent a known-unsafe Game from creating new Sessions without directly destroying existing SessionRoots or saves.
+- **OPS-006**: Administrators must be able to prevent a known-unsafe Game from creating or reopening Sessions without directly destroying existing SessionRoots or saves.
 
 ## 7. Compatibility Requirements
 
@@ -206,12 +208,9 @@ The system uses the following compatibility classifications:
 │                                              │
 │ Web/API process                              │
 │ Auth │ Game/Save │ Session │ WebSocket       │
-│                    │ local IPC               │
-│                    ▼                         │
-│ Worker Supervisor process                    │
-│                    │                         │
-│                    ├─ Session Worker process │
-│                    └─ Session Worker process │
+│ Worker Manager      │ local IPC              │
+│                     ├─ Session Worker process│
+│                     └─ Session Worker process│
 │                       (one per active Session)│
 │                                              │
 │ /data  ← mounted persistent data directory  │
@@ -238,18 +237,18 @@ The system deploys one API process, whose code should contain at least these mod
 - Session Registry & Scheduler
 - Administration & Audit
 
-The API process must not keep active Sessions only in memory. After an API-process restart, the Worker Supervisor must keep Session Workers alive and rebuild Session state and local IPC connections from durable metadata in the mounted data directory.
+The API process must not keep active Sessions only in memory. It is the only business process that accesses SQLite at runtime and coordinates HTTP operations, background work, and Worker lifecycles through durable Sessions, WorkerLeases, epochs, and state versions. The separate Migrator runs only before API startup, and Session Workers do not access SQLite.
 
-The API process and Worker Supervisor process must be managed as independent processes by the container's process manager. Restarting the API process must not terminate the Worker Supervisor or its Session Workers.
+The API process directly starts, monitors, limits, and terminates Session Workers. Exiting the API ends its active Workers. A restarted API does not adopt old Workers; after confirming that they have lost write access to their SessionRoots, it reconciles residual active Sessions to `CRASHED` while preserving each SessionRoot.
 
 ### 8.3 Worker layer
 
-The Worker layer should distinguish:
+The Worker layer consists of:
 
-- **Worker Supervisor process**: runs inside the container and starts, monitors, limits, and terminates Session Worker child processes.
+- **API Worker Manager module**: starts, monitors, limits, and terminates Session Worker child processes inside the API process, without loading Emuera Runtime or replacing durable leases with in-memory state.
 - **Session Worker process**: one independent operating-system process per active Session, owning one Runtime, one ConsoleSnapshot, and one Session file sandbox.
 
-A Session Worker must continue running during an API-process restart or temporary local-IPC interruption and retain bounded output. It should re-register with `sessionId + workerEpoch` after the control channel recovers.
+A Session Worker may retain bounded output and reconnect during a brief local-IPC interruption within the same API instance, but the disconnect grace period must be bounded. The Worker must stop and exit when the API instance exits, its instance identity changes, or the grace period expires; a new API instance does not adopt it.
 
 Every Session Worker must use an actual `SessionRoot` as its process working directory and Emuera GameRoot. At creation, Session management copies the complete validated regular-file tree of the Game's current content; configuration, game-defined directories, saves, and temporary files all live directly in the Session's physical directory:
 
@@ -277,33 +276,28 @@ For legacy games that write `save*.sav` and `global.sav` at the GameRoot level, 
 ## 9. Session State Machine
 
 ```text
-CREATING → STARTING → RUNNING ↔ DETACHED
-                         │          │
-                         ├──────────┤
-                         ▼          ▼
-                      STOPPING → CLOSED
-
-STARTING/RUNNING/DETACHED → CRASHED
-CRASHED → RECOVERING → RUNNING       (future capability)
-RUNNING/DETACHED → SUSPENDING → SUSPENDED → RESUMING  (future capability)
+CREATING → CLOSED
+CLOSED/CRASHED → STARTING → RUNNING
+STARTING/RUNNING → STOPPING → CLOSED
+STARTING/RUNNING/STOPPING → CRASHED
+RUNNING → SUSPENDING → SUSPENDED → RESUMING  (future capability)
 ```
 
 State definitions:
 
 | State | Description |
 | --- | --- |
-| CREATING | The API accepted the request but has not assigned a Worker |
+| CREATING | The API accepted the request and is materializing the persistent SessionRoot |
 | STARTING | A Worker is starting and loading the game |
-| RUNNING | The Worker is healthy and at least one real-time connection is attached |
-| DETACHED | The Worker is healthy and no real-time connection is attached |
+| RUNNING | The Worker is healthy, regardless of whether a browser is currently connected |
 | STOPPING | New input is rejected while files are flushed and the Worker terminates |
-| CLOSED | Closure by the user or administrator has completed |
-| CRASHED | The Worker exited unrecoverably or lost its lease |
+| CLOSED | The SessionRoot exists without an active Worker; the last run closed normally and the Session may be reopened |
+| CRASHED | The SessionRoot exists without an active Worker; the last run ended abnormally and the Session may be reopened after old write access is released |
 | SUSPENDED | A future persistent runtime snapshot that consumes no active Worker |
 
-The active runtime quota counts `CREATING`, `STARTING`, `RUNNING`, `DETACHED`, and `STOPPING` states. `CREATING` reserves quota, and `STOPPING` remains counted until its Worker is released. `CLOSED`, `CRASHED`, and `SUSPENDED` do not consume active runtime quota. `DETACHED` has no browser connection but still consumes a Worker and must therefore be counted.
+The active runtime quota counts `STARTING`, `RUNNING`, and `STOPPING`. `CLOSED`, `CRASHED`, `CREATING`, and `SUSPENDED` do not consume active runtime quota. `CREATING` is constrained only by storage quota; active quota is reserved by the open transaction. Browser connection counts are ephemeral Realtime Gateway data rather than Session state; reaching zero connections neither changes `RUNNING`, stops the Worker, nor releases active quota.
 
-State transitions must be protected by database versioning or transactions. WorkerLease must use an increasing epoch; heartbeats, output, and input responses from an older epoch must be rejected.
+State transitions must be protected by database versioning or transactions. Every `CLOSED/CRASHED → STARTING` transition creates a new WorkerLease with an increased epoch; heartbeats, output, and input responses from an older epoch must be rejected. Reopening reuses the existing SessionRoot without recopying current Game content or restoring pre-crash interpreter memory.
 
 ## 10. Reconnection and Message Semantics
 
@@ -406,8 +400,8 @@ Session management must copy every valid regular file and directory in the Game'
 ### 13.1 Availability and recovery
 
 - **NFR-001**: Under normal load, reconnecting to a running Session and displaying its initial snapshot should complete within 2 seconds at P95, excluding abnormal external user-network conditions.
-- **NFR-002**: Restarting the API process must not actively terminate healthy Session Workers; the Worker Supervisor must continue managing them.
-- **NFR-003**: During a temporary local-IPC interruption, a Session Worker must continue running and attempt to re-register. If its output buffer reaches the limit, it must retain the latest ConsoleSnapshot.
+- **NFR-002**: During a normal API shutdown, the API must gracefully stop its Workers within a bound and force termination after the bound. After an unexpected API exit, Workers must exit within a bounded disconnect grace period or be reclaimed by an operating-system-level fallback. Affected active Sessions must reconcile to `CRASHED` while preserving their SessionRoots.
+- **NFR-003**: During a temporary local-IPC interruption within the same API instance, a Session Worker may continue running and attempt to re-register for a bounded grace period. If its output buffer reaches the limit, it must retain the latest ConsoleSnapshot. Workers must not be adopted across API instances.
 - **NFR-004**: A Worker crash must preserve the SessionRoot as found and must not affect current Game content, its workspace, or another Session; the Session must be clearly marked `CRASHED`. A file being overwritten by the native writer is not guaranteed to remain valid.
 - **NFR-005**: Arbitrary execution-point recovery and transactional recovery of every save are not initial-phase SLAs. Only persistence of SessionRoot and diagnostic availability are guaranteed.
 
@@ -437,11 +431,11 @@ Session management must copy every valid regular file and directory in the Game'
 
 | Failure | Expected behavior |
 | --- | --- |
-| Browser refresh/network loss | Session transitions to or remains DETACHED; reconnection restores the snapshot and current prompt |
-| API-process restart | Worker Supervisor and Session Workers remain alive; the API locates Sessions through durable metadata |
-| Short API–Worker local-IPC interruption | Worker buffers within bounds and reconnects; epoch and sequence are reconciled afterward |
-| Worker crash | Session becomes CRASHED; SessionRoot is preserved as found; an in-progress native write and exact instruction state are not recoverable guarantees |
-| Docker-container or host restart | Active Workers are treated as failed; Game content, workspaces, and SessionRoots in the mounted data directory remain |
+| Browser refresh/network loss | The Session remains RUNNING; the Realtime Gateway eventually detects the broken stream, and reconnection restores the snapshot and current prompt |
+| API-process exit or restart | Workers stop within bounds or are reclaimed; after proving old Workers have exited, the new API reconciles active Sessions to CRASHED while preserving SessionRoots |
+| Short Worker IPC interruption within one API instance | The Worker buffers and reconnects within a bounded grace period; instance identity, epoch, and sequence are reconciled, or the Worker exits on timeout |
+| Worker crash | Session becomes CRASHED and its SessionRoot is preserved; after the old Worker exits, the same Session can be reopened and continue from native saves, without an exact-instruction recovery guarantee |
+| Docker-container or host restart | Active Workers are treated as failed; Game content, workspaces, and SessionRoots remain in the mounted data directory, and the same Sessions may be reopened after recovery |
 | Mounted data directory unavailable | New Sessions and save writes are rejected, with an explicit persistence failure |
 | Duplicate client input | Deduplicated using promptId and clientMessageId |
 | Old Worker reconnects | Fenced by an older epoch and unable to produce valid new state |
@@ -450,11 +444,11 @@ Session management must copy every valid regular file and directory in the Game'
 
 - **AC-001**: One user starts two Sessions for the same game; their variables, display, input, and saves do not affect one another.
 - **AC-002**: A user closes the page while awaiting input and logs in again after the configured test interval; the latest display and same prompt are available.
-- **AC-003**: During an API restart the Worker does not exit, and the user can reconnect after API recovery.
+- **AC-003**: On a normal API shutdown, Workers exit gracefully within the configured bound. After the API is force-terminated, Workers exit within the disconnect grace period or are reclaimed. After API recovery, affected Sessions are `CRASHED`, active quota is released, and SessionRoots remain as found. Once old Worker write access is proven released, the user can reopen the same Session and load an existing native save.
 - **AC-004**: Two users creating Sessions from the same current Game content cannot access or overwrite each other's Sessions or saves.
 - **AC-005**: Repeating the same input message executes it only once.
-- **AC-006**: After the user explicitly closes a Session, its Worker exits within the configured bound, the Session becomes CLOSED, and later input is rejected.
-- **AC-007**: After a Worker is force-killed, its Session becomes CRASHED within the heartbeat window, SessionRoot is not cleaned up, and native save files present there remain inspectable or downloadable.
+- **AC-006**: After the user explicitly closes a Session, its Worker exits within the configured bound, the Session becomes CLOSED, and later input is rejected. Reopening the same Session reuses its SessionRoot with a higher epoch and can load the save created before closure.
+- **AC-007**: After a Worker is force-killed, its Session becomes CRASHED within the heartbeat window and its SessionRoot is not cleaned up. After the old-Worker exit barrier completes, the same Session can be reopened and inspect or load native saves already present there.
 - **AC-008**: A representative `1824+v18` test game completes loading, input, save, load, and primary display scenarios.
 - **AC-009**: A representative current EM+EE test game runs all declared Supported features, while unsupported features produce explicit diagnostics.
 - **AC-010**: A game package containing path traversal, symbolic-link escape, or archive-bomb characteristics is rejected without writing outside the sandbox.
@@ -474,8 +468,8 @@ Session management must copy every valid regular file and directory in the Game'
 
 ### Phase 1: Single-node MVP
 
-- One Docker container, one API process, one Worker Supervisor, SQLite, and one mounted data directory.
-- One API process, one Worker Supervisor process, and one independent child process per Session inside the container.
+- One Docker container, one API control-plane process, SQLite, and one mounted data directory.
+- An in-process API Worker Manager directly manages one independent child process per Session; only the API accesses SQLite at runtime.
 - WebSocket reconnection, ConsoleSnapshot, save isolation, and basic Web rendering.
 - Game package upload, single-workspace editing, atomic current-content activation, and baseline diagnostics.
 
@@ -488,8 +482,8 @@ Session management must copy every valid regular file and directory in the Game'
 ### Phase 3: Suspension and recovery
 
 - Investigate interpreter snapshots at INPUT safe points.
-- Support SUSPENDED/RESUMING to release active memory for long-detached Sessions.
-- Support in-container Session recovery after a Worker crash only under verifiable conditions.
+- Support SUSPENDED/RESUMING to release active memory for Sessions left running without clients for a configured policy interval.
+- Investigate in-memory recovery from interpreter safe points under verifiable conditions. The MVP already cold-starts the same SessionRoot and loads native saves, but does not describe that as exact-instruction recovery.
 
 ## 17. Open Questions
 

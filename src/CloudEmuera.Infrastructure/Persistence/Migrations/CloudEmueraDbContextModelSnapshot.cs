@@ -1322,7 +1322,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_sessions_source_revision", "source_content_revision > 0");
 
-                            t.HasCheckConstraint("ck_sessions_state", "state IN ('CREATING', 'STARTING', 'RUNNING', 'DETACHED', 'STOPPING', 'CLOSED', 'CRASHED')");
+                            t.HasCheckConstraint("ck_sessions_state", "state IN ('CREATING', 'STARTING', 'RUNNING', 'STOPPING', 'CLOSED', 'CRASHED')");
 
                             t.HasCheckConstraint("ck_sessions_time_order", "created_at >= 0 AND last_activity_at >= created_at AND (started_at IS NULL OR started_at >= created_at) AND (closed_at IS NULL OR closed_at >= created_at)");
 

@@ -1,3 +1,4 @@
+using CloudEmuera.Domain.Sessions;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Infrastructure.Tests.Support;
 using Microsoft.Data.Sqlite;
@@ -49,7 +50,7 @@ public sealed class InitialMigrationTests
         Assert.DoesNotContain(tables, name => name.StartsWith("AspNet", StringComparison.Ordinal));
         Assert.DoesNotContain(tables, name => name.Contains("save", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(tables, name => name == "__EFMigrationsHistory");
-        Assert.Equal(10, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(11, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -73,7 +74,7 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(10, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(11, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -98,7 +99,33 @@ public sealed class InitialMigrationTests
         Assert.Null(user.PasswordChangedAt);
         Assert.False(user.MustChangePassword);
         Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
-        Assert.Equal(10, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(11, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task DetachedSession_UpgradesToRunning_AndLegacyStateIsRejected()
+    {
+        using TemporarySqliteDatabase database = new();
+        await using (DbContextScope initial = database.OpenContext(SqliteConnectionAccess.ReadWriteCreate))
+        {
+            await initial.Context.Database.MigrateAsync("20260810110000_AddGameNameReuseAfterDelete");
+            initial.Context.AddRange(
+                PersistenceFixtures.CreateQuotaProfile(),
+                PersistenceFixtures.CreateUser(),
+                PersistenceFixtures.CreateGame(),
+                PersistenceFixtures.CreateSession());
+            await initial.Context.SaveChangesAsync();
+            await ExecuteAsync(initial.Connection, "UPDATE sessions SET state = 'DETACHED' WHERE id = 'sess_fixture';");
+        }
+
+        MigrationResult result = await database.MigrateAsync();
+
+        Assert.True(result.Succeeded, result.ErrorCode);
+        await using DbContextScope verify = database.OpenContext();
+        Assert.Equal(SessionState.Running, (await verify.Context.Sessions.SingleAsync()).State);
+        await Assert.ThrowsAsync<SqliteException>(() =>
+            ExecuteAsync(verify.Connection, "UPDATE sessions SET state = 'DETACHED' WHERE id = 'sess_fixture';"));
     }
 
     [Fact]
@@ -210,7 +237,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(11, await CountHistoryRowsAsync(database));
+        Assert.Equal(12, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>

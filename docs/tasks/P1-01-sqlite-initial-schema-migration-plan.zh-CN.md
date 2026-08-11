@@ -8,6 +8,15 @@
 已提交 migration；P1-04 必须通过新增 migration 把元数据合并进 `games`、为 Session 保存源摘要/
 manifest 快照并删除旧表。以下旧字段说明只用于理解升级起点，不再是目标领域模型。
 
+进程拓扑同样是历史基线：[`ADR-0015`](../adr/0015-api-owned-worker-lifecycle.md) 已决定运行期只有
+API 业务进程访问 SQLite，独立 Migrator 仍只在 API 启动前执行，Worker 不访问数据库；独立
+Supervisor 将在 P1-05 移除。本文后续 API/Supervisor 表述描述 P1-01 交付时的约束，不代表当前
+目标拓扑。Session open/close/reopen 语义由
+[`ADR-0016`](../adr/0016-reopenable-session-root-lifecycle.md) 规定。
+本文历史 schema 中的 `DETACHED` 也不再属于目标状态模型；后续 migration
+`20260811120000_RemoveDetachedSessionState` 已将旧值映射为 `RUNNING` 并收紧当前 CHECK，没有
+回改本计划对应的已提交 migration。
+
 计划日期：2026-08-07
 
 对应开发步骤：`P1-01 — SQLite 首版 schema 与迁移`
@@ -15,7 +24,7 @@ manifest 快照并删除旧表。以下旧字段说明只用于理解升级起�
 前置条件：P0-01～P0-06 已完成
 
 后续步骤：P1-02 本地身份、资源授权与审计；P1-03 安全游戏包摄取；P1-05
-Supervisor、租约、epoch 与状态机；P1-06 幂等 Session 创建与关闭纵切
+API Worker Manager、租约、epoch 与可重开状态机；P1-06 幂等 Session 创建、开启与关闭纵切
 
 需求映射：核心领域模型、GAME-004/008/010、SESS-002/005/007/010、SAVE-005/015、
 OPS-005、NFR-011

@@ -19,7 +19,7 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             table.HasCheckConstraint("ck_sessions_runtime_version", "length(runtime_version) BETWEEN 1 AND 128 AND instr(runtime_version, char(0)) = 0");
             table.HasCheckConstraint("ck_sessions_root_path", SqliteCheckExpressions.RelativePath("session_root_path"));
             table.HasCheckConstraint("ck_sessions_name", "length(name) BETWEEN 1 AND 200 AND instr(name, char(0)) = 0");
-            table.HasCheckConstraint("ck_sessions_state", "state IN ('CREATING', 'STARTING', 'RUNNING', 'DETACHED', 'STOPPING', 'CLOSED', 'CRASHED')");
+            table.HasCheckConstraint("ck_sessions_state", "state IN ('CREATING', 'STARTING', 'RUNNING', 'STOPPING', 'CLOSED', 'CRASHED')");
             table.HasCheckConstraint("ck_sessions_counters", "state_version >= 0 AND worker_epoch >= 0 AND last_output_sequence >= 0");
             table.HasCheckConstraint("ck_sessions_waiting_prompt", "waiting_for_input IN (0, 1) AND ((waiting_for_input = 1 AND current_prompt_id IS NOT NULL AND length(current_prompt_id) BETWEEN 1 AND 256) OR (waiting_for_input = 0 AND current_prompt_id IS NULL))");
             table.HasCheckConstraint("ck_sessions_close_reason", "close_reason IS NULL OR (length(close_reason) BETWEEN 1 AND 256 AND instr(close_reason, char(0)) = 0)");

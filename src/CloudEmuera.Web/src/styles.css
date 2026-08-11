@@ -211,7 +211,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .status-pill { display: inline-flex; min-height: 24px; align-items: center; gap: 6px; padding: 0 8px; border-radius: 5px; color: #696d65; background: #edede8; font-size: 9px; font-weight: 700; white-space: nowrap; }
 .status-pill i, .connection-chip > span, .updated i { width: 6px; height: 6px; border-radius: 50%; background: #92958f; }
 .status-pill.running { color: #257258; background: #e1f0e9; }.status-pill.running i { background: #319470; }
-.status-pill.detached { color: #95671c; background: #f6edd8; }.status-pill.detached i { background: #cf9432; }
 .session-meta span, .session-meta strong { display: block; }.session-meta span { color: #9a9d95; font-size: 9px; }.session-meta strong { margin-top: 5px; font-size: 10px; font-weight: 600; }
 .session-row > .play-button, .session-row > .secondary-button { min-width: 112px; min-height: 38px; font-size: 10px; }
 .info-banner { margin-top: 19px; padding: 15px 18px; border: 1px solid #e7ddc2; border-radius: 11px; color: #8c692a; background: #f8f2e2; }

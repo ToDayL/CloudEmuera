@@ -2,8 +2,8 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | 草案 v0.2 |
-| 日期 | 2026-08-03 |
+| 文档状态 | 草案 v0.3 |
+| 日期 | 2026-08-11 |
 | 对应英文文档 | [requirements.en.md](./requirements.en.md) |
 | 目标读者 | 产品、前端、后端、运行时、运维与测试开发者 |
 
@@ -39,12 +39,13 @@ CloudEmuera 将使用 Emuera.EM+EE 作为运行时基线，并保留面向 `Emue
 
 - 本地账户或单一外部身份提供商登录。
 - 游戏包上传、校验、查看、编辑与启用。
-- Session 创建、列表、连接、重连和显式关闭。
+- Session 创建、列表、开启、连接、重连、显式关闭和重新开启。
 - 文字、样式、按钮、基础 HTML、图片、Sprite 和基础音频事件。
 - 用户输入、超时输入和移动端软键盘。
 - 每个 Session 独立的存档空间，以及存档导入、导出、重命名和删除。
 - 管理员查看 Worker 状态并终止异常 Session。
-- 单个 Docker 容器部署；Web/API、Worker Supervisor 和 Session Worker 均运行在容器内，并通过挂载的数据目录持久化。
+- 单个 Docker 容器部署；一个 Web/API 控制面进程直接创建和管理每个活动 Session 的独立 Worker
+  进程，并通过挂载的数据目录持久化。
 
 ### 3.3 非目标
 
@@ -127,11 +128,17 @@ Session 1 ── 1 私有 SessionRoot
 - **SESS-003**：浏览器断开不得自动关闭 Session，也不得清除运行时状态。
 - **SESS-004**：Session 在无浏览器连接时必须继续处理已经开始的执行、计时输入和内部计时器。
 - **SESS-005**：用户必须能查看 Session 名称、游戏、源内容摘要、状态、创建时间、最后活动时间和当前是否等待输入。
-- **SESS-006**：用户必须能够显式关闭 Session。关闭流程必须停止新输入、刷新文件、可选生成最终自动存档、终止 Worker，并把状态置为 `CLOSED`。
-- **SESS-007**：API 必须具备幂等的创建和关闭语义，以防网络重试重复创建或重复关闭资源。
+- **SESS-006**：用户必须能够显式关闭 Session。关闭流程必须停止新输入、刷新文件、可选生成最终
+  自动存档、终止 Worker、释放活动配额并把状态置为 `CLOSED`；不得删除或重建 SessionRoot。
+- **SESS-007**：API 必须具备相互独立且幂等的创建、开启和关闭语义，以防网络重试重复创建 Session、启动 Worker 或重复关闭。
 - **SESS-008**：除管理员操作、安全策略、资源故障或明确配置的部署策略外，系统不得仅因连接空闲而自动关闭 Session。
 - **SESS-009**：管理员必须能够查看和强制停止失控、超配额或违反安全策略的 Session。
 - **SESS-010**：Worker 异常退出时，Session 必须在心跳超时后转为 `CRASHED`，不得继续显示为可运行。
+- **SESS-011**：`CLOSED` 和已确认没有旧 Worker 写权限的 `CRASHED` Session 必须能够重新开启。
+  每次开启都复用原 SessionRoot、递增 worker epoch 并创建新 Worker；不得重新复制 Game current
+  content 或要求用户创建新 Session。
+- **SESS-012**：Session 是从创建到显式删除持续存在的资源；开启和关闭只改变 Worker 与活动运行
+  配额。删除 Session 必须与关闭分离，并且不得因关闭、崩溃、API 重启或浏览器断开自动发生。
 
 ### 6.4 游戏显示与交互
 
@@ -168,12 +175,12 @@ Session 1 ── 1 私有 SessionRoot
 
 ### 6.6 管理与运维
 
-- **OPS-001**：管理员必须能够查看容器内的 Worker Supervisor、Session Worker 进程、Session、心跳、CPU、内存、磁盘和输出速率。
+- **OPS-001**：管理员必须能够查看 API Worker Manager、Session Worker 进程、Session、心跳、CPU、内存、磁盘和输出速率。
 - **OPS-002**：系统必须允许配置每用户活动运行 Session 数量、每 Session 内存/CPU/磁盘、游戏包大小、存档大小和输出速率上限；不得配置 Session 创建总数上限。
 - **OPS-003**：API 必须提供健康检查、就绪检查和版本信息。
 - **OPS-004**：日志必须包含可关联的 `requestId`、`sessionId`、`workerId` 和 `workerEpoch`，但不得记录密码或默认记录用户输入全文。
 - **OPS-005**：必须记录 Session 创建、连接、关闭、崩溃、管理员终止、Game 内容启用和存档删除等审计事件。
-- **OPS-006**：管理员必须能够阻止已知不安全的 Game 继续创建新 Session，同时不直接破坏既有 SessionRoot 和存档。
+- **OPS-006**：管理员必须能够阻止已知不安全的 Game 继续创建或重新开启 Session，同时不直接破坏既有 SessionRoot 和存档。
 
 ## 7. 兼容性需求
 
@@ -208,12 +215,9 @@ Session 1 ── 1 私有 SessionRoot
 │                                              │
 │ Web/API process                              │
 │ Auth │ Game/Save │ Session │ WebSocket       │
-│                    │ local IPC               │
-│                    ▼                         │
-│ Worker Supervisor process                    │
-│                    │                         │
-│                    ├─ Session Worker process │
-│                    └─ Session Worker process │
+│ Worker Manager      │ local IPC              │
+│                     ├─ Session Worker process│
+│                     └─ Session Worker process│
 │                       (one per active Session)│
 │                                              │
 │ /data  ← mounted persistent data directory  │
@@ -240,18 +244,25 @@ Session 1 ── 1 私有 SessionRoot
 - Session Registry & Scheduler
 - Administration & Audit
 
-API 进程不得把活动 Session 仅保存在内存中。API 进程重启后，Worker Supervisor 必须保持 Session Worker 运行，并通过挂载数据目录中的持久元数据重新建立 Session 状态和本地 IPC 连接。
+API 进程不得把活动 Session 仅保存在内存中。它是运行期间唯一访问 SQLite 的业务进程，通过持久
+Session、WorkerLease、epoch 和状态版本协调 HTTP、后台任务与 Worker 生命周期；独立 Migrator
+只在 API 启动前执行迁移或检查，Session Worker 不访问 SQLite。
 
-API 进程与 Worker Supervisor 进程必须由容器内的进程管理机制作为相互独立的进程管理；重启 API 进程不得终止 Worker Supervisor 或其管理的 Session Worker。
+API 进程直接创建、监视、限制和终止 Session Worker。API 退出会结束其管理的活动 Worker；API
+重新启动后不接管旧 Worker，而是在确认旧进程已失去 SessionRoot 写权限后，把遗留活动 Session
+对账为 `CRASHED` 并保留 SessionRoot。
 
 ### 8.3 Worker 层
 
-Worker 层建议区分：
+Worker 层包括：
 
-- **Worker Supervisor 进程**：在容器内启动、监视、限制和终止 Session Worker 子进程。
+- **API Worker Manager 模块**：在 API 进程内启动、监视、限制和终止 Session Worker 子进程，
+  但不加载 Emuera Runtime，也不以进程内状态替代持久 lease。
 - **Session Worker 进程**：每个活动 Session 一个独立操作系统进程，承载一个 Runtime、一个 ConsoleSnapshot 和一个 Session 文件沙箱。
 
-Session Worker 必须在 API 进程暂时重启或本地 IPC 暂时中断时继续运行，并保留有界输出。控制通道恢复后应使用 `sessionId + workerEpoch` 重新注册。
+Session Worker 在同一 API 实例的本地 IPC 短暂中断期间可以保留有界输出并重连，但断连宽限期必须
+有界。API 实例退出、实例身份变化或宽限期届满时，Worker 必须停止并退出，不能无限等待或被新
+API 实例接管。
 
 每个 Session Worker 必须以实际的 `SessionRoot` 作为进程工作目录和 Emuera 的 GameRoot。Session 管理方在创建时完整复制 Game 当前已验证的合法普通文件树；配置、游戏自定义目录、存档和临时文件都直接位于 Session 自己的物理目录：
 
@@ -279,33 +290,33 @@ SessionRoot/
 ## 9. Session 状态机
 
 ```text
-CREATING → STARTING → RUNNING ↔ DETACHED
-                         │          │
-                         ├──────────┤
-                         ▼          ▼
-                      STOPPING → CLOSED
-
-STARTING/RUNNING/DETACHED → CRASHED
-CRASHED → RECOVERING → RUNNING       （未来能力）
-RUNNING/DETACHED → SUSPENDING → SUSPENDED → RESUMING  （未来能力）
+CREATING → CLOSED
+CLOSED/CRASHED → STARTING → RUNNING
+STARTING/RUNNING → STOPPING → CLOSED
+STARTING/RUNNING/STOPPING → CRASHED
+RUNNING → SUSPENDING → SUSPENDED → RESUMING  （未来能力）
 ```
 
 状态定义：
 
 | 状态 | 说明 |
 | --- | --- |
-| CREATING | API 已接受请求，尚未分配 Worker |
+| CREATING | API 已接受请求，正在物化持久 SessionRoot |
 | STARTING | Worker 正在启动和加载游戏 |
-| RUNNING | Worker 健康，至少有一个实时连接 |
-| DETACHED | Worker 健康，没有实时连接 |
+| RUNNING | Worker 健康；不论当前是否存在浏览器实时连接 |
 | STOPPING | 正在拒绝新输入、刷新文件并终止 Worker |
-| CLOSED | 用户或管理员已完成关闭 |
-| CRASHED | Worker 不可恢复地退出或租约失效 |
+| CLOSED | SessionRoot 存在且无活动 Worker；最近一次运行正常关闭，可重新开启 |
+| CRASHED | SessionRoot 存在且无活动 Worker；最近一次运行异常结束，可在旧写权限释放后重新开启 |
 | SUSPENDED | 未来的持久运行时快照状态，不占用活动 Worker |
 
-活动运行配额统计 `CREATING`、`STARTING`、`RUNNING`、`DETACHED` 和 `STOPPING` 状态；`CREATING` 会预留配额，`STOPPING` 直到 Worker 释放前仍计入。`CLOSED`、`CRASHED` 和 `SUSPENDED` 不占用活动运行配额。`DETACHED` 虽然没有浏览器连接，但仍占用 Worker，因此必须计入。
+活动运行配额统计 `STARTING`、`RUNNING` 和 `STOPPING` 状态；`CLOSED`、`CRASHED`、`CREATING`
+和 `SUSPENDED` 不占用活动运行配额。`CREATING` 只受存储配额约束；活动配额在 open 事务中预留。
+浏览器连接数不属于 Session 状态，由 Realtime Gateway 在内存中维护；连接数变为零不改变
+`RUNNING`、不停止 Worker，也不释放活动配额。
 
-状态转换必须在数据库中使用版本号或事务保护。WorkerLease 必须有递增 epoch；来自旧 epoch 的心跳、输出与输入响应必须被拒绝。
+状态转换必须在数据库中使用版本号或事务保护。`CLOSED/CRASHED → STARTING` 每次创建新的
+WorkerLease 并递增 epoch；来自旧 epoch 的心跳、输出与输入响应必须被拒绝。重新开启复用已有
+SessionRoot，不重新复制 Game current content，也不恢复崩溃前的解释器内存状态。
 
 ## 10. 重连与消息语义
 
@@ -408,8 +419,11 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 ### 13.1 可用性与恢复
 
 - **NFR-001**：正常负载下，已运行 Session 的重连及初始快照显示目标为 P95 不超过 2 秒，不含用户外部网络异常。
-- **NFR-002**：API 进程重启不得主动终止健康的 Session Worker；Worker Supervisor 必须继续管理这些进程。
-- **NFR-003**：本地 IPC 暂时中断时 Session Worker 必须继续运行并尝试重新注册；输出缓冲达到上限后必须保留最新 ConsoleSnapshot。
+- **NFR-002**：API 正常停止时必须有界优雅停止其 Worker，超时后强制终止；API 意外退出后，
+  Worker 必须在有界断连宽限期内自行退出或被系统级兜底回收。受影响的活动 Session 必须对账为
+  `CRASHED` 并保留 SessionRoot。
+- **NFR-003**：同一 API 实例内的本地 IPC 暂时中断时，Session Worker 可以在有界宽限期内继续
+  运行并尝试重新注册；输出缓冲达到上限后必须保留最新 ConsoleSnapshot。不得跨 API 实例接管。
 - **NFR-004**：Worker 崩溃必须保留其 SessionRoot 现场且不得影响 Game 当前内容、workspace 或其他 Session；Session 必须清晰标记为 `CRASHED`。不承诺正在被原生 writer 覆盖的文件仍然有效。
 - **NFR-005**：第一阶段不把任意执行点或每次保存的事务性恢复作为 SLA；仅保证 SessionRoot 持久存在和诊断信息可用。
 
@@ -440,11 +454,11 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 
 | 故障 | 预期行为 |
 | --- | --- |
-| 浏览器刷新/断网 | Session 转为或保持 DETACHED；重连后恢复快照与当前 prompt |
-| API 进程重启 | Worker Supervisor 和 Session Worker 保持运行；API 通过持久元数据找回 Session |
-| API 与 Worker 本地 IPC 短时中断 | Worker 有界缓冲并重连；恢复后核对 epoch 与序号 |
-| Worker 崩溃 | Session 标记 CRASHED；原样保留 SessionRoot；不承诺正在写入的文件或指令级恢复 |
-| Docker 容器或宿主机重启 | 活动 Worker 按故障处理；挂载数据目录中的 Game 内容、workspace 与 SessionRoot 保留 |
+| 浏览器刷新/断网 | Session 保持 RUNNING；Realtime Gateway 最终发现断流，重连后恢复快照与当前 prompt |
+| API 进程退出或重启 | Worker 有界停止或被回收；新 API 确认旧 Worker 已退出后把活动 Session 对账为 CRASHED，SessionRoot 保留 |
+| 同一 API 实例与 Worker 本地 IPC 短时中断 | Worker 在有界宽限期内缓冲并重连；恢复后核对实例身份、epoch 与序号，超时则退出 |
+| Worker 崩溃 | Session 标记 CRASHED；原样保留 SessionRoot；确认旧 Worker 退出后可重新开启同一 Session 并从原生存档继续，不承诺指令级恢复 |
+| Docker 容器或宿主机重启 | 活动 Worker 按故障处理；挂载数据目录中的 Game 内容、workspace 与 SessionRoot 保留，恢复后可重新开启同一 Session |
 | 挂载数据目录不可用 | 禁止新建 Session 和写入存档，并明确报告持久化故障 |
 | 客户端重复输入 | 通过 promptId 和 clientMessageId 去重 |
 | 旧 Worker 恢复连接 | 因 epoch 落后被 fencing，不能继续产生有效状态 |
@@ -453,11 +467,15 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 
 - **AC-001**：一个用户同时启动同一游戏的两个 Session，两者变量、显示、输入和存档互不影响。
 - **AC-002**：用户在等待输入时关闭网页，至少在配置的测试间隔后重新登录，能够看到最新显示并继续同一 prompt。
-- **AC-003**：API 服务重启期间 Worker 不退出；API 恢复后用户可以重新连接。
+- **AC-003**：API 正常停止时 Worker 在限定时间内优雅退出；强制终止 API 后 Worker 在断连宽限期
+  内自行退出或被回收。API 恢复后相关 Session 变为 `CRASHED`、活动配额被释放、SessionRoot
+  原样保留；旧 Worker 写权限确认释放后，用户能重新开启同一 Session 并加载已有原生存档。
 - **AC-004**：两个用户使用同一 Game 当前内容创建 Session 时，不能访问或覆盖彼此存档和 Session。
 - **AC-005**：重复提交同一输入消息只执行一次。
-- **AC-006**：用户显式关闭 Session 后 Worker 在限定时间内退出，Session 状态变为 CLOSED，随后输入被拒绝。
-- **AC-007**：强制终止 Worker 后，Session 在心跳窗口内变为 CRASHED，SessionRoot 不被清理，其中现存原生存档仍可检查或下载。
+- **AC-006**：用户显式关闭 Session 后 Worker 在限定时间内退出，Session 状态变为 CLOSED，随后
+  输入被拒绝；再次开启同一 Session 时复用原 SessionRoot、epoch 增大且能加载关闭前存档。
+- **AC-007**：强制终止 Worker 后，Session 在心跳窗口内变为 CRASHED，SessionRoot 不被清理；
+  旧 Worker 退出屏障完成后，同一 Session 可重新开启并检查或加载其中现存原生存档。
 - **AC-008**：代表性的 `1824+v18` 测试游戏能够完成加载、输入、保存、加载和主要显示场景。
 - **AC-009**：代表性的当前 EM+EE 测试游戏能够运行已声明为 Supported 的特性；未支持功能产生明确诊断。
 - **AC-010**：包含路径穿越、符号链接逃逸或压缩炸弹特征的游戏包被拒绝且不写出沙箱。
@@ -477,8 +495,8 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 
 ### Phase 1：单机 MVP
 
-- 单 Docker 容器、单 API 进程、单 Worker Supervisor、SQLite 和挂载的数据目录。
-- 容器内一个 API 进程、一个 Worker Supervisor 进程，以及每 Session 一个独立子进程。
+- 单 Docker 容器、单 API 控制面进程、SQLite 和挂载的数据目录。
+- API 内的 Worker Manager 直接管理每 Session 一个独立子进程；运行期只有 API 访问 SQLite。
 - WebSocket 重连、ConsoleSnapshot、存档隔离和基础 Web 渲染。
 - 游戏包上传、单一工作区编辑、当前内容原子启用与基础诊断。
 
@@ -492,7 +510,8 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 
 - 研究 INPUT 安全点的解释器快照。
 - 支持 SUSPENDED/RESUMING，释放长期离线 Session 的活动内存。
-- 在可验证条件下支持容器内 Worker 崩溃后的 Session 恢复。
+- 在可验证条件下研究从解释器安全点恢复内存状态；MVP 已支持复用同一 SessionRoot 冷启动并加载
+  原生存档，但不把它描述为指令级恢复。
 
 ## 17. 待确认事项
 

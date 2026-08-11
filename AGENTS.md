@@ -10,56 +10,61 @@ Phase 0 运行时切分与兼容性证明已经完成，当前进入 Phase 1 单
 
 - Git 仓库、解决方案和前后端工程骨架；
 - API 健康检查和版本端点；
-- Supervisor、Worker、Migrator 进程入口；
+- API、Worker、Migrator 进程入口，以及待按 ADR-0015 移除的历史 Supervisor 入口；
 - Session 状态机的最小领域实现和测试；
 - React 占位应用、单元测试和 Playwright 骨架；
 - Docker Compose 开发环境及宿主 UID/GID 映射；
 - 固定版本、直接纳入仓库的 Emuera.EM+EE 源码；
 - Runtime fixture、平台端口和结构化 Console/Input；
 - 原生双布局存档与持久私有 SessionRoot；
-- 单 Session Worker/Supervisor UDS IPC 冒烟链路；
+- 历史单 Session Worker/Supervisor UDS IPC 冒烟链路；
 - SQLite 首版 schema、独占 Migrator、迁移备份与约束测试；
 - React 游戏库、Session、控制台、存档和管理页面展示版；
 - Apache-2.0 项目许可证和第三方许可声明。
 
-Game 库后端纵切和内容启用基线已经实现，但正式 parser-only Validator、dirfd/fsync 存储与完整恢复
-加固仍待完成；持久 Worker 管理、浏览器实时协议、正式存档管理和正式 UI 仍待实现。P0-06
-已提供最小的单 Session Worker/Supervisor UDS IPC 冒烟链路，P1-01 已完成首版 SQLite
-持久化基线，P1-02 已完成本地身份、资源授权与审计，P1-03 已完成安全游戏包摄取。当前任务是
-P1-04：依据 ADR-0010 移除 GameVersion 产品概念，建立单一 Game workspace/current content 模型；
-核心纵切、一次性真实 Validator、dirfd 文本写删和 copy lease 已完成，崩溃恢复/API 收尾仍在进行。
-当前 schema/后端 API 基线已落地，仓库在真实 Validator 与存储恢复加固完成前仍不能宣称可安全运行
-任意不受信任游戏包。
+Game 库后端纵切、真实 parser-only Validator、dirfd/fsync 存储和恢复加固已经完成；持久 Worker
+管理、浏览器实时协议、正式存档管理和正式 Session UI 仍待实现。P0-06 已提供最小的单 Session
+Worker/Supervisor UDS IPC 历史冒烟链路，P1-01 已完成首版 SQLite 持久化基线，P1-02 已完成本地
+身份、资源授权与审计，P1-03 已完成安全游戏包摄取，P1-04 已完成单一 Game
+workspace/current content 模型。当前任务是 P1-05：依据 ADR-0015 把 Worker 管理迁入 API、移除
+独立 Supervisor，并依据 ADR-0016 建立可反复 open/close/reopen 的持久 SessionRoot 生命周期。
 
 ## 已确认技术方案
 
 - 后端：.NET 10 LTS、ASP.NET Core、EF Core 10、SQLite；
 - 前端：React 19、TypeScript 7、Vite 8、TanStack Query、React Router；
 - 浏览器实时通信：原生 WebSocket，HTTP 负责资源和管理操作；
-- 进程内/容器内通信：gRPC over Unix Domain Socket；
-- 进程模型：一个 Web/API、一个 Worker Supervisor、每个活动 Session 一个独立 Worker；
+- 容器内通信：API 与 Worker 使用 gRPC over Unix Domain Socket；
+- 进程模型：一个 Web/API 控制面直接管理每个活动 Session 的独立 Worker；无独立 Supervisor；
+- 数据库所有权：运行期间只有 API 业务进程访问 SQLite，Migrator 仅在 API 启动前独占执行；
 - 持久化：SQLite 保存元数据，挂载的数据目录保存 Game workspace/current content、SessionRoot 和存档；
 - 部署：MVP 为单容器，开发环境使用 Docker Compose；
 - 沙箱方向：Linux namespace、cgroup、seccomp 和只读/私有文件系统边界；
 - 许可证：CloudEmuera 自研代码使用 Apache-2.0；Emuera.EM+EE 保留 zlib/libpng 许可证。
 
-不得在没有 ADR 和验证证据的情况下，把已确认方案替换为 SignalR、PostgreSQL、Redis、消息队列、Kubernetes、同进程多 Session 或多主机调度。
+不得在没有 ADR 和验证证据的情况下，把已确认方案替换为独立 Supervisor、SignalR、PostgreSQL、
+Redis、消息队列、Kubernetes、同进程多 Session 或多主机调度。
 
 ## 核心架构约束
 
 1. 每个活动 Session 只能有一个有效 Worker，并用递增 epoch fencing 拒绝旧 Worker 的心跳、输出和输入结果；同一时刻只能把 SessionRoot 写权限交给该 Worker。
-2. 浏览器断开不会关闭 Session；`DETACHED` 仍占用 Worker，不能偷换为挂起状态。
-3. 产品不建立 GameVersion。每个 Game 最多一个可编辑 workspace 和一个当前只读 content；新内容
+2. 浏览器断开不会改变 Session 的持久运行状态或关闭 Worker；连接数由 Realtime Gateway 瞬时维护，
+   不建立 `DETACHED` Session 状态，也不能把无浏览器连接偷换为挂起状态。
+3. Session 是持久 SessionRoot，不是一次性 Worker。`CLOSED` 和完成旧 Worker 回收的 `CRASHED`
+   都可用同一 Session ID/目录重新开启；open/close 只获取或释放 Worker，创建后不再复制 Game
+   current content，关闭或崩溃不删除目录。
+4. 产品不建立 GameVersion。每个 Game 最多一个可编辑 workspace 和一个当前只读 content；新内容
    验证后原子替换 current，不提供版本列表、版本标签或历史回滚。
-4. 每个 Session 使用独立、持久的实际 SessionRoot。创建时把 Game 当时 current content 的完整
+5. 每个 Session 使用独立、持久的实际 SessionRoot。创建时把 Game 当时 current content 的完整
    合法普通文件树复制进去，并记录源摘要/manifest 快照；Worker 只读写该副本，Game 后续编辑不
    改变既有 SessionRoot，库内容与 Session 不共享可写 inode。
-5. 必须兼容根目录存档与 `sav/` 两种 Emuera 原生布局，不定义替代存档格式。
-6. Worker 只输出结构化、可校验的 Console 事件，不把任意游戏 HTML 直接交给浏览器。
-7. 输出使用单调递增 sequence；输入使用 `promptId + clientMessageId`，重复输入不得执行两次。
-8. 授权检查必须位于服务端的每个资源操作边界，不能依赖前端隐藏入口。
-9. 上传和文件操作必须防御路径穿越、绝对路径、符号链接逃逸、Unicode/大小写碰撞、压缩炸弹和 TOCTOU。
-10. API、Supervisor 和 Worker 的正确性不能依赖 API 进程内的临时状态。
+6. 必须兼容根目录存档与 `sav/` 两种 Emuera 原生布局，不定义替代存档格式。
+7. Worker 只输出结构化、可校验的 Console 事件，不把任意游戏 HTML 直接交给浏览器。
+8. 输出使用单调递增 sequence；输入使用 `promptId + clientMessageId`，重复输入不得执行两次。
+9. 授权检查必须位于服务端的每个资源操作边界，不能依赖前端隐藏入口。
+10. 上传和文件操作必须防御路径穿越、绝对路径、符号链接逃逸、Unicode/大小写碰撞、压缩炸弹和 TOCTOU。
+11. Session、WorkerLease、epoch 和配额正确性不能只依赖 API 进程内临时状态；API 退出时 Worker
+    必须有界退出，新 API 确认旧写权限释放后把活动 Session 对账为 `CRASHED`。
 
 ## 仓库结构
 
@@ -79,11 +84,11 @@ data/                 本地运行数据，不提交 Git
 - `CloudEmuera.Application`：用例、端口、授权和事务编排；
 - `CloudEmuera.Contracts`：HTTP、WebSocket 和共享版本契约；
 - `CloudEmuera.Infrastructure`：EF Core、文件系统和外部实现；
-- `CloudEmuera.Ipc`：API/Supervisor/Worker 的 protobuf/gRPC 契约；
+- `CloudEmuera.Ipc`：API/Worker 的 protobuf/gRPC 契约；
 - `CloudEmuera.RuntimeAdapter`：平台无关的 Console/Input/File/Clock/Media 契约；
 - `CloudEmuera.EmueraRuntime`：内置 Emuera 源码、headless host 与平台接线（P0-04 建立可构建项目）；
-- `CloudEmuera.Api`：HTTP/WebSocket 宿主；
-- `CloudEmuera.Supervisor`：Worker 生命周期、租约和资源治理；
+- `CloudEmuera.Api`：HTTP/WebSocket、Worker IPC 与 Worker Manager 宿主；
+- `CloudEmuera.Supervisor`：P0-06 历史实现；P1-05 迁移可复用代码后删除；
 - `CloudEmuera.Worker`：单 Session 运行时宿主；
 - `CloudEmuera.Migrator`：数据库和数据布局迁移；
 - `CloudEmuera.Web`：浏览器客户端。
@@ -193,9 +198,10 @@ Emuera.EM+EE 以普通 Git 文件位于 `src/CloudEmuera.EmueraRuntime/Upstream`
 
 ## 开发顺序
 
-按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0、P1-01～P1-03 已完成；当前首要工作
-是 P1-04：迁移旧 `game_versions` schema/代码，建立单一 Game workspace/current content、编辑、
-验证和原子启用。P1-02 自动化身份校验必须继续与人工 `.env`、`./data` 和 Compose project 隔离。
+按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0、P1-01～P1-04 已完成；当前首要工作
+是 P1-05：迁移独立 Supervisor 到 API Worker Manager，实现运行期 SQLite 单进程所有权、API
+生命周期绑定和可重开的持久 Session 状态机。P1-02 自动化身份校验必须继续与人工 `.env`、
+`./data` 和 Compose project 隔离。
 
 涉及待决事项时，在实现前创建 ADR，至少记录背景、选项、决策、后果和验证方案。不要以临时代码默默固化产品或安全决策。
 
