@@ -129,6 +129,13 @@ public sealed record SessionRuntimeCompletionResult(bool Applied, SessionState S
         new(false, SessionState.Crashed, reasonCode);
 }
 
+public sealed record SessionRuntimeWriteResult(bool Applied, SessionRuntimeBinding? Binding)
+{
+    public static SessionRuntimeWriteResult Stale() => new(false, null);
+
+    public static SessionRuntimeWriteResult Accepted(SessionRuntimeBinding binding) => new(true, binding);
+}
+
 public sealed record SessionRootRuntimeDescriptor(
     string AbsoluteSessionRoot,
     int SaveLayout,
@@ -153,25 +160,25 @@ public interface ISessionRuntimeStore
         SessionRuntimeOpenOptions options,
         CancellationToken cancellationToken = default);
 
-    Task<bool> RecordProcessIdentityAsync(
+    Task<SessionRuntimeWriteResult> RecordProcessIdentityAsync(
         SessionRuntimeBinding binding,
         WorkerProcessIdentity identity,
         DateTimeOffset observedAt,
         CancellationToken cancellationToken = default);
 
-    Task<bool> MarkReadyAsync(
+    Task<SessionRuntimeWriteResult> MarkReadyAsync(
         SessionRuntimeBinding binding,
         WorkerReadyInfo ready,
         DateTimeOffset observedAt,
         CancellationToken cancellationToken = default);
 
-    Task<bool> RecordHeartbeatAsync(
+    Task<SessionRuntimeWriteResult> RecordHeartbeatAsync(
         SessionRuntimeBinding binding,
         WorkerHeartbeatInfo heartbeat,
         TimeSpan leaseDuration,
         CancellationToken cancellationToken = default);
 
-    Task<bool> BeginStoppingAsync(
+    Task<SessionRuntimeWriteResult> BeginStoppingAsync(
         SessionRuntimeBinding binding,
         DateTimeOffset observedAt,
         CancellationToken cancellationToken = default);
@@ -217,6 +224,7 @@ public interface IWorkerProcessHandle : IAsyncDisposable
     Task<WorkerExitInfo> WaitForExitAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
     Task RequestStopAsync(string reasonCode, DateTimeOffset deadline, CancellationToken cancellationToken = default);
     Task KillAsync(CancellationToken cancellationToken = default);
+    void UpdateRuntimeBinding(SessionRuntimeBinding binding, bool persistenceReady = false);
 }
 
 public interface ISessionWorkerControl
@@ -267,10 +275,11 @@ public sealed class SessionRuntimeCoordinator(
 
         SessionRuntimeLease lease = acquired.Lease!;
         IWorkerProcessHandle? process = null;
+        SessionRuntimeBinding binding = lease.Binding;
         try
         {
             SessionRootRuntimeDescriptor root = await rootInspector.InspectAsync(lease, cancellationToken).ConfigureAwait(false);
-            SessionRuntimeBinding binding = lease.Binding with
+            binding = binding with
             {
                 SessionRootPath = root.AbsoluteSessionRoot,
                 SaveLayout = root.SaveLayout,
@@ -290,20 +299,28 @@ public sealed class SessionRuntimeCoordinator(
                     Environment.ProcessId,
                     string.Empty),
                 cancellationToken).ConfigureAwait(false);
-            if (!await store.RecordProcessIdentityAsync(binding, process.Identity, timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false))
+            SessionRuntimeWriteResult identityResult = await store.RecordProcessIdentityAsync(
+                binding,
+                process.Identity,
+                timeProvider.GetUtcNow(),
+                cancellationToken).ConfigureAwait(false);
+            if (!identityResult.Applied || identityResult.Binding is null)
                 throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerStaleEpoch, "The Worker lease changed during launch.");
+            binding = identityResult.Binding;
+            process.UpdateRuntimeBinding(binding);
 
             WorkerReadyInfo ready = await process.WaitForReadyAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
-            if (!await store.MarkReadyAsync(binding, ready, timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false))
+            SessionRuntimeWriteResult readyResult = await store.MarkReadyAsync(
+                binding,
+                ready,
+                timeProvider.GetUtcNow(),
+                cancellationToken).ConfigureAwait(false);
+            if (!readyResult.Applied || readyResult.Binding is null)
                 throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerStaleEpoch, "The Worker ready event was stale.");
-
-            SessionRuntimeBinding readyBinding = binding with
-            {
-                StateVersion = checked(binding.StateVersion + 1),
-                InitialOutputSequence = Math.Max(binding.InitialOutputSequence, ready.LastOutputSequence),
-            };
+            binding = readyResult.Binding;
+            process.UpdateRuntimeBinding(binding, persistenceReady: true);
             return new SessionRuntimeOpenResult(
-                lease with { Binding = readyBinding, State = SessionState.Running },
+                lease with { Binding = binding, State = SessionState.Running },
                 ready);
         }
         catch (Exception exception)
@@ -330,11 +347,13 @@ public sealed class SessionRuntimeCoordinator(
             string failureReason = exception is SessionRuntimeException runtimeException
                 ? runtimeException.Code
                 : SessionRuntimeResultCodes.WorkerStartFailed;
+            if (string.Equals(failureReason, SessionRuntimeResultCodes.WorkerExitUnconfirmed, StringComparison.Ordinal))
+                throw;
             await store.CompleteAsync(
-                lease.Binding,
+                binding,
                 SessionRuntimeTerminalState.Crashed,
                 failureReason,
-                lease.Binding.InitialOutputSequence,
+                binding.InitialOutputSequence,
                 timeProvider.GetUtcNow(),
                 CancellationToken.None).ConfigureAwait(false);
             throw;
@@ -357,8 +376,14 @@ public sealed class SessionRuntimeCoordinator(
         ArgumentNullException.ThrowIfNull(request);
         if (!string.Equals(request.SessionId, binding.SessionId, StringComparison.Ordinal))
             throw new SessionRuntimeException(SessionRuntimeResultCodes.InvalidBinding, "The close request does not match the Worker binding.");
-        if (!await store.BeginStoppingAsync(binding, timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false))
+        SessionRuntimeWriteResult stoppingResult = await store.BeginStoppingAsync(
+            binding,
+            timeProvider.GetUtcNow(),
+            cancellationToken).ConfigureAwait(false);
+        if (!stoppingResult.Applied || stoppingResult.Binding is null)
             return new SessionRuntimeCloseResult(SessionRuntimeCompletionResult.Stale());
+        binding = stoppingResult.Binding;
+        process.UpdateRuntimeBinding(binding, persistenceReady: true);
 
         SessionRuntimeTerminalState terminalState = SessionRuntimeTerminalState.Closed;
         string reasonCode = request.ReasonCode;

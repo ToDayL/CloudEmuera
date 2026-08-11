@@ -434,6 +434,12 @@ docker compose -f compose.dev.yaml run --rm api \
 后 Worker 均在期限内退出，新 API 对账为 CRASHED；无法回收旧 Worker 时 ready 失败且不授予新
 写租约。生产解决方案和容器不再启动独立 Supervisor，Worker 不访问 SQLite。
 
+2026-08-11 复核修复：运行期身份在注册等待前由 coordinator 持久化；heartbeat、STOPPING 和终态
+写入均校验并返回最新 `state_version` binding；API shutdown 使用真实 binding；终止和启动失败无法
+确认退出时保持 fail-closed。新增同 epoch 陈旧版本、无 PID `STARTING` 对账、无法确认退出和停机
+binding 测试；Application SessionLifecycle 13 项、Infrastructure SessionLifecycle/WorkerLease 88
+项、Worker ProcessIsolation 18 项、API 集成 21 项在 Linux dev Docker 中通过。
+
 ### P1-06 — 幂等 Session 创建、开启与关闭纵切（TODO）
 
 需求映射：SESS-001、SESS-005～008、SESS-011/012、AC-001、AC-003、AC-006/007。

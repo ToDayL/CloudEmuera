@@ -7,6 +7,10 @@
 关联需求：SESS-001、SESS-002、SESS-005、SESS-009～012、OPS-001、OPS-002、
 AC-003、AC-006、AC-007
 
+复核修复（2026-08-11）：补齐启动身份持久化窗口、同 epoch `state_version` fencing、真实 shutdown
+binding 和 Worker 终止 deadline；无法确认退出时保留 lease/readiness 屏障。对应的 stale binding、
+无 PID `STARTING` 对账、无法确认退出和关闭状态版本测试已加入 Application/Infrastructure 测试集。
+
 关联决策：[`ADR-0015`](../adr/0015-api-owned-worker-lifecycle.md)、
 [`ADR-0016`](../adr/0016-reopenable-session-root-lifecycle.md)、
 [`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)

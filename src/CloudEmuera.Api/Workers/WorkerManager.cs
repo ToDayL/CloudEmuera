@@ -7,6 +7,7 @@ using System.Threading.Channels;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V2;
+using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Grpc.AspNetCore.Server;
 using Grpc.Core;
@@ -200,13 +201,22 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl
                 (RuntimeSaveLayout)spec.SessionRoot.SaveLayout,
                 spec.SessionRoot.ManifestDigest,
                 spec.Binding.InitialOutputSequence),
-            cancellationToken).ConfigureAwait(false);
+            spec.Binding,
+            waitForRegistration: false,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         return new ApiWorkerProcessHandle(session);
     }
 
-    public async Task<ApiWorkerSession> LaunchWorkerAsync(
+    public Task<ApiWorkerSession> LaunchWorkerAsync(
         WorkerLaunchRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        LaunchWorkerAsync(request, runtimeBinding: null, waitForRegistration: true, cancellationToken: cancellationToken);
+
+    private async Task<ApiWorkerSession> LaunchWorkerAsync(
+        WorkerLaunchRequest request,
+        SessionRuntimeBinding? runtimeBinding,
+        bool waitForRegistration,
+        CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
         if (IsDraining)
@@ -221,7 +231,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl
                 throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerStartFailed, "The Session already has a Worker.");
             if (sessions.ContainsKey(request.Binding.WorkerId))
                 throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerStartFailed, "The Worker ID is already registered with this API.");
-            session = new ApiWorkerSession(request, options, loggerFactory.CreateLogger<ApiWorkerSession>());
+            session = new ApiWorkerSession(request, options, loggerFactory.CreateLogger<ApiWorkerSession>(), runtimeBinding);
             sessions.Add(request.Binding.WorkerId, session);
         }
 
@@ -254,19 +264,21 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl
         {
             Process process = StartProcess(request.SessionRoot, bootstrapPath, session);
             session.AttachProcess(process, ProcessIdentityProbe.Read(process));
-            await session.WaitForRegistrationAsync(options.RegistrationTimeout, cancellationToken).ConfigureAwait(false);
-            session.LogLifecycle("worker_registered");
-            WorkerBootstrapFile.DeleteIfOwned(bootstrapPath);
+            if (waitForRegistration)
+                await session.WaitForRegistrationAsync(options.RegistrationTimeout, cancellationToken).ConfigureAwait(false);
             return session;
         }
         catch
         {
             session.LogLifecycle("worker_launch_failed", SessionRuntimeResultCodes.WorkerStartFailed, LogLevel.Warning);
             WorkerBootstrapFile.DeleteIfOwned(bootstrapPath);
-            await session.TerminateProcessAsync().ConfigureAwait(false);
-            lock (sync)
-                sessions.Remove(request.Binding.WorkerId);
-            await session.DisposeAsync().ConfigureAwait(false);
+            bool exited = await session.TerminateProcessAsync(options.WorkerShutdownTimeout, CancellationToken.None).ConfigureAwait(false);
+            if (exited)
+            {
+                lock (sync)
+                    sessions.Remove(request.Binding.WorkerId);
+                await session.DisposeAsync().ConfigureAwait(false);
+            }
             throw;
         }
     }
@@ -327,24 +339,28 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl
         {
             try
             {
-                bool applied = await runtimeStore.RecordHeartbeatAsync(
-                    connection.Session.RuntimeBinding,
-                    new WorkerHeartbeatInfo(
-                        connection.Session.ProcessIdentity,
-                        message.Heartbeat.OutputSequence,
-                        message.Heartbeat.WaitingForInput,
-                        string.IsNullOrEmpty(message.Heartbeat.CurrentPromptId) ? null : message.Heartbeat.CurrentPromptId,
-                        message.Heartbeat.ResidentMemoryBytes,
-                        timeProvider.GetUtcNow()),
-                    options.LeaseDuration).ConfigureAwait(false);
-                if (!applied)
+                if (connection.Session.RuntimePersistenceReady)
                 {
-                    connection.Session.LogLifecycle("heartbeat_rejected", SessionRuntimeResultCodes.WorkerStaleEpoch, LogLevel.Warning);
-                    connection.Cancel();
-                    return;
+                    SessionRuntimeWriteResult heartbeatResult = await runtimeStore.RecordHeartbeatAsync(
+                        connection.Session.RuntimeBinding,
+                        new WorkerHeartbeatInfo(
+                            connection.Session.ProcessIdentity,
+                            message.Heartbeat.OutputSequence,
+                            message.Heartbeat.WaitingForInput,
+                            string.IsNullOrEmpty(message.Heartbeat.CurrentPromptId) ? null : message.Heartbeat.CurrentPromptId,
+                            message.Heartbeat.ResidentMemoryBytes,
+                            timeProvider.GetUtcNow()),
+                        options.LeaseDuration).ConfigureAwait(false);
+                    if (!heartbeatResult.Applied || heartbeatResult.Binding is null)
+                    {
+                        connection.Session.LogLifecycle("heartbeat_rejected", SessionRuntimeResultCodes.WorkerStaleEpoch, LogLevel.Warning);
+                        connection.Cancel();
+                        return;
+                    }
+                    connection.Session.UpdateRuntimeBinding(heartbeatResult.Binding);
                 }
             }
-            catch (Exception exception) when (exception is DbUpdateException or SqliteException or IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is ArgumentException or DbUpdateException or SqliteException or IOException or UnauthorizedAccessException)
             {
                 connection.Session.LogLifecycle("heartbeat_persist_failed", "database_unavailable", LogLevel.Error);
                 connection.Cancel();
@@ -372,7 +388,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl
             }
             catch
             {
-                await worker.TerminateProcessAsync().ConfigureAwait(false);
+                await worker.TerminateProcessAsync(options.WorkerShutdownTimeout, CancellationToken.None).ConfigureAwait(false);
             }
             await worker.DisposeAsync().ConfigureAwait(false);
         }
@@ -440,6 +456,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     private readonly TaskCompletionSource<WorkerEnvelope> stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private ApiWorkerConnection? connection;
     private Process? process;
+    private SessionRuntimeBinding? runtimeBinding;
     private string bootstrapPath = string.Empty;
     private string bootstrapToken = string.Empty;
     private bool tokenConsumed;
@@ -449,12 +466,18 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     private long lastDisplaySequence;
     private int connectionCount;
     private int disposed;
+    private int runtimePersistenceReady;
 
-    internal ApiWorkerSession(WorkerLaunchRequest request, WorkerManagerOptions options, ILogger logger)
+    internal ApiWorkerSession(
+        WorkerLaunchRequest request,
+        WorkerManagerOptions options,
+        ILogger logger,
+        SessionRuntimeBinding? runtimeBinding = null)
     {
         this.request = request;
         this.options = options;
         this.logger = logger;
+        this.runtimeBinding = runtimeBinding;
         sensitiveLogValues.Add(request.SessionRoot);
         sensitiveLogValues.Add(Path.GetFullPath(options.ControlSocketPath));
         lastDisplaySequence = request.InitialOutputSequence;
@@ -465,6 +488,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     public string ControlPlaneInstanceId => options.ControlPlaneInstanceId;
     public int ProcessId => process?.Id ?? 0;
     public WorkerProcessIdentity ProcessIdentity { get; private set; } = new(0, string.Empty, 0);
+    internal TimeSpan ShutdownTimeout => options.WorkerShutdownTimeout;
     public bool IsRegistered => Volatile.Read(ref registered);
     public bool HasExited => process?.HasExited ?? true;
     public int? ExitCode => process is { HasExited: true } value ? value.ExitCode : null;
@@ -473,6 +497,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     public IReadOnlyList<DisplayBatch> DisplayBatches { get { lock (sync) return displayBatches.Select(item => item.Clone()).ToArray(); } }
     public long LastOutputSequence { get { lock (sync) return lastDisplaySequence; } }
     public DateTimeOffset LastHeartbeatAt => new(Interlocked.Read(ref lastHeartbeatUtcTicks), TimeSpan.Zero);
+    internal bool RuntimePersistenceReady => Volatile.Read(ref runtimePersistenceReady) != 0;
 
     public Task<int> WaitForExitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) => processExit.Task.WaitAsync(timeout, cancellationToken);
 
@@ -551,13 +576,16 @@ public sealed class ApiWorkerSession : IAsyncDisposable
 
     internal async Task StopAsync(string reasonCode, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        using var stopCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        stopCancellation.CancelAfter(timeout);
         await commands.Writer.WriteAsync(CreateEnvelope(IpcProtocol.NewMessageId("stop"), new StopWorker
         {
             ReasonCode = reasonCode,
             DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.Add(timeout).ToUnixTimeMilliseconds(),
-        }), cancellationToken).ConfigureAwait(false);
-        await stopped.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
-        await processExit.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+        }), stopCancellation.Token).ConfigureAwait(false);
+        await stopped.Task.WaitAsync(timeout, stopCancellation.Token).ConfigureAwait(false);
+        await processExit.Task.WaitAsync(timeout, stopCancellation.Token).ConfigureAwait(false);
     }
 
     public Task DisconnectCurrentConnectionForTestAsync()
@@ -610,19 +638,45 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         };
     }
 
-    internal SessionRuntimeBinding RuntimeBinding => new(
-        Binding.SessionId,
-        Binding.WorkerId,
-        checked((long)Binding.WorkerEpoch),
-        0,
-        ControlPlaneInstanceId,
-        SessionRoot,
-        request.CompatibilityProfile,
-        (int)request.SaveLayout,
-        request.SessionRootManifestDigest,
-        "",
-        LastOutputSequence,
-        "{}");
+    internal SessionRuntimeBinding RuntimeBinding
+    {
+        get
+        {
+            lock (sync)
+            {
+                SessionRuntimeBinding binding = runtimeBinding ?? new SessionRuntimeBinding(
+                    Binding.SessionId,
+                    Binding.WorkerId,
+                    checked((long)Binding.WorkerEpoch),
+                    0,
+                    ControlPlaneInstanceId,
+                    SessionRoot,
+                    request.CompatibilityProfile,
+                    (int)request.SaveLayout,
+                    request.SessionRootManifestDigest,
+                    "",
+                    LastOutputSequence,
+                    "{}");
+                return binding with { InitialOutputSequence = Math.Max(binding.InitialOutputSequence, lastDisplaySequence) };
+            }
+        }
+    }
+
+    internal void UpdateRuntimeBinding(SessionRuntimeBinding binding, bool persistenceReady = false)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        if (!binding.SessionId.Equals(Binding.SessionId, StringComparison.Ordinal) ||
+            !binding.WorkerId.Equals(Binding.WorkerId, StringComparison.Ordinal) ||
+            binding.WorkerEpoch != checked((long)Binding.WorkerEpoch) ||
+            !binding.ControlPlaneInstanceId.Equals(ControlPlaneInstanceId, StringComparison.Ordinal))
+            throw new SessionRuntimeException(SessionRuntimeResultCodes.InvalidBinding, "The Worker runtime binding does not match the process.");
+        lock (sync)
+        {
+            runtimeBinding = binding;
+            if (persistenceReady)
+                Interlocked.Exchange(ref runtimePersistenceReady, 1);
+        }
+    }
 
     internal bool ReadyConfirmed { get; private set; }
 
@@ -657,8 +711,12 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         }
     }
 
-    internal async Task WaitForRegistrationAsync(TimeSpan timeout, CancellationToken cancellationToken) =>
+    internal async Task WaitForRegistrationAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
         await registration.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+        WorkerBootstrapFile.DeleteIfOwned(bootstrapPath);
+        LogLifecycle("worker_registered");
+    }
 
     internal bool AcceptRegistrationToken(string token)
     {
@@ -766,21 +824,6 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         }
     }
 
-    internal Task TerminateProcessAsync()
-    {
-        if (process is null)
-            return Task.CompletedTask;
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        return process.WaitForExitAsync();
-    }
-
     internal async Task<bool> TryTerminateProcessAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
@@ -806,6 +849,9 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             return false;
         }
     }
+
+    internal Task<bool> TerminateProcessAsync(TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        TryTerminateProcessAsync(timeout, cancellationToken);
 
     internal void LogLifecycle(string eventName, string reason = "", LogLevel level = LogLevel.Information)
     {
@@ -847,7 +893,9 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             eventSignal.TrySetResult(true);
         }
         commands.Writer.TryComplete();
-        await TerminateProcessAsync().ConfigureAwait(false);
+        bool exited = await TerminateProcessAsync(options.WorkerShutdownTimeout, CancellationToken.None).ConfigureAwait(false);
+        if (!exited)
+            LogLifecycle("worker_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
         WorkerBootstrapFile.DeleteIfOwned(bootstrapPath);
         LogLifecycle("worker_session_disposed");
     }
@@ -901,6 +949,7 @@ internal sealed class ApiWorkerProcessHandle(ApiWorkerSession session) : IWorker
 
     public async Task<WorkerReadyInfo> WaitForReadyAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
     {
+        await session.WaitForRegistrationAsync(timeout, cancellationToken).ConfigureAwait(false);
         await session.SendStartRuntimeAsync(timeout, cancellationToken).ConfigureAwait(false);
         WorkerEnvelope ready = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
@@ -939,8 +988,17 @@ internal sealed class ApiWorkerProcessHandle(ApiWorkerSession session) : IWorker
 
     public Task KillAsync(CancellationToken cancellationToken = default)
     {
+        return KillBoundedAsync(cancellationToken);
+    }
+
+    public void UpdateRuntimeBinding(SessionRuntimeBinding binding, bool persistenceReady = false) =>
+        session.UpdateRuntimeBinding(binding, persistenceReady);
+
+    private async Task KillBoundedAsync(CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
-        return session.TerminateProcessAsync();
+        if (!await session.TerminateProcessAsync(session.ShutdownTimeout, cancellationToken).ConfigureAwait(false))
+            throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerExitUnconfirmed, "The Worker exit could not be confirmed.");
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -1098,9 +1156,21 @@ internal sealed class WorkerManagerHostedService(
                 cancellationToken.ThrowIfCancellationRequested();
                 if (lease.ProcessIdentity is null)
                 {
-                    readiness.MarkFailed(SessionRuntimeResultCodes.WorkerExitUnconfirmed);
-                    coordinator.BeginDraining();
-                    return;
+                    if (!string.Equals(lease.Status, WorkerLeaseStatus.Starting.ToString().ToUpperInvariant(), StringComparison.Ordinal))
+                    {
+                        readiness.MarkFailed(SessionRuntimeResultCodes.WorkerExitUnconfirmed);
+                        coordinator.BeginDraining();
+                        return;
+                    }
+
+                    if (!await runtimeStore.ReconcileAsync(lease, "control_plane_restarted", timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false))
+                    {
+                        readiness.MarkFailed(SessionRuntimeResultCodes.ControlPlaneReconciliationFailed);
+                        coordinator.BeginDraining();
+                        return;
+                    }
+
+                    continue;
                 }
 
                 if (!await ProcessIdentityProbe.TerminateExactAsync(lease.ProcessIdentity, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false))
@@ -1156,22 +1226,17 @@ internal sealed class WorkerManagerHostedService(
         await manager.DisposeAsync().ConfigureAwait(false);
         foreach (ApiWorkerSession worker in workers)
         {
+            if (!worker.HasExited)
+            {
+                readiness.MarkFailed(SessionRuntimeResultCodes.WorkerExitUnconfirmed);
+                worker.LogLifecycle("shutdown_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
+                continue;
+            }
+
             try
             {
                 await runtimeStore.CompleteAsync(
-                    new SessionRuntimeBinding(
-                        worker.Binding.SessionId,
-                        worker.Binding.WorkerId,
-                        checked((long)worker.Binding.WorkerEpoch),
-                        0,
-                        worker.ControlPlaneInstanceId,
-                        worker.SessionRoot,
-                        "v18-compatible",
-                        0,
-                        string.Empty,
-                        string.Empty,
-                        worker.LastOutputSequence,
-                        "{}"),
+                    worker.RuntimeBinding,
                     SessionRuntimeTerminalState.Crashed,
                     "control_plane_stopped",
                     worker.LastOutputSequence,

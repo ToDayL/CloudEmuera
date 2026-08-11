@@ -117,7 +117,7 @@ public sealed class SqliteSessionRuntimeStore(
         return SessionRuntimeAcquireResult.Success(new SessionRuntimeLease(binding, session.OwnerUserId, session.State, now, lease.ExpiresAt));
     }
 
-    public async Task<bool> RecordProcessIdentityAsync(
+    public async Task<SessionRuntimeWriteResult> RecordProcessIdentityAsync(
         SessionRuntimeBinding binding,
         WorkerProcessIdentity identity,
         DateTimeOffset observedAt,
@@ -128,20 +128,21 @@ public sealed class SqliteSessionRuntimeStore(
         await using CloudEmueraDbContext db = CreateContext(connection);
         await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, cancellationToken).ConfigureAwait(false);
         WorkerLeaseRow? lease = await FindLeaseAsync(db, binding, cancellationToken).ConfigureAwait(false);
-        if (lease is null || lease.Status != WorkerLeaseStatus.Starting)
-            return false;
+        SessionRow? session = await db.Sessions.SingleOrDefaultAsync(row => row.Id == binding.SessionId, cancellationToken).ConfigureAwait(false);
+        if (lease is null || session is null || lease.Status != WorkerLeaseStatus.Starting || session.StateVersion != binding.StateVersion)
+            return SessionRuntimeWriteResult.Stale();
         if (lease.Pid is not null)
-            return SameIdentity(lease, identity);
+            return SameIdentity(lease, identity) ? SessionRuntimeWriteResult.Accepted(binding) : SessionRuntimeWriteResult.Stale();
         lease.Pid = identity.ProcessId;
         lease.ProcessBootId = identity.ProcessBootId;
         lease.ProcessStartTicks = identity.ProcessStartTicks;
         lease.HeartbeatAt = observedAt;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+        return SessionRuntimeWriteResult.Accepted(binding);
     }
 
-    public async Task<bool> MarkReadyAsync(
+    public async Task<SessionRuntimeWriteResult> MarkReadyAsync(
         SessionRuntimeBinding binding,
         WorkerReadyInfo ready,
         DateTimeOffset observedAt,
@@ -155,12 +156,12 @@ public sealed class SqliteSessionRuntimeStore(
         SessionRow? session = await db.Sessions.SingleOrDefaultAsync(row => row.Id == binding.SessionId, cancellationToken).ConfigureAwait(false);
         if (lease is null || session is null || lease.Status != WorkerLeaseStatus.Starting || session.State != SessionState.Starting ||
             session.StateVersion != binding.StateVersion || lease.Pid is null || lease.ProcessBootId is null || lease.ProcessStartTicks is null)
-            return false;
+            return SessionRuntimeWriteResult.Stale();
         if (!string.Equals(ready.CompatibilityProfile, binding.CompatibilityProfile, StringComparison.Ordinal) ||
             (!string.IsNullOrEmpty(binding.SessionRootManifestDigest) &&
              !string.Equals(ready.SessionRootManifestDigest, binding.SessionRootManifestDigest, StringComparison.OrdinalIgnoreCase)) ||
             ready.LastOutputSequence < session.LastOutputSequence)
-            return false;
+            return SessionRuntimeWriteResult.Stale();
 
         session.State = SessionState.Running;
         session.StateVersion = checked(session.StateVersion + 1);
@@ -172,10 +173,14 @@ public sealed class SqliteSessionRuntimeStore(
         lease.ExpiresAt = observedAt.Add(GetLeaseDuration(lease));
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+        return SessionRuntimeWriteResult.Accepted(binding with
+        {
+            StateVersion = session.StateVersion,
+            InitialOutputSequence = session.LastOutputSequence,
+        });
     }
 
-    public async Task<bool> RecordHeartbeatAsync(
+    public async Task<SessionRuntimeWriteResult> RecordHeartbeatAsync(
         SessionRuntimeBinding binding,
         WorkerHeartbeatInfo heartbeat,
         TimeSpan leaseDuration,
@@ -193,8 +198,8 @@ public sealed class SqliteSessionRuntimeStore(
         WorkerLeaseRow? lease = await FindLeaseAsync(db, binding, cancellationToken).ConfigureAwait(false);
         SessionRow? session = await db.Sessions.SingleOrDefaultAsync(row => row.Id == binding.SessionId, cancellationToken).ConfigureAwait(false);
         if (lease is null || session is null || lease.Status != WorkerLeaseStatus.Active || session.State != SessionState.Running ||
-            !SameIdentity(lease, heartbeat.ProcessIdentity))
-            return false;
+            session.StateVersion != binding.StateVersion || !SameIdentity(lease, heartbeat.ProcessIdentity))
+            return SessionRuntimeWriteResult.Stale();
 
         bool stateChanged = session.WaitingForInput != heartbeat.WaitingForInput ||
             !string.Equals(session.CurrentPromptId, heartbeat.CurrentPromptId, StringComparison.Ordinal) ||
@@ -209,10 +214,14 @@ public sealed class SqliteSessionRuntimeStore(
         lease.ExpiresAt = heartbeat.ObservedAt.Add(leaseDuration);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+        return SessionRuntimeWriteResult.Accepted(binding with
+        {
+            StateVersion = session.StateVersion,
+            InitialOutputSequence = session.LastOutputSequence,
+        });
     }
 
-    public async Task<bool> BeginStoppingAsync(
+    public async Task<SessionRuntimeWriteResult> BeginStoppingAsync(
         SessionRuntimeBinding binding,
         DateTimeOffset observedAt,
         CancellationToken cancellationToken = default)
@@ -223,8 +232,8 @@ public sealed class SqliteSessionRuntimeStore(
         WorkerLeaseRow? lease = await FindLeaseAsync(db, binding, cancellationToken).ConfigureAwait(false);
         SessionRow? session = await db.Sessions.SingleOrDefaultAsync(row => row.Id == binding.SessionId, cancellationToken).ConfigureAwait(false);
         if (lease is null || session is null || session.State is not (SessionState.Starting or SessionState.Running) ||
-            lease.Status is not (WorkerLeaseStatus.Starting or WorkerLeaseStatus.Active))
-            return false;
+            session.StateVersion != binding.StateVersion || lease.Status is not (WorkerLeaseStatus.Starting or WorkerLeaseStatus.Active))
+            return SessionRuntimeWriteResult.Stale();
         session.State = SessionState.Stopping;
         session.StateVersion = checked(session.StateVersion + 1);
         session.WaitingForInput = false;
@@ -234,7 +243,7 @@ public sealed class SqliteSessionRuntimeStore(
         lease.HeartbeatAt = observedAt;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+        return SessionRuntimeWriteResult.Accepted(binding with { StateVersion = session.StateVersion });
     }
 
     public async Task<SessionRuntimeCompletionResult> CompleteAsync(
@@ -261,7 +270,8 @@ public sealed class SqliteSessionRuntimeStore(
             return SessionRuntimeCompletionResult.Stale();
         }
         if (session.WorkerEpoch != binding.WorkerEpoch || !string.Equals(lease.WorkerId, binding.WorkerId, StringComparison.Ordinal) ||
-            !string.Equals(lease.ControlPlaneInstanceId, binding.ControlPlaneInstanceId, StringComparison.Ordinal))
+            !string.Equals(lease.ControlPlaneInstanceId, binding.ControlPlaneInstanceId, StringComparison.Ordinal) ||
+            session.StateVersion != binding.StateVersion)
             return SessionRuntimeCompletionResult.Stale();
 
         session.State = terminalState == SessionRuntimeTerminalState.Closed ? SessionState.Closed : SessionState.Crashed;

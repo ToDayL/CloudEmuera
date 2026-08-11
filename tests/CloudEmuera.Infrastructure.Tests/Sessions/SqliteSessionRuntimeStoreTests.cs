@@ -30,16 +30,24 @@ public sealed class SqliteSessionRuntimeStoreTests
         Assert.Equal("sha256:" + new string('a', 64), firstLease.Binding.SessionRootManifestDigest);
 
         WorkerProcessIdentity firstIdentity = new(43101, "00000000-0000-0000-0000-000000000001", 1001);
-        Assert.True(await store.RecordProcessIdentityAsync(firstLease.Binding, firstIdentity, now.AddSeconds(1)));
-        Assert.True(await store.MarkReadyAsync(firstLease.Binding, Ready(firstLease.Binding), now.AddSeconds(2)));
-        Assert.True(await store.RecordHeartbeatAsync(
-            firstLease.Binding,
+        SessionRuntimeWriteResult identity = await store.RecordProcessIdentityAsync(firstLease.Binding, firstIdentity, now.AddSeconds(1));
+        Assert.True(identity.Applied);
+        SessionRuntimeBinding startingBinding = identity.Binding!;
+        SessionRuntimeWriteResult ready = await store.MarkReadyAsync(startingBinding, Ready(startingBinding), now.AddSeconds(2));
+        Assert.True(ready.Applied);
+        SessionRuntimeBinding runningBinding = ready.Binding!;
+        SessionRuntimeWriteResult heartbeat = await store.RecordHeartbeatAsync(
+            runningBinding,
             new WorkerHeartbeatInfo(firstIdentity, 7, true, "prompt_1", 1024, now.AddSeconds(3)),
-            TimeSpan.FromSeconds(30)));
-        Assert.True(await store.BeginStoppingAsync(firstLease.Binding, now.AddSeconds(4)));
+            TimeSpan.FromSeconds(30));
+        Assert.True(heartbeat.Applied);
+        SessionRuntimeBinding heartbeatBinding = heartbeat.Binding!;
+        SessionRuntimeWriteResult stopping = await store.BeginStoppingAsync(heartbeatBinding, now.AddSeconds(4));
+        Assert.True(stopping.Applied);
+        SessionRuntimeBinding stoppingBinding = stopping.Binding!;
 
         SessionRuntimeCompletionResult closed = await store.CompleteAsync(
-            firstLease.Binding,
+            stoppingBinding,
             SessionRuntimeTerminalState.Closed,
             "requested",
             7,
@@ -56,7 +64,7 @@ public sealed class SqliteSessionRuntimeStoreTests
         Assert.Equal(firstLease.Binding.SessionRootPath, secondLease.Binding.SessionRootPath);
         Assert.Equal(firstLease.Binding.RuntimeManifestJson, secondLease.Binding.RuntimeManifestJson);
 
-        Assert.False(await store.RecordProcessIdentityAsync(firstLease.Binding, firstIdentity, now.AddSeconds(7)));
+        Assert.False((await store.RecordProcessIdentityAsync(firstLease.Binding, firstIdentity, now.AddSeconds(7))).Applied);
         SessionRuntimeCompletionResult stale = await store.CompleteAsync(
             firstLease.Binding,
             SessionRuntimeTerminalState.Crashed,
@@ -132,6 +140,67 @@ public sealed class SqliteSessionRuntimeStoreTests
             "test_cleanup",
             0,
             now.AddSeconds(1))).Applied);
+    }
+
+    [Fact]
+    public async Task SameEpochStaleStateVersionCannotStopOrCompleteAfterHeartbeat()
+    {
+        using TemporarySqliteDatabase database = new();
+        await SeedSessionsAsync(database, quota: 4, "sess_fixture");
+        SqliteSessionRuntimeStore store = new(database.Options, TimeProvider.System);
+        DateTimeOffset now = new(2026, 8, 11, 16, 0, 0, TimeSpan.Zero);
+
+        SessionRuntimeLease lease = (await store.TryAcquireOpenLeaseAsync(
+            OpenOptions("sess_fixture", "ctl_fence", "wrk_fence", now))).Lease!;
+        WorkerProcessIdentity identity = new(43102, "00000000-0000-0000-0000-000000000002", 1002);
+        Assert.True((await store.RecordProcessIdentityAsync(lease.Binding, identity, now.AddSeconds(1))).Applied);
+        SessionRuntimeBinding running = (await store.MarkReadyAsync(
+            lease.Binding,
+            Ready(lease.Binding),
+            now.AddSeconds(2))).Binding!;
+        SessionRuntimeBinding afterHeartbeat = (await store.RecordHeartbeatAsync(
+            running,
+            new WorkerHeartbeatInfo(identity, running.InitialOutputSequence + 1, true, "prompt_fence", 1024, now.AddSeconds(3)),
+            TimeSpan.FromSeconds(30))).Binding!;
+
+        Assert.False((await store.BeginStoppingAsync(running, now.AddSeconds(4))).Applied);
+        Assert.False((await store.CompleteAsync(
+            running,
+            SessionRuntimeTerminalState.Crashed,
+            "stale_complete",
+            afterHeartbeat.InitialOutputSequence,
+            now.AddSeconds(4))).Applied);
+
+        SessionRuntimeBinding stopping = (await store.BeginStoppingAsync(afterHeartbeat, now.AddSeconds(5))).Binding!;
+        Assert.True((await store.CompleteAsync(
+            stopping,
+            SessionRuntimeTerminalState.Closed,
+            "requested",
+            stopping.InitialOutputSequence,
+            now.AddSeconds(6))).Applied);
+    }
+
+    [Fact]
+    public async Task ReconcileStartingLeaseWithoutProcessIdentityAfterApiRestart()
+    {
+        using TemporarySqliteDatabase database = new();
+        await SeedSessionsAsync(database, quota: 4, "sess_fixture");
+        SqliteSessionRuntimeStore store = new(database.Options, TimeProvider.System);
+        DateTimeOffset now = new(2026, 8, 11, 17, 0, 0, TimeSpan.Zero);
+
+        SessionRuntimeLease acquired = (await store.TryAcquireOpenLeaseAsync(
+            OpenOptions("sess_fixture", "ctl_restarted", "wrk_restarted", now))).Lease!;
+        PersistedWorkerLease persisted = Assert.Single(await store.ListPersistedLeasesAsync());
+        Assert.Equal(WorkerLeaseStatus.Starting.ToString().ToUpperInvariant(), persisted.Status);
+        Assert.Null(persisted.ProcessIdentity);
+
+        Assert.True(await store.ReconcileAsync(persisted, "control_plane_restarted", now.AddSeconds(1)));
+
+        await using DbContextScope verify = database.OpenContext();
+        SessionRow session = await verify.Context.Sessions.SingleAsync(row => row.Id == acquired.Binding.SessionId);
+        Assert.Equal(SessionState.Crashed, session.State);
+        Assert.Equal("control_plane_restarted", session.CloseReason);
+        Assert.False(await verify.Context.WorkerLeases.AnyAsync(row => row.SessionId == acquired.Binding.SessionId));
     }
 
     private static SessionRuntimeOpenOptions OpenOptions(

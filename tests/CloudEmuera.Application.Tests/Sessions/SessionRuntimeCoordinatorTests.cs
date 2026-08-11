@@ -49,6 +49,27 @@ public sealed class SessionRuntimeCoordinatorTests
     }
 
     [Fact]
+    public async Task OpenDoesNotReleaseLeaseWhenWorkerExitCannotBeConfirmed()
+    {
+        var trace = new List<string>();
+        RecordingStore store = new(trace);
+        RecordingRootInspector inspector = new(trace);
+        RecordingWorkerControl workerControl = new(trace)
+        {
+            StartException = new SessionRuntimeException(
+                SessionRuntimeResultCodes.WorkerExitUnconfirmed,
+                "The Worker exit could not be confirmed.")
+        };
+        SessionRuntimeCoordinator coordinator = new(store, workerControl, inspector, TimeProvider.System);
+
+        SessionRuntimeException exception = await Assert.ThrowsAsync<SessionRuntimeException>(() => coordinator.OpenAsync(CreateOpenOptions()));
+
+        Assert.Equal(SessionRuntimeResultCodes.WorkerExitUnconfirmed, exception.Code);
+        Assert.Null(store.CompletedTerminalState);
+        Assert.DoesNotContain("complete", trace);
+    }
+
+    [Fact]
     public async Task CloseOrdersStoppingRequestExitAndClosedCompletion()
     {
         var trace = new List<string>();
@@ -68,6 +89,29 @@ public sealed class SessionRuntimeCoordinatorTests
         Assert.Equal(SessionState.Closed, result.Completion.State);
         Assert.Equal(["stopping", "request-stop", "exit", "complete"], trace);
         Assert.Equal(SessionRuntimeTerminalState.Closed, store.CompletedTerminalState);
+        Assert.Equal(opened.Lease.Binding.StateVersion + 1, store.CompletedBinding!.StateVersion);
+    }
+
+    [Fact]
+    public async Task CloseDoesNotCompleteWhenForcedExitCannotBeConfirmed()
+    {
+        var trace = new List<string>();
+        RecordingStore store = new(trace);
+        RecordingRootInspector inspector = new(trace);
+        RecordingWorkerControl workerControl = new(trace);
+        SessionRuntimeCoordinator coordinator = new(store, workerControl, inspector, TimeProvider.System);
+        SessionRuntimeOpenResult opened = await coordinator.OpenAsync(CreateOpenOptions());
+        workerControl.Process.ExitConfirmed = false;
+
+        SessionRuntimeException exception = await Assert.ThrowsAsync<SessionRuntimeException>(() => coordinator.CloseAsync(
+            opened.Lease.Binding,
+            workerControl.Process,
+            new SessionRuntimeCloseRequest(opened.Lease.Binding.SessionId, Force: false, "requested")));
+
+        Assert.Equal(SessionRuntimeResultCodes.WorkerExitUnconfirmed, exception.Code);
+        Assert.Null(store.CompletedTerminalState);
+        Assert.Contains("kill", trace);
+        Assert.DoesNotContain("complete", trace);
     }
 
     private static SessionRuntimeOpenOptions CreateOpenOptions() => new(
@@ -86,6 +130,7 @@ public sealed class SessionRuntimeCoordinatorTests
         public WorkerReadyInfo? Ready { get; private set; }
         public SessionRuntimeTerminalState? CompletedTerminalState { get; private set; }
         public string? CompletedReason { get; private set; }
+        public SessionRuntimeBinding? CompletedBinding { get; private set; }
 
         public Task<SessionRuntimeAcquireResult> TryAcquireOpenLeaseAsync(
             SessionRuntimeOpenOptions options,
@@ -114,7 +159,7 @@ public sealed class SessionRuntimeCoordinatorTests
             return Task.FromResult(SessionRuntimeAcquireResult.Success(lease));
         }
 
-        public Task<bool> RecordProcessIdentityAsync(
+        public Task<SessionRuntimeWriteResult> RecordProcessIdentityAsync(
             SessionRuntimeBinding binding,
             WorkerProcessIdentity identity,
             DateTimeOffset observedAt,
@@ -122,10 +167,10 @@ public sealed class SessionRuntimeCoordinatorTests
         {
             trace.Add("identity");
             RecordedIdentity = identity;
-            return Task.FromResult(true);
+            return Task.FromResult(SessionRuntimeWriteResult.Accepted(binding));
         }
 
-        public Task<bool> MarkReadyAsync(
+        public Task<SessionRuntimeWriteResult> MarkReadyAsync(
             SessionRuntimeBinding binding,
             WorkerReadyInfo ready,
             DateTimeOffset observedAt,
@@ -133,22 +178,26 @@ public sealed class SessionRuntimeCoordinatorTests
         {
             trace.Add("mark-ready");
             Ready = ready;
-            return Task.FromResult(true);
+            return Task.FromResult(SessionRuntimeWriteResult.Accepted(binding with
+            {
+                StateVersion = checked(binding.StateVersion + 1),
+                InitialOutputSequence = Math.Max(binding.InitialOutputSequence, ready.LastOutputSequence),
+            }));
         }
 
-        public Task<bool> RecordHeartbeatAsync(
+        public Task<SessionRuntimeWriteResult> RecordHeartbeatAsync(
             SessionRuntimeBinding binding,
             WorkerHeartbeatInfo heartbeat,
             TimeSpan leaseDuration,
-            CancellationToken cancellationToken = default) => Task.FromResult(true);
+            CancellationToken cancellationToken = default) => Task.FromResult(SessionRuntimeWriteResult.Accepted(binding));
 
-        public Task<bool> BeginStoppingAsync(
+        public Task<SessionRuntimeWriteResult> BeginStoppingAsync(
             SessionRuntimeBinding binding,
             DateTimeOffset observedAt,
             CancellationToken cancellationToken = default)
         {
             trace.Add("stopping");
-            return Task.FromResult(true);
+            return Task.FromResult(SessionRuntimeWriteResult.Accepted(binding with { StateVersion = checked(binding.StateVersion + 1) }));
         }
 
         public Task<SessionRuntimeCompletionResult> CompleteAsync(
@@ -162,6 +211,7 @@ public sealed class SessionRuntimeCoordinatorTests
             trace.Add("complete");
             CompletedTerminalState = terminalState;
             CompletedReason = reasonCode;
+            CompletedBinding = binding;
             SessionState state = terminalState == SessionRuntimeTerminalState.Closed
                 ? SessionState.Closed
                 : SessionState.Crashed;
@@ -198,12 +248,15 @@ public sealed class SessionRuntimeCoordinatorTests
     {
         public RecordingProcess Process { get; } = new(trace);
         public Exception? ReadyException { get; init; }
+        public Exception? StartException { get; init; }
 
         public Task<IWorkerProcessHandle> StartAsync(
             WorkerLaunchSpec spec,
             CancellationToken cancellationToken = default)
         {
             trace.Add("start");
+            if (StartException is not null)
+                return Task.FromException<IWorkerProcessHandle>(StartException);
             Process.ReadyException = ReadyException;
             return Task.FromResult<IWorkerProcessHandle>(Process);
         }
@@ -217,6 +270,7 @@ public sealed class SessionRuntimeCoordinatorTests
             1001);
 
         public Exception? ReadyException { get; set; }
+        public bool ExitConfirmed { get; set; } = true;
 
         public Task<WorkerReadyInfo> WaitForReadyAsync(
             TimeSpan timeout,
@@ -239,7 +293,13 @@ public sealed class SessionRuntimeCoordinatorTests
             CancellationToken cancellationToken = default)
         {
             trace.Add("exit");
-            return Task.FromResult(new WorkerExitInfo(0, true, true, "worker_finished", 4, DateTimeOffset.UtcNow));
+            return Task.FromResult(new WorkerExitInfo(
+                ExitConfirmed ? 0 : null,
+                ExitConfirmed,
+                ExitConfirmed,
+                ExitConfirmed ? "worker_finished" : SessionRuntimeResultCodes.WorkerExitUnconfirmed,
+                4,
+                DateTimeOffset.UtcNow));
         }
 
         public Task RequestStopAsync(
@@ -261,6 +321,10 @@ public sealed class SessionRuntimeCoordinatorTests
         {
             trace.Add("dispose");
             return ValueTask.CompletedTask;
+        }
+
+        public void UpdateRuntimeBinding(SessionRuntimeBinding binding, bool persistenceReady = false)
+        {
         }
     }
 }
