@@ -135,7 +135,7 @@ public sealed class WorkerProcessIsolationTests
     }
 
     [Fact]
-    public async Task DisconnectingWorkerStreamKeepsPromptAndWorkerAlive()
+    public async Task ClosingWorkerControlStreamStopsRuntimeWithinBound()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
         await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
@@ -144,7 +144,7 @@ public sealed class WorkerProcessIsolationTests
                 RegistrationTimeout = TimeSpan.FromSeconds(15)
             });
         ApiWorkerSession session = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
-            new WorkerBinding("sess_reconnect", "wrk_reconnect", 6), fixture.SessionRoot,
+            new WorkerBinding("sess_disconnect", "wrk_disconnect", 6), fixture.SessionRoot,
             "v18-compatible", RuntimeSaveLayout.Root, fixture.Manifest.ManifestDigest));
 
         await session.SendStartRuntimeAsync();
@@ -154,29 +154,14 @@ public sealed class WorkerProcessIsolationTests
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
             TimeSpan.FromSeconds(15));
-        WorkerEnvelope promptBatch = await session.WaitForAsync(
+        await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
                 value.DisplayBatch.Operations.Any(operation =>
                     operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
             TimeSpan.FromSeconds(15));
-        string promptId = promptBatch.DisplayBatch.Operations
-            .Single(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
-            .OpenPrompt.Prompt.PromptId;
-        int previousConnectionCount = session.ConnectionCount;
-
         await session.DisconnectCurrentConnectionForTestAsync();
-        await session.WaitForConnectionCountAsync(previousConnectionCount + 1, TimeSpan.FromSeconds(10));
-        Assert.False(session.HasExited);
-
-        await session.SendInputAsync(promptId, "client_reconnect", "7");
-        await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
-                value.InputResult.Kind == InputResultKind.InputResultAccepted,
-            TimeSpan.FromSeconds(5));
-        await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.WorkerStopped,
-            TimeSpan.FromSeconds(15));
-        Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(15)));
+        Assert.True(session.HasExited);
     }
 
     [Fact]
@@ -268,7 +253,7 @@ public sealed class WorkerProcessIsolationTests
     }
 
     [Fact]
-    public async Task MismatchedCommandBindingIsRejectedBeforeInputExecution()
+    public async Task MismatchedCommandBindingStopsWorkerBeforeInputExecution()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
         await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
@@ -292,8 +277,6 @@ public sealed class WorkerProcessIsolationTests
         string promptId = promptBatch.DisplayBatch.Operations
             .Single(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
             .OpenPrompt.Prompt.PromptId;
-        int previousConnectionCount = session.ConnectionCount;
-
         await session.SendRawAsync(new WorkerCommandEnvelope
         {
             ProtocolVersion = IpcProtocol.CurrentVersion,
@@ -309,18 +292,8 @@ public sealed class WorkerProcessIsolationTests
                 DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.AddSeconds(5).ToUnixTimeMilliseconds()
             }
         });
-        await session.WaitForConnectionCountAsync(previousConnectionCount + 1, TimeSpan.FromSeconds(10));
-        Assert.False(session.HasExited);
-
-        await session.SendInputAsync(promptId, "client_binding", "7");
-        await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
-                value.InputResult.Kind == InputResultKind.InputResultAccepted,
-            TimeSpan.FromSeconds(5));
-        await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.WorkerStopped,
-            TimeSpan.FromSeconds(15));
         Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(session.HasExited);
     }
 
     [Fact]
@@ -400,10 +373,7 @@ public sealed class WorkerProcessIsolationTests
         try
         {
             await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
-                new WorkerManagerOptions(runtimeRoot, typeof(ConsoleWireMapper).Assembly.Location)
-                {
-                    MaxConcurrentWorkers = 2
-                });
+                new WorkerManagerOptions(runtimeRoot, typeof(ConsoleWireMapper).Assembly.Location));
             ApiWorkerSession first = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
                 new WorkerBinding("sess_first", "wrk_first", 1), firstFixture.SessionRoot,
                 "v18-compatible", RuntimeSaveLayout.Root, firstFixture.Manifest.ManifestDigest));

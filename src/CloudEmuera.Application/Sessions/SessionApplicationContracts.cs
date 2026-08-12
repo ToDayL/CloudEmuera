@@ -20,7 +20,7 @@ public static class SessionErrorCodes
     public const string SessionNotReady = "SESSION_NOT_READY";
     public const string SessionTransitionInProgress = "SESSION_TRANSITION_IN_PROGRESS";
     public const string SessionRootInvalid = "SESSION_ROOT_INVALID";
-    public const string ActiveSessionQuotaExceeded = "ACTIVE_SESSION_QUOTA_EXCEEDED";
+    public const string ActiveWorkerLimitExceeded = "ACTIVE_WORKER_LIMIT_EXCEEDED";
     public const string ControlPlaneDraining = "CONTROL_PLANE_DRAINING";
     public const string ServiceNotReady = "SERVICE_NOT_READY";
     public const string StorageBudgetExceeded = "SESSION_STORAGE_QUOTA_EXCEEDED";

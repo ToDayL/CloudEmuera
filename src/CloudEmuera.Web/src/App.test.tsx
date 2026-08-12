@@ -126,7 +126,7 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
-  it("browses the workspace and opens a text file for editing", async () => {
+  it("browses the workspace and opens a text file read-only", async () => {
     const draft = game({ workspaceStatus: "DRAFT", stateVersion: 2 });
     const files = [
       { path: "ERB", isDirectory: true, bytes: 0 },
@@ -146,7 +146,10 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: /START\.ERB/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /START\.ERB/ }));
 
-    expect(await screen.findByLabelText("编辑 ERB/START.ERB")).toHaveValue("@SYSTEM_TITLE\n");
+    const preview = await screen.findByLabelText("查看 ERB/START.ERB");
+    expect(preview).toHaveValue("@SYSTEM_TITLE\n");
+    expect(preview).toHaveAttribute("readonly");
+    expect(screen.getByRole("link", { name: "下载 ERB/START.ERB" })).toHaveAttribute("href", expect.stringContaining("/api/v1/games/g1/download"));
     vi.unstubAllGlobals();
   });
 

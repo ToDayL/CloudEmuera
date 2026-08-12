@@ -6,6 +6,9 @@
 P1-04 将代码重命名为 `Game current content/GameContentRoot`；P0-05 的完整复制、私有
 SessionRoot、无共享可写 inode 和原生存档语义保持不变。
 
+范围说明：本文是历史 SessionRoot 验证记录；其中关于未来 Worker mount namespace、降权或资源
+隔离的表述已由 [`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md) 取代。
+
 计划日期：2026-08-05
 
 完成日期：2026-08-05

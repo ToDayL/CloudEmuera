@@ -57,7 +57,7 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, gameUpdated.StatusCode);
 
         csrf = await GetCsrfAsync(anonymous);
-        HttpResponseMessage created = await SendJsonAsync(anonymous, HttpMethod.Post, "/api/v1/admin/users", new CreateUserRequest("player-one", "player@example.test", "player-temporary-password", "PLAYER", null), csrf);
+        HttpResponseMessage created = await SendJsonAsync(anonymous, HttpMethod.Post, "/api/v1/admin/users", new CreateUserRequest("player-one", "player@example.test", "player-temporary-password", "PLAYER"), csrf);
         CurrentUserResponse player = await created.Content.ReadFromJsonAsync<CurrentUserResponse>() ?? throw new Xunit.Sdk.XunitException("Create user response was missing.");
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         Assert.True(player.MustChangePassword);

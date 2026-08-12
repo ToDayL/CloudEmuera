@@ -1,6 +1,7 @@
 using CloudEmuera.Application.Auditing;
 using CloudEmuera.Infrastructure.Identity;
 using CloudEmuera.Infrastructure.Persistence;
+using CloudEmuera.Infrastructure.Capacity;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,7 +19,8 @@ public sealed partial class BootstrapAdminInitializer(
     IServiceScopeFactory scopes,
     IConfiguration configuration,
     BootstrapReadiness readiness,
-    ILogger<BootstrapAdminInitializer> logger) : IHostedService
+    ILogger<BootstrapAdminInitializer> logger,
+    InstanceCapacityOptions? capacityOptions = null) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -88,7 +90,12 @@ public sealed partial class BootstrapAdminInitializer(
             return BootstrapAttemptResult.ConfigurationInvalid;
 
         DateTimeOffset now = scope.ServiceProvider.GetRequiredService<TimeProvider>().GetUtcNow();
-        QuotaProfileRow quota = new() { Id = $"qtp_{Guid.CreateVersion7():N}", Name = "Default", MaxActiveSessions = 4, MaxGamePackageBytes = 2L * 1024 * 1024 * 1024, MaxSessionBytes = 4L * 1024 * 1024 * 1024, MaxOutputBytesPerSecond = 1_048_576, CreatedAt = now, UpdatedAt = now, StateVersion = 0 };
+        InstanceCapacityOptions capacity = capacityOptions ?? InstanceCapacityOptions.Default;
+        capacity.Validate();
+        // These columns are retained only to satisfy the legacy user FK and
+        // old database readers. Runtime admission uses InstanceCapacityOptions;
+        // the output column has no runtime consumer and keeps a fixed legacy value.
+        QuotaProfileRow quota = new() { Id = $"qtp_{Guid.CreateVersion7():N}", Name = "Default", MaxActiveSessions = capacity.MaxActiveWorkers, MaxGamePackageBytes = capacity.MaxGamePackageBytes, MaxSessionBytes = capacity.MaxSessionRootBytes, MaxOutputBytesPerSecond = 1_048_576, CreatedAt = now, UpdatedAt = now, StateVersion = 0 };
         db.QuotaProfiles.Add(quota);
         LocalIdentityService identities = scope.ServiceProvider.GetRequiredService<LocalIdentityService>();
         CloudEmueraUser admin = identities.NewUser(username, normalizedUsername, email.Trim(), normalizedEmail, quota.Id, UserRole.Admin, password, now);

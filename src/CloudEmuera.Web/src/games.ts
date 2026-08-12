@@ -26,18 +26,6 @@ export interface GameFileItem {
   etag?: string | null;
 }
 
-export interface GameSearchMatch {
-  path: string;
-  line: number;
-  column: number;
-  preview: string;
-}
-
-export interface GameSearchPage {
-  items: GameSearchMatch[];
-  nextCursor: string | null;
-}
-
 export interface GameTextFile {
   path: string;
   content: string;
@@ -150,10 +138,6 @@ function stateVersionHeader(stateVersion: number): Record<string, string> {
   return { "X-Game-State-Version": String(stateVersion) };
 }
 
-function fileETagHeader(etag: string): Record<string, string> {
-  return { "X-File-If-Match": `"${etag}"` };
-}
-
 function scopeQuery(scope?: ContentScope | null, path?: string | null): string {
   const params = new URLSearchParams();
   if (scope) params.set("scope", scope);
@@ -231,22 +215,6 @@ export async function bindGamePackage(gameId: string, stateVersion: number, inge
   });
 }
 
-export async function startEditing(gameId: string, stateVersion: number): Promise<GameLibraryItem> {
-  const token = await getCsrfToken();
-  return apiRequest<GameLibraryItem>(`/games/${encodeURIComponent(gameId)}:edit`, {
-    method: "POST",
-    headers: mutationHeaders(token, stateVersionHeader(stateVersion)),
-  });
-}
-
-export async function discardWorkspace(gameId: string, stateVersion: number): Promise<GameLibraryItem> {
-  const token = await getCsrfToken();
-  return apiRequest<GameLibraryItem>(`/games/${encodeURIComponent(gameId)}/workspace`, {
-    method: "DELETE",
-    headers: mutationHeaders(token, stateVersionHeader(stateVersion)),
-  });
-}
-
 export async function listFiles(gameId: string, scope: ContentScope, path?: string | null): Promise<GameFileItem[]> {
   const page = await apiRequest<{ items: GameFileItem[] }>(`/games/${encodeURIComponent(gameId)}/files${scopeQuery(scope, path)}`);
   return page.items;
@@ -254,43 +222,6 @@ export async function listFiles(gameId: string, scope: ContentScope, path?: stri
 
 export async function readTextFile(gameId: string, scope: ContentScope, path: string): Promise<GameTextFile> {
   return apiRequest<GameTextFile>(`/games/${encodeURIComponent(gameId)}/file${scopeQuery(scope, path)}`);
-}
-
-export async function writeTextFile(
-  gameId: string,
-  path: string,
-  content: string,
-  stateVersion: number,
-  fileETag?: string | null,
-  requireAbsent = false,
-): Promise<GameLibraryItem> {
-  const token = await getCsrfToken();
-  const precondition = requireAbsent ? { "If-None-Match": "*" } : fileETag ? fileETagHeader(fileETag) : {};
-  return apiRequest<GameLibraryItem>(`/games/${encodeURIComponent(gameId)}/file?path=${encodeURIComponent(path)}`, {
-    method: "PUT",
-    headers: mutationHeaders(token, { ...stateVersionHeader(stateVersion), ...precondition }),
-    body: JSON.stringify({ content }),
-  });
-}
-
-export async function deletePath(gameId: string, path: string, stateVersion: number): Promise<GameLibraryItem> {
-  const token = await getCsrfToken();
-  return apiRequest<GameLibraryItem>(`/games/${encodeURIComponent(gameId)}/file?path=${encodeURIComponent(path)}`, {
-    method: "DELETE",
-    headers: mutationHeaders(token, stateVersionHeader(stateVersion)),
-  });
-}
-
-export async function searchFiles(
-  gameId: string,
-  scope: ContentScope,
-  query: string,
-  cursor?: string | null,
-  limit = 100,
-): Promise<GameSearchPage> {
-  const params = new URLSearchParams({ scope, q: query, limit: String(limit) });
-  if (cursor) params.set("cursor", cursor);
-  return apiRequest<GameSearchPage>(`/games/${encodeURIComponent(gameId)}/search?${params.toString()}`);
 }
 
 export async function listDiagnostics(gameId: string): Promise<GameDiagnosticItem[]> {

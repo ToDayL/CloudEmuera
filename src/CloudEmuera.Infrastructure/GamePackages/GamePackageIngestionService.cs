@@ -8,6 +8,7 @@ using Microsoft.Win32.SafeHandles;
 using CloudEmuera.Application.GamePackages;
 using CloudEmuera.Application.Auditing;
 using CloudEmuera.Infrastructure.Persistence;
+using CloudEmuera.Infrastructure.Capacity;
 using Microsoft.EntityFrameworkCore;
 
 namespace CloudEmuera.Infrastructure.GamePackages;
@@ -16,7 +17,8 @@ public sealed class GamePackageIngestionService(
     CloudEmueraDbContext db,
     GamePackageStorageOptions storageOptions,
     TimeProvider timeProvider,
-    IGamePackageIngestionFaultInjector? faultInjector = null) : IGamePackageIngestionService
+    IGamePackageIngestionFaultInjector? faultInjector = null,
+    InstanceCapacityOptions? capacityOptions = null) : IGamePackageIngestionService
 {
     private const string ArchiveFileName = "archive.zip.part";
     private const string CandidateDirectoryName = "candidate.work";
@@ -39,6 +41,8 @@ public sealed class GamePackageIngestionService(
         GamePackageIngestionLimits limits = requestedLimits ?? new();
         limits.Validate();
         storageOptions.Validate();
+        InstanceCapacityOptions capacity = capacityOptions ?? InstanceCapacityOptions.Default;
+        capacity.Validate();
         using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(limits.MaxDuration);
         string ingestionId = $"ing_{Guid.CreateVersion7():N}";
@@ -49,13 +53,13 @@ public sealed class GamePackageIngestionService(
         long effectiveExpandedLimit;
         await using (SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, deadline.Token).ConfigureAwait(false))
         {
-            var quota = await db.Users.AsNoTracking()
-                .Where(user => user.Id == request.OwnerUserId && user.Status == UserStatus.Active)
-                .Select(user => new { user.QuotaProfile!.MaxGamePackageBytes, user.QuotaProfile.MaxSessionBytes })
-                .SingleOrDefaultAsync(deadline.Token).ConfigureAwait(false)
-                ?? throw new GamePackageIngestionException("OWNER_NOT_ACTIVE", "The package owner is unavailable.");
-            effectiveArchiveLimit = Math.Min(limits.MaxArchiveBytes, quota.MaxGamePackageBytes);
-            effectiveExpandedLimit = Math.Min(limits.MaxExpandedBytes, quota.MaxSessionBytes);
+            bool ownerActive = await db.Users.AsNoTracking()
+                .AnyAsync(user => user.Id == request.OwnerUserId && user.Status == UserStatus.Active, deadline.Token)
+                .ConfigureAwait(false);
+            if (!ownerActive)
+                throw new GamePackageIngestionException("OWNER_NOT_ACTIVE", "The package owner is unavailable.");
+            effectiveArchiveLimit = Math.Min(limits.MaxArchiveBytes, capacity.MaxGamePackageBytes);
+            effectiveExpandedLimit = Math.Min(limits.MaxExpandedBytes, capacity.MaxSessionRootBytes);
             long reservation = checked(effectiveArchiveLimit + effectiveExpandedLimit);
             long active = await db.GamePackageIngestions.SumAsync(row => (long?)row.ReservedBytes, deadline.Token).ConfigureAwait(false) ?? 0;
             if (active > storageOptions.MaxStagingReservedBytes - reservation)
@@ -422,7 +426,7 @@ public sealed class GamePackageIngestionService(
 
     /// <summary>
     /// Normalizes UTF-16/UTF-32 text files (with BOM) to UTF-8 inside the private
-    /// staging copy so validation, the editor, the runtime and the content digest
+    /// staging copy so validation, the file viewer, the runtime and the content digest
     /// all agree on a canonical encoding (ADR-0014). Shift-JIS and UTF-8 files are
     /// left untouched because the upstream runtime auto-detects them.
     /// </summary>
@@ -666,7 +670,7 @@ public sealed class GamePackageIngestionService(
     /// <summary>
     /// After the archive is received and expanded, settle the staging reservation
     /// to the actual bytes on disk instead of the worst-case archive+expanded
-    /// quota. The conservative start reservation still bounds concurrent uploads;
+    /// budget. The conservative start reservation still bounds concurrent uploads;
     /// settling prevents a handful of unconsumed READY packages from exhausting
     /// the whole staging budget (each upload would otherwise reserve several GiB
     /// regardless of its real size).

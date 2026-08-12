@@ -16,8 +16,6 @@ public sealed record GameLibraryItem(
     DateTimeOffset UpdatedAt);
 
 public sealed record GameFileItem(string Path, bool IsDirectory, long Bytes, string? ETag = null);
-public sealed record GameSearchMatch(string Path, int Line, int Column, string Preview);
-public sealed record GameSearchPage(IReadOnlyList<GameSearchMatch> Items, string? NextCursor);
 public sealed record GameTextFile(string Path, string Content, string Encoding, bool HasBom, long Bytes, string ETag, int StateVersion);
 public sealed record GameFileDownload(string FileName, long Bytes, string ETag, Stream Content);
 public sealed record GameContentOperationItem(string Id, string Type, string Status, string? ContentDigest, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt);
@@ -87,15 +85,10 @@ public interface IGameLibraryService
     Task DeleteAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<GameLibraryItem> SetBlockedAsync(CurrentActor actor, string gameId, bool blocked, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<GameLibraryItem> BindPackageAsync(CurrentActor actor, string gameId, string ingestionId, string contentDigest, int expectedStateVersion, CancellationToken cancellationToken = default);
-    Task<GameLibraryItem> StartEditingAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
-    Task<GameLibraryItem> DiscardWorkspaceAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<GameFileItem>> ListFilesAsync(CurrentActor actor, string gameId, string? scope, string? directory, CancellationToken cancellationToken = default);
     Task<GameTextFile> ReadTextFileAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default);
-    Task<GameSearchPage> SearchAsync(CurrentActor actor, string gameId, string? scope, string query, string? cursor = null, int limit = 100, CancellationToken cancellationToken = default);
     Task<GameFileDownload> OpenDownloadAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default);
     Task<GameContentOperationItem?> GetOperationAsync(CurrentActor actor, string gameId, string operationId, CancellationToken cancellationToken = default);
-    Task<GameLibraryItem> WriteTextFileAsync(CurrentActor actor, string gameId, string path, string content, int expectedStateVersion, string? expectedFileETag = null, bool requireAbsent = false, CancellationToken cancellationToken = default);
-    Task<GameLibraryItem> DeletePathAsync(CurrentActor actor, string gameId, string path, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<GameDiagnosticItem> OverrideDiagnosticAsync(CurrentActor actor, string gameId, string diagnosticId, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<GameDiagnosticItem>> ListDiagnosticsAsync(CurrentActor actor, string gameId, CancellationToken cancellationToken = default);
     Task<GameValidationResult> ValidateAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
@@ -116,21 +109,14 @@ public static class GameLibraryErrorCodes
     public const string Conflict = "GAME_CONFLICT";
     public const string StateVersionConflict = "GAME_STATE_CONFLICT";
     public const string InvalidInput = "GAME_INPUT_INVALID";
-    public const string WorkspaceNotFound = "WORKSPACE_NOT_FOUND";
-    public const string WorkspaceAlreadyExists = "WORKSPACE_ALREADY_EXISTS";
     public const string FileNotFound = "FILE_NOT_FOUND";
-    public const string FileTypeNotEditable = "FILE_TYPE_NOT_EDITABLE";
-    public const string FileTooLargeToEdit = "FILE_TOO_LARGE_TO_EDIT";
+    public const string FileTooLargeToRead = "FILE_TOO_LARGE_TO_READ";
     public const string TextEncodingUnsupported = "TEXT_ENCODING_UNSUPPORTED";
-    public const string TextNotRepresentable = "TEXT_NOT_REPRESENTABLE";
     public const string ValidationFailed = "GAME_VALIDATION_FAILED";
     public const string ValidationInProgress = "VALIDATION_IN_PROGRESS";
     public const string ActivationInProgress = "ACTIVATION_IN_PROGRESS";
     public const string ActivationValidationFailed = "ACTIVATION_VALIDATION_FAILED";
     public const string UnsafePath = "GAME_PATH_UNSAFE";
-    public const string FileChanged = "FILE_CHANGED";
-    public const string SearchCursorInvalid = "SEARCH_CURSOR_INVALID";
-    public const string SearchLimitExceeded = "SEARCH_LIMIT_EXCEEDED";
     public const string IdempotencyConflict = "IDEMPOTENCY_KEY_REUSED";
     public const string DiagnosticOverrideNotAllowed = "DIAGNOSTIC_OVERRIDE_NOT_ALLOWED";
 }

@@ -137,14 +137,11 @@ public sealed class LocalIdentityService(
         await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, cancellationToken).ConfigureAwait(false);
         if (await db.Users.AnyAsync(user => user.NormalizedLoginName == normalizedUsername, cancellationToken).ConfigureAwait(false)) throw new IdentityConflictException("USERNAME_ALREADY_EXISTS");
         if (await db.Users.AnyAsync(user => user.NormalizedEmail == normalizedEmail, cancellationToken).ConfigureAwait(false)) throw new IdentityConflictException("EMAIL_ALREADY_EXISTS");
-        string? requestedQuotaProfileId = command.QuotaProfileId;
-        string quotaProfileId;
-        if (string.IsNullOrWhiteSpace(requestedQuotaProfileId))
-        {
-            quotaProfileId = await db.QuotaProfiles.OrderBy(profile => profile.CreatedAt).ThenBy(profile => profile.Id).Select(profile => profile.Id).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false) ?? throw new IdentityConflictException("QUOTA_PROFILE_NOT_FOUND");
-        }
-        else if (!await db.QuotaProfiles.AnyAsync(profile => profile.Id == requestedQuotaProfileId, cancellationToken).ConfigureAwait(false)) throw new IdentityConflictException("QUOTA_PROFILE_NOT_FOUND");
-        else quotaProfileId = requestedQuotaProfileId;
+        // Keep the required foreign key populated for the first compatibility
+        // migration, but do not select or schedule users by quota profile.
+        string quotaProfileId = await db.QuotaProfiles.OrderBy(profile => profile.CreatedAt).ThenBy(profile => profile.Id)
+            .Select(profile => profile.Id).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false)
+            ?? throw new IdentityConflictException("QUOTA_PROFILE_NOT_FOUND");
         DateTimeOffset now = timeProvider.GetUtcNow();
         CloudEmueraUser user = NewUser(command.Username, normalizedUsername, command.Email.Trim(), normalizedEmail, quotaProfileId, role, command.TemporaryPassword, now);
         AddAudit(AuditActions.UserCreated, "USER", user.Id, "SUCCEEDED", "ADMIN", actor.UserId);

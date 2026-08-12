@@ -15,8 +15,9 @@ internal sealed class WorkerRegistrationRejectedException(string reasonCode) : E
 
 /// <summary>
 /// Owns the single Worker-side gRPC writer. Runtime code only enqueues bounded
-/// messages; it never waits on a response stream write. A broken UDS stream is
-/// retried with the same immutable binding and token.
+/// messages; it never waits on a response stream write. The UDS stream is the
+/// Worker lifetime boundary: once it closes, this process exits and does not
+/// establish another control stream.
 /// </summary>
 internal sealed class WorkerConnectionLoop : IAsyncDisposable
 {
@@ -45,6 +46,7 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
     private Task? loopTask;
     private long lastOutputSequence;
     private int registrationAttempted;
+    private int controlStreamClosed;
 
     public WorkerConnectionLoop(
         WorkerBootstrapDocument bootstrap,
@@ -60,6 +62,8 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
 
     public Task RegistrationAccepted => registrationAccepted.Task;
 
+    public bool ControlStreamClosed => Volatile.Read(ref controlStreamClosed) != 0;
+
     public void SetLastOutputSequence(long sequence) => Interlocked.Exchange(ref lastOutputSequence, sequence);
 
     public Task RunAsync()
@@ -71,19 +75,21 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
     public async Task SendControlAsync(WorkerEnvelope message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
+        using var sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.Token);
         var pending = new PendingWorkerMessage(message);
-        await controlMessages.Writer.WriteAsync(pending, cancellationToken).ConfigureAwait(false);
+        await controlMessages.Writer.WriteAsync(pending, sendCancellation.Token).ConfigureAwait(false);
         outputAvailable.Release();
-        await pending.Written.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await pending.Written.Task.WaitAsync(sendCancellation.Token).ConfigureAwait(false);
     }
 
     public async Task SendDisplayAsync(WorkerEnvelope message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
+        using var sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.Token);
         var pending = new PendingWorkerMessage(message);
-        await displayMessages.Writer.WriteAsync(pending, cancellationToken).ConfigureAwait(false);
+        await displayMessages.Writer.WriteAsync(pending, sendCancellation.Token).ConfigureAwait(false);
         outputAvailable.Release();
-        await pending.Written.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await pending.Written.Task.WaitAsync(sendCancellation.Token).ConfigureAwait(false);
     }
 
     public async Task StopAsync()
@@ -118,63 +124,26 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
 
     private async Task RunLoopAsync(CancellationToken cancellationToken)
     {
-        DateTimeOffset connectDeadline = DateTimeOffset.FromUnixTimeMilliseconds(
-            bootstrap.ConnectDeadlineUnixMilliseconds);
-        TimeSpan backoff = TimeSpan.FromMilliseconds(25);
-        bool hadConnection = false;
-        DateTimeOffset? reconnectDeadline = null;
-
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            try
-            {
-                await ConnectAndServeAsync(cancellationToken).ConfigureAwait(false);
-                hadConnection = true;
-                reconnectDeadline = null;
-                backoff = TimeSpan.FromMilliseconds(25);
-            }
-            catch (WorkerRegistrationRejectedException exception)
-            {
-                LogLifecycle("registration_rejected", exception.ReasonCode, LogLevel.Warning);
+            await ConnectAndServeAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (WorkerRegistrationRejectedException exception)
+        {
+            LogLifecycle("registration_rejected", exception.ReasonCode, LogLevel.Warning);
+            registrationAccepted.TrySetException(exception);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            string reason = exception is RpcException rpcException
+                ? $"connection_closed:{rpcException.StatusCode}"
+                : $"connection_closed:{exception.GetType().Name}";
+            LogLifecycle("connection_closed", reason, LogLevel.Warning);
+            if (!registrationAccepted.Task.IsCompleted)
                 registrationAccepted.TrySetException(exception);
-                return;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (RpcException) when (cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
-            {
-                string reason = exception is RpcException rpcException
-                    ? $"connection_failed:{rpcException.StatusCode}"
-                    : $"connection_failed:{exception.GetType().Name}";
-                LogLifecycle("connection_retry", reason, LogLevel.Warning);
-                if (!hadConnection && DateTimeOffset.UtcNow >= connectDeadline)
-                {
-                    registrationAccepted.TrySetException(
-                        new TimeoutException(IpcReasonCodes.UnsupportedMessage));
-                    return;
-                }
-                if (hadConnection)
-                {
-                    reconnectDeadline ??= DateTimeOffset.UtcNow.AddMilliseconds(bootstrap.DisconnectGracePeriodMilliseconds);
-                    if (DateTimeOffset.UtcNow >= reconnectDeadline.Value)
-                    {
-                        LogLifecycle("connection_grace_expired", IpcReasonCodes.WorkerStopping, LogLevel.Warning);
-                        return;
-                    }
-                }
-            }
-
-            if (cancellationToken.IsCancellationRequested)
-                return;
-
-            await Task.Delay(backoff, cancellationToken).ConfigureAwait(false);
-            backoff = TimeSpan.FromMilliseconds(Math.Min(backoff.TotalMilliseconds * 2, 1_000));
         }
     }
 
@@ -258,6 +227,15 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
             catch (OperationCanceledException)
             {
             }
+            catch (Exception exception)
+            {
+                LogLifecycle("writer_closed", exception.GetType().Name, LogLevel.Warning);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref controlStreamClosed, 1);
+                lifetime.Cancel();
+            }
         }
     }
 
@@ -269,20 +247,14 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
         {
             if (controlMessages.Reader.TryRead(out PendingWorkerMessage? control))
             {
-                await WriteWithRetryOnReconnectAsync(
-                        writer,
-                        control,
-                        controlMessages.Writer)
+                await WritePendingAsync(writer, control)
                     .ConfigureAwait(false);
                 continue;
             }
 
             if (displayMessages.Reader.TryRead(out PendingWorkerMessage? display))
             {
-                await WriteWithRetryOnReconnectAsync(
-                        writer,
-                        display,
-                        displayMessages.Writer)
+                await WritePendingAsync(writer, display)
                     .ConfigureAwait(false);
                 continue;
             }
@@ -291,10 +263,9 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
         }
     }
 
-    private async Task WriteWithRetryOnReconnectAsync(
+    private async Task WritePendingAsync(
         IClientStreamWriter<WorkerEnvelope> writer,
-        PendingWorkerMessage pending,
-        ChannelWriter<PendingWorkerMessage> queue)
+        PendingWorkerMessage pending)
     {
         try
         {
@@ -303,10 +274,7 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
         }
         catch
         {
-            if (!lifetime.IsCancellationRequested && queue.TryWrite(pending))
-                outputAvailable.Release();
-            else
-                pending.Written.TrySetCanceled();
+            pending.Written.TrySetCanceled(lifetime.Token);
             throw;
         }
     }

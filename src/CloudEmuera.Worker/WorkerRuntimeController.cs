@@ -695,12 +695,28 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task FinishAfterCancellationAsync()
     {
-        await SendStoppedAsync(
-                "stop_requested",
-                graceful: true,
-                DateTimeOffset.UtcNow.AddMilliseconds(bootstrap.ShutdownGracePeriodMilliseconds).ToUnixTimeMilliseconds(),
-                CancellationToken.None)
-            .ConfigureAwait(false);
+        try
+        {
+            await SendStoppedAsync(
+                    "stop_requested",
+                    graceful: true,
+                    DateTimeOffset.UtcNow.AddMilliseconds(bootstrap.ShutdownGracePeriodMilliseconds).ToUnixTimeMilliseconds(),
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (connection.ControlStreamClosed)
+        {
+            LogLifecycle("worker_stopped", "control_stream_closed", LogLevel.Warning);
+        }
+        catch (InvalidOperationException) when (connection.ControlStreamClosed)
+        {
+            LogLifecycle("worker_stopped", "control_stream_closed", LogLevel.Warning);
+        }
+        catch (OperationCanceledException)
+        {
+            LogLifecycle("worker_stopped", "shutdown_deadline_exceeded", LogLevel.Warning);
+            Complete(WorkerExitCodes.ShutdownDeadlineExceeded);
+        }
         Complete(WorkerExitCodes.Normal);
     }
 
@@ -742,6 +758,14 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                     Graceful = graceful
                 }
             }, deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (connection.ControlStreamClosed)
+        {
+            LogLifecycle("worker_stopped", "control_stream_closed", LogLevel.Warning);
+        }
+        catch (InvalidOperationException) when (connection.ControlStreamClosed)
+        {
+            LogLifecycle("worker_stopped", "control_stream_closed", LogLevel.Warning);
         }
         catch (OperationCanceledException)
         {

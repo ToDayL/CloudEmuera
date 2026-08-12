@@ -2,9 +2,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | 草案 v0.3 |
-| 日期 | 2026-08-11 |
-| 输入文档 | [requirements.zh-CN.md](./requirements.zh-CN.md) v0.3 |
+| 文档状态 | 草案 v0.4 |
+| 日期 | 2026-08-12 |
+| 输入文档 | [requirements.zh-CN.md](./requirements.zh-CN.md) v0.4 |
 | 目标阶段 | Phase 0、Phase 1（MVP），并为 Phase 2 预留扩展点 |
 | 目标读者 | 架构、前端、后端、运行时、运维、安全与测试开发者 |
 
@@ -13,6 +13,9 @@
 本文档把需求文档中的产品要求和总体架构细化为可实施的软件设计，定义进程边界、模块职责、领域状态、持久化模型、文件布局、HTTP/WebSocket/IPC 协议、关键一致性算法、安全控制、故障处理和测试策略。
 
 本文档不替代需求文档。若两者冲突，以带编号的需求为准，并通过设计评审修改本文档。本文中的“决定”表示 MVP 实现约束；“建议”表示可在不破坏接口语义的前提下调整；“待决”表示实现前仍需产品或技术评审确认。
+
+范围说明：本文中保留的早期独立控制面、强隔离、细粒度资源和控制流恢复内容只描述历史实现或替代
+方案；当前 MVP 以 [`ADR-0017`](adr/0017-trusted-self-hosted-mvp-simplification.md) 及 P1-S01 为准。
 
 ## 2. 范围与设计假设
 
@@ -26,6 +29,10 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 
 系统只依赖一个挂载到 `/data` 的持久化目录，不依赖外部数据库、对象存储、消息队列或远程文件系统。SQLite 是权威元数据存储，文件系统是游戏内容、完整 SessionRoot、原生存档、日志和备份的权威内容存储。
 
+依据 ADR-0017，本实例由部署者为自己及其信任参与者运行。身份、角色和资源授权仍是应用级边界，
+但 Worker 不作为敌对租户执行隔离边界；部署者只运行其信任的游戏。游戏包、路径、编码、显示和浏览器
+输入仍按不安全数据格式验证，以防损坏输入、文件逃逸和浏览器注入。
+
 ### 2.2 暂定决策
 
 需求文档第 17 节仍有未决项。为使接口设计可继续推进，本文采用以下可替换假设：
@@ -34,25 +41,26 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | --- | --- | --- |
 | 身份认证 | 本地账户、email-only 登录、可撤销 HttpOnly Cookie Session；未初始化实例从 `.env` 原子 bootstrap 首个管理员 | `IIdentityProvider` 可替换为单一 OIDC Provider；bootstrap 完成后永久忽略首次配置且不开放注册 |
 | 多客户端输入 | 同一 `promptId` 的第一个有效输入生效 | 后续可在 Realtime Gateway 前增加控制权租约 |
-| Session 空闲 | 断连不自动关闭，持续占用活动配额 | 管理员策略只能通过显式配置启用 |
+| Session 空闲 | 断连不自动关闭，持续占用实例级活动 Worker 名额 | 管理员策略只能通过显式配置启用 |
 | 存档删除 | 无活动 Worker 时显式确认后直接删除 | 历史恢复由 SessionRoot 外部备份提供 |
 | HTML/媒体兼容 | 仅开放结构化允许列表中已测试的节点 | 能力由运行时清单和兼容性矩阵声明 |
 | 跨服务器迁移 | MVP 不定义可移植整包格式 | 数据备份不依赖该格式 |
 
-配额数值、测试游戏集、字体授权和具体媒体兼容等级不在本文中硬编码，统一从部署配置和运行时能力清单读取。
+实例级容量数值、测试游戏集、字体授权和具体媒体兼容等级不在本文中硬编码，统一从部署配置和运行时能力清单读取。MVP 不定义按用户或进程拆分的资源配额。
 
 ### 2.3 关键设计原则
 
 1. **控制面与执行面分离**：API 管理身份、元数据和连接，Worker 独占解释器状态。
-2. **一个活动 Session 一个进程**：隔离 Emuera 全局状态，并允许独立限制和终止资源。
+2. **一个活动 Session 一个进程**：隔离 Emuera 全局状态，并支持独立生命周期和有界终止。
 3. **API 独占运行期数据库并确认进程事实**：Session 状态是持久化事实；API 内 Worker Manager
    观测进程、心跳和退出并以条件更新回写，不能只依赖进程内注册表。
-4. **所有跨进程消息均可重试**：控制命令有 `commandId`，输入有 `clientMessageId`，状态变化有版本号。
+4. **管理命令可重试、实时状态可替换**：持久 HTTP 命令有幂等键，控制命令有 `commandId`，输入
+   有有界内存去重的 `clientMessageId`；断线显示状态由完整 Snapshot 替换，不持久补发历史增量。
 5. **epoch fencing 优先于连接状态**：任何旧 Worker 即使恢复连接，也不能影响当前 Session。
-6. **当前内容原子替换，Session 工作区私有**：Game 只有一份当前可运行内容；编辑发生在独立
-   workspace，验证后原子替换当前内容；每个 Session 只写自己的完整副本。
+6. **当前内容原子替换，Session 工作区私有**：Game 只有一份当前可运行内容；上传包进入独立
+   摄取 workspace，验证后原子替换当前内容；每个 Session 只写自己的完整副本。
 7. **显示数据结构化**：浏览器不执行游戏提供的 HTML、脚本或任意 URL。
-8. **有界缓存**：输出历史、连接队列、日志和去重记录均有明确上限及降级方式。
+8. **有界缓存**：Snapshot、实时连接队列、日志和当前 Worker 去重记录均有明确上限及降级方式。
 
 ### 2.4 技术选型结论
 
@@ -64,46 +72,48 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | Web/API | ASP.NET Core Minimal APIs + Kestrel | 10.x | 原生支持 WebSocket、认证授权、限流、健康检查、静态文件和 OpenAPI；单进程即可服务 API 与 SPA |
 | 身份认证 | ASP.NET Core Identity + Cookie Authentication + Data Protection | 10.x | MVP 复用成熟的用户、密码、角色和安全戳能力；Data Protection key ring 持久化到 `/data`，保留替换为 OIDC 的认证端口 |
 | API 描述 | ASP.NET Core OpenAPI + 仓库内 JSON Schema | 10.x / schema v1 | HTTP 契约由 OpenAPI 生成；WebSocket 负载用 JSON Schema 单独校验和生成 TypeScript 类型 |
-| 浏览器实时通信 | ASP.NET Core 原生 WebSocket | RFC 6455，应用协议 v1 | CloudEmuera 需要自定义 epoch、sequence、snapshot、ack 和背压语义；不采用 SignalR 的 Hub/RPC 抽象 |
+| 浏览器实时通信 | ASP.NET Core 原生 WebSocket | RFC 6455，应用协议 v1 | CloudEmuera 需要自定义 epoch、sequence、完整 snapshot 替换和背压语义；不采用 SignalR 的 Hub/RPC 抽象 |
 | WebSocket 编码 | UTF-8 JSON + `System.Text.Json` source generation | 应用协议 v1 | 易调试、浏览器零额外解码依赖；达到性能瓶颈后才通过新协议版本评估 MessagePack |
 | 进程间通信 | gRPC 双向流 + Protocol Buffers over Unix Domain Socket | IPC 协议 v1 | 强类型、代码生成、截止时间和流式通信成熟；UDS 不暴露容器网络端口 |
 | 元数据数据库 | SQLite | 3.x，随运行镜像锁定 | 符合单容器和本地备份要求，无外部服务；使用 WAL、外键和 busy timeout |
-| 数据访问 | EF Core SQLite Provider；关键 CAS 使用参数化原生 SQL | EF Core 10.x | 普通 CRUD、关系和迁移成本低；状态机、配额预留和 epoch 更新用显式 SQL 保证条件更新可审查 |
+| 数据访问 | EF Core SQLite Provider；关键 CAS 使用参数化原生 SQL | EF Core 10.x | 普通 CRUD、关系和迁移成本低；状态机、实例级容量检查和 epoch 更新用显式 SQL 保证条件更新可审查 |
 | 数据库迁移 | 独立 `CloudEmuera.Migrator` 控制台程序 | 与应用同版本 | 容器初始化阶段执行并持有独占迁移锁；API 和 Worker 不在运行时自动迁移 |
 | 后台任务 | ASP.NET Core `BackgroundService` + SQLite 持久任务表 | .NET 10 | 上传验证、孤儿清理等任务需要重启可恢复；不引入外部消息队列 |
 | Runtime Host | C# Console Worker + 仓库内 Emuera.EM+EE 固定源码快照 | 清单锁定 commit 与 integration version | 保持原生解释器和存档格式；直接修改内置源码并通过适配层替换 WinForms/GDI+、路径、输入和显示 |
 | 图像与字体兼容层 | SkiaSharp + HarfBuzzSharp | 按 Runtime manifest 锁定 | 替代仅限 Windows 的 GDI+ 测量和解码路径，提供 Linux 上可重复的字体 shaping、测量与图片元数据处理 |
 | 游戏包格式 | MVP 仅接受 ZIP；使用 `System.IO.Compression` 安全逐项解包 | .NET 10 | 收窄攻击面且不增加原生解压依赖；7z/RAR 等格式需另行评审和协议声明 |
 | 文本编码 | `System.Text.Encoding` + `System.Text.Encoding.CodePages` 严格解码器 | .NET 10 | 明确支持 UTF-8 BOM/无 BOM 与 Shift-JIS，并禁用依赖系统 locale 的隐式回退 |
-| 容器进程管理 | s6-overlay v3 | 构建时锁定精确版本和 SHA-256 | 作为 PID 1 监督 API、回收僵尸进程并转发信号；Session Worker 由 API Worker Manager 管理 |
-| Worker 沙箱 | NsJail + Linux namespaces + cgroup v2 + seccomp-bpf + rlimit | NsJail 3.x，精确版本/摘要锁定 | 一个经过专门审计的 launcher 统一提供只读 bind mount、网络隔离和资源限制；封装在 `IWorkerSandbox`，首选 rootless user namespace |
+| 容器进程管理 | 轻量 init/PID 1 | 随生产镜像锁定 | 只负责转发信号和回收僵尸进程；API 是唯一长驻服务，Session Worker 由 API Worker Manager 管理 |
+| Worker 进程约束 | 同容器非 root 子进程 + 私有启动绑定 + 可选容器整体限制 | 随生产镜像锁定 | 独立进程隔离 Emuera 全局状态并支持有界终止；API 与 Worker 可同 UID，MVP 不宣称具备敌对租户隔离 |
 | 前端语言和框架 | TypeScript + React | TypeScript 7.x、React 19.x | 适合复杂交互和长期状态界面，生态成熟；不采用 SSR，输出纯 SPA |
 | 前端构建 | Vite + Node.js + pnpm | Vite 8.x、Node.js 24 LTS、pnpm 11.x | 仅在构建阶段使用 Node；生产镜像不包含 Node.js，依赖由 lockfile 固定 |
 | 路由与服务端状态 | React Router + TanStack Query | 当前兼容主版本，lockfile 固定 | 路由与 HTTP 缓存/失效交给成熟库；游戏实时状态不进入 Query 缓存 |
 | 游戏实时状态 | React `useSyncExternalStore` + 自研 Session Store | 内部接口 v1 | 高频增量需要按 sequence 串行应用和有界内存，避免通用全局状态库造成不必要重渲染 |
 | 样式与无障碍 | CSS Modules + CSS Custom Properties + React Aria primitives | 按发布锁定 | 保持样式可控，以可访问交互原语实现焦点、键盘和触摸行为；不引入完整视觉组件框架 |
-| ERB/CSV 编辑器 | Monaco Editor，按需加载 | 按发布锁定 | 提供大文本、搜索、编码提示和诊断标记；移动端降级为轻量文本编辑器/只读查看 |
+| Game 文件查看 | React 只读文本/目录视图 | 随前端版本 | 展示编码和 Validator 诊断并支持下载；不引入浏览器写入或搜索状态 |
 | 显示渲染 | React DOM + Canvas 2D + Web Audio API | 浏览器标准 | 文本和按钮使用可访问 DOM；Sprite/背景层使用 Canvas；音频使用浏览器原生 API |
 | 日志 | `Microsoft.Extensions.Logging` JSON Console | .NET 10 | 默认写 stdout/stderr 交给容器采集；可选写 `/data/logs` 轮转文件，不绑定专有日志服务 |
-| 指标与追踪 | OpenTelemetry .NET + OTLP；Prometheus scrape endpoint 可选 | 按发布锁定 | traces、metrics、logs 使用同一标准模型；未配置外部 Collector 时系统仍可独立运行 |
+| 诊断 | 结构化日志 + health/version + 管理员基本状态接口 | 随应用版本 | 保留请求/Session/Worker 关联与最近错误；MVP 不引入专用遥测平台或时序容量面板 |
 | 后端测试 | xUnit + ASP.NET Core `WebApplicationFactory` | 与 .NET 10 兼容版本 | 单元、契约和 API 集成测试统一在 .NET 工具链运行 |
 | 前端测试 | Vitest + Testing Library | 与 Vite 8 兼容版本 | 组件和状态归约器测试速度快，并复用 Vite 配置 |
 | 端到端测试 | Playwright | 按发布锁定 | 同时覆盖 Chromium、Firefox、WebKit 和移动设备配置，匹配浏览器兼容需求 |
-| 性能测试 | NBomber（内部/HTTP/WS）+ 自研代表性 ERB workload | 按发布锁定 | C# 场景便于注入 Session、输入和持续输出负载；运行时执行仍使用真实 Worker |
+| 容量验证 | xUnit 集成场景 + 代表性 ERB workload | 随测试工程 | 验证活动 Worker 上限、持续输出和有界队列；MVP 不引入独立负载测试框架 |
 | 容器镜像 | Debian slim 系列的 .NET 10 ASP.NET Runtime 多阶段镜像 | digest 锁定 | 相比 Alpine/musl 对原生库、字体和诊断工具兼容性更稳；最终镜像不包含 SDK/Node |
 
 ### 2.5 选型边界与明确不选项
 
 #### 2.5.1 SignalR 与原生 WebSocket
 
-ASP.NET Core 官方通常建议业务应用优先考虑 SignalR，但 CloudEmuera 的实时协议本身就是领域核心，需要显式控制恢复屏障、序号连续性、快照替换、逐连接队列和输入回执。因此 MVP 选择原生 WebSocket，避免同时维护 SignalR 重连语义和 CloudEmuera 重连语义。若将来需要 SSE/long polling 降级，再以独立 ADR 评估 SignalR，不能改变现有应用层游标语义。
+ASP.NET Core 官方通常建议业务应用优先考虑 SignalR，但 CloudEmuera 需要显式控制完整 Snapshot
+替换、序号缺口检测、逐连接有界队列和输入回执。因此 MVP 选择原生 WebSocket，避免同时维护
+SignalR 重连语义。若将来需要 SSE/long polling 降级，再以独立 ADR 评估。
 
 #### 2.5.2 EF Core 与关键状态更新
 
 EF Core 用于身份、Game、普通查询和迁移；以下操作必须使用显式事务和参数化条件 SQL，并检查受影响行数：
 
 - SessionRoot 存储预算与 `CREATING` Session 插入；
-- 活动配额检查与 `CLOSED/CRASHED → STARTING` open 转换；
+- 实例级活动 Worker 上限检查与 `CLOSED/CRASHED → STARTING` open 转换；
 - `state_version` 比较交换；
 - Worker epoch 递增和租约替换；
 - 第一个 prompt 输入抢占；
@@ -117,7 +127,9 @@ gRPC/Protobuf 只用于容器内 API 和 Worker。浏览器不使用 gRPC-Web，
 
 #### 2.5.4 前端状态划分
 
-TanStack Query 只管理 HTTP 资源，例如游戏列表、Session 元数据和存档索引。游戏控制台的 snapshot、delta、prompt 和 ack 由每 Session 独立 Store 管理，按 `(workerEpoch, sequence)` 归约。两者不得复制保存同一份权威实时状态。
+TanStack Query 只管理 HTTP 资源，例如游戏列表、Session 元数据和存档索引。游戏控制台的完整
+snapshot、后续实时 batch、prompt 和当前 Worker 内输入回执由每 Session 独立 Store 管理，按
+`(workerEpoch, sequence)` 归约。两者不得复制保存同一份权威实时状态。
 
 #### 2.5.5 不引入的基础设施
 
@@ -126,9 +138,9 @@ MVP 不采用 PostgreSQL、Redis、Kafka/RabbitMQ、对象存储、Kubernetes、
 ### 2.6 版本与依赖治理
 
 - 仓库固定 `.NET SDK 10.0.x` feature band、Node.js 24 LTS、pnpm 主版本，并提交 NuGet/npm lockfile；
-- 基础镜像、s6-overlay 和下载的外部二进制同时锁定版本与 SHA-256/digest；
+- 基础镜像、轻量 init 和下载的外部二进制同时锁定版本与 SHA-256/digest；
 - .NET 与 ASP.NET Core 跟随 .NET 10 每月安全补丁，不锁死到初始 patch；
-- React、Vite、EF Core、gRPC、OpenTelemetry 等主版本升级必须通过兼容性、安全和性能回归；
+- React、Vite、EF Core、gRPC 等主版本升级必须通过兼容性、安全和性能回归；
 - 生产构建生成 SBOM、NuGet/npm 依赖清单和 Runtime manifest；
 - 前端构建产物复制进 ASP.NET Core `wwwroot`，最终运行镜像不保留 npm token、源码映射（除非显式启用）或 Node 工具链；
 - 所有第三方库在引入前检查许可证、维护状态和已知安全问题，避免仅为一个简单辅助函数新增运行时依赖。
@@ -139,7 +151,7 @@ MVP 不采用 PostgreSQL、Redis、Kafka/RabbitMQ、对象存储、Kubernetes、
 src/
 ├── CloudEmuera.Domain/            # 领域实体、状态机、策略，无基础设施依赖
 ├── CloudEmuera.Application/       # 用例、端口、DTO、授权调用
-├── CloudEmuera.Infrastructure/    # EF Core、SQLite、文件系统、Worker 进程/沙箱、审计实现
+├── CloudEmuera.Infrastructure/    # EF Core、SQLite、文件系统、Worker 子进程、审计实现
 ├── CloudEmuera.Api/               # ASP.NET Core HTTP/WS、Worker IPC、静态 SPA
 ├── CloudEmuera.Contracts/         # HTTP/WS schema 与共享常量
 ├── CloudEmuera.Ipc/               # .proto 与 gRPC 生成代码
@@ -157,7 +169,7 @@ tests/
 ```
 
 依赖方向必须保持：`Domain ← Application ← adapters`，以及 `RuntimeAdapter ← EmueraRuntime ← Worker`。
-`Application` 只定义 Worker 生命周期端口和事务用例；进程/UDS/沙箱实现位于外部适配层。
+`Application` 只定义 Worker 生命周期端口和事务用例；进程/UDS 实现位于外部适配层。
 `RuntimeAdapter` 不引用真实解释器、Worker 或 Web/API；`Worker` 不引用 EF Core；API 不加载
 Emuera 解释器；前端只依赖生成的公开契约。
 
@@ -169,10 +181,8 @@ Emuera 解释器；前端只依赖生成的公开契约。
 - [EF Core SQLite 限制](https://learn.microsoft.com/en-us/ef/core/providers/sqlite/limitations)：明确了并发 token 和表重建式迁移等限制，本文据此采用应用版本号和独立 Migrator。
 - [React 19](https://react.dev/blog/2024/12/05/react-19) 与 [Vite 8](https://vite.dev/blog/announcing-vite8)：采用当前稳定主版本；Node.js 仅参与构建。
 - [Node.js 发布策略](https://nodejs.org/en/about/previous-releases)：构建环境采用 Node.js 24 LTS，不采用 Current 分支。
-- [OpenTelemetry .NET](https://opentelemetry.io/docs/languages/dotnet/)：traces、metrics、logs 均为稳定信号。
 - [Playwright 浏览器矩阵](https://playwright.dev/docs/browsers)：可覆盖 Chromium、Firefox、WebKit 及移动设备配置。
-- [s6-overlay](https://github.com/just-containers/s6-overlay)：提供容器 PID 1、服务依赖、独立监督和有序停止能力。
-- [NsJail](https://github.com/google/nsjail)：集中提供 Linux namespace、cgroup、rlimit、只读 mount 和 seccomp-bpf 策略。
+- [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/)：部署者可以在容器整体层设置 CPU、内存和 PID 上限。
 - [SkiaSharp](https://github.com/mono/SkiaSharp)：为 .NET 提供跨平台 Skia 2D、图片与字体处理能力。
 
 ## 3. 系统上下文与进程架构
@@ -188,7 +198,7 @@ Desktop/Mobile Browser
 │  ├─ Session Control Plane                                       │
 │  ├─ Realtime Gateway                                            │
 │  ├─ Admin / Audit                                               │
-│  └─ Worker Manager ─── spawn/monitor/limit ───────┐              │
+│  └─ Worker Manager ─── spawn/monitor/stop ────────┐              │
 │          │ gRPC over Unix domain socket           ▼              │
 │          ├────────────────────────────── Session Worker A         │
 │          └────────────────────────────── Session Worker B         │
@@ -205,14 +215,14 @@ Web/API 进程不得加载 Emuera Runtime，也不得持有只能存在于内存
 | --- | --- | --- |
 | Identity | 登录、登出、Cookie/OIDC 回调、用户状态 | 资源授权判断 |
 | Authorization | 所有资源级访问决策、管理员策略 | 仅依赖前端可见性 |
-| Game Package Service | 上传暂存、解包校验、workspace、current content 启用、文件浏览 | 运行游戏 |
+| Game Package Service | 上传暂存、解包校验、摄取 workspace、current content 启用、只读文件浏览 | 浏览器内编辑或运行游戏 |
 | Compatibility Service | 静态扫描、解析验证、生成能力报告 | 绕过 Blocked 能力 |
-| Session Control Plane | 创建、关闭、查询、配额预留、状态转换 | 解释器执行 |
+| Session Control Plane | 创建、关闭、查询、实例级 Worker 名额检查、状态转换 | 解释器执行、按用户拆分资源调度 |
 | Realtime Gateway | WebSocket 鉴权、恢复、广播、背压、输入转发 | 修改显示事件语义 |
 | Save Service | 在 Session 停止时授权访问其原生存档文件 | 解析存档内容、维护独立历史版本 |
-| Admin Service | Worker/Session 观测、强制停止、策略配置 | 绕过审计 |
-| Audit Service | 追加式审计记录 | 保存密码或输入全文 |
-| Worker Manager | Worker 启动、UDS、心跳、进程退出、资源限制和故障对账 | 加载 Emuera Runtime、只以内存保存 lease |
+| Admin Service | Worker/Session 基本状态、强制停止、已实现的策略配置 | 资源指标平台、绕过审计 |
+| Audit Service | 已实现的关键追加式审计记录 | 通用查询 UI、保存密码或输入全文 |
+| Worker Manager | Worker 启动、UDS、心跳、进程退出和故障对账 | 加载 Emuera Runtime、替代持久 lease 事实、只以内存保存 lease |
 
 API 进程内部建议采用分层依赖：
 
@@ -239,13 +249,13 @@ Worker Manager 是 Session Worker 生命周期和本地路由的唯一管理者�
 - 启动时扫描持久活动 Session，清理上一 API 实例的 Worker 并完成故障对账；
 - 由 Application 用例创建 SessionRoot、分配 `workerId` 和 epoch，再启动 Worker；
 - 维护 Worker 心跳、进程退出码和本地 IPC 连接；
-- 应用 CPU、内存、进程数、文件描述符、磁盘与输出速率限制；
+- 检查实例级最大活动 Worker 数，并依赖有界 Snapshot/IPC 队列保护应用内存；
 - 将 Worker 事件转发给 Realtime Gateway；
 - 对关闭和强制终止执行分阶段回收；
 - 拒绝所有控制面实例身份或 epoch 不是数据库当前值的 Worker 注册、心跳和输出。
 
 Worker Manager 不解析 ERB，不把进程句柄或连接表当作权威 Session 状态，也不直接处理用户授权。
-Application 定义 `IWorkerManager` 等端口；进程、UDS 和沙箱实现留在外部适配层，避免 HTTP handler
+Application 定义 `IWorkerManager` 等端口；进程和 UDS 实现留在外部适配层，避免 HTTP handler
 直接操作 `System.Diagnostics.Process`。
 
 ### 3.3 Session Worker 进程
@@ -257,26 +267,26 @@ Application 定义 `IWorkerManager` 等端口；进程、UDS 和沙箱实现留�
 | Runtime Host | 初始化、运行和终止 Emuera 解释器 |
 | RuntimePaths | 注入 SessionRoot、资源、配置、临时文件与两种存档布局 |
 | Console Adapter | 将解释器绘制调用转换为结构化显示操作 |
-| Snapshot Store | 维护当前 ConsoleSnapshot、序号和有界增量环形缓冲 |
+| Snapshot Store | 维护当前 ConsoleSnapshot、序号和实时发送所需的有界批次队列 |
 | Input Coordinator | 生成 prompt、验证输入、去重并唤醒 Runtime |
 | Capability Guard | 禁止 DLL、进程、非允许网络和不安全路径操作 |
-| Worker IPC | 注册、心跳、事件发送、命令接收与断线重连 |
+| Worker IPC | 注册、心跳、事件发送、命令接收；控制通道断开即触发退出 |
 
 Runtime 主循环不得被浏览器发送速度阻塞。Console Adapter 将事件写入有界内部队列；队列接近上限时合并相邻文本/样式事件，超过上限时生成新快照并丢弃已被快照覆盖的旧增量。
 
-P0-06 的历史进程切片已落在 `CloudEmuera.Supervisor/SupervisorHost` 和
-`CloudEmuera.Worker/WorkerConnectionLoop`：当时的 Supervisor 在自己的私有 runtime 目录监听
+P0-06 的历史进程切片已落在旧控制面实现和
+`CloudEmuera.Worker/WorkerConnectionLoop`：当时的控制面在自己的私有 runtime 目录监听
 单一 UDS，使用一次性 bootstrap JSON 启动一个带不可变
 `sessionId/workerId/workerEpoch` 的 Worker；Worker 只使用已经物化的 SessionRoot，并以
 `worker.proto` 的 IPC v1 双向流发送结构化 Console、输入结果、心跳和终态。Worker 的
-控制/显示发送队列有界且由单一 gRPC writer 串行写出，短断时保留 binding、prompt 和
-Console 状态并重新注册。UDS stale endpoint 只有在 `lstat` 确认 socket 类型、服务账户
+控制/显示发送队列有界且由单一 gRPC writer 串行写出。早期实现的短断恢复行为已由 ADR-0017
+取消，正式 Worker 在控制通道断开后退出。UDS stale endpoint 只有在 `lstat` 确认 socket 类型、服务账户
 owner、单链接和 `0700` 父目录后，才通过受保护父目录句柄 `unlinkat` 清理；祖先 symlink、
-路径越界、权限或属主异常均拒绝。Supervisor/Worker 生命周期日志输出结构化
+路径越界、权限或属主异常均拒绝。Worker 生命周期日志输出结构化
 `sessionId/workerId/workerEpoch`，并过滤 token、SessionRoot、UDS/bootstrap 路径和输入值。
-这仍是 IPC 与独立 Worker 隔离的有效证据，但独立 Supervisor 拓扑及跨 API 实例重连已由
+这仍是 IPC 与独立 Worker 隔离的有效证据，但早期控制面拓扑及跨 API 实例接管已由
 [`ADR-0015`](adr/0015-api-owned-worker-lifecycle.md) 取代。P1-05 已把可复用实现迁入 API，增加
-持久 WorkerLease、epoch 分配、API 生命周期绑定和启动故障对账，并删除独立 Supervisor 入口；
+持久 WorkerLease、epoch 分配、API 生命周期绑定和启动故障对账，并删除旧独立控制面入口；
 当前生产拓扑只保留 API Worker Manager。
 
 ### 3.4 进程启动顺序
@@ -284,13 +294,14 @@ owner、单链接和 `0700` 父目录后，才通过受保护父目录句柄 `un
 1. init 独占运行 Migrator；迁移或完整性检查失败则不启动 API；
 2. init 启动 API，API 生成新的控制面实例身份并建立受保护 Worker UDS；
 3. Worker Manager 清理或终止上一实例遗留 Worker，确认其已失去 SessionRoot 写权限；
-4. API 以条件更新把遗留活动 Session 对账为 `CRASHED`、失效 lease 并释放活动配额；
+4. API 以条件更新把遗留活动 Session 对账为 `CRASHED`、失效 lease 并释放活动 Worker 名额；
 5. 数据库、数据目录、Worker Manager 和迁移版本检查成功后，API 开始接收业务流量。
 
 API 正常停止时先停止接入和新输入，再对 Worker 执行有界优雅停止，超时后强制终止。API 异常
-退出时，Worker 在控制通道断开的有界宽限期后自行退出；parent-death signal、专属进程组或 cgroup
-提供系统级兜底。控制面停止中断的活动 Session 进入 `CRASHED` 而不是伪装成用户关闭的
-`CLOSED`；新 API 在无法证明旧 Worker 已退出时不得进入正常 ready。
+退出时，Worker 在控制通道断开后立即开始有界退出；parent-death signal 或专属进程组提供兜底。
+控制面停止中断的活动 Session 进入 `CRASHED` 而不是伪装成用户关闭的 `CLOSED`；新 API 在无法
+证明某个旧 Worker 已退出时阻止对应 Session 的 open 和存档写，不把缺少额外内核隔离能力作为全局
+readiness 失败条件。
 
 ## 4. 领域模型与状态约束
 
@@ -304,7 +315,7 @@ Game 内容 revision 是内部单调计数，不是外部资源 ID，也不提�
 
 ### 4.2 Session 聚合
 
-Session 是状态转换、配额占用和 WorkerLease 的事务边界。核心不变量：
+Session 是状态转换和 WorkerLease 的事务边界。核心不变量：
 
 - 一个 Session 固定一个 `gameId`、创建时源内容摘要和运行时清单快照，创建后不可更改；
 - 活动状态最多有一个当前 WorkerLease；
@@ -312,26 +323,26 @@ Session 是状态转换、配额占用和 WorkerLease 的事务边界。核心�
 - `CLOSED` 和 `CRASHED` 都是无 Worker、可重新开启的持久状态，不是 Session 资源终态；
 - 重新开启必须经 `STARTING` 创建新 lease，不能把 `CRASHED` 直接改为 `RUNNING`；
 - 状态更新必须同时匹配 `sessionId + stateVersion + expectedState`；
-- Session 创建只受存储配额约束；活动配额占用与 `CLOSED/CRASHED → STARTING` 必须在同一事务中完成；
+- Session 创建受实例级存储上限约束；`CLOSED/CRASHED → STARTING` 在同一事务中检查全局活动 Worker 上限；
 - 创建后每次开启都复用相同 SessionRoot，不再次复制 Game current content。
 
 ### 4.3 Session 状态转换表
 
 | 当前状态 | 事件 | 下一状态 | 执行者 | 事务/副作用 |
 | --- | --- | --- | --- | --- |
-| 无 | CreateAccepted | CREATING | API | 幂等键落库并预留 SessionRoot 存储预算 |
+| 无 | CreateAccepted | CREATING | API | 幂等键落库并执行已实现的 SessionRoot 存储预算流程 |
 | CREATING | SessionRootPublished | CLOSED | API | 固定源摘要/manifest，Session 创建完成但不占 Worker |
-| CLOSED/CRASHED | OpenRequested | STARTING | API | 预留活动配额，创建新 epoch 和 WorkerLease |
+| CLOSED/CRASHED | OpenRequested | STARTING | API | 检查实例级 Worker 上限，创建新 epoch 和 WorkerLease |
 | STARTING | WorkerReady | RUNNING | API Worker Manager | 与浏览器连接数无关 |
 | STARTING/RUNNING | CloseRequested | STOPPING | API | 拒绝后续新输入 |
-| STOPPING | WorkerStopped | CLOSED | API Worker Manager | 清除活动租约并释放配额 |
-| STARTING/RUNNING | HeartbeatExpired/UnexpectedExit | CRASHED | API Worker Manager | 失效租约并释放配额 |
-| STARTING/RUNNING/STOPPING | ControlPlaneExited | CRASHED | API 启动对账 | 确认旧 Worker 退出后失效租约并释放配额 |
+| STOPPING | WorkerStopped | CLOSED | API Worker Manager | 清除活动租约并释放全局 Worker 名额 |
+| STARTING/RUNNING | HeartbeatExpired/UnexpectedExit | CRASHED | API Worker Manager | 失效租约并释放全局 Worker 名额 |
+| STARTING/RUNNING/STOPPING | ControlPlaneExited | CRASHED | API 启动对账 | 确认旧 Worker 退出后失效租约并释放全局 Worker 名额 |
 | STARTING/RUNNING | AdminForceStop | STOPPING | API | 写审计，随后强制停止；静止态无 Worker 可停 |
 
 浏览器连接数不是 Session 状态。Realtime Gateway 在内存中维护每个 Session 的有效连接数和最近
 连接时间，通过 WebSocket close/heartbeat 最终发现断流；零连接时 Session 仍为 `RUNNING`，不写
-SQLite、不停止 Worker、不释放活动配额。若 API 崩溃，新 API 不恢复旧运行时；它先确认旧 Worker
+SQLite、不停止 Worker、不释放全局 Worker 名额。若 API 崩溃，新 API 不恢复旧运行时；它先确认旧 Worker
 已退出，再把遗留活动状态收敛为 `CRASHED`。
 
 `CLOSED` 只表示最近一次运行正常结束，`CRASHED` 只表示最近一次运行异常结束；两者都保留同一
@@ -476,7 +487,7 @@ UNIQUE(owner_user_id, name)
 
 Game 不包含版本标签、版本集合或历史内容引用。`content_revision` 只协调当前内容原子替换和
 Session 创建；同一摘要可以属于不同 Game，不建立全局唯一内容身份。workspace 可以与 current
-content 同时存在，owner 编辑 workspace 时新 Session 仍复制 current content。
+content 同时存在，owner 上传候选 workspace 时新 Session 仍复制 current content。
 
 #### sessions
 
@@ -633,7 +644,7 @@ P1-01 另外建立 EF history 表 `schema_migrations`，并保留 EF Core SQLite
 ├── games/
 │   ├── staging/{uploadId}/                 # 未信任，禁止 Worker 使用
 │   └── {gameId}/
-│       ├── workspace/                      # Game 的唯一可编辑工作区
+│       ├── workspace/                      # Game 的内部摄取/校验工作区
 │       ├── content/                        # 当前只读 Session 复制来源
 │       ├── runtime-manifest.json
 │       └── operations/{operationId}/       # 冻结校验/启用暂存
@@ -674,14 +685,14 @@ content 或其他 Session 共享可写 inode。上传阶段已经拒绝软链接
 
 复制成功前先在同一 sessions 父目录下建立 staging root；只有文件数、总字节数、逐项类型和清单
 摘要全部通过后，才原子重命名为最终 SessionRoot。失败只清理本次 staging，不触碰已存在
-SessionRoot。Worker 的 mount namespace 隐藏 Game 库目录和其他 Session，只暴露它自己的完整
-副本及必要系统路径。
+SessionRoot。Worker 正常启动参数只包含自己的完整副本及必要 IPC/系统路径，不传入 Game 库目录
+或其他 Session；同 UID 部署不构成抵御恶意 Worker 的内核强制隔离保证。
 
 SessionRoot 位于挂载数据目录中，本身就是存档的唯一权威副本。Worker 重启复用同一路径；正常退出和崩溃都不触发复制、generation 发布或第二套存档提交协议。
 
-同一容器内的 API 可拥有 Worker 管理权限，Worker 必须降权，清除不需要的 capabilities，并应用
-`no_new_privs`。不同 Session 的工作目录不能通过路径枚举互访。API 权限扩大后，Worker launcher
-的参数、路径、凭据和 cgroup 目标必须作为独立安全边界测试。
+同一容器内 API 与 Worker 可以使用相同的非 root UID。Worker launcher 仍必须只接受经过验证的
+SessionRoot、Worker binding 和 IPC 参数，不向 Worker 传递 Game workspace/current 路径。该应用级边界
+不把“其他目录不可枚举”或“抵御恶意 Worker”作为安全保证。
 
 ## 6. 游戏包与 Game 内容设计
 
@@ -693,7 +704,7 @@ P1-04 的单一 workspace、逐文件清单、持久 operation、Validator、内
 
 ### 6.1 上传流水线
 
-P1-03 的 ZIP 子集、暂存预留、路径规范化、双阶段配额、一次性候选内容和故障恢复细节见
+P1-03 的 ZIP 子集、暂存预留、路径规范化、双阶段预算、一次性候选内容和故障恢复细节见
 [`tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md`](tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md)，
 相关决策由 [`ADR-0008`](adr/0008-secure-zip-ingestion-policy.md) 冻结。
 
@@ -715,13 +726,12 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 
 若文件移动成功而数据库事务失败，后台清理器根据“数据库无引用且超过安全期”回收孤儿目录。不得在请求失败时立即递归删除尚未核对的路径。
 
-### 6.2 Game workspace 与编辑
+### 6.2 Game 摄取 workspace 与只读查看
 
 - current content 不可原地编辑；
-- 编辑已有 Game 时先把 current content 独立复制到唯一 workspace；
-- 写文件使用 `If-Match`/文件版本避免覆盖并发修改；
-- 保存时保留原始编码，用户明确转换编码时才更新编码元数据；
-- 文本搜索限制在允许的文本文件、当前 Game workspace/content 和资源配额内；
+- 上传新包时把安全展开结果写入唯一内部 workspace，并用它整体替换先前候选；
+- 浏览器只可浏览目录、只读查看受支持文本和下载文件，不提供写文件、创建、重命名、删除或搜索 API；
+- 编码转换只发生在已定义的摄取兼容步骤中，不提供用户交互式转换；
 - 启用生成新的内容摘要和内部 revision；Session 只固定 `gameId + sourceContentDigest`，完整内容
   已复制到自己的 SessionRoot；
 - Game 不保留用户可见历史版本、版本标签或回滚入口。
@@ -754,8 +764,8 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 客户端必须发送 `Idempotency-Key`。处理流程：
 
 1. API 验证用户、Game 可见性、ACTIVE/BLOCKED 状态、current content 摘要和兼容策略；
-2. 在短事务中预留 SessionRoot 存储预算，插入 `CREATING` Session 和幂等记录；创建不预留活动
-   Worker 配额；
+2. 在短事务中执行已实现的 SessionRoot 存储预算流程，插入 `CREATING` Session 和幂等记录；创建
+   不占用活动 Worker 名额；
 3. 按事务固定的 Game content revision/digest，把完整合法普通文件树复制到同父目录 staging；
 4. 校验 manifest、文件类型、字节数和摘要后原子发布 SessionRoot，并持久化源 manifest 快照；
 5. API 以 CAS 把 Session 置为 `CLOSED` 并返回资源。前端若要“一步开始”，在创建成功后另行调用
@@ -770,17 +780,17 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 
 1. API 验证 Session 授权、状态为 `CLOSED` 或 `CRASHED`、部署安全策略和 SessionRoot 绑定；
 2. 对 `CRASHED` Session 先确认旧 Worker 已退出且失去 SessionRoot 写权限；
-3. 在 `BEGIN IMMEDIATE` 短事务中预留活动配额，以 CAS 递增 epoch、写入绑定当前控制面实例的
+3. 在 `BEGIN IMMEDIATE` 短事务中检查实例级活动 Worker 上限，以 CAS 递增 epoch、写入绑定当前控制面实例的
    `STARTING` lease；
 4. 事务提交后，Worker Manager 再次验证 SessionRoot 的目录 identity、owner 和 manifest marker，
-   施加沙箱与资源限制并启动 Worker；不得重新复制或合并 Game current content；
+   构造同 UID 非 root 子进程启动参数并启动 Worker；不得重新复制或合并 Game current content；
 5. Worker 使用绑定控制面实例、Session、Worker 和 epoch 的启动令牌注册，加载 Runtime，发送
    `worker.ready`；
 6. Worker Manager 验证实例身份和 epoch，并以 CAS 将 Session 更新为 `RUNNING`；浏览器连接数不
    参与该状态转换；
 7. 若同步等待超时，API 返回 `202`，客户端查询状态；相同幂等键不得再启动一个 Worker。
 
-启动失败将 Session 置为 `CRASHED`，记录阶段化错误码并释放活动配额。重新开启只冷启动 Emuera；
+启动失败将 Session 置为 `CRASHED`，记录阶段化错误码并释放活动 Worker 名额。重新开启只冷启动 Emuera；
 用户通过游戏原生菜单加载 SessionRoot 中的存档，不提供指令级内存恢复。
 
 ### 7.3 关闭 Session
@@ -792,24 +802,24 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 3. Worker Manager 发送 `worker.stop(graceDeadline, finalAutosavePolicy)`；
 4. Worker 停止创建新 prompt，等待当前安全点，刷新存档，发送最终事件并退出；
 5. 超过宽限期后 Worker Manager 先发送终止信号，再在硬超时后强制结束；
-6. Worker Manager 确认进程退出、失效租约，把 Session 置为 `CLOSED` 并释放配额；存档已经位于持久 SessionRoot，无退出提交阶段；
+6. Worker Manager 确认进程退出、失效租约，把 Session 置为 `CLOSED` 并释放活动 Worker 名额；存档已经位于持久 SessionRoot，无退出提交阶段；
 7. API 广播静止状态并关闭该 Session 的 WebSocket 订阅。
 
-重复关闭 `CLOSED` Session 返回原状态。关闭只结束 Worker 和活动配额，不删除、重建、提交或回滚
-SessionRoot；之后可通过 open 再次启动同一 Session。用户关闭、管理员终止、资源限制和控制面
+重复关闭 `CLOSED` Session 返回原状态。关闭只结束 Worker 和活动 Worker 名额，不删除、重建、提交或回滚
+SessionRoot；之后可通过 open 再次启动同一 Session。用户关闭、管理员终止、实例容量/数据故障和控制面
 退出使用不同 `closeReason`，其中异常结束进入 `CRASHED`。
 
 ### 7.4 心跳与崩溃判定
 
-Worker 以配置间隔发送单调时钟产生的心跳，其中包含 CPU、RSS、文件数、输出速率、当前序号和
-prompt 状态。API Worker Manager 收到后更新有界内存视图，并按较低频率用短事务批量持久化，
-避免每次心跳写 SQLite。
+Worker 以配置间隔发送单调时钟产生的心跳，其中包含当前序号和 prompt 状态。API Worker Manager
+收到后更新有界内存视图，并按较低频率用短事务批量持久化，避免每次心跳写 SQLite。MVP 不要求
+采集 CPU、RSS、FD、磁盘或输出速率时序指标。
 
 只有 API Worker Manager 可以根据子进程退出或心跳截止时间判定 `CRASHED`。判定时必须再次检查
 `controlPlaneInstanceId + sessionId + workerId + epoch + stateVersion`，防止旧 Worker 或迟到回调
 把新 Worker 标记为崩溃。
 
-进入 `CRASHED` 后不自动重启，避免恶意游戏或损坏存档形成崩溃循环。旧 Worker 退出屏障完成后，
+进入 `CRASHED` 后不自动重启，避免损坏游戏或存档形成崩溃循环。旧 Worker 退出屏障完成后，
 用户可以显式 open 同一 Session；新的 epoch fencing 旧消息，并继续使用原 SessionRoot。
 
 ## 8. 实时显示、重连与输入
@@ -837,23 +847,22 @@ Session 创建时保存的 Game runtime manifest 解析出的 `assetId`，不能
 
 - 每个被接受的显示操作或原子批次分配一个严格递增的 `sequence`；
 - Snapshot 表示应用完 `snapshotSequence` 后的完整有界显示树和当前 prompt；
-- 环形缓冲保存 `(snapshotSequence, currentSequence]` 的增量；
+- 实时发送队列仅保存尚未发送的有界批次；溢出时以较新的 Snapshot 替代，不维护历史增量窗口；
 - sequence 使用 64 位整数，数据库仅保存观测值，不参与热路径分配；
-- Worker 重启必须使用新 epoch；sequence 可从持久记录后继续，但客户端以 `(epoch, sequence)` 作为完整游标。
+- Worker 重启必须使用新 epoch；客户端以最新完整 `(epoch, snapshotSequence)` Snapshot 替换本地显示状态。
 
-### 8.3 无丢失窗口的恢复算法
+### 8.3 完整快照恢复算法
 
-Realtime Gateway 对一个 Session 建立恢复屏障：
+Realtime Gateway 对一个 Session 执行以下恢复：
 
 1. 验证 WebSocket 身份和 Session 权限；
-2. 订阅 Worker 实时流，并先把新事件暂存到有界连接队列；
-3. 请求 `resume(lastEpoch, lastSequence)`；
-4. 若 epoch 一致且增量仍完整，Worker 返回连续增量；否则返回 `Snapshot(N)`；
-5. Gateway 发送恢复数据，再发送暂存队列中序号大于恢复终点的事件；
-6. 去除重复序号后进入实时转发；
-7. 客户端确认 `ackSequence`，用于监测消费进度，不用于删除 Worker 的唯一副本。
+2. 请求当前 Worker 冻结或原子读取 `Snapshot(N)`，其中包含当前 prompt；
+3. Gateway 发送 Snapshot，客户端以其完整替换本地显示树；
+4. Gateway 从序号大于 `N` 的下一批实时事件开始转发；
+5. 若读取与转发衔接期间检测到序号缺口或连接队列溢出，放弃该轮结果并重新取得较新的 Snapshot。
 
-步骤 2 先于步骤 3，保证快照读取与订阅之间没有丢失窗口。若暂存队列溢出，Gateway 丢弃该次恢复结果并重新请求较新的 Snapshot，而不是继续发送不连续事件。
+MVP 不接受 `lastSequence` 作为历史补发承诺，也不维护 ack 驱动的重放日志。恢复正确性只要求客户端
+最终取得一个内部一致的完整 Snapshot，并且在发现缺口时确定性地重新同步。
 
 ### 8.4 慢客户端策略
 
@@ -861,7 +870,7 @@ Realtime Gateway 对一个 Session 建立恢复屏障：
 
 - 优先批量发送连续小事件；
 - 队列达到软上限时通知客户端 `resync.required`；
-- 达到硬上限时丢弃该连接的待发增量，发送最新快照；
+- 达到硬上限时丢弃该连接的待发批次，发送最新快照；
 - 多次无法消费快照时以策略错误关闭 WebSocket，但不关闭 Session；
 - 任一客户端都不能反向阻塞 Worker 或其他客户端。
 
@@ -887,7 +896,8 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 | STALE_EPOCH | 客户端连接的是旧 Worker |
 | FORBIDDEN | 当前用户没有控制权限 |
 
-去重缓存采用内存 LRU，并把最近的已接受输入结果以有界日志写入 Session metadata；其保留窗口至少覆盖 WebSocket 自动重试最大时长。即使缓存淘汰，已经完成的 prompt 也会因 `promptId` 不再当前而拒绝再次执行。
+去重缓存只采用当前 Worker 内的有界内存 LRU，不写入 Session metadata，也不跨 Worker 重启保留。
+即使缓存淘汰，已经完成的 prompt 也会因 `promptId` 不再当前而拒绝再次执行。
 
 ### 8.6 WebSocket 消息封装
 
@@ -929,23 +939,22 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 | `POST /auth/logout` | 注销当前会话 | 使服务端会话失效 |
 | `GET /games` | 列出可见游戏 | 私有所有者或共享游戏 |
 | `POST /games` | 创建 Game | 玩家 |
-| `PUT /games/{id}/package` | 上传/替换唯一 workspace | 所有者，流式、幂等 |
-| `POST /games/{id}:edit` | 从 current content 建立 workspace | 所有者，无历史版本 |
+| `PUT /games/{id}/package` | 上传/替换内部摄取 workspace | 所有者，流式、幂等 |
 | `GET /games/{id}/files` | 浏览 workspace 或 current | 授权后访问 |
-| `GET/PUT /games/{id}/file?path=...` | 查看/编辑 workspace 文本 | 严格规范化路径 |
+| `GET /games/{id}/file?path=...` | 只读查看或下载 workspace/current 文件 | 严格规范化路径 |
 | `POST /games/{id}:validate` | 验证 workspace | 返回持久 operation |
 | `POST /games/{id}:activate` | 原子启用 workspace 为 current | 幂等、要求无阻断错误 |
 | `GET /sessions` | 列出自己的 Session | 支持状态过滤 |
 | `POST /sessions` | 创建持久 SessionRoot | 幂等、预留存储预算，成功后为 `CLOSED` |
 | `GET /sessions/{id}` | Session 详情 | 所有者/管理员 |
-| `POST /sessions/{id}:open` | 启动或重新启动 Worker | 幂等、`CLOSED/CRASHED`、预留活动配额、递增 epoch |
+| `POST /sessions/{id}:open` | 启动或重新启动 Worker | 幂等、`CLOSED/CRASHED`、检查实例级 Worker 上限、递增 epoch |
 | `POST /sessions/{id}:close` | 优雅关闭 Worker | 幂等，不删除 SessionRoot |
 | `GET /sessions/{id}/saves` | 列出存档 | 所有者 |
 | `PUT /sessions/{id}/saves/{path}` | 导入/替换原生存档 | Session 停止、严格路径校验 |
 | `GET /sessions/{id}/saves/{path}` | 下载原生存档 | 所有者、流式响应 |
 | `PATCH /sessions/{id}/saves/{path}` | 重命名 | Session 停止、目标名校验 |
 | `DELETE /sessions/{id}/saves/{path}` | 删除 | Session 停止、要求显式确认 |
-| `GET /admin/workers` | Worker 状态与资源 | 管理员 |
+| `GET /admin/workers` | Worker 基本状态、PID、心跳和最近错误 | 管理员 |
 | `POST /admin/sessions/{id}:force-stop` | 强制停止 | 管理员，必须填写原因并审计 |
 | `GET /health/live` | 进程存活 | 不检查昂贵依赖 |
 | `GET /health/ready` | 接流量能力 | DB、数据目录、Worker Manager、启动对账 |
@@ -957,7 +966,9 @@ WebSocket 入口为 `GET /api/v1/realtime`。连接建立后通过 `session.resu
 
 ### 10.1 传输与身份
 
-IPC 默认使用 Unix domain socket，协议定义独立于传输。socket 文件权限限制到服务账户；连接建立时还要使用容器启动时生成的短期服务凭据完成挑战响应。Worker 使用一次性启动令牌注册，令牌绑定 Session、Worker、epoch 和过期时间。
+IPC 默认使用 Unix domain socket，协议定义独立于传输。socket 文件权限限制到容器服务 UID；
+Worker 使用一次性启动令牌注册，令牌绑定 Session、Worker、epoch 和过期时间。MVP 不增加独立的
+跨实例服务身份挑战协议。
 
 禁止把 UDS 暴露到容器端口或共享宿主目录。对敏感命令同时验证对端身份和消息字段，不把“能连接 socket”视为完整授权。
 
@@ -1022,12 +1033,12 @@ CloudEmuera 不包装每次原生保存，不改变上游 `FileMode`、flush、�
 
 ### 11.3 管理操作
 
-活动 Session 的原生文件由 Worker 独占，API 不与其并发修改。列出和下载可以在明确接受非事务性读取语义后开放；MVP 的上传、替换、重命名、复制和删除只允许 Session 处于 `CLOSED` 或其他无 Worker 状态，并在执行前后复核租约不存在。
+活动 Session 的原生文件由 Worker 独占，API 不与其并发修改。列出和下载可以在明确接受非事务性读取语义后开放；MVP 的上传、替换、重命名和删除只允许 Session 处于 `CLOSED` 或其他无 Worker 状态，并在执行前后复核租约不存在。Session 间直接传输存档不提供专用 API。
 
 管理操作只处理允许列表内的 `save*.sav`、`global.sav` 以及当前布局允许的 `sav/` 条目：
 
 - 下载：每次验证 Session 所有权，使用安全下载名并流式读取当前文件；
-- 上传/复制：先写入当前 SessionRoot 外的隔离暂存文件，验证大小、目标名和基本原生格式；确认 Session 仍无 Worker后，再移动到目标路径；这只是管理操作的文件替换，不形成历史 generation；
+- 上传/替换：先写入当前 SessionRoot 外的隔离暂存文件，验证大小、目标名和基本原生格式；确认 Session 仍无 Worker后，再移动到目标路径；不尝试证明其与 Game 摘要语义兼容，也不形成历史 generation；
 - 重命名/删除：要求显式确认、再次检查无活动 Worker，并写审计日志；
 - 自动保存：完全由游戏和 Emuera 控制；CloudEmuera 不另建自动存档调度器；
 - 备份：面向整个挂载数据目录或 SessionRoot，由运维备份策略负责。
@@ -1036,24 +1047,24 @@ CloudEmuera 不包装每次原生保存，不改变上游 `FileMode`、flush、�
 
 ### 12.1 信任边界
 
-不受信任输入包括游戏包、文件名、ERB/CSV 内容、游戏生成的显示内容、存档、浏览器输入和客户端
-游标。API 与 Worker 不因父子进程或同容器部署而省略协议校验。
+不安全数据包括游戏包、文件名、游戏生成的显示内容、存档、浏览器输入和客户端游标，必须防御
+损坏格式、路径逃逸和浏览器注入。部署者及已认证参与者被假定不会刻意提交并运行恶意 ERB 来攻击
+同实例其他用户；API 资源授权仍逐操作执行，但 Worker 执行面不是敌对租户隔离边界。
 
-### 12.2 Worker 沙箱
+### 12.2 Worker 基础进程边界
 
-目标控制：
+MVP 控制为：
 
-- 非 root 运行，`no_new_privs`，最小 capabilities；
-- 独立进程和文件系统视图，只暴露本 Session 的完整可写副本，不暴露 Game workspace、current
-  content 或其他 Session；
-- 默认无网络；若实现确需本地 IPC，仅允许指定 UDS；
-- seccomp/等价策略禁止创建额外进程、挂载、ptrace 和危险系统调用；
-- cgroup v2 或容器内等价控制限制 CPU、内存和进程数；
-- `rlimit` 限制文件描述符、文件大小和 core dump；
-- 磁盘通过独立目录计量和写入前配额检查控制；
-- 达到输出速率限制时先合并/节流，持续违规时按策略终止并审计。
+- 整个生产容器以非 root UID 运行，API 与 Worker 可以使用相同 UID；
+- Worker 保持每 Session 一个独立子进程，只接收自己的 SessionRoot、binding 和私有 UDS 信息；
+- 容器不得挂载 Docker socket、宿主密钥或无关宿主目录；
+- Snapshot、IPC/WebSocket 队列、ZIP 展开和 DataRoot 空间使用具有实例级上限；
+- 部署者可在 Docker 层为整个容器配置 CPU、内存和 PID 上限；
+- close、API 停止或控制通道断开都必须在期限内结束 Worker，必要时使用进程组强制终止。
 
-单容器部署是否能提供全部内核隔离能力必须在启动时自检。缺少强制安全能力时，管理员界面明确显示降级状态；面向不受信任多用户开放的部署应拒绝就绪，而不是静默降级。
+MVP 不承诺面向敌对租户的内核级 Worker 隔离，也不因缺少额外内核隔离能力拒绝 readiness。因此同 UID
+Worker 从内核视角可能读取 DataRoot 内其他资源；实例不得面向敌对租户开放。未来改变信任模型时必须
+以新 ADR 恢复强制隔离和相应测试。
 
 ### 12.3 Web 安全
 
@@ -1063,11 +1074,11 @@ CloudEmuera 不包装每次原生保存，不改变上游 `FileMode`、flush、�
 - Emuera HTML 先解析为内部节点，再由前端组件生成 DOM；禁止 `innerHTML` 直灌；
 - 文本、tooltip、文件名和错误详情按上下文编码；
 - 资源响应使用清单中声明的 MIME、`nosniff` 和下载/内联白名单；
-- 登录、上传、搜索、创建 Session 和输入分别实施速率限制。
+- 登录、上传、创建 Session 和输入实施轻量实例级速率限制。
 
 全新实例不开放 `/setup` 或注册 API。仅当持久状态为 BOOTSTRAP_REQUIRED 时，API 从 `.env`
 读取 `CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME`、`CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL` 和
-`CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD`，在一个 SQLite 写事务内提交管理员、默认 quota、完成
+`CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD`，在一个 SQLite 写事务内提交管理员、现有默认 profile、完成
 标记和审计；并发启动最多一个成功。管理员使用 email 登录且首次登录强制改密。COMPLETED 后
 不再读取或验证这些变量；“没有 ACTIVE ADMIN”不是重新 bootstrap 的条件。
 
@@ -1093,44 +1104,38 @@ sessionId?, workerId?, workerEpoch?, userIdHash?, durationMs?, result
 API 请求、Session 创建/连接/关闭、Worker 注册/崩溃、Game 内容启用和存档删除都有稳定事件名。
 日志按大小和时间轮转，保留策略可配置。
 
-### 13.2 指标
+### 13.2 基本诊断
 
-至少暴露：
-
-- API 请求量、错误率和延迟；
-- WebSocket 连接数、恢复耗时、重同步次数和待发队列字节数；
-- 各 Session 状态数量、创建/启动/关闭/崩溃计数；
-- 每 Worker CPU、RSS、文件描述符、磁盘、事件速率、快照大小；
-- prompt 等待时间、输入接受/重复/过期计数；
-- SQLite busy、事务时长、WAL 大小和备份结果；
-- 上传拒绝原因、兼容性诊断数量和存档文件管理失败数。
-
-高基数字段如 `sessionId` 不默认作为通用时序数据库标签；在日志和按需诊断接口中查询。
+管理员接口只需按需返回 Session 状态、Worker ID/PID/epoch、最近心跳、当前 prompt、Snapshot 大小、
+队列是否发生溢出以及最近错误。上传拒绝、兼容诊断和存档失败通过稳定错误码与结构化日志查询。
+MVP 不提供专用遥测平台、进程级 CPU/RSS/FD/磁盘时序指标或容量规划面板。
 
 ### 13.3 健康检查
 
 - liveness：当前 API 事件循环可响应；
 - readiness：数据库可读写、`/data` 可写且空间高于安全阈值、Worker IPC 可用、启动对账完成、迁移完成；
-- Worker Manager 健康：本地 IPC 可用、进程监视和对账循环在运行，不存在无法回收且仍持有写权限的旧 Worker；
+- Worker Manager 健康：本地 IPC 可用、进程监视和启动对账循环在运行；无法回收的旧 Worker 只使对应 Session 不可 open/修改存档；
 - version：Web/API、Worker 协议、上游 Runtime commit、源码集成版本、schema 版本。
 
-单个 Worker 崩溃不应使整个 API liveness 失败，但会影响 Session 指标和管理员告警。
+单个 Worker 崩溃不应使整个 API liveness 失败，但会反映在 Session 状态和最近错误中。
 
 ### 13.4 审计
 
-审计事件记录谁在何时对什么资源执行了什么操作及结果。管理员强停和安全例外必须包含原因。审计元数据只保存必要字段，既不能依赖普通应用日志，也不能包含密码、令牌或输入全文。
+保留已实现的身份、关键资源变更、管理员强停、Game 内容启用和存档删除审计。管理员强停必须包含
+原因；审计元数据不能包含密码、令牌或输入全文。MVP 不建设通用审计浏览，也不要求普通连接和
+只读请求全部进入审计表。
 
 ## 14. 故障恢复与对账
 
 ### 14.1 API 重启
 
 API 每次启动生成新的 `controlPlaneInstanceId`，从 SQLite 读取活动 Session 和 lease，并检查上一实例
-记录的 PID/start identity、进程组或 cgroup：
+记录的 PID/start identity 或进程组：
 
-- 旧 Worker 已退出：以 CAS 失效 lease、释放活动配额并把 Session 置为 `CRASHED`；
+- 旧 Worker 已退出：以 CAS 失效 lease、释放活动 Worker 名额并把 Session 置为 `CRASHED`；
 - 旧 Worker 仍存在：先 fence、终止并等待退出，再执行上述状态更新；
 - 无法确认身份、终止失败或无法证明 SessionRoot 写权限已经释放：保持 lease，阻止该 Session 的
-  open 和存档写操作，并使 readiness 失败；
+  open 和存档写操作；不因单个 Session 异常使整个实例 readiness 失败；
 - DB 已 `CLOSED/CRASHED` 但发现旧 Worker：停止并审计异常，确认退出前不得授予新写租约。
 
 新 API 不接受上一实例的 Worker 注册，也不恢复旧 Runtime 路由。完成故障对账后，用户可以显式
@@ -1138,9 +1143,8 @@ open 同一 `CRASHED` Session；新 Worker 使用更大的 epoch 和原 SessionR
 
 ### 14.2 API—Worker 控制通道中断
 
-Worker 只在短且有界的宽限期内向同一 `controlPlaneInstanceId` 重连，并保留有界输出。API 实例
-变化、凭据失效或宽限期届满时 Worker 必须停止 Runtime 并退出；parent-death signal、专属进程组
-或 cgroup 作为异常清理兜底。该机制不提供跨 API 实例接管。
+Worker 的控制通道断开后立即停止接受新运行时工作并开始有界退出，不恢复旧控制流；
+parent-death signal 或专属进程组作为异常清理兜底。该机制不提供跨 API 实例接管。
 
 ### 14.3 数据目录故障
 
@@ -1160,20 +1164,20 @@ MVP 不恢复指令级内存状态。重启后所有先前活动 Session 在对�
 
 ## 15. 前端设计
 
-前端按领域分为游戏库、单一 Game 编辑器、Session 列表、游戏控制台、存档管理和管理员控制台。
+前端按领域分为游戏库/包检查与只读查看、Session 列表、游戏控制台、存档管理和基本管理员页面。
 
 游戏控制台维护：
 
 ```text
 connectionState
 sessionId + workerEpoch
-lastAppliedSequence + lastAckedSequence
+snapshotSequence + lastAppliedSequence
 bounded rendered model
 currentPrompt
 pending clientMessageId → result
 ```
 
-渲染器只接收已验证的内部节点。按键和按钮最终都生成同一种 `session.input` 消息；发送后保持待定状态，直到收到确定结果。重连时不凭本地 DOM 推断权威状态，而是使用游标恢复或替换为服务端快照。
+渲染器只接收已验证的内部节点。按键和按钮最终都生成同一种 `session.input` 消息；发送后保持待定状态，直到收到确定结果。重连时不凭本地 DOM 推断权威状态，而是用服务端完整快照替换本地显示树。
 
 移动端需处理软键盘造成的 visual viewport 改变、安全区域、触摸目标尺寸和自动滚动；自动滚动仅在用户已接近底部时发生，避免打断查看历史。所有按钮可通过键盘聚焦，颜色不是唯一状态提示，图片具有可用的替代文本或装饰标识。
 
@@ -1197,13 +1201,16 @@ pending clientMessageId → result
   只读验证 migration history、foreign-key check 和 quick check。退出码 `0/10/11/12/13/14/15`
   分别表示成功、配置非法、锁竞争、数据库高于当前 binary、备份失败、migration 失败和完整性
   检查失败。业务 API 和 Worker 不调用 `Database.Migrate()`。
+- `CloudEmuera:Capacity:*` 实例级容量：活动 Worker、游戏包/SessionRoot/暂存字节和 DataRoot 最低
+  剩余空间；历史 `CloudEmuera:MinDataRootFreeBytes` 仅兼容读取一个周期并输出弃用 warning，
+  新部署使用带 `Capacity` 前缀的键；
 - 上传/解压/文件数量/编码限制；
-- 用户活动 Session、Worker CPU/内存/PID/FD/磁盘配额；
-- 输出速率、快照、增量和 WebSocket 队列上限；
+- 实例级最大活动 Worker 数、上传/展开/文件数量、存档文件和 DataRoot 最低剩余空间上限；
+- Snapshot、IPC 和 WebSocket 队列上限；容器整体 CPU/内存/PID 限制属于部署选项；
 - 心跳、启动、停止、强制终止超时；
 - 存档文件大小、停止态管理操作和 SessionRoot 备份保留；
 - Runtime 基线、兼容配置和禁止能力；
-- 日志级别、轮转、指标和审计保留。
+- 日志级别、轮转和已实现审计保留。
 
 人工开发使用仓库根 `.env` 与 `./data`。自动化身份测试必须生成独立临时 env/DataRoot，使用唯一
 Compose project 和动态端口，并通过 `--env-file` 与 API service 的显式 environment mapping 传入
@@ -1218,25 +1225,25 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 
 | 层级 | 重点 |
 | --- | --- |
-| 领域单元测试 | 状态机、授权、配额、幂等、epoch、输入抢占 |
+| 领域单元测试 | 状态机、授权、实例级 Worker 上限、幂等、epoch、输入抢占 |
 | Runtime 兼容测试 | v18 与当前 EM+EE 的解析、变量、输入、存档和命令 |
 | 协议契约测试 | HTTP、WebSocket、IPC 版本和未知字段兼容 |
 | 文件系统安全测试 | 穿越、链接、Unicode/大小写碰撞、TOCTOU、压缩炸弹 |
 | 组件集成测试 | SQLite + 文件系统 + API Worker Manager + Worker |
 | 浏览器测试 | 重连、输入、移动视口、键盘与可访问性 |
 | 故障注入 | API/Worker 退出、IPC 中断、孤儿回收失败、磁盘满、慢客户端 |
-| 性能测试 | 代表性游戏负载、持续 PRINT、多连接、快照恢复 |
+| 容量测试 | 代表性游戏手工/自动负载、持续 PRINT、快照恢复与有界队列 |
 | 视觉回归 | 字体测量、换行、按钮命中、图片和 Sprite |
 
 ### 17.2 必测并发性质
 
 - 相同幂等键并发创建只产生一个 Session；
-- 活动配额只剩一个名额时，并发 open 最多一个成功；
+- 实例级活动 Worker 只剩一个名额时，并发 open 最多一个成功；
 - 同一 `CLOSED/CRASHED` Session 并发 open 最多产生一个有效 Worker；
 - close/crash 后 open 保持同一 SessionRoot identity、源摘要与 manifest，只增加 epoch；
 - 两个客户端回答同一 prompt 只有一个 `ACCEPTED`；
 - Worker A epoch 过期后，其心跳、输出和输入结果均被拒绝，且它不能获得新 Worker 的 SessionRoot 写权限；
-- Snapshot 生成期间持续输出，恢复流仍无缺口且无乱序；
+- Snapshot 生成期间持续输出，客户端要么连续应用后续批次，要么检测缺口并重新取得完整 Snapshot；
 - 关闭和输入并发时，结果要么输入先被接受，要么明确被停止状态拒绝；
 - Worker 写存档时退出后，系统保留 SessionRoot 现场且不产生虚假的“已提交”状态；其他 Session 不受影响。
 
@@ -1269,18 +1276,19 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 
 ### 18.2 Phase 1：端到端 MVP
 
-1. SQLite schema、Game workspace/内容启用和本地账户；
+1. SQLite schema、Game 摄取 workspace/内容启用和本地账户；
 2. API Worker Manager、Worker IPC、epoch 和可反复开启的 Session 状态机；
-3. 结构化 Console、Snapshot、WebSocket 恢复和输入去重；
+3. 结构化 Console、完整 Snapshot WebSocket 恢复和当前 Worker 内输入去重；
 4. SessionRoot 隔离和停止态原生存档文件管理；
-5. Web 游戏库、Session 控制台、存档界面；
-6. 管理员 Worker 查看与强制停止；
+5. Web 游戏包检查/只读查看、Session 控制台、存档界面；
+6. 管理员 Worker 基本查看与强制停止；
 7. 单容器进程管理、健康检查、备份和升级说明；
 8. 完成 AC-001 至 AC-014 自动化或可重复验收。
 
 ### 18.3 Phase 2 预留接口
 
-资源指标、审计、备份和策略接口在 MVP 即保留版本字段，但不提前实现多主机调度。未来挂起恢复
+已实现的审计和备份机制继续保留；不为资源指标平台、敌对租户隔离或多主机调度预留未使用协议。
+未来挂起恢复
 必须新增状态和显式能力协商，不能把“当前没有浏览器连接”偷换为不占 Worker 的“挂起”。
 
 ## 19. 待决设计记录
@@ -1288,7 +1296,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 以下事项在进入对应实现前必须形成 ADR：
 
 1. `ADR-0001`：从本地账户切换到单一 OIDC Provider 的触发条件和迁移方式；
-2. `ADR-002`：所选 Linux namespace/cgroup/seccomp 沙箱在目标发行版和 Docker 配置下的能力验证、降级与拒绝就绪条件；
+2. `ADR-0017`：可信参与者自托管 MVP 的信任边界、容量、实时、存档和运维简化边界（已完成）；
 3. `ADR-003`：ConsoleSnapshot 的序列化格式、大小上限和压缩策略；
 4. `ADR-004`：Emuera HTML、Sprite、CBG 和音频的 MVP 允许列表；
 5. `ADR-0008`：安全 ZIP 摄取边界、上传/展开配额和 staging 预算（已完成）；
@@ -1296,7 +1304,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 7. `ADR-0010`：单一 Game 内容模型和旧 GameVersion schema 迁移（已完成）；
 8. `ADR-0015`：API 直接管理 Session Worker 生命周期（已完成）；
 9. `ADR-0016`：Session 是可反复开启的持久 SessionRoot（已完成）；
-10. 待编号：默认活动 Session、Worker CPU/内存/磁盘、输出和存档配额；
+10. 待编号：实例级活动 Worker、上传/展开、存档文件、Snapshot/队列和最低剩余空间默认上限；
 11. 待编号：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
 12. 待编号：字体文件保留、服务和授权策略；
 13. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
@@ -1309,6 +1317,6 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 - 所有待决项已指定负责人和截止阶段，不阻塞当前迭代；
 - Session 状态转换、HTTP/WebSocket/IPC schema 形成机器可校验定义；
 - SQLite 首版迁移和文件布局经过崩溃一致性评审；
-- Worker 沙箱在目标 Docker/宿主环境完成可重复验证；
+- 非 root 生产容器、敏感挂载禁用、Worker 有界回收和实例级容量上限完成可重复验证；
 - v18 与当前 EM+EE 最小兼容测试集可在 CI 运行；
 - AC-001 至 AC-014 均有可执行的验收方案。

@@ -2,16 +2,20 @@
 
 | Item | Value |
 | --- | --- |
-| Document status | Draft v0.3 |
-| Date | 2026-08-11 |
+| Document status | Draft v0.4 |
+| Date | 2026-08-12 |
 | Chinese counterpart | [requirements.zh-CN.md](./requirements.zh-CN.md) |
 | Intended audience | Product, frontend, backend, runtime, operations, and test engineers |
 
 ## 1. Purpose
 
-This document defines the initial product requirements, system boundaries, and high-level technical design for CloudEmuera. CloudEmuera deploys Emuera text games on a remote server so that multiple users can upload and manage their own games, start multiple isolated sessions, manage their own saves, and reconnect from a desktop or mobile browser while the session remains alive after the browser disconnects.
+This document defines the initial product requirements, system boundaries, and high-level technical design for CloudEmuera. CloudEmuera is a single-host system operated by its deployer for themselves and trusted participants. Multiple users may upload and manage their own games, start isolated Sessions, manage saves, and reconnect from desktop or mobile browsers. Application-level resource authorization remains, but the product is not a hostile-tenant game-hosting platform; ADR-0017 defines this trust boundary.
 
 The terms “must,” “should,” and “may” denote mandatory, recommended, and optional capabilities. Numbered requirements are used for implementation traceability and acceptance. The English and Chinese documents use the same identifiers.
+
+Scope note: retained references to the earlier independent control plane, strong isolation, fine-grained
+resources, and control-flow recovery describe historical implementation or alternative designs only. The
+current MVP follows [ADR-0017](adr/0017-trusted-self-hosted-mvp-simplification.md) and P1-S01.
 
 ## 2. Background and Design Decisions
 
@@ -28,22 +32,22 @@ CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit comp
 ### 3.1 Product goals
 
 - Play Era/Emuera games through modern desktop and mobile browsers.
-- Let players upload, manage, and edit their own game packages containing ERB, CSV, and assets.
+- Let players upload, inspect, view, and activate their own game packages containing ERB, CSV, and assets.
 - Let one user run multiple Sessions for the same or different games concurrently.
 - Keep Sessions alive independently from browser connections and restore the latest display and input state on reconnect.
 - Isolate saves, configuration, temporary files, and runtime state across users and Sessions.
 - Support current Emuera.EM+EE as far as practical while covering common `1824+v18` games.
-- Provide an observable, resource-bounded, and backup-friendly architecture for a player-operated single-container deployment.
+- Provide a diagnosable, bounded, and backup-friendly architecture for a player-operated single-container deployment.
 
 ### 3.2 MVP scope
 
 - Local accounts or one external identity provider.
-- Game package upload, validation, browsing, editing, and activation.
+- Game package upload, validation, browsing, and activation; no browser-based ERB/CSV file writes.
 - Session creation, listing, opening, connection, reconnection, explicit closure, and reopening.
 - Text, styles, buttons, basic HTML, images, sprites, and basic audio events.
 - User input, timed input, and mobile soft keyboards.
 - Per-Session isolated save spaces, with save import, export, rename, and deletion.
-- Administrative Worker inspection and termination of unhealthy Sessions.
+- Administrative inspection of basic Worker/Session state and force-stop of a Session.
 - A single Docker container deployment in which one Web/API control-plane process directly creates and manages an independent Worker process for each active Session, with persistence through a mounted data directory.
 
 ### 3.3 Non-goals
@@ -55,6 +59,8 @@ CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit comp
 - Perfect compatibility with every Emuera fork, non-standard patch, or game that depends on historical bugs.
 - Collaborative gameplay where multiple players jointly control one Session.
 - Multiple containers, multiple API instances, multiple Worker Hosts, cross-host horizontal scaling, or seamless migration.
+- A hostile multi-tenant game-hosting service or kernel-enforced isolation against authenticated users exploiting Worker/Runtime vulnerabilities.
+- Fine-grained user- or process-level CPU, memory, disk, PID, FD, or output-rate scheduling, metering, or billing.
 
 ## 4. Roles and Permissions
 
@@ -69,17 +75,17 @@ CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit comp
 
 ### 4.2 Administrator
 
-- Manage users and quotas.
-- Inspect Worker and Session health and resource usage.
-- Force-stop Sessions for security, resource, or maintenance reasons.
+- Manage users and instance-wide capacity settings.
+- Inspect basic Worker and Session health.
+- Force-stop Sessions for failure, security, or maintenance reasons.
 - Manage backup, retention, and compatibility policies.
 
 ## 5. Core Domain Model
 
 | Entity | Description |
 | --- | --- |
-| User | Identity, roles, quotas, and preferences |
-| Game | Stable identity, owner, visibility, editable workspace, current runnable content, and runtime requirements |
+| User | Identity, roles, and preferences |
+| Game | Stable identity, owner, visibility, ingestion workspace, current runnable content, and runtime requirements |
 | Session | A reconnectable instance created for one Game; its SessionRoot pins the content copied at creation |
 | WorkerLease | Routing, lease, and fencing epoch for the Session's current Worker |
 | ConsoleSnapshot | Current bounded display tree, input prompt, and output sequence |
@@ -111,27 +117,27 @@ Session 1 ── 1 private SessionRoot
 - **GAME-002**: Upload processing must reject path traversal, absolute paths, unsafe symbolic links, archive bombs, and files exceeding configured quotas.
 - **GAME-003**: The system must detect and record text-file encodings, covering at least Shift-JIS, UTF-8 with BOM, and UTF-8 without BOM.
 - **GAME-004**: Each Game has only one current runnable content tree. That tree must remain immutable until atomically replaced and must record its checksum, activator, activation time, and runtime configuration. The system must not expose GameVersion resources, version labels, version lists, or product-level history rollback.
-- **GAME-005**: Browser edits must write to the Game's separate workspace. They must not change current runnable content before validation and atomic activation, and must never change files already copied into an existing Session.
-- **GAME-006**: The system must provide directory browsing, text viewing, ERB/CSV text editing, search, and file download.
-- **GAME-007**: Before activating a workspace as current content, the system must perform baseline validation for directory layout, encoding, parse errors, missing assets, and prohibited capabilities.
-- **GAME-008**: Session creation must copy the Game's current runnable content into a private SessionRoot and record the source digest and runtime-manifest snapshot. Later Game edits or activations must not implicitly alter an existing Session.
+- **GAME-005**: Upload and inspection must write to the Game's separate ingestion workspace. They must not change current runnable content before validation and atomic activation, and must never change files already copied into an existing Session.
+- **GAME-006**: The system must provide directory browsing, read-only text viewing, and file download. Browser-based creation, editing, renaming, deletion, or search of ERB/CSV files is outside MVP scope.
+- **GAME-007**: Before activating an ingestion workspace as current content, the system must perform baseline validation for directory layout, encoding, parse errors, missing assets, and prohibited capabilities.
+- **GAME-008**: Session creation must copy the Game's current runnable content into a private SessionRoot and record the source digest and runtime-manifest snapshot. Later package replacements or activations must not implicitly alter an existing Session.
 - **GAME-009**: Game visibility must support at least private and server-shared modes. Public marketplace publication is outside the MVP scope.
 - **GAME-010**: Deleting a Game referenced by any Session must be rejected. An unreferenced Game must first be soft-deleted; ordinary requests must not immediately remove its content recursively.
 
 ### 6.3 Session management
 
-- **SESS-001**: A user may create any number of Sessions for the same or different Games. The system must not reject creation because of the total number of previously created Sessions, but must limit the number of Sessions that are simultaneously active and consuming Workers.
+- **SESS-001**: A user may create any number of Sessions for the same or different Games. The system must not reject creation because of the total number of previously created Sessions. An instance-wide maximum active Worker count may be configured; active slots are not partitioned by user.
 - **SESS-002**: Every active Session must have exactly one valid Runtime owner. Worker replacement must use an increasing epoch to prevent an old Worker from continuing to accept input.
 - **SESS-003**: Browser disconnects must not automatically close a Session or clear runtime state.
 - **SESS-004**: Without an attached browser, a Session must continue already-started execution, timed input, and internal timers.
 - **SESS-005**: A user must be able to view the Session name, Game, source content digest, state, creation time, last activity time, and whether it is waiting for input.
-- **SESS-006**: A user must be able to explicitly close a Session. Closure must stop new input, flush files, optionally produce a final autosave, terminate the Worker, release active quota, and set the state to `CLOSED`; it must not delete or rebuild the SessionRoot.
+- **SESS-006**: A user must be able to explicitly close a Session. Closure must stop new input, flush files, optionally produce a final autosave, terminate the Worker, and set the state to `CLOSED`; it must not delete or rebuild the SessionRoot.
 - **SESS-007**: The API must provide separate idempotent creation, opening, and closure semantics so network retries cannot duplicate a Session, start multiple Workers, or repeat closure side effects.
 - **SESS-008**: Except for administrative action, security policy, resource failure, or an explicitly configured deployment policy, the system must not close a Session solely because its connections are idle.
-- **SESS-009**: Administrators must be able to inspect and force-stop runaway, over-quota, or policy-violating Sessions.
+- **SESS-009**: Administrators must be able to inspect active Sessions and force-stop their Workers for failure or maintenance.
 - **SESS-010**: After a Worker exits unexpectedly, the Session must transition to `CRASHED` after the heartbeat timeout and must not remain reported as runnable.
 - **SESS-011**: A `CLOSED` Session, and a `CRASHED` Session whose old Worker is proven to have lost write access, must be reopenable. Every open reuses the existing SessionRoot, increments the Worker epoch, and creates a new Worker; it must not recopy current Game content or require a new Session.
-- **SESS-012**: A Session is a resource that persists from creation until explicit deletion. Opening and closing affect only its Worker and active-runtime quota. Session deletion must be separate from closure and must never occur automatically because of closure, a crash, an API restart, or a browser disconnect.
+- **SESS-012**: A Session is a resource that persists from creation until explicit deletion. Opening and closing only acquire or release a Worker. Session deletion must be separate from closure and must never occur automatically because of closure, a crash, an API restart, or a browser disconnect.
 
 ### 6.4 Game display and interaction
 
@@ -139,10 +145,10 @@ Session 1 ── 1 private SessionRoot
 - **PLAY-002**: The display model must support text, foreground/background colors, font styles, line breaks, buttons, tooltips, images, sprites, background layers, and basic audio control.
 - **PLAY-003**: The implemented Emuera HTML subset must be parsed with an allowlist. Scripts, event-handler attributes, and arbitrary URLs must not enter the browser DOM.
 - **PLAY-004**: Every output event must contain a monotonically increasing Session-local `sequence`.
-- **PLAY-005**: The Worker must maintain a bounded ConsoleSnapshot and short-term output deltas for reconnection.
-- **PLAY-006**: Reconnection must return a snapshot at a defined sequence followed by later deltas, or all deltas beginning after the client's last acknowledged sequence. There must be no loss window between snapshot and subscription.
+- **PLAY-005**: The Worker must maintain a bounded ConsoleSnapshot. Real-time batches need only remain until sent or replaced by a newer snapshot; a historical replay window is not required.
+- **PLAY-006**: Reconnection must establish a complete ConsoleSnapshot at the current `(workerEpoch, snapshotSequence)` as a new baseline and then receive later real-time batches. Replay from a client acknowledgment is not required.
 - **PLAY-007**: Every input request must have a unique `promptId`, and client input must contain a unique `clientMessageId`.
-- **PLAY-008**: The Worker must reject stale `promptId` values and return the original result or an explicit duplicate response for repeated `clientMessageId` values; it must not execute an input twice.
+- **PLAY-008**: The Worker must reject stale `promptId` values and old-epoch input, and within a bounded in-memory window of the current Worker must return the original result or an explicit duplicate response for repeated `clientMessageId` values. Deduplication need not survive Worker restart.
 - **PLAY-009**: Desktop clients must support keyboard, mouse, and scrolling. Mobile clients must support touch buttons, soft keyboards, viewport changes, and safe areas.
 - **PLAY-010**: Display history must have configurable bounds. When the bound is exceeded, the Worker should compact to the latest snapshot and discard invisible old deltas instead of growing memory without limit.
 - **PLAY-011**: The same user may view a Session from multiple clients. In the MVP, each `promptId` accepts only the first valid input.
@@ -155,8 +161,8 @@ Session 1 ── 1 private SessionRoot
 - **SAVE-003**: Users must be able to list and download their native saves by Session, and upload, rename, or delete them only while the Session has no active Worker.
 - **SAVE-004**: Emuera must write saves directly in the current SessionRoot using its native behavior. CloudEmuera must not add generations, a commit queue, or a second authoritative save copy to the runtime path.
 - **SAVE-005**: Session metadata must record its Game, source content digest, Runtime version, runtime-manifest snapshot, and private SessionRoot. Native save files are managed as opaque contents of that Session, without per-save generations.
-- **SAVE-006**: Save import must validate file size, paths, format, permission for the target Game/source digest and Session, and re-confirm that the target Session has no active Worker.
-- **SAVE-007**: Copying a save from one Session to another must be explicit. Multiple active Workers must not write the same physical file concurrently.
+- **SAVE-006**: Save import must validate file size, path, basic native-file constraints, and Session permission, and re-confirm that the target Session has no active Worker. Semantic compatibility with the Game digest need not be proven.
+- **SAVE-007**: MVP does not provide direct save copying between Sessions. A user may download and explicitly upload into another stopped Session, and multiple active Workers must never share the same physical file.
 - **SAVE-008**: Autosave and overwrite behavior follows native game and Emuera semantics. System-level history retention is provided by external backup of the whole SessionRoot, not by intercepting each runtime save.
 - **SAVE-009**: Save deletion must require confirmation. While a Session is active, no process other than its Worker may modify its saves concurrently.
 - **SAVE-010**: Save-content serialization and deserialization must use the native Emuera Runtime implementation. CloudEmuera must not introduce an incompatible game-save format merely to support Web-based save management.
@@ -168,11 +174,11 @@ Session 1 ── 1 private SessionRoot
 
 ### 6.6 Administration and operations
 
-- **OPS-001**: Administrators must be able to inspect the API Worker Manager, Session Worker processes, Sessions, heartbeats, CPU, memory, disk, and output rates.
-- **OPS-002**: The system must support configuration of per-user active runtime Session counts, per-Session memory/CPU/disk, game-package size, save size, and output-rate limits; it must not impose a total Session-creation limit.
+- **OPS-001**: Administrators must be able to inspect Session state, current Worker identity/PID, heartbeat, and the most recent error, and force-stop an active Worker. MVP does not require a fine-grained process-resource metrics platform.
+- **OPS-002**: The system must support instance-wide limits for active Worker count, archive/expanded size/file count, save-file size, ConsoleSnapshot/WebSocket queue size, and minimum free DataRoot space. User- or process-specific resource quotas, scheduling, reservation, and billing are not required.
 - **OPS-003**: The API must expose health, readiness, and version endpoints.
 - **OPS-004**: Logs must include correlatable `requestId`, `sessionId`, `workerId`, and `workerEpoch` values, but must not log passwords or full user input by default.
-- **OPS-005**: Audit events must be recorded for Session creation, connection, closure, crash, administrative termination, Game-content activation, and save deletion.
+- **OPS-005**: Existing critical audit events for identity, resource mutation, administrative termination, Game-content activation, and save deletion must remain. MVP does not require a general audit-query UI or a complete audit trail for ordinary connections and reads.
 - **OPS-006**: Administrators must be able to prevent a known-unsafe Game from creating or reopening Sessions without directly destroying existing SessionRoots or saves.
 
 ## 7. Compatibility Requirements
@@ -222,7 +228,7 @@ The system uses the following compatibility classifications:
 
 - Uses resources only through the API.
 - Uses HTTPS for control operations and WebSocket for real-time events and game input.
-- Stores the Session identifier, most recently acknowledged output sequence, and client message identifiers, but not authoritative game state.
+- Stores the Session identifier and current epoch locally, but not authoritative game state; reconnect replaces local display state with a server snapshot.
 - Renders structured events through DOM/Canvas/WebAudio and does not execute raw script or HTML supplied by a game.
 
 ### 8.2 API layer
@@ -234,21 +240,21 @@ The system deploys one API process, whose code should contain at least these mod
 - Save Service
 - Session Control Plane
 - Realtime Gateway
-- Session Registry & Scheduler
+- Session Registry & instance capacity gate
 - Administration & Audit
 
 The API process must not keep active Sessions only in memory. It is the only business process that accesses SQLite at runtime and coordinates HTTP operations, background work, and Worker lifecycles through durable Sessions, WorkerLeases, epochs, and state versions. The separate Migrator runs only before API startup, and Session Workers do not access SQLite.
 
-The API process directly starts, monitors, limits, and terminates Session Workers. Exiting the API ends its active Workers. A restarted API does not adopt old Workers; after confirming that they have lost write access to their SessionRoots, it reconciles residual active Sessions to `CRASHED` while preserving each SessionRoot.
+The API process directly starts, monitors, and terminates Session Workers and applies only the instance-wide active Worker gate. Exiting the API ends its active Workers. A restarted API does not adopt old Workers; after confirming that they have lost write access to their SessionRoots, it reconciles residual active Sessions to `CRASHED` while preserving each SessionRoot.
 
 ### 8.3 Worker layer
 
 The Worker layer consists of:
 
-- **API Worker Manager module**: starts, monitors, limits, and terminates Session Worker child processes inside the API process, without loading Emuera Runtime or replacing durable leases with in-memory state.
-- **Session Worker process**: one independent operating-system process per active Session, owning one Runtime, one ConsoleSnapshot, and one Session file sandbox.
+- **API Worker Manager module**: starts, monitors, and terminates Session Worker child processes and checks the instance-wide Worker gate, without loading Emuera Runtime or replacing durable leases with in-memory state.
+- **Session Worker process**: one independent operating-system process per active Session, owning one Runtime, one ConsoleSnapshot, and one SessionRoot working directory. This process boundary provides state isolation and termination, not malicious-code execution isolation.
 
-A Session Worker may retain bounded output and reconnect during a brief local-IPC interruption within the same API instance, but the disconnect grace period must be bounded. The Worker must stop and exit when the API instance exits, its instance identity changes, or the grace period expires; a new API instance does not adopt it.
+A Session Worker must stop its Runtime and exit within a bound when its local IPC control channel disconnects. It does not continue in the background, and a new API instance does not adopt it.
 
 Every Session Worker must use an actual `SessionRoot` as its process working directory and Emuera GameRoot. At creation, Session management copies the complete validated regular-file tree of the Game's current content; configuration, game-defined directories, saves, and temporary files all live directly in the Session's physical directory:
 
@@ -295,7 +301,7 @@ State definitions:
 | CRASHED | The SessionRoot exists without an active Worker; the last run ended abnormally and the Session may be reopened after old write access is released |
 | SUSPENDED | A future persistent runtime snapshot that consumes no active Worker |
 
-The active runtime quota counts `STARTING`, `RUNNING`, and `STOPPING`. `CLOSED`, `CRASHED`, `CREATING`, and `SUSPENDED` do not consume active runtime quota. `CREATING` is constrained only by storage quota; active quota is reserved by the open transaction. Browser connection counts are ephemeral Realtime Gateway data rather than Session state; reaching zero connections neither changes `RUNNING`, stops the Worker, nor releases active quota.
+The instance-wide active Worker gate counts `STARTING`, `RUNNING`, and `STOPPING`. `CLOSED`, `CRASHED`, `CREATING`, and `SUSPENDED` do not consume a slot. Open checks the global limit in a database transaction; it does not split active slots by user. Browser connection counts are ephemeral Realtime Gateway data rather than Session state; reaching zero connections neither changes `RUNNING`, stops the Worker, nor releases a Worker slot.
 
 State transitions must be protected by database versioning or transactions. Every `CLOSED/CRASHED → STARTING` transition creates a new WorkerLease with an increased epoch; heartbeats, output, and input responses from an older epoch must be rejected. Reopening reuses the existing SessionRoot without recopying current Game content or restoring pre-crash interpreter memory.
 
@@ -327,11 +333,11 @@ Example:
 {
   "type": "session.resume",
   "sessionId": "sess_123",
-  "lastSequence": 1040
+  "lastEpoch": 4
 }
 ```
 
-If deltas remain available, the Worker/API may return `1041..current`. Otherwise it must return a complete ConsoleSnapshot at sequence `N` and stream deltas beginning at `N+1`.
+The Worker/API returns a complete ConsoleSnapshot at sequence `N` for the current epoch and uses it as the new display baseline, then streams real-time batches after `N`. MVP does not replay disconnected history from `lastSequence` or acknowledgments.
 
 ### 10.3 Input request
 
@@ -356,8 +362,8 @@ Use SQLite or an equivalent embedded relational database. Its database file must
 
 Stores:
 
-- Users, roles, and quotas
-- Game metadata, editable workspace, current-content digest, and runtime manifest
+- Users and roles
+- Game metadata, ingestion workspace, current-content digest, and runtime manifest
 - Session state and the current WorkerLease
 - SessionRoot paths, Session lifecycle state, and save-management audit data
 - Administrative policy and compatibility-report summaries
@@ -371,7 +377,7 @@ The container must mount one host data directory at `/data`. All games, Sessions
 ```text
 /data/
 ├── cloudemuera.db
-├── games/{gameId}/workspace/       ← the Game's only editable workspace
+├── games/{gameId}/workspace/       ← internal ingestion/validation workspace
 ├── games/{gameId}/content/         ← current immutable copy source; no retained version history
 ├── sessions/{sessionId}/
 │   ├── root/                       ← actual SessionRoot
@@ -384,14 +390,14 @@ Session management must copy every valid regular file and directory in the Game'
 
 ## 12. Security Requirements
 
-- **SEC-001**: Every game package must be treated as untrusted input.
-- **SEC-002**: By default, a Session Worker must not access the public network, host secrets, other users' files, or the container-management interface.
-- **SEC-003**: A Game's workspace and current content must not be exposed to a Worker. A Worker may access and write only its assigned complete SessionRoot copy and must not access any Game library directory or another SessionRoot.
-- **SEC-004**: CPU, memory, process count, open file count, disk, and output-rate limits must be enforced for Workers.
+- **SEC-001**: Game packages, filenames, and display content must be parsed as unsafe data formats. The deployer must run only games they trust; the system does not promise safe execution of malicious ERB or Runtime content.
+- **SEC-002**: The production container must run as non-root and must not mount the container-management interface, host secrets, or unrelated host directories. Workers should not intentionally use the public network; the execution boundary is the container and the application path checks.
+- **SEC-003**: Session management passes only the assigned complete SessionRoot path to a Worker, and normal Worker logic must not access the Game library or another SessionRoot. API and Worker may share a UID, so this is not kernel-enforced hostile-Worker tenant isolation.
+- **SEC-004**: ConsoleSnapshot, IPC/WebSocket queues, ZIP expansion, and DataRoot usage must have instance-wide bounds. CPU, memory, and PID limits may be applied to the whole container by the deployer; fine-grained process-resource governance is not required.
 - **SEC-005**: Archive path traversal, symbolic-link escape, case collisions, and decompression overrun must be prevented.
 - **SEC-006**: Browser rendering must encode text and attributes. Emuera HTML must be converted to supported structured nodes.
-- **SEC-007**: Local Worker IPC endpoints must not be exposed outside the container and must authenticate the API service identity.
-- **SEC-008**: Save-download and asset URLs must be short-lived and permission-bound, or proxied through an authorized API.
+- **SEC-007**: Local Worker IPC endpoints must not be exposed outside the container. Worker registration must bind the Session, Worker, and epoch issued at launch; a separate cross-instance service-identity challenge protocol is not required.
+- **SEC-008**: Saves and assets must be served through an authorized API proxy. Signed or short-lived URLs are not required for MVP.
 - **SEC-009**: Logs, metrics, and crash artifacts must avoid exposing credentials and unnecessary user-input content.
 - **SEC-010**: Dependency and upstream interpreter updates must pass compatibility regression and security review before becoming the new runtime baseline.
 
@@ -400,8 +406,8 @@ Session management must copy every valid regular file and directory in the Game'
 ### 13.1 Availability and recovery
 
 - **NFR-001**: Under normal load, reconnecting to a running Session and displaying its initial snapshot should complete within 2 seconds at P95, excluding abnormal external user-network conditions.
-- **NFR-002**: During a normal API shutdown, the API must gracefully stop its Workers within a bound and force termination after the bound. After an unexpected API exit, Workers must exit within a bounded disconnect grace period or be reclaimed by an operating-system-level fallback. Affected active Sessions must reconcile to `CRASHED` while preserving their SessionRoots.
-- **NFR-003**: During a temporary local-IPC interruption within the same API instance, a Session Worker may continue running and attempt to re-register for a bounded grace period. If its output buffer reaches the limit, it must retain the latest ConsoleSnapshot. Workers must not be adopted across API instances.
+- **NFR-002**: During a normal API shutdown, the API must gracefully stop its Workers within a bound and force termination after the bound. After an unexpected API exit or control-channel disconnect, Workers must immediately begin bounded shutdown or be reclaimed by a parent/child or process-group fallback. Affected active Sessions must reconcile to `CRASHED` while preserving their SessionRoots.
+- **NFR-003**: A Session Worker must not continue running after its control channel disconnects, and it must not be adopted by a new API instance. The user may explicitly reopen the same Session after reconciliation.
 - **NFR-004**: A Worker crash must preserve the SessionRoot as found and must not affect current Game content, its workspace, or another Session; the Session must be clearly marked `CRASHED`. A file being overwritten by the native writer is not guaranteed to remain valid.
 - **NFR-005**: Arbitrary execution-point recovery and transactional recovery of every save are not initial-phase SLAs. Only persistence of SessionRoot and diagnostic availability are guaranteed.
 
@@ -410,8 +416,8 @@ Session management must copy every valid regular file and directory in the Game'
 - **NFR-006**: Under normal load, Session list and detail API requests should complete within 300 ms at P95, excluding large-file transfers.
 - **NFR-007**: For a connected Session, transport from API input receipt to Worker receipt should complete within 200 ms at P95, excluding ERB execution time.
 - **NFR-008**: Workers must batch high-frequency `PRINT` output and bound memory. A slow client must not block the interpreter loop or grow queues without limit.
-- **NFR-009**: Concurrent capacity must be determined with repeatable representative-game load tests, not estimated only from idle Worker counts.
-- **NFR-010**: The system must expose per-Session memory, CPU, event rate, snapshot size, and input wait time for capacity planning.
+- **NFR-009**: The instance-wide maximum active Worker count should be chosen through manual or repeatable representative-game validation and set explicitly in deployment configuration.
+- **NFR-010**: The system must expose basic Session/Worker state, recent heartbeat, snapshot size, and queue-overflow diagnostics. A full capacity-planning metrics suite is not required.
 
 ### 13.3 Maintainability
 
@@ -433,29 +439,29 @@ Session management must copy every valid regular file and directory in the Game'
 | --- | --- |
 | Browser refresh/network loss | The Session remains RUNNING; the Realtime Gateway eventually detects the broken stream, and reconnection restores the snapshot and current prompt |
 | API-process exit or restart | Workers stop within bounds or are reclaimed; after proving old Workers have exited, the new API reconciles active Sessions to CRASHED while preserving SessionRoots |
-| Short Worker IPC interruption within one API instance | The Worker buffers and reconnects within a bounded grace period; instance identity, epoch, and sequence are reconciled, or the Worker exits on timeout |
+| API–Worker local IPC interruption | The Worker stops the Runtime and exits within a bound; the Session reconciles to CRASHED without re-registration |
 | Worker crash | Session becomes CRASHED and its SessionRoot is preserved; after the old Worker exits, the same Session can be reopened and continue from native saves, without an exact-instruction recovery guarantee |
 | Docker-container or host restart | Active Workers are treated as failed; Game content, workspaces, and SessionRoots remain in the mounted data directory, and the same Sessions may be reopened after recovery |
 | Mounted data directory unavailable | New Sessions and save writes are rejected, with an explicit persistence failure |
 | Duplicate client input | Deduplicated using promptId and clientMessageId |
-| Old Worker reconnects | Fenced by an older epoch and unable to produce valid new state |
+| Delayed messages from an old Worker arrive | Fenced by an older epoch and unable to produce valid new state |
 
 ## 15. MVP Acceptance Scenarios
 
 - **AC-001**: One user starts two Sessions for the same game; their variables, display, input, and saves do not affect one another.
 - **AC-002**: A user closes the page while awaiting input and logs in again after the configured test interval; the latest display and same prompt are available.
-- **AC-003**: On a normal API shutdown, Workers exit gracefully within the configured bound. After the API is force-terminated, Workers exit within the disconnect grace period or are reclaimed. After API recovery, affected Sessions are `CRASHED`, active quota is released, and SessionRoots remain as found. Once old Worker write access is proven released, the user can reopen the same Session and load an existing native save.
+- **AC-003**: On a normal API shutdown, Workers exit gracefully within the configured bound. After the API is force-terminated or the control channel disconnects, Workers immediately begin exit or are reclaimed by their process group. After API recovery, affected Sessions are `CRASHED`, active Worker slots are released, and SessionRoots remain as found. Once old Worker write access is proven released, the user can reopen the same Session and load an existing native save.
 - **AC-004**: Two users creating Sessions from the same current Game content cannot access or overwrite each other's Sessions or saves.
 - **AC-005**: Repeating the same input message executes it only once.
 - **AC-006**: After the user explicitly closes a Session, its Worker exits within the configured bound, the Session becomes CLOSED, and later input is rejected. Reopening the same Session reuses its SessionRoot with a higher epoch and can load the save created before closure.
 - **AC-007**: After a Worker is force-killed, its Session becomes CRASHED within the heartbeat window and its SessionRoot is not cleaned up. After the old-Worker exit barrier completes, the same Session can be reopened and inspect or load native saves already present there.
 - **AC-008**: A representative `1824+v18` test game completes loading, input, save, load, and primary display scenarios.
 - **AC-009**: A representative current EM+EE test game runs all declared Supported features, while unsupported features produce explicit diagnostics.
-- **AC-010**: A game package containing path traversal, symbolic-link escape, or archive-bomb characteristics is rejected without writing outside the sandbox.
+- **AC-010**: A game package containing path traversal, symbolic-link escape, or archive-bomb characteristics is rejected without writing outside the protected ingestion directory.
 - **AC-011**: Both desktop and mobile browsers can create a Session, submit game input, reconnect, and download a save.
 - **AC-012**: During sustained high output, Worker and browser memory remain within configured bounds and reconnection still produces a consistent snapshot.
 - **AC-013**: A representative game can save and load through native Emuera logic in both root-level and `sav/` layouts, while physical save files appear only in the owning Session's private area.
-- **AC-014**: When two users and two Sessions of the same user use the same current Game content, Game library files remain untouched by Workers, and Global saves are isolated by `User + Game + Session`; later Game edits do not change those SessionRoots.
+- **AC-014**: When two users and two Sessions of the same user use the same current Game content, Game library files remain untouched by Workers, and Global saves are isolated by `User + Game + Session`; later package replacements do not change those SessionRoots.
 
 ## 16. Suggested Delivery Phases
 
@@ -471,12 +477,12 @@ Session management must copy every valid regular file and directory in the Game'
 - One Docker container, one API control-plane process, SQLite, and one mounted data directory.
 - An in-process API Worker Manager directly manages one independent child process per Session; only the API accesses SQLite at runtime.
 - WebSocket reconnection, ConsoleSnapshot, save isolation, and basic Web rendering.
-- Game package upload, single-workspace editing, atomic current-content activation, and baseline diagnostics.
+- Game package upload, an internal ingestion workspace, atomic current-content activation, and baseline diagnostics; no browser-based file writes.
 
 ### Phase 2: Self-hosted hardening
 
 - Docker image, health checks, logs, filesystem backups, and upgrade procedures.
-- Resource quotas, audit, metrics, backups, and an administration console.
+- Critical audit, offline backup, basic diagnostics, and administrative force-stop; no resource-metrics platform or general audit console.
 - Broader HTML, sprite, audio, and mobile compatibility.
 
 ### Phase 3: Suspension and recovery
@@ -489,7 +495,7 @@ Session management must copy every valid regular file and directory in the Game'
 
 Identity is confirmed as local accounts with email-only login, revocable Cookie Sessions, and a first-administrator bootstrap that reads `.env` only for an uninitialized instance. ADR-0001 records the triggers for reconsidering OIDC. Remaining open questions:
 
-1. What are the default per-user active runtime Session and game/save storage quotas?
+1. What are the default instance-wide active Worker, archive/expanded content, save-file, snapshot/queue, and minimum-free-space limits?
 2. Does multi-tab access need an explicit controller lease, or is first-valid-input sufficient?
 3. What compatibility level will the MVP promise for Emuera HTML, sprites, CBG, and audio?
 4. May administrators configure a maximum Session lifetime, or only stop Sessions for resource and security reasons?
@@ -505,8 +511,9 @@ Identity is confirmed as local accounts with email-only login, revocable Cookie 
 | Global static Emuera state | Cross-Session contamination in one process | Use one process per Session initially |
 | Coupled game-root and save paths | Shared resources may become writable or saves may cross user boundaries | Complete per-Session copies, no shared writable inode, and isolated SessionRoots |
 | Complex display semantics | Games run but UI is misaligned | Structured display model and visual regression tests |
-| Malicious uploaded packages | File escape or resource exhaustion | Sandbox, read-only mounts, quotas, and upload validation |
-| Permanently resident Sessions | Memory cost grows with abandoned Sessions | Active runtime quotas, admin controls, and future suspension snapshots |
+| Damaged or maliciously constructed packages | File escape, disk exhaustion, or browser injection | Protected ingestion, immutable current content, copy validation, instance-wide bounds, and structured display |
+| Deployer runs a malicious game | A same-UID Worker may read other DataRoot resources | Support only trusted participants and trusted games; hostile tenancy requires reintroducing kernel isolation |
+| Permanently resident Sessions | Memory cost grows with abandoned Sessions | Instance-wide active Worker limit, admin force-stop, and future suspension snapshots |
 | No exact recovery after Worker crash | Unsaved progress is lost and a natively overwritten file may be invalid | Whole-directory backups, game-native autosave, explicit failure semantics, and safe-point snapshot research |
 | Continued upstream evolution | Difficult merges or regressions | Pinned commits, thin adapter layer, and dual compatibility suites |
 | Unclear game and font licensing | Illegal hosting or redistribution | Preserve ownership metadata, require deployment authorization, and avoid public exposure by default |

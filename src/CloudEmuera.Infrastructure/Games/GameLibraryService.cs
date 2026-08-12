@@ -18,7 +18,7 @@ public sealed class GameLibraryService(
     SqliteDatabaseOptions databaseOptions,
     TimeProvider timeProvider) : IGameLibraryService
 {
-    private const int MaxEditableFileBytes = 4 * 1024 * 1024;
+    private const int MaxTextPreviewBytes = 4 * 1024 * 1024;
 
     public async Task<IReadOnlyList<GameLibraryItem>> ListAsync(CurrentActor actor, CancellationToken cancellationToken = default) =>
         await db.Games.AsNoTracking()
@@ -181,76 +181,6 @@ public sealed class GameLibraryService(
         }
     }
 
-    public async Task<GameLibraryItem> StartEditingAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default)
-    {
-        await using FileStream mutationLock = AcquireMutationLock(gameId);
-        GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
-        EnsureVersion(row, expectedStateVersion);
-        if (row.WorkspacePath is not null) throw new GameLibraryException(GameLibraryErrorCodes.WorkspaceAlreadyExists, "The game already has an editable workspace.");
-        if (row.CurrentContentPath is null) throw new GameLibraryException(GameLibraryErrorCodes.HasNoCurrentContent, "The game has no current content to edit.");
-        string staging = Path.Combine(GameDirectory(gameId), $".workspace-{Guid.NewGuid():N}");
-        CopyTree(AbsoluteDataPath(row.CurrentContentPath), staging);
-        MakeWritable(staging);
-        if (OperatingSystem.IsLinux())
-        {
-            using SafeFileHandle gameDirectoryHandle = LinuxFileOperations.OpenDirectory(GameDirectory(gameId));
-            LinuxFileOperations.RenameAt(gameDirectoryHandle, Path.GetFileName(staging), "workspace");
-            LinuxFileOperations.Sync(gameDirectoryHandle);
-        }
-        else
-        {
-            Directory.Move(staging, Path.Combine(GameDirectory(gameId), "workspace"));
-        }
-        WorkspaceInspection inspection = InspectWorkspace(Path.Combine(GameDirectory(gameId), "workspace"));
-        await ReplaceFileIndexAsync(gameId, "WORKSPACE", inspection.Entries, cancellationToken).ConfigureAwait(false);
-        row.WorkspacePath = RelativeWorkspace(gameId);
-        row.WorkspaceStatus = GameWorkspaceStatus.Draft;
-        await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
-        Touch(row);
-        AddAudit(actor, "GAME_WORKSPACE_CREATE", row.Id, row.UpdatedAt);
-        try { await SaveAsync(cancellationToken).ConfigureAwait(false); }
-        catch
-        {
-            RestoreReplacedDirectory(Path.Combine(GameDirectory(gameId), "workspace"), retired: null);
-            throw;
-        }
-        return ToItem(row);
-    }
-
-    public async Task<GameLibraryItem> DiscardWorkspaceAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default)
-    {
-        await using FileStream mutationLock = AcquireMutationLock(gameId);
-        GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
-        EnsureVersion(row, expectedStateVersion);
-        string workspace = RequireWorkspace(row);
-        string retiredName = $"workspace-discarded-{Guid.NewGuid():N}";
-        string retired = Path.Combine(GameDirectory(gameId), retiredName);
-        if (OperatingSystem.IsLinux())
-        {
-            using SafeFileHandle gameDirectoryHandle = LinuxFileOperations.OpenDirectory(GameDirectory(gameId));
-            LinuxFileOperations.RenameAt(gameDirectoryHandle, "workspace", retiredName);
-            LinuxFileOperations.Sync(gameDirectoryHandle);
-        }
-        else
-        {
-            Directory.Move(workspace, retired);
-        }
-        row.WorkspacePath = null;
-        row.WorkspaceStatus = GameWorkspaceStatus.None;
-        row.CompatibilitySummaryJson = "{}";
-        await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
-        db.GameFiles.RemoveRange(await db.GameFiles.Where(file => file.GameId == gameId && file.Scope == "WORKSPACE").ToArrayAsync(cancellationToken).ConfigureAwait(false));
-        Touch(row);
-        AddAudit(actor, "GAME_WORKSPACE_DISCARD", row.Id, row.UpdatedAt);
-        try { await SaveAsync(cancellationToken).ConfigureAwait(false); }
-        catch
-        {
-            if (!Directory.Exists(workspace) && Directory.Exists(retired)) Directory.Move(retired, workspace);
-            throw;
-        }
-        return ToItem(row);
-    }
-
     public async Task<IReadOnlyList<GameFileItem>> ListFilesAsync(CurrentActor actor, string gameId, string? scope, string? directory, CancellationToken cancellationToken = default)
     {
         GameRow row = await FindVisibleAsync(actor, gameId, tracking: false, cancellationToken).ConfigureAwait(false) ?? throw NotFound();
@@ -276,53 +206,12 @@ public sealed class GameLibraryService(
         var info = new FileInfo(filePath);
         RejectLink(info);
         if (!info.Exists) throw new GameLibraryException(GameLibraryErrorCodes.FileNotFound, "The requested game file does not exist.");
-        if (info.Length > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.FileTooLargeToEdit, "The file is too large to edit as text.");
+        if (info.Length > MaxTextPreviewBytes) throw new GameLibraryException(GameLibraryErrorCodes.FileTooLargeToRead, "The file is too large to view as text.");
         cancellationToken.ThrowIfCancellationRequested();
         byte[] bytes = await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
         if (!TryReadGameText(bytes, out string text, out string? encoding, out bool hasBom))
             throw new GameLibraryException(GameLibraryErrorCodes.TextEncodingUnsupported, "The text encoding is unsupported.");
         return new GameTextFile(path, text, encoding!, hasBom, bytes.LongLength, ComputeETag(bytes), row.StateVersion);
-    }
-
-    public async Task<GameSearchPage> SearchAsync(CurrentActor actor, string gameId, string? scope, string query, string? cursor = null, int limit = 100, CancellationToken cancellationToken = default)
-    {
-        string needle = query.Normalize(NormalizationForm.FormC);
-        if (needle.Length is < 1 or > 128 || needle.Contains('\0') || Encoding.UTF8.GetByteCount(needle) > 1024)
-            throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The search query is invalid.");
-        if (limit is < 1 or > 100) throw new GameLibraryException(GameLibraryErrorCodes.SearchLimitExceeded, "The search result limit is invalid.");
-        GameRow row = await FindVisibleAsync(actor, gameId, tracking: false, cancellationToken).ConfigureAwait(false) ?? throw NotFound();
-        string root = ResolveReadableRoot(actor, row, scope);
-        string normalizedScope = scope?.ToUpperInvariant() ?? (row.OwnerUserId == actor.UserId && row.WorkspacePath is not null ? "WORKSPACE" : "CURRENT");
-        SearchCursor? after = DecodeSearchCursor(cursor, normalizedScope, needle, row.StateVersion);
-        var results = new List<GameSearchMatch>();
-        int files = 0;
-        long decodedBytes = 0;
-        foreach (string file in EnumerateRegularFiles(root).Order(StringComparer.Ordinal))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!IsGameTextFile(file)) continue;
-            if (++files > 500) throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The search file limit was exceeded.");
-            long length = new FileInfo(file).Length;
-            decodedBytes = checked(decodedBytes + length);
-            if (decodedBytes > 32L * 1024 * 1024) throw new GameLibraryException(GameLibraryErrorCodes.InvalidInput, "The search byte limit was exceeded.");
-            if (!TryReadGameText(file, out string text, out _, out _)) continue;
-            string[] lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
-            for (int lineIndex = 0; lineIndex < lines.Length && results.Count <= limit; lineIndex++)
-            {
-                int column = lines[lineIndex].IndexOf(needle, StringComparison.OrdinalIgnoreCase);
-                if (column < 0) continue;
-                string relativePath = Path.GetRelativePath(root, file).Replace('\\', '/');
-                if (after is not null && CompareSearchPosition(relativePath, lineIndex + 1, column + 1, after) <= 0) continue;
-                string preview = lines[lineIndex].Length <= 240 ? lines[lineIndex] : lines[lineIndex][..240];
-                results.Add(new(relativePath, lineIndex + 1, column + 1, preview));
-            }
-            if (results.Count > limit) break;
-        }
-        bool hasMore = results.Count > limit;
-        IReadOnlyList<GameSearchMatch> page = hasMore ? results.Take(limit).ToArray() : results;
-        string? nextCursor = hasMore ? EncodeSearchCursor(new SearchCursor(
-            normalizedScope, needle, page[^1].Path, page[^1].Line, page[^1].Column, row.StateVersion)) : null;
-        return new GameSearchPage(page, nextCursor);
     }
 
     public async Task<GameFileDownload> OpenDownloadAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default)
@@ -358,86 +247,6 @@ public sealed class GameLibraryService(
             operation.CreatedAt,
             operation.UpdatedAt,
             operation.CompletedAt);
-    }
-
-    public async Task<GameLibraryItem> WriteTextFileAsync(CurrentActor actor, string gameId, string path, string content, int expectedStateVersion, string? expectedFileETag = null, bool requireAbsent = false, CancellationToken cancellationToken = default)
-    {
-        if (Encoding.UTF8.GetByteCount(content) > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.FileTooLargeToEdit, "The edited file is too large.");
-        await using FileStream mutationLock = AcquireMutationLock(gameId);
-        GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
-        EnsureVersion(row, expectedStateVersion);
-        string root = RequireWorkspace(row);
-        string logical = NormalizeRelativePath(path);
-        string target = ResolvePath(root, logical, allowMissingLeaf: true);
-        if (!IsGameTextFile(target)) throw new GameLibraryException(GameLibraryErrorCodes.FileTypeNotEditable, "Only game text files are editable.");
-        string[] segments = logical.Split('/');
-        string parentPath = string.Join('/', segments[..^1]);
-        string temporaryName = $".cloudemuera-edit-{Guid.NewGuid():N}";
-        using (SafeFileHandle rootHandle = LinuxFileOperations.OpenDirectory(root))
-        using (SafeFileHandle parent = LinuxGamePackageStagingStore.OpenDirectoryPath(rootHandle, parentPath, create: true))
-        {
-            using SafeFileHandle? existing = LinuxFileOperations.TryOpenRegularFileAt(parent, segments[^1], readOnly: true);
-            if (existing is not null && LinuxFileOperations.ReadIdentity(existing).LinkCount != 1) throw UnsafePath();
-            if (requireAbsent && existing is not null) throw new GameLibraryException(GameLibraryErrorCodes.FileChanged, "The file already exists.");
-            if (existing is null && expectedFileETag is not null) throw new GameLibraryException(GameLibraryErrorCodes.FileChanged, "The file was created concurrently.");
-            if (existing is not null && expectedFileETag is not null)
-            {
-                string actual = ComputeETag(existing);
-                if (!ETagsEqual(actual, expectedFileETag)) throw new GameLibraryException(GameLibraryErrorCodes.FileChanged, "The file changed concurrently.");
-            }
-            byte[] existingBytes = existing is null ? [] : ReadAll(existing);
-            byte[] encoded = EncodeEditedText(existingBytes, existing is not null, content);
-            if (encoded.LongLength > MaxEditableFileBytes) throw new GameLibraryException(GameLibraryErrorCodes.FileTooLargeToEdit, "The edited file is too large.");
-            try
-            {
-                using SafeFileHandle temporary = LinuxFileOperations.OpenRegularFileAt(parent, temporaryName, readOnly: false, create: true, exclusive: true);
-                LinuxFileOperations.ApplyPrivateMode(temporary);
-                await using (FileStream output = LinuxFileOperations.CreateFileStream(temporary, FileAccess.Write, 64 * 1024, isAsync: false))
-                {
-                    await output.WriteAsync(encoded, cancellationToken).ConfigureAwait(false);
-                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                    output.Flush(flushToDisk: true);
-                }
-                LinuxFileOperations.RenameAt(parent, temporaryName, segments[^1]);
-                LinuxFileOperations.Sync(parent);
-            }
-            catch
-            {
-                LinuxFileOperations.UnlinkAtIfExists(parent, temporaryName);
-                throw;
-            }
-        }
-        WorkspaceInspection inspection = InspectWorkspace(root);
-        await ReplaceFileIndexAsync(gameId, "WORKSPACE", inspection.Entries, cancellationToken).ConfigureAwait(false);
-        await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
-        MarkWorkspaceChanged(row);
-        AddAudit(actor, "GAME_FILE_UPDATE", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { path = logical }));
-        await SaveAsync(cancellationToken).ConfigureAwait(false);
-        return ToItem(row);
-    }
-
-    public async Task<GameLibraryItem> DeletePathAsync(CurrentActor actor, string gameId, string path, int expectedStateVersion, CancellationToken cancellationToken = default)
-    {
-        await using FileStream mutationLock = AcquireMutationLock(gameId);
-        GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
-        EnsureVersion(row, expectedStateVersion);
-        string logical = NormalizeRelativePath(path);
-        string root = RequireWorkspace(row);
-        _ = ResolvePath(root, logical, allowMissingLeaf: false);
-        string[] segments = logical.Split('/');
-        using (SafeFileHandle rootHandle = LinuxFileOperations.OpenDirectory(root))
-        using (SafeFileHandle parent = LinuxGamePackageStagingStore.OpenDirectoryPath(rootHandle, string.Join('/', segments[..^1]), create: false))
-        {
-            LinuxFileOperations.DeleteTreeAt(parent, segments[^1]);
-            LinuxFileOperations.Sync(parent);
-        }
-        WorkspaceInspection inspection = InspectWorkspace(RequireWorkspace(row));
-        await ReplaceFileIndexAsync(gameId, "WORKSPACE", inspection.Entries, cancellationToken).ConfigureAwait(false);
-        await ClearDiagnosticsAsync(gameId, cancellationToken).ConfigureAwait(false);
-        MarkWorkspaceChanged(row);
-        AddAudit(actor, "GAME_FILE_DELETE", row.Id, row.UpdatedAt, JsonSerializer.Serialize(new { path = logical }));
-        await SaveAsync(cancellationToken).ConfigureAwait(false);
-        return ToItem(row);
     }
 
     public async Task<GameDiagnosticItem> OverrideDiagnosticAsync(CurrentActor actor, string gameId, string diagnosticId, int expectedStateVersion, CancellationToken cancellationToken = default)
@@ -635,7 +444,7 @@ public sealed class GameLibraryService(
     }
 
     private string RequireWorkspace(GameRow row) => row.WorkspacePath is null
-        ? throw new GameLibraryException(GameLibraryErrorCodes.WorkspaceNotFound, "The game has no editable workspace.")
+        ? throw new GameLibraryException(GameLibraryErrorCodes.Conflict, "The game has no staged workspace.")
         : AbsoluteDataPath(row.WorkspacePath);
 
     private void MarkWorkspaceChanged(GameRow row)
@@ -962,38 +771,6 @@ public sealed class GameLibraryService(
         }
     }
 
-    private static byte[] EncodeEditedText(ReadOnlySpan<byte> existingBytes, bool existing, string content)
-    {
-        string encoding = "UTF8";
-        if (existing)
-        {
-            if (!TryReadGameText(existingBytes, out _, out string? detected, out _))
-                throw new GameLibraryException(GameLibraryErrorCodes.TextEncodingUnsupported, "The existing text encoding is unsupported.");
-            if (detected is not null) encoding = detected;
-        }
-        try
-        {
-            return encoding switch
-            {
-                "UTF8_BOM" => new byte[] { 0xEF, 0xBB, 0xBF }.Concat(new UTF8Encoding(false, true).GetBytes(content)).ToArray(),
-                "SHIFT_JIS" => Encoding.GetEncoding(932, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback).GetBytes(content),
-                _ => new UTF8Encoding(false, true).GetBytes(content),
-            };
-        }
-        catch (EncoderFallbackException exception)
-        {
-            throw new GameLibraryException(GameLibraryErrorCodes.TextNotRepresentable, $"The text cannot be represented in the original encoding: {exception.Message}");
-        }
-    }
-
-    private static byte[] ReadAll(SafeFileHandle handle)
-    {
-        using FileStream stream = LinuxFileOperations.CreateFileStream(handle, FileAccess.Read);
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return buffer.ToArray();
-    }
-
     private static string ComputeFileETag(string path)
     {
         using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
@@ -1009,56 +786,6 @@ public sealed class GameLibraryService(
     private static string ComputeETag(Stream stream) => $"sha256:{Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant()}";
 
     private static string ComputeETag(ReadOnlySpan<byte> bytes) => $"sha256:{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
-
-    private static bool ETagsEqual(string left, string right) =>
-        string.Equals(left.Trim().Trim('"'), right.Trim().Trim('"'), StringComparison.Ordinal);
-
-    private string EncodeSearchCursor(SearchCursor cursor)
-    {
-        byte[] payload = JsonSerializer.SerializeToUtf8Bytes(cursor);
-        byte[] signature = HMACSHA256.HashData(SearchCursorKey(), payload);
-        return $"{Base64Url(payload)}.{Base64Url(signature)}";
-    }
-
-    private SearchCursor? DecodeSearchCursor(string? encoded, string scope, string query, int stateVersion)
-    {
-        if (string.IsNullOrWhiteSpace(encoded)) return null;
-        try
-        {
-            string[] parts = encoded.Split('.', StringSplitOptions.None);
-            if (parts.Length != 2) throw new FormatException();
-            byte[] payload = Base64UrlDecode(parts[0]);
-            byte[] signature = Base64UrlDecode(parts[1]);
-            byte[] expected = HMACSHA256.HashData(SearchCursorKey(), payload);
-            if (!CryptographicOperations.FixedTimeEquals(signature, expected)) throw new FormatException();
-            SearchCursor? cursor = JsonSerializer.Deserialize<SearchCursor>(payload);
-            if (cursor is null || cursor.Scope != scope || cursor.Query != query || cursor.StateVersion != stateVersion
-                || cursor.Path.Length is < 1 or > 512 || cursor.Line <= 0 || cursor.Column <= 0)
-                throw new FormatException();
-            return cursor;
-        }
-        catch (Exception exception) when (exception is FormatException or JsonException or OverflowException or ArgumentException)
-        {
-            throw new GameLibraryException(GameLibraryErrorCodes.SearchCursorInvalid, "The search cursor is invalid or expired.");
-        }
-    }
-
-    private byte[] SearchCursorKey() => SHA256.HashData(Encoding.UTF8.GetBytes(
-        "CloudEmuera.SearchCursor.v1\0" + Path.GetFullPath(databaseOptions.DataRoot)));
-
-    private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-    private static byte[] Base64UrlDecode(string value)
-    {
-        string padded = value.Replace('-', '+').Replace('_', '/') + new string('=', (4 - value.Length % 4) % 4);
-        return Convert.FromBase64String(padded);
-    }
-
-    private static int CompareSearchPosition(string path, int line, int column, SearchCursor cursor)
-    {
-        int pathComparison = string.CompareOrdinal(path, cursor.Path);
-        return pathComparison != 0 ? pathComparison : line != cursor.Line ? line.CompareTo(cursor.Line) : column.CompareTo(cursor.Column);
-    }
 
     private static void CopyTree(string source, string destination)
     {
@@ -1343,5 +1070,4 @@ public sealed class GameLibraryService(
     private sealed record InspectedEntry(string Path, string EntryKind, long Bytes, string? Digest, string? FileKind, string? Encoding, bool? HasBom);
     private sealed record WorkspaceInspection(bool CanActivate, string ContentDigest, int FileCount, long TotalBytes,
         IReadOnlyList<GameValidationDiagnostic> Diagnostics, IReadOnlyList<InspectedEntry> Entries, string ManifestJson, string RuntimeConfigJson);
-    private sealed record SearchCursor(string Scope, string Query, string Path, int Line, int Column, int StateVersion);
 }

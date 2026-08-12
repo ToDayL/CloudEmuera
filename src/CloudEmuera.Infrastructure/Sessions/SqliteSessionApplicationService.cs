@@ -10,6 +10,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Domain.Sessions;
 using CloudEmuera.Infrastructure.Games;
+using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Microsoft.EntityFrameworkCore;
@@ -29,7 +30,8 @@ public sealed partial class SqliteSessionApplicationService(
     SqliteIdempotencyStore idempotency,
     ISessionLifecycleExecutor lifecycle,
     TimeProvider timeProvider,
-    ILogger<SqliteSessionApplicationService> logger) : ISessionApplicationService, ISessionOperationRecovery
+    ILogger<SqliteSessionApplicationService> logger,
+    InstanceCapacityOptions? capacityOptions = null) : ISessionApplicationService, ISessionOperationRecovery
 {
     private const string CreateScope = "SESSION_CREATE";
     private const string OpenScope = "SESSION_OPEN";
@@ -42,6 +44,7 @@ public sealed partial class SqliteSessionApplicationService(
     private readonly ConcurrentDictionary<string, Lazy<Task<SessionCommandResult>>> createOperations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<SessionCommandResult>>> openOperations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<SessionCommandResult>>> closeOperations = new(StringComparer.Ordinal);
+    private InstanceCapacityOptions Capacity => capacityOptions ?? InstanceCapacityOptions.Default;
 
     public async Task<SessionCommandResult> CreateAsync(
         CurrentActor actor,
@@ -550,17 +553,14 @@ public sealed partial class SqliteSessionApplicationService(
         long fileCount = files.LongCount(row => row.EntryKind == "FILE");
         long directoryCount = files.LongCount(row => row.EntryKind == "DIRECTORY");
         long contentBytes = files.Where(row => row.EntryKind == "FILE").Sum(row => row.ByteLength);
-        QuotaProfileRow? quota = await db.Users.Where(row => row.Id == actor.UserId).Select(row => row.QuotaProfile).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-        if (quota is null)
-            throw new SessionApplicationException(SessionErrorCodes.StorageUnavailable, "用户配额不可用。", 503);
         long reservedBytes = checked(contentBytes + 64 * 1024 + fileCount * 512 + directoryCount * 256);
-        if (reservedBytes > quota.MaxSessionBytes)
-            throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "SessionRoot 超过单 Session 存储配额。", 413);
+        if (reservedBytes > Capacity.MaxSessionRootBytes)
+            throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "SessionRoot 超过实例存储上限。", 413);
         long alreadyReserved = await db.SessionCreationOperations
-            .Where(row => row.ActorUserId == actor.UserId && row.Status != SessionCreationOperationStatus.Committed && row.Status != SessionCreationOperationStatus.Failed)
+            .Where(row => row.Status != SessionCreationOperationStatus.Committed && row.Status != SessionCreationOperationStatus.Failed)
             .SumAsync(row => (long?)row.ReservedBytes, cancellationToken).ConfigureAwait(false) ?? 0;
-        if (alreadyReserved > quota.MaxSessionBytes - reservedBytes)
-            throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "当前 Session 创建预留已达到存储配额。", 413);
+        if (alreadyReserved > Capacity.MaxSessionRootBytes - reservedBytes)
+            throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "实例 SessionRoot 创建预留已达到存储上限。", 413);
         long globalReserved = await db.SessionCreationOperations
             .Where(row => row.Status != SessionCreationOperationStatus.Committed && row.Status != SessionCreationOperationStatus.Failed)
             .SumAsync(row => (long?)row.ReservedBytes, cancellationToken).ConfigureAwait(false) ?? 0;
@@ -706,8 +706,6 @@ public sealed partial class SqliteSessionApplicationService(
         FrozenRuntimeManifest frozen = JsonSerializer.Deserialize<FrozenRuntimeManifest>(session.RuntimeManifestJson, JsonOptions)
             ?? throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session runtime manifest 无效。", 503);
         SessionRootPublishedManifest manifest = frozen.ToPublishedManifest(session.SourceContentDigest);
-        QuotaProfileRow quota = await db.Users.Where(row => row.Id == actorUserId).Select(row => row.QuotaProfile).SingleOrDefaultAsync()
-            ?? throw new SessionApplicationException(SessionErrorCodes.StorageUnavailable, "用户配额不可用。", 503);
         string stagingContainer = ResolveDataPath(operation.StagingPath);
         string finalContainer = SessionRootProtectedMarkerStore.ContainerPath(databaseOptions, sessionId);
         ValidateStagingContainer(stagingContainer, operation.StagingPath);
@@ -742,8 +740,8 @@ public sealed partial class SqliteSessionApplicationService(
             if (OperatingSystem.IsLinux())
                 File.SetUnixFileMode(stagingContainer, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             SessionRootCopyLimits limits = new(
-                maxTotalBytes: quota.MaxSessionBytes,
-                maxSingleFileBytes: Math.Min(quota.MaxSessionBytes, 512L * 1024 * 1024));
+                maxTotalBytes: Capacity.MaxSessionRootBytes,
+                maxSingleFileBytes: Math.Min(Capacity.MaxSessionRootBytes, 512L * 1024 * 1024));
             SessionRootLayout layout = new SessionRootLayoutBuilder(lease.ContentRootPath, stagingContainer, frozen.SaveLayout)
                 .WithPublishedManifest(manifest)
                 .WithCopyLimits(limits)
@@ -1332,7 +1330,7 @@ public sealed partial class SqliteSessionApplicationService(
 
     private static SessionCommandFailure MapRuntimeFailure(SessionRuntimeException exception) => exception.Code switch
     {
-        SessionRuntimeResultCodes.ActiveSessionQuotaExceeded => new(SessionErrorCodes.ActiveSessionQuotaExceeded, "活动 Session 配额已用尽。", 409),
+        SessionRuntimeResultCodes.ActiveWorkerLimitExceeded => new(SessionErrorCodes.ActiveWorkerLimitExceeded, "实例活动 Worker 上限已用尽。", 409),
         SessionRuntimeResultCodes.GameBlocked => new(SessionErrorCodes.GameBlocked, "游戏当前不可运行。", 409),
         SessionRuntimeResultCodes.ControlPlaneDraining or SessionRuntimeResultCodes.ControlPlaneReconciliationFailed => new(SessionErrorCodes.ServiceNotReady, "控制面当前不可用。", 503),
         SessionRuntimeResultCodes.SessionRootInvalid => new(SessionErrorCodes.SessionRootInvalid, "SessionRoot 校验失败。", 503),

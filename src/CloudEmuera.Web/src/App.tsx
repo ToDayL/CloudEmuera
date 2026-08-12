@@ -17,7 +17,6 @@ import {
   GameFileItem,
   GamePackageDiagnostic,
   GameLibraryItem,
-  GameSearchMatch,
   GameTextFile,
   GameValidationResult,
   GameVisibility,
@@ -26,8 +25,7 @@ import {
   bindGamePackage,
   createGame,
   deleteGame,
-  deletePath,
-  discardWorkspace,
+  downloadFileUrl,
   formatBytes,
   formatDateTime,
   getGame,
@@ -36,13 +34,10 @@ import {
   listFiles,
   listGames,
   readTextFile,
-  searchFiles,
   setGameBlocked,
   shortDigest,
-  startEditing,
   updateGame,
   validateGame,
-  writeTextFile,
 } from "./games";
 
 type IconName =
@@ -138,8 +133,7 @@ function AppShell({ children }: { children: ReactNode }) {
         <NavLink to="/settings" className={({ isActive }) => isActive ? "active" : ""}><Icon name="settings"/><span>设置</span></NavLink>
       </nav>
       <div className="sidebar-foot">
-        <div className="quota-label"><span>运行中的 Session</span><strong>2 / 4</strong></div>
-        <div className="quota-track"><span/></div>
+        <div className="instance-label"><span className="pulse-dot"/>单机实例运行中</div>
         <button className="profile-button" onClick={() => void logout().finally(() => navigate("/login", { replace: true }))}><span className="avatar">{user?.username.slice(0, 1) ?? "?"}</span><span><strong>{user?.username}</strong><small>{user?.role === "ADMIN" ? "管理员" : "玩家账户"} · 注销</small></span><Icon name="more"/></button>
       </div>
     </aside>
@@ -208,7 +202,7 @@ function GamesPage() {
       <div><span className="summary-icon peach"><Icon name="book"/></span><p><strong>{items.length}</strong><small>游戏</small></p></div>
       <div><span className="summary-icon mint"><Icon name="archive"/></span><p><strong>{currentCount}</strong><small>份当前内容</small></p></div>
       <div><span className="summary-icon blue"><Icon name="grid"/></span><p><strong>{sharedCount}</strong><small>服务器共享</small></p></div>
-      <div className="tip"><Icon name="spark"/><p><strong>内容验证后原子启用</strong><small>编辑只修改独立工作区，不影响当前可运行内容</small></p></div>
+      <div className="tip"><Icon name="spark"/><p><strong>内容验证后原子启用</strong><small>上传包只写入独立工作区，不影响当前可运行内容</small></p></div>
     </section>
     <div className="toolbar">
       <label className="search-box"><Icon name="search"/><span className="sr-only">搜索游戏</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索游戏…"/></label>
@@ -334,7 +328,7 @@ function UploadDialog({ onClose, games, initialGameId }: { onClose: () => void; 
         <span className="success-ring"><Icon name="check" size={30}/></span>
         <div><h3>游戏包已安全解压</h3><p>{ingestion.manifest.fileCount} 个文件 · {ingestion.manifest.directoryCount} 个目录 · {formatBytes(ingestion.manifest.contentBytes)}</p><small>摘要 sha256:{shortDigest(ingestion.manifest.contentDigest)}</small></div>
       </div>
-      {blocking > 0 && <div className="ingest-warning"><Icon name="warning"/><p><strong>{blocking} 条阻断提醒</strong><small>绑定后仍可查看与编辑草稿；验证通过前不会启用为当前内容。</small></p></div>}
+      {blocking > 0 && <div className="ingest-warning"><Icon name="warning"/><p><strong>{blocking} 条阻断提醒</strong><small>绑定后可查看工作区草稿；验证通过前不会启用为当前内容。</small></p></div>}
       {blocking > 0 && <ul className="ingest-blocking-list" aria-label="阻断提醒明细">
         {ingestion.manifest.diagnostics.filter(diagnostic => diagnostic.publishBlocking).slice(0, 6).map((diagnostic: GamePackageDiagnostic, index) => <li key={index}><span>{diagnostic.code}</span>{diagnostic.logicalPath && <small>{diagnostic.logicalPath}</small>}</li>)}
         {blocking > 6 && <li className="ingest-blocking-more">…另有 {blocking - 6} 条</li>}
@@ -391,7 +385,6 @@ function GameDetailPage() {
   const [validation, setValidation] = useState<GameValidationResult | null>(null);
   const [diagnostics, setDiagnostics] = useState<GameDiagnosticItem[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
 
@@ -443,7 +436,7 @@ function GameDetailPage() {
     <div className="panel error-panel" role="alert"><Icon name="warning"/><div><strong>无法加载游戏</strong><p>{loadError ?? "游戏不存在。"}</p></div><button className="secondary-button" onClick={() => { setLoading(true); void refresh(); }}>重试</button></div>
   </>;
 
-  const canEdit = game.workspaceStatus === "DRAFT";
+  const hasDraft = game.workspaceStatus === "DRAFT";
   const canPlay = game.hasCurrentContent && game.status === "ACTIVE";
   const displayDiagnostics: Array<{ id: string; code: string; severity: string; path: string | null; message: string; activationBlocking: boolean }> =
     diagnostics.length > 0
@@ -462,7 +455,7 @@ function GameDetailPage() {
         <div className="tag-row">
           {game.status === "BLOCKED" && <span className="tag warning"><Icon name="warning" size={13}/>已禁用</span>}
           {game.hasCurrentContent ? <span className="tag success"><Icon name="check" size={13}/>当前内容可运行</span> : <span className="tag">无当前内容</span>}
-          {canEdit && <span className="tag waiting">工作区草稿</span>}
+          {hasDraft && <span className="tag waiting">待验证工作区</span>}
           {game.contentDigest && <span className="tag">sha256:{shortDigest(game.contentDigest)}</span>}
         </div>
       </div>
@@ -479,35 +472,34 @@ function GameDetailPage() {
 
     {tab === "内容" && <section className="panel">
       <div className="panel-heading">
-        <div><h2>当前内容</h2><p>当前可运行内容是只读快照；编辑写入独立工作区，验证通过并原子启用后才替换。</p></div>
-        {canEdit
+        <div><h2>当前内容</h2><p>当前可运行内容是只读快照；上传包写入独立摄取工作区，验证通过并原子启用后才替换。</p></div>
+        {hasDraft
           ? <button className="primary-button" onClick={() => void run("正在验证并启用", () => activateGame(game.id, game.stateVersion))} disabled={busy !== ""}><Icon name="check"/>验证并启用</button>
-          : <button className="secondary-button" onClick={() => void run("正在从当前内容创建工作区", () => startEditing(game.id, game.stateVersion))} disabled={!game.hasCurrentContent || busy !== ""}><Icon name="plus"/>从当前内容开始编辑</button>}
+          : <button className="secondary-button" onClick={() => setUploadOpen(true)} disabled={busy !== ""}><Icon name="upload"/>上传游戏包</button>}
       </div>
       <div className="content-list">
         <article><span className="timeline-dot live"/><div>
           <h3>{game.hasCurrentContent ? `sha256:${shortDigest(game.contentDigest)}` : "尚未启用当前内容"}{game.hasCurrentContent && <span className="tag success">当前内容</span>}</h3>
           <p>内容修订 #{game.contentRevision} · {formatDateTime(game.updatedAt)} 更新</p>
-          <small>{game.hasCurrentContent ? "Session 创建时完整复制此快照；继续编辑不会改变既有 Session。" : "导入游戏包并验证启用后，即可创建 Session。"}</small>
+          <small>{game.hasCurrentContent ? "Session 创建时完整复制此快照；后续上传不会改变既有 Session。" : "导入游戏包并验证启用后，即可创建 Session。"}</small>
         </div><button className="text-button" onClick={() => setTab("文件")}>查看文件 <Icon name="arrow"/></button></article>
       </div>
-      {canEdit && <div className="content-list">
+      {hasDraft && <div className="content-list">
         <article><span className="timeline-dot"/><div>
-          <h3>工作区草稿 <span className="tag waiting">可编辑</span></h3>
-          <p>编辑只影响工作区，当前内容保持不可变。</p>
-          <small>可验证后原子启用，或直接丢弃草稿。</small>
+          <h3>工作区草稿 <span className="tag waiting">待验证</span></h3>
+          <p>上传包只写入工作区，当前内容保持不可变。</p>
+          <small>验证通过后可原子启用；不启用时可再次上传包替换。</small>
         </div>
         <span className="workspace-actions">
           <button className="text-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>验证</button>
-          <button className="danger-text" onClick={() => setConfirmDiscard(true)} disabled={busy !== ""}>丢弃工作区</button>
         </span></article>
       </div>}
-      {!game.hasCurrentContent && !canEdit && <div className="content-list empty-list"><article><span className="timeline-dot"/><div><h3>这个游戏还没有内容</h3><p>导入一个游戏包开始。</p></div><button className="secondary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>导入游戏包</button></article></div>}
-      {canEdit && <div className="panel-foot-actions"><button className="secondary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>上传新游戏包替换工作区</button></div>}
+      {!game.hasCurrentContent && !hasDraft && <div className="content-list empty-list"><article><span className="timeline-dot"/><div><h3>这个游戏还没有内容</h3><p>导入一个游戏包开始。</p></div><button className="secondary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>导入游戏包</button></article></div>}
+      {hasDraft && <div className="panel-foot-actions"><button className="secondary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>上传新游戏包替换工作区</button></div>}
       {(validation || displayDiagnostics.length > 0) && <div className={`validation-banner ${blockingCount === 0 ? "ok" : "bad"}`}><Icon name={blockingCount === 0 ? "check" : "warning"}/><p><strong>{blockingCount === 0 ? "验证通过" : "存在阻断启用的诊断"}</strong><small>{validation ? `${validation.diagnostics.length} 条诊断 · 摘要 ${shortDigest(validation.contentDigest)}` : `${displayDiagnostics.length} 条诊断`}</small></p><button className="text-button" onClick={() => setTab("兼容性")}>查看详情 <Icon name="arrow"/></button></div>}
     </section>}
 
-    {tab === "文件" && <GameFilesPanel game={game} onChanged={() => void refresh()}/>}
+    {tab === "文件" && <GameFilesPanel game={game}/>}
 
     {tab === "兼容性" && <section className="panel diagnostics">
       {!validation && displayDiagnostics.length === 0 ? <div className="diagnostic-empty"><Icon name="spark" size={26}/><h2>尚未运行验证</h2><p>运行一次验证以检查目录结构、编码、解析错误与禁止能力。</p><button className="primary-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>运行验证</button></div>
@@ -519,17 +511,16 @@ function GameDetailPage() {
           {displayDiagnostics.length === 0 ? <p className="diagnostic-none">没有诊断。</p>
             : displayDiagnostics.map(diagnostic => <div className={`diagnostic-row ${diagnostic.activationBlocking ? "blocking" : ""}`} key={diagnostic.id}><Icon name={diagnostic.activationBlocking ? "warning" : "check"}/><span><strong>{diagnostic.code}</strong>{diagnostic.path && <small> · {diagnostic.path}</small>}<p>{diagnostic.message}</p></span><small>{diagnostic.severity}</small></div>)}
         </>}
-      {canEdit && <div className="diagnostic-foot"><button className="secondary-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>{busy === "正在验证" ? "验证中…" : "重新验证"}</button></div>}
+      {hasDraft && <div className="diagnostic-foot"><button className="secondary-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>{busy === "正在验证" ? "验证中…" : "重新验证"}</button></div>}
     </section>}
 
     {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); void refresh(); }}/>}
     {uploadOpen && <UploadDialog onClose={() => setUploadOpen(false)} games={[game]} initialGameId={game.id}/>}
-    {confirmDiscard && <ConfirmDialog title="丢弃工作区草稿？" body="工作区中的所有编辑都会被丢弃，当前内容保持不变。" confirm="确认丢弃" onCancel={() => setConfirmDiscard(false)} onConfirm={() => void run("正在丢弃工作区", () => discardWorkspace(game.id, game.stateVersion))} pending={busy === "正在丢弃工作区"}/>}
     {confirmDelete && <ConfirmDialog title="删除这个游戏？" body="未被 Session 引用的游戏会先执行可恢复的逻辑删除；被引用的游戏会被拒绝删除。" confirm="确认删除" onCancel={() => setConfirmDelete(false)} onConfirm={() => void deleteGameAction()} pending={busy === "正在删除"}/>}
   </>;
 }
 
-function GameFilesPanel({ game, onChanged }: { game: GameLibraryItem; onChanged: () => void }) {
+function GameFilesPanel({ game }: { game: GameLibraryItem }) {
   const [scope, setScope] = useState<ContentScope>(game.workspaceStatus === "DRAFT" ? "WORKSPACE" : "CURRENT");
   const [path, setPath] = useState("");
   const [files, setFiles] = useState<GameFileItem[] | null>(null);
@@ -537,21 +528,9 @@ function GameFilesPanel({ game, onChanged }: { game: GameLibraryItem; onChanged:
   const [selected, setSelected] = useState<GameTextFile | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<string | null>(null);
-  const [editingNew, setEditingNew] = useState(false);
-  const [newPath, setNewPath] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<GameSearchMatch[] | null>(null);
-  const [searchNext, setSearchNext] = useState<string | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
 
   const workspaceAvailable = game.workspaceStatus === "DRAFT";
   const currentAvailable = game.hasCurrentContent;
-  const editable = scope === "WORKSPACE" && workspaceAvailable;
-
   const loadFiles = useCallback(async (targetScope: ContentScope, targetPath: string) => {
     setFilesError(null);
     try { setFiles(await listFiles(game.id, targetScope, targetPath)); }
@@ -559,106 +538,40 @@ function GameFilesPanel({ game, onChanged }: { game: GameLibraryItem; onChanged:
   }, [game.id]);
 
   useEffect(() => {
-    setPath(""); setSelected(null); setSelectedPath(null); setDraft(null); setReadError(null); setEditingNew(false);
-    setSearchResults(null); setSearchNext(null); setSearchQuery("");
+    setPath(""); setSelected(null); setSelectedPath(null); setReadError(null);
     const available = scope === "WORKSPACE" ? workspaceAvailable : currentAvailable;
     if (available) void loadFiles(scope, "");
-  }, [scope, loadFiles]);
+  }, [scope, loadFiles, workspaceAvailable, currentAvailable]);
 
   const openFile = async (filePath: string) => {
-    setSelectedPath(filePath); setSelected(null); setDraft(null); setReadError(null); setEditingNew(false);
-    try { const file = await readTextFile(game.id, scope, filePath); setSelected(file); setDraft(file.content); }
+    setSelectedPath(filePath); setSelected(null); setReadError(null);
+    try { setSelected(await readTextFile(game.id, scope, filePath)); }
     catch (err) { setReadError(err instanceof Error ? err.message : "无法读取文件。"); }
-  };
-
-  const save = async () => {
-    if (!selected || draft === null) return;
-    setSaving(true); setReadError(null);
-    try {
-      await writeTextFile(game.id, selected.path, draft, game.stateVersion, selected.etag);
-      onChanged();
-      await openFile(selected.path);
-      await loadFiles(scope, path);
-    } catch (err) { setReadError(err instanceof Error ? err.message : "保存失败。"); }
-    finally { setSaving(false); }
-  };
-
-  const createNewFile = async (event: FormEvent) => {
-    event.preventDefault();
-    const trimmed = newPath.trim();
-    if (!trimmed) return;
-    setSaving(true); setReadError(null);
-    try {
-      await writeTextFile(game.id, trimmed, "", game.stateVersion, null, true);
-      onChanged();
-      setEditingNew(false); setNewPath("");
-      await openFile(trimmed);
-      await loadFiles(scope, path);
-    } catch (err) { setReadError(err instanceof Error ? err.message : "创建失败。"); }
-    finally { setSaving(false); }
-  };
-
-  const removeSelected = async () => {
-    if (!selected) return;
-    setSaving(true); setReadError(null);
-    try {
-      await deletePath(game.id, selected.path, game.stateVersion);
-      onChanged();
-      setSelected(null); setSelectedPath(null); setDraft(null); setConfirmDelete(false);
-      await loadFiles(scope, path);
-    } catch (err) { setReadError(err instanceof Error ? err.message : "删除失败。"); }
-    finally { setSaving(false); }
-  };
-
-  const runSearch = async (cursor?: string | null) => {
-    const q = searchQuery.trim();
-    if (!q) return;
-    setSearching(true); setSearchError(null);
-    try {
-      const page = await searchFiles(game.id, scope, q, cursor);
-      setSearchResults(previous => cursor ? [...(previous ?? []), ...page.items] : page.items);
-      setSearchNext(page.nextCursor);
-    } catch (err) { setSearchError(err instanceof Error ? err.message : "搜索失败。"); }
-    finally { setSearching(false); }
   };
 
   const segments = path ? path.split("/") : [];
   const goTo = (index: number) => {
     const target = segments.slice(0, index + 1).join("/");
-    setPath(target);
-    void loadFiles(scope, target);
+    setPath(target); void loadFiles(scope, target);
   };
   const goUp = () => {
     const parent = segments.slice(0, -1).join("/");
-    setPath(parent);
-    void loadFiles(scope, parent);
+    setPath(parent); void loadFiles(scope, parent);
   };
 
   return <div className="file-workspace">
     <div className="file-toolbar">
       <div className="segment-control" aria-label="文件范围">
-        <button className={scope === "WORKSPACE" ? "selected" : ""} disabled={!workspaceAvailable} onClick={() => setScope("WORKSPACE")}>工作区</button>
+        <button className={scope === "WORKSPACE" ? "selected" : ""} disabled={!workspaceAvailable} onClick={() => setScope("WORKSPACE")}>待验证工作区</button>
         <button className={scope === "CURRENT" ? "selected" : ""} disabled={!currentAvailable} onClick={() => setScope("CURRENT")}>当前内容</button>
       </div>
-      <form className="search-box" onSubmit={(event) => { event.preventDefault(); void runSearch(null); }}>
-        <Icon name="search"/><span className="sr-only">搜索文件内容</span>
-        <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="搜索文本内容…"/>
-        <button className="text-button" type="submit" disabled={!searchQuery.trim() || searching}>{searching ? "搜索中…" : "搜索"}</button>
-      </form>
-      {editable && !editingNew && <button className="secondary-button" onClick={() => { setEditingNew(true); setSelected(null); setDraft(null); setReadError(null); }}><Icon name="plus"/>新建文件</button>}
+      <span className="readonly-note">文件仅供查看和下载</span>
     </div>
-    {searchResults !== null && <div className="panel search-panel">
-      <div className="search-head"><h3>搜索结果（{scope === "WORKSPACE" ? "工作区" : "当前内容"}）</h3><button className="text-button" onClick={() => { setSearchResults(null); setSearchNext(null); setSearchError(null); }}>清空</button></div>
-      {searchError && <p className="file-error" role="alert">{searchError}</p>}
-      {!searchError && searchResults.length === 0 && !searching && <p className="search-empty">没有匹配的内容。</p>}
-      {searchResults.map((match, index) => <button className="search-row" key={`${match.path}-${match.line}-${index}`} onClick={() => void openFile(match.path)}><span className="search-path">{match.path}</span><span className="search-loc">第 {match.line} 行</span><p>{match.preview}</p></button>)}
-      {searchNext && <button className="text-button search-more" onClick={() => void runSearch(searchNext)} disabled={searching}>{searching ? "加载中…" : "加载更多"}</button>}
-    </div>}
     {!workspaceAvailable && !currentAvailable
       ? <div className="panel empty-list-panel"><Icon name="folder" size={26}/><p>这个游戏还没有可浏览的内容。先在「内容」页导入游戏包。</p></div>
       : <section className="panel file-panel">
         <div className="file-tree">
-          <h3>{scope === "WORKSPACE" ? "工作区" : "当前内容"}{path ? ` / ${path}` : ""}</h3>
+          <h3>{scope === "WORKSPACE" ? "待验证工作区" : "当前内容"}{path ? ` / ${path}` : ""}</h3>
           <div className="file-breadcrumb">
             <button className={path === "" ? "current" : ""} onClick={() => { setPath(""); void loadFiles(scope, ""); }}>根目录</button>
             {segments.map((segment, index) => <button key={index} onClick={() => goTo(index)}>{segment}</button>)}
@@ -667,21 +580,19 @@ function GameFilesPanel({ game, onChanged }: { game: GameLibraryItem; onChanged:
           {filesError && <p className="file-error" role="alert">{filesError}</p>}
           {files?.map(item => item.isDirectory
             ? <button className="file-row" key={item.path} onClick={() => { setPath(item.path); void loadFiles(scope, item.path); }}><Icon name="folder"/><span>{item.path.split("/").pop()}</span><span className="file-meta">目录</span></button>
-            : <button className={`file-row ${selectedPath === item.path ? "selected" : ""}`} key={item.path} onClick={() => void openFile(item.path)}><Icon name="book"/><span>{item.path.split("/").pop()}</span><span className="file-meta">{formatBytes(item.bytes)}</span></button>)}
+            : <div className="file-row-wrap" key={item.path}><button className={`file-row ${selectedPath === item.path ? "selected" : ""}`} onClick={() => void openFile(item.path)}><Icon name="book"/><span>{item.path.split("/").pop()}</span><span className="file-meta">{formatBytes(item.bytes)}</span></button><a className="file-download" href={downloadFileUrl(game.id, scope, item.path)} download aria-label={`下载 ${item.path}`}><Icon name="download" size={15}/></a></div>)}
           {files && files.length === 0 && !filesError && <p className="file-empty">此目录为空。</p>}
         </div>
-        <div className="editor-preview">
-          {editingNew
-            ? <div className="editor-bar"><span>新建文件</span><span>工作区 · UTF-8</span></div>
-            : selected ? <div className="editor-bar"><span>{selected.path}</span><span>{selected.encoding}{selected.hasBom ? " BOM" : ""} · {editable ? formatBytes(selected.bytes) : "只读"}</span><span className="editor-actions">{editable && <><button className="text-button" onClick={() => setConfirmDelete(true)}>删除</button><button className="primary-button small" onClick={() => void save()} disabled={saving || draft === selected.content}>{saving ? "保存中…" : "保存"}</button></>}</span></div>
-            : readError ? <div className="editor-error" role="alert"><Icon name="warning"/><p>{readError}</p></div>
-            : <div className="editor-empty"><Icon name="book" size={26}/><p>选择左侧文件查看内容</p>{!editable && <small>当前内容是只读快照；切换到工作区可编辑。</small>}</div>}
-          {editingNew && <form className="new-file-form" onSubmit={createNewFile}><label><span>文件路径（相对工作区根目录）</span><input value={newPath} onChange={(event) => setNewPath(event.target.value)} placeholder="ERB/NEW.ERB" autoFocus required/></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setEditingNew(false)}>取消</button><button className="primary-button" disabled={saving || !newPath.trim()}>{saving ? "创建中…" : "创建文件"}</button></div></form>}
-          {selected && <textarea className="file-editor" value={draft ?? ""} onChange={(event) => setDraft(event.target.value)} readOnly={!editable} spellCheck={false} aria-label={`编辑 ${selected.path}`}/>}
+        <div className="file-viewer">
+          {selected ? <div className="file-viewer-bar"><span>{selected.path}</span><span>{selected.encoding}{selected.hasBom ? " BOM" : ""} · {formatBytes(selected.bytes)} · 只读</span></div>
+            : readError ? <div className="file-viewer-error" role="alert"><Icon name="warning"/><p>{readError}</p></div>
+            : <div className="file-viewer-empty"><Icon name="book" size={26}/><p>选择左侧文件查看内容</p><small>文件内容不可在浏览器中修改。</small></div>}
+          {selected && (
+            <textarea className="file-viewer-content" value={selected.content} readOnly spellCheck={false} aria-label={`查看 ${selected.path}`}/>
+          )}
           {readError && selected && <p className="file-error" role="alert">{readError}</p>}
         </div>
       </section>}
-    {confirmDelete && selected && <ConfirmDialog title={`删除 ${selected.path}？`} body="此操作会从工作区移除该文件，且无法撤销。" confirm="确认删除" onCancel={() => setConfirmDelete(false)} onConfirm={() => void removeSelected()} pending={saving}/>}
   </div>;
 }
 
@@ -695,7 +606,7 @@ function SessionsPage() {
     <section className="session-list">
       {shown.map(session => <article key={session.id} className="session-row"><span className={`session-art ${session.color}`}>{session.glyph}</span><div className="session-main"><div><h2>{session.name}</h2><p>{session.game} <span>·</span> {session.sourceContentDigest}</p></div><div className="session-badges"><Status state={session.state}/>{session.waiting && <span className="tag waiting"><Icon name="clock" size={13}/>等待输入</span>}</div></div><div className="session-meta"><span>最后活动</span><strong>{session.activity}</strong></div><div className="session-meta"><span>本次时长</span><strong>{session.played}</strong></div>{session.state === "CLOSED" ? <Link className="secondary-button" to="/saves">查看存档</Link> : <Link className="play-button" to={`/sessions/${session.id}`}><Icon name="play" size={17}/>继续游戏</Link>}</article>)}
     </section>
-    <div className="info-banner"><Icon name="spark"/><p><strong>Session 与浏览器连接相互独立</strong><small>关闭标签页不会停止游戏。请在不再需要时显式关闭 Session，以释放运行配额。</small></p></div>
+    <div className="info-banner"><Icon name="spark"/><p><strong>Session 与浏览器连接相互独立</strong><small>关闭标签页不会停止游戏。请在不再需要时显式关闭 Session，以释放实例 Worker 名额。</small></p></div>
   </>;
 }
 
@@ -785,7 +696,7 @@ function SavesPage() {
 }
 
 function AdminPage() {
-  return <><PageHeader eyebrow="SYSTEM" title="运行状态" description="观察单机 API Worker Manager 与每个活动 Worker 的健康状态。" actions={<span className="updated"><i/>刚刚更新</span>}/><section className="health-grid"><article><span className="summary-icon mint"><Icon name="server"/></span><div><p>API</p><strong>健康</strong><small>12 ms · v0.1.0-dev</small></div></article><article><span className="summary-icon mint"><Icon name="settings"/></span><div><p>Worker Manager</p><strong>健康</strong><small>最后心跳 2 秒前</small></div></article><article><span className="summary-icon blue"><Icon name="gamepad"/></span><div><p>Worker</p><strong>2 / 4</strong><small>50% 活动配额</small></div></article><article><span className="summary-icon peach"><Icon name="archive"/></span><div><p>数据目录</p><strong>18.6 GB</strong><small>剩余 74%</small></div></article></section><section className="panel"><div className="panel-heading"><div><h2>活动 Worker</h2><p>每个活动 Session 由一个独立进程持有。</p></div><button className="secondary-button">查看审计记录</button></div><div className="worker-table"><div className="worker-head"><span>Session / Worker</span><span>状态</span><span>CPU</span><span>内存</span><span>输出速率</span><span>心跳</span></div>{[{name:"周目二 · 港口存档",id:"wrk_8fd2 · epoch 3",cpu:"2.4%",mem:"286 MB",rate:"18 evt/s"},{name:"初见流程",id:"wrk_1ac4 · epoch 1",cpu:"0.8%",mem:"241 MB",rate:"0 evt/s"}].map(w=><div className="worker-row" key={w.id}><span><strong>{w.name}</strong><small>{w.id}</small></span><span><Status state="RUNNING"/></span><span>{w.cpu}</span><span>{w.mem}</span><span>{w.rate}</span><span>2 秒前</span></div>)}</div></section><div className="security-banner"><span><Icon name="check"/></span><p><strong>运行环境隔离检查已通过</strong><small>namespace、cgroup v2、seccomp 与私有文件系统边界均已启用。</small></p><button>查看详情</button></div></>;
+  return <><PageHeader eyebrow="SYSTEM" title="运行状态" description="查看单机 API、Worker Manager 和活动 Session 的基本状态。" actions={<span className="updated"><i/>刚刚更新</span>}/><section className="health-grid"><article><span className="summary-icon mint"><Icon name="server"/></span><div><p>API</p><strong>健康</strong><small>12 ms · v0.1.0-dev</small></div></article><article><span className="summary-icon mint"><Icon name="settings"/></span><div><p>Worker Manager</p><strong>健康</strong><small>进程监视运行中</small></div></article><article><span className="summary-icon blue"><Icon name="gamepad"/></span><div><p>活动 Worker</p><strong>2</strong><small>当前运行进程</small></div></article><article><span className="summary-icon peach"><Icon name="archive"/></span><div><p>数据目录</p><strong>可用</strong><small>空间检查正常</small></div></article></section><section className="panel"><div className="panel-heading"><div><h2>活动 Worker</h2><p>每个活动 Session 由一个独立进程持有。</p></div></div><div className="worker-table"><div className="worker-head"><span>Session / Worker</span><span>状态</span><span>epoch</span><span>心跳</span></div>{[{name:"周目二 · 港口存档",id:"wrk_8fd2",epoch:"3"},{name:"初见流程",id:"wrk_1ac4",epoch:"1"}].map(w=><div className="worker-row" key={w.id}><span><strong>{w.name}</strong><small>{w.id}</small></span><span><Status state="RUNNING"/></span><span>{w.epoch}</span><span>2 秒前</span></div>)}</div></section></>;
 }
 
 const defaultUserInput: CreateUserInput = { username: "", email: "", temporaryPassword: "", role: "PLAYER" };

@@ -7,7 +7,8 @@
 
 拓扑迁移：本文记录 P0-06 已完成的独立 Supervisor/Worker 验证，不回写历史实现与测试结果。
 [`ADR-0015`](../adr/0015-api-owned-worker-lifecycle.md) 已取代独立 Supervisor 和 API 重启期间保留
-Worker 的产品目标；P1-05 把可复用的 UDS、binding、启动和监视实现迁入 API。按
+Worker 的产品目标；[`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md) 进一步取代强沙箱、
+资源治理和控制流重注册语义。P1-05 把可复用的 UDS、binding、启动和监视实现迁入 API。按
 [`ADR-0016`](../adr/0016-reopenable-session-root-lifecycle.md)，同一 Session 可在 Worker 关闭或
 崩溃后以更大 epoch 复用原 SessionRoot 重新开启。下文相反表述仅描述 P0-06 当时的验收边界。
 

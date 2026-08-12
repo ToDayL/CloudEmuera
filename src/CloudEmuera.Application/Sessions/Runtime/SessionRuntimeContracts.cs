@@ -12,8 +12,7 @@ public static class SessionRuntimeResultCodes
     public const string Accepted = "accepted";
     public const string SessionNotFound = "session_not_found";
     public const string SessionNotOpenable = "session_not_openable";
-    public const string ActiveSessionQuotaExceeded = "active_session_quota_exceeded";
-    public const string WorkerLimitExceeded = "worker_limit_exceeded";
+    public const string ActiveWorkerLimitExceeded = "active_worker_limit_exceeded";
     public const string WorkerStartFailed = "worker_start_failed";
     public const string WorkerRegistrationTimeout = "worker_registration_timeout";
     public const string WorkerReadyTimeout = "worker_ready_timeout";
@@ -85,7 +84,7 @@ public enum SessionRuntimeAcquireFailure
     None,
     SessionNotFound,
     SessionNotOpenable,
-    ActiveSessionQuotaExceeded,
+    ActiveWorkerLimitExceeded,
     WorkerAlreadyLeased,
     MutationLeaseActive,
     GameBlocked,
@@ -156,7 +155,6 @@ public sealed record WorkerLaunchSpec(
     DateTimeOffset RegistrationDeadline,
     TimeSpan HeartbeatInterval,
     TimeSpan ShutdownGracePeriod,
-    TimeSpan DisconnectGracePeriod,
     TimeSpan RuntimeInitializationTimeout,
     TimeSpan RuntimeExecutionTimeout,
     long ExpectedParentProcessId,
@@ -306,7 +304,6 @@ public sealed class SessionRuntimeCoordinator(
                     timeProvider.GetUtcNow().AddSeconds(10),
                     TimeSpan.FromMilliseconds(500),
                     TimeSpan.FromSeconds(5),
-                    TimeSpan.FromSeconds(2),
                     TimeSpan.FromSeconds(30),
                     Timeout.InfiniteTimeSpan,
                     Environment.ProcessId,
@@ -447,7 +444,7 @@ public sealed class SessionRuntimeCoordinator(
     {
         SessionRuntimeAcquireFailure.SessionNotFound => SessionRuntimeResultCodes.SessionNotFound,
         SessionRuntimeAcquireFailure.SessionNotOpenable => SessionRuntimeResultCodes.SessionNotOpenable,
-        SessionRuntimeAcquireFailure.ActiveSessionQuotaExceeded => SessionRuntimeResultCodes.ActiveSessionQuotaExceeded,
+        SessionRuntimeAcquireFailure.ActiveWorkerLimitExceeded => SessionRuntimeResultCodes.ActiveWorkerLimitExceeded,
         SessionRuntimeAcquireFailure.WorkerAlreadyLeased => SessionRuntimeResultCodes.WorkerStaleEpoch,
         SessionRuntimeAcquireFailure.MutationLeaseActive => SessionRuntimeResultCodes.SessionMutationInProgress,
         SessionRuntimeAcquireFailure.GameBlocked => SessionRuntimeResultCodes.GameBlocked,

@@ -1,6 +1,7 @@
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Domain.Sessions;
 using CloudEmuera.Infrastructure.Games;
+using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Infrastructure.Tests.Support;
@@ -92,11 +93,11 @@ public sealed class SqliteSessionRuntimeStoreTests
     }
 
     [Fact]
-    public async Task ConcurrentOpensForTheLastOwnerQuotaHaveOneWinner()
+    public async Task ConcurrentOpensForTheLastInstanceWorkerSlotHaveOneWinner()
     {
         using TemporarySqliteDatabase database = new();
         await SeedSessionsAsync(database, quota: 1, "sess_fixture", "sess_second");
-        SqliteSessionRuntimeStore store = new(database.Options, TimeProvider.System);
+        SqliteSessionRuntimeStore store = new(database.Options, TimeProvider.System, new InstanceCapacityOptions { MaxActiveWorkers = 1 });
         DateTimeOffset now = new(2026, 8, 11, 14, 0, 0, TimeSpan.Zero);
 
         Task<SessionRuntimeAcquireResult> first = store.TryAcquireOpenLeaseAsync(
@@ -106,7 +107,7 @@ public sealed class SqliteSessionRuntimeStoreTests
         SessionRuntimeAcquireResult[] results = await Task.WhenAll(first, second);
 
         Assert.Single(results, result => result.Succeeded);
-        Assert.Single(results, result => result.Failure == SessionRuntimeAcquireFailure.ActiveSessionQuotaExceeded);
+        Assert.Single(results, result => result.Failure == SessionRuntimeAcquireFailure.ActiveWorkerLimitExceeded);
 
         SessionRuntimeLease winner = results.Single(result => result.Succeeded).Lease!;
         Assert.True((await store.CompleteAsync(

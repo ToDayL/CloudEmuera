@@ -69,7 +69,7 @@ public sealed class LocalIdentityConcurrencyTests
         {
             LocalIdentityService service = CreateService(attempt.Context);
             await Assert.ThrowsAsync<DbUpdateException>(() => service.CreateUserAsync(
-                new CreateUserCommand("rollback-user", "rollback@example.test", "rollback-password", "PLAYER", null),
+                new CreateUserCommand("rollback-user", "rollback@example.test", "rollback-password", "PLAYER"),
                 new CurrentActor("usr_admin", "ADMIN", "auths_admin")));
         }
 

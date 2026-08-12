@@ -95,11 +95,11 @@ public sealed class GameLibraryApiContractTests : IDisposable
         GameFileListResponse currentErb = await currentErbResponse.Content.ReadFromJsonAsync<GameFileListResponse>() ?? throw new Xunit.Sdk.XunitException("Current ERB file list was missing.");
         Assert.Contains(currentErb.Items, item => item.Path == "ERB/START.ERB");
 
-        HttpResponseMessage search = await client.GetAsync($"/api/v1/games/{game.Id}/search?scope=CURRENT&q=INPUT&limit=10");
-        Assert.Equal(HttpStatusCode.OK, search.StatusCode);
-        GameSearchPageResponse searchPage = await search.Content.ReadFromJsonAsync<GameSearchPageResponse>() ?? throw new Xunit.Sdk.XunitException("Search response was missing.");
-        Assert.NotNull(searchPage.Items);
-        Assert.NotEmpty(searchPage.Items);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/v1/games/{game.Id}/search?scope=CURRENT&q=INPUT&limit=10")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/v1/games/{game.Id}:edit", new StringContent("{}", Encoding.UTF8, "application/json"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/v1/games/{game.Id}/workspace")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsync($"/api/v1/games/{game.Id}/file?path=ERB%2FNEW.ERB", new StringContent("{}", Encoding.UTF8, "application/json"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/v1/games/{game.Id}/file?path=ERB%2FSTART.ERB")).StatusCode);
 
         HttpResponseMessage download = await client.GetAsync($"/api/v1/games/{game.Id}/download?scope=CURRENT&path=ERB%2FSTART.ERB");
         Assert.Equal(HttpStatusCode.OK, download.StatusCode);
@@ -618,7 +618,6 @@ public sealed class GameLibraryApiContractTests : IDisposable
     }
 
     private sealed record GameFileListResponse(IReadOnlyList<GameFileItem> Items);
-    private sealed record GameSearchPageResponse(IReadOnlyList<GameSearchMatch> Items, string? NextCursor);
     private sealed record GameDiagnosticListResponse(IReadOnlyList<GameDiagnosticItem> Items);
     private sealed record CsrfResponse(string Token);
 }

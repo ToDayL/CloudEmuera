@@ -4,6 +4,10 @@
 
 日期：2026-08-11
 
+范围修订：本文保留 P1-05 实施时的历史计划和验证记录；其中强沙箱、细粒度进程资源治理以及控制流
+断线恢复的表述已由 [`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md) 取代，
+当前收敛以 P1-S01 简化计划为准。
+
 关联需求：SESS-001、SESS-002、SESS-005、SESS-009～012、OPS-001、OPS-002、
 AC-003、AC-006、AC-007
 
@@ -18,7 +22,7 @@ binding 和 Worker 终止 deadline；无法确认退出时保留 lease/readiness
 前置任务：P0-06、P1-01、P1-02、P1-04
 
 后续任务：P1-06 Session HTTP 纵切、P1-07 Snapshot、P1-08 Realtime、P1-09 Save、
-P1-12 沙箱与资源治理、P1-13 部署收尾
+P1-13 部署收尾；强沙箱与细粒度资源治理已由 ADR-0017/P1-S01 明确不作为本 MVP 能力
 
 ## 1. 目标结果
 

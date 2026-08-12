@@ -15,7 +15,7 @@ namespace CloudEmuera.Ipc;
 public static class IpcProtocol
 {
     public const uint CurrentVersion = 2;
-    public const int BootstrapSchemaVersion = 2;
+    public const int BootstrapSchemaVersion = 3;
 
     public static string NewMessageId(string prefix = "msg")
     {
@@ -134,8 +134,6 @@ public sealed record WorkerBootstrapDocument
 
     public int ShutdownGracePeriodMilliseconds { get; init; }
 
-    public int DisconnectGracePeriodMilliseconds { get; init; } = 2_000;
-
     public long InitialOutputSequence { get; init; }
 
     public int SaveLayout { get; init; }
@@ -174,7 +172,6 @@ public sealed record WorkerBootstrapDocument
 
         ValidatePositive(HeartbeatIntervalMilliseconds, nameof(HeartbeatIntervalMilliseconds), 10, 60_000);
         ValidatePositive(ShutdownGracePeriodMilliseconds, nameof(ShutdownGracePeriodMilliseconds), 100, 120_000);
-        ValidatePositive(DisconnectGracePeriodMilliseconds, nameof(DisconnectGracePeriodMilliseconds), 100, 120_000);
         ValidatePositive(RuntimeInitializationTimeoutMilliseconds, nameof(RuntimeInitializationTimeoutMilliseconds), 100, 300_000);
         if (RuntimeExecutionTimeoutMilliseconds == 0 || RuntimeExecutionTimeoutMilliseconds < -1 || RuntimeExecutionTimeoutMilliseconds > 86_400_000)
         {

@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using CloudEmuera.Ipc;
 using CloudEmuera.Worker;
+using Grpc.Core;
 using Microsoft.Extensions.Logging;
 
 return await WorkerProcess.RunAsync(args).ConfigureAwait(false);
@@ -84,6 +85,16 @@ internal static class WorkerProcess
         int exitCode;
         try
         {
+            Task completed = await Task.WhenAny(controller.Completion, connectionTask).ConfigureAwait(false);
+            if (completed == connectionTask)
+            {
+                try { await connectionTask.ConfigureAwait(false); }
+                catch (Exception exception) when (exception is IOException or RpcException or OperationCanceledException)
+                {
+                    WorkerLifecycleLog.Write(connectionLogger, bootstrap.Binding, "control_stream_closed", exception.GetType().Name, LogLevel.Warning);
+                }
+                await controller.RequestShutdownAsync().ConfigureAwait(false);
+            }
             exitCode = await controller.Completion.WaitAsync(processCancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -94,7 +105,11 @@ internal static class WorkerProcess
 
         await connection.StopAsync().ConfigureAwait(false);
         await controller.DisposeAsync().ConfigureAwait(false);
-        await connectionTask.ConfigureAwait(false);
+        try { await connectionTask.ConfigureAwait(false); }
+        catch (Exception exception) when (exception is IOException or RpcException or OperationCanceledException)
+        {
+            WorkerLifecycleLog.Write(connectionLogger, bootstrap.Binding, "control_stream_closed", exception.GetType().Name, LogLevel.Warning);
+        }
         return exitCode;
     }
 

@@ -34,13 +34,9 @@ public sealed record WorkerManagerOptions
 
     public TimeSpan WorkerShutdownTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
-    public TimeSpan DisconnectGracePeriod { get; init; } = TimeSpan.FromSeconds(2);
-
     public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromMilliseconds(500);
 
     public TimeSpan LeaseDuration { get; init; } = TimeSpan.FromSeconds(5);
-
-    public int MaxConcurrentWorkers { get; init; } = 32;
 
     public Func<WorkerBootstrapDocument, WorkerBootstrapDocument>? BootstrapTransformForTest { get; init; }
 
@@ -53,9 +49,7 @@ public sealed record WorkerManagerOptions
         IpcValidator.ValidateAbsolutePath(WorkerAssemblyPath, nameof(WorkerAssemblyPath));
         IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
         if (ControlSocketPath.Length > 107 || RegistrationTimeout <= TimeSpan.Zero || RuntimeReadyTimeout <= TimeSpan.Zero ||
-            WorkerShutdownTimeout <= TimeSpan.Zero || DisconnectGracePeriod <= TimeSpan.Zero ||
-            HeartbeatInterval <= TimeSpan.Zero || LeaseDuration <= HeartbeatInterval ||
-            DisconnectGracePeriod >= LeaseDuration || MaxConcurrentWorkers <= 0)
+            WorkerShutdownTimeout <= TimeSpan.Zero || HeartbeatInterval <= TimeSpan.Zero || LeaseDuration <= HeartbeatInterval)
             throw new ArgumentException("Worker Manager options are outside their supported bounds.");
 
         if (!SamePath(RuntimeDirectory, Path.Combine(DataRoot, "runtime", ControlPlaneInstanceId)) ||

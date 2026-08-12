@@ -2,7 +2,7 @@
 
 状态：Draft v0.2
 
-更新日期：2026-08-11
+更新日期：2026-08-12
 依据：`requirements.zh-CN.md`、`design.zh-CN.md`
 
 ## 1. 计划目标
@@ -10,6 +10,10 @@
 本计划把 CloudEmuera 从已验证的工程骨架推进到可重复验收的单机 MVP。所有步骤都必须产生可检查的代码或文档，并提供自动化命令和明确通过条件。步骤默认按编号顺序执行；只有依赖已满足且验证边界完全独立时才能并行。
 
 状态标记：`DONE` 已完成、`NEXT` 下一步、`TODO` 未开始、`BLOCKED` 外部条件阻塞。
+
+范围说明：本文的历史步骤可能保留已完成系统的旧独立控制面、内核隔离、细粒度配额或断线恢复描述；
+这些表述已由 [`ADR-0017`](adr/0017-trusted-self-hosted-mvp-simplification.md) 和 P1-S01 取代，
+当前完成门以本文最新状态和简化计划为准。
 
 下文中尚不存在的测试项目和脚本属于对应步骤的必交付物；该步骤只有在这些命令真实存在、可独立执行且返回正确退出码后才能标记为 `DONE`。
 
@@ -210,24 +214,46 @@ docker compose -f compose.dev.yaml run --rm api \
 
 通过条件：契约序列化和未知字段测试通过；错误协议版本被明确拒绝；第二个 Session 不能进入同一 Worker；API 测试进程退出不导致 Worker 立即退出；关闭请求后 Worker 在限定时间内退出。
 
-2026-08-05 完成记录：冻结 IPC protocol v1 与 `worker.proto` 字段号/保留字段，Supervisor
+2026-08-05 完成记录：冻结 IPC protocol v1 与 `worker.proto` 字段号/保留字段，旧控制面
 仅监听权限为 `0600` 的 Unix domain socket，Worker bootstrap 父目录/文件分别为
 `0700`/`0600`，启动令牌为 256-bit CSPRNG base64url 且不进入 argv、环境变量或日志。
 stale socket 清理验证 Unix socket 类型、服务账户 owner、单链接和 `0700` 父目录后，使用
-父目录句柄 `unlinkat`；Supervisor/Worker 生命周期日志包含 session/worker/epoch 关联字段并
+父目录句柄 `unlinkat`；Worker 生命周期日志包含 session/worker/epoch 关联字段并
 脱敏 token、路径和输入。真实 `CloudEmuera.Worker` 子进程直接消费 P0-05 SessionRoot，完成
 v18 与 EM+EE 两套 fixture 的注册、版本握手、ready、结构化 DisplayBatch、INPUT、重复输入、
 completed、stopped 和退出；另覆盖错误 token、独立控制客户端进程退出、stop 等待输入、同
-Worker 第二次 start、错误 binding、Supervisor stream 短断重连、两个 Worker 并行隔离和 UDS
+Worker 第二次 start、错误 binding、控制流断开退出、两个 Worker 并行隔离和 UDS
 恶意路径。IPC 契约测试 9 项、ProcessIsolation 测试 18 项，均在 Linux dev Docker 中通过；
-P1-05 的持久 WorkerLease、epoch 分配、Supervisor 重启对账和沙箱限制仍未实现。
+P1-05 的持久 WorkerLease、epoch 分配、控制面重启对账和旧资源隔离限制仍未实现。
 
 2026-08-11 架构修订：上述结果保留为独立 Worker、UDS、binding 和进程隔离的历史证据；
-[`ADR-0015`](adr/0015-api-owned-worker-lifecycle.md) 已取代独立 Supervisor 生产拓扑及 API 退出后
+[`ADR-0015`](adr/0015-api-owned-worker-lifecycle.md) 已取代旧独立控制面生产拓扑及 API 退出后
 Worker 继续运行的目标。P1-05 将复用实现迁入 API，并按
 [`ADR-0016`](adr/0016-reopenable-session-root-lifecycle.md) 实现可反复开启的持久 Session。
 
 ## 4. Phase 1：端到端单机 MVP
+
+2026-08-12 起，后续范围按 ADR-0017 的可信参与者自托管边界执行。已经实现但需要降复杂度的
+浏览器文件写入产品面、用户分层容量消费、Worker 断流恢复占位和运维占位，统一按独立计划
+[`tasks/P1-S01-simplify-implemented-systems-plan.zh-CN.md`](tasks/P1-S01-simplify-implemented-systems-plan.zh-CN.md)
+分步处理；身份/授权、关键审计、Migrator、持久幂等和 operation recovery 不在删除范围。
+
+### P1-S01 — 已实现系统简化（DONE）
+
+关联决策：[`ADR-0017`](adr/0017-trusted-self-hosted-mvp-simplification.md)。
+
+完成内容：移除浏览器游戏文件写入面和服务端全文搜索；将活动 Worker、包摄取与 SessionRoot 预算收敛为
+实例级容量选项；控制流断开后 Worker 停止并有界退出；保留基本健康、版本、Worker/Session 状态和关键
+审计，移除专用遥测、细粒度进程资源面板及通用审计浏览入口。`QuotaProfile` 表、外键和历史数据暂保留，
+但运行期不再按用户读取或调度；安全 ZIP 摄取、parser-only Validator、current 原子启用、SessionRoot
+独立副本、原生存档、身份授权、幂等、恢复和 WorkerLease/epoch 约束继续有效。
+
+验证：后端和前端完整检查必须通过；定向测试覆盖只读 Game API、实例 Worker 名额、旧 epoch 拒绝、
+控制流断开退出、优雅/强制停止、API 父进程退出和不明确遗留 lease 不影响无关 Session。
+2026-08-12 验证记录：`./scripts/check.sh` 通过（Release 0 warning/0 error、Application 13、API
+22、Domain 22、GamePackages 51、Infrastructure 98、IPC 9、RuntimeAdapter 142、
+RuntimeCompatibility 27、Worker 18、Web 13）；`./scripts/verify-dev-user.sh`、
+`./scripts/verify-third-party.sh` 和 `git diff --check` 通过。
 
 ### P1-01 — SQLite 首版 schema 与迁移（DONE）
 
@@ -351,7 +377,7 @@ P1-01 的 `game_versions` 是 ADR-0010 之前已完成的旧 schema。不得回�
 必须新增升级 migration，把内容元数据合并进 `games`、把 Session 改为 Game + 源摘要快照，并删除
 旧表和产品代码。
 
-### P1-04 — 简化游戏库、工作区编辑与当前内容启用（DONE）
+### P1-04 — 简化游戏库、摄取与当前内容启用（DONE）
 
 需求映射：GAME-004～010。
 
@@ -360,8 +386,8 @@ P1-01 的 `game_versions` 是 ADR-0010 之前已完成的旧 schema。不得回�
 架构决策见
 [`ADR-0010`](adr/0010-single-game-content-without-version-entities.md)。
 
-交付物：移除 GameVersion 的 schema/代码迁移；单一 Game API；workspace 目录浏览、文本读取编辑和
-搜索；验证与 current content 原子启用；运行时清单；Session 源摘要快照；引用保护和逻辑删除。
+交付物：移除 GameVersion 的 schema/代码迁移；单一 Game API；workspace 目录浏览、文本只读查看和
+下载；验证与 current content 原子启用；运行时清单；Session 源摘要快照；引用保护和逻辑删除。
 
 验证：
 
@@ -370,11 +396,11 @@ dotnet test tests/CloudEmuera.Api.IntegrationTests --filter 'Category=GameLibrar
 ```
 
 通过条件：公开契约不存在 GameVersion；每个 Game 最多一个 workspace 和一个 current content；
-编辑/启用不改变既有 SessionRoot；Session 创建与内容替换并发只复制完整旧树或新树；被 Session
+只读浏览/启用不改变既有 SessionRoot；Session 创建与内容替换并发只复制完整旧树或新树；被 Session
 引用的 Game 不能删除；升级后旧 schema 数据按明确规则保留或在修改前安全失败。
 
 当前实现记录：schema/实体/授权/RuntimeAdapter 的 GameVersion 清除、旧数据升级、Game CRUD、摄取
-绑定、workspace 编辑/丢弃、目录/文本/下载/搜索、只读 current 启用、文件/诊断索引、持久 operation
+绑定、workspace 摄取、目录/文本只读查看/下载、current 启用、文件/诊断索引、持久 operation
 与基础对账已经完成。一次性真实 Emuera parser-only Validator 及超时/崩溃/超输出/非法协议、只读
 validation snapshot、owner inode marker、内容复制/发布/删除的 Linux dirfd 主路径、持久 copy lease、
 `CONTENT_READY` 恢复/续租/retired 清理、强 ETag/创建前置条件、幂等、独立速率限制、诊断 override、
@@ -387,10 +413,10 @@ Game 错误码与审计动作对齐计划 §15；API 暴露 OpenAPI 文档端点
 Session 创建/启用并发完整集成测试按 P1-04 计划 §12 属 P1-06，本步交付 copy lease 端口及
 rename 钉住测试。
 2026-08-09 UI 接入：P1-04 的浏览器 UI（游戏库列表/创建/导入绑定、单一 Game 内容页的
-workspace/current 文件浏览、文本编辑、搜索、验证、原子启用、丢弃草稿、删除与下载）已接入真实
+workspace/current 文件浏览、文本只读查看、验证、原子启用、删除与下载）已接入真实
 API；P1-10 不再处理 Game 的 UI。同时修复开发容器 Validator 程序集路径解析（Development 下
 默认路径指向不存在的目录）与 Debug/Release 解析行为不一致（上游 DEBUG 经过时间系统行被当作
-阻断诊断），使开发环境可真实执行验证与启用。新增 Web 单元测试（列表/创建/上传绑定/文件编辑/
+阻断诊断），使开发环境可真实执行验证与启用。新增 Web 单元测试（列表/创建/上传绑定/文件查看/
 验证启用）、HTTP 集成测试（GameLibrary 类别，含真实 parser 进程）与 RuntimeBridge 回归测试；
 `pnpm --dir src/CloudEmuera.Web typecheck/test/build`、定向 .NET 测试与隔离 e2e 身份套件通过。
 
@@ -401,14 +427,14 @@ API；P1-10 不再处理 Game 的 UI。同时修复开发容器 Validator 程序
 详细设计：[`tasks/P1-05-api-worker-manager-session-lifecycle-plan.zh-CN.md`](tasks/P1-05-api-worker-manager-session-lifecycle-plan.zh-CN.md)。
 
 交付物：把 P0-06 可复用的 Worker 启动、UDS、安全校验和进程监视迁入 API Worker Manager；删除
-独立 Supervisor 产品进程/入口；API 成为唯一运行期 SQLite 业务访问者；实现 WorkerLease 获取/
-续租/回收、epoch fencing、心跳超时、活动配额、API 退出时有界 Worker 回收，以及
+旧独立控制面产品进程/入口；API 成为唯一运行期 SQLite 业务访问者；实现 WorkerLease 获取/
+续租/回收、epoch fencing、心跳超时、实例级活动 Worker 名额、API 退出时有界 Worker 回收，以及
 `CLOSED/CRASHED → STARTING` 的同 Session 重开状态机。Session 创建只物化一次 SessionRoot，
 open/close 只获取或释放 Worker。
 
 实现记录：API 已成为运行期唯一 SQLite 业务访问者；Worker Manager、UDS gRPC、bootstrap
 凭据、PID/boot ID/start ticks、parent-death、心跳续租、进程退出监视、启动对账和 readiness
-屏障已迁入 API，独立 Supervisor 项目、solution 引用和部署入口已删除。SQLite migration 增加
+屏障已迁入 API，旧独立控制面项目、solution 引用和部署入口已删除。SQLite migration 增加
 control-plane/process identity、活动状态约束和 owner/state 索引；SessionRoot 只在 open 前复核，
 close/crash 不删除目录，重开递增 epoch 并从上次持久输出序列继续。P1-05 不新增公开 Session
 HTTP API；P1-06 通过 Application coordinator 接入。
@@ -431,16 +457,17 @@ docker compose -f compose.dev.yaml run --rm api \
 通过条件：同一 `CLOSED/CRASHED` Session 并发 open 只产生一个有效 Worker；只剩一个活动名额时
 并发 open 最多一个成功；旧 epoch 的心跳和结果全部被拒绝；kill Worker 后 Session 在心跳窗口内
 变为 CRASHED，并可在旧写权限释放后以更大 epoch 复用同一 SessionRoot 重开；正常/强制终止 API
-后 Worker 均在期限内退出，新 API 对账为 CRASHED；无法回收旧 Worker 时 ready 失败且不授予新
-写租约。生产解决方案和容器不再启动独立 Supervisor，Worker 不访问 SQLite。
+后 Worker 均在期限内退出，新 API 对账为 CRASHED；无法确认旧 Worker 退出时只冻结对应 Session 的
+open/存档写，不影响无关 Session 的 ready 和 open。生产解决方案和容器不再启动旧独立控制面，Worker
+不访问 SQLite。
 
 2026-08-11 复核修复：运行期身份在注册等待前由 coordinator 持久化；heartbeat、STOPPING 和终态
 写入均校验并返回最新 `state_version` binding；API shutdown 使用真实 binding；终止和启动失败无法
 确认退出时保持 fail-closed。新增同 epoch 陈旧版本、无 PID `STARTING` 对账、无法确认退出和停机
 binding 测试；Application SessionLifecycle 13 项、Infrastructure SessionLifecycle/WorkerLease 88
-项、Worker ProcessIsolation 18 项、API 集成 21 项在 Linux dev Docker 中通过。
+项、Worker ProcessIsolation 18 项、API 集成 22 项在 Linux dev Docker 中通过。
 
-### P1-06 — 幂等 Session 创建、开启与关闭纵切（BLOCKED：未完成验收）
+### P1-06 — 幂等 Session 创建、开启与关闭纵切（IN PROGRESS：补齐恢复验收）
 
 需求映射：SESS-001、SESS-005～008、SESS-011/012、AC-001、AC-003、AC-006/007。
 
@@ -473,36 +500,39 @@ staging，再发布私有持久 SessionRoot。新增 `session_creation_operation
 现在会等待 lifecycle reconciliation 并确认没有未决 Session 命令。
 
 当前验证：dev Docker 中真实 Kestrel HTTP + Worker Session lifecycle 集成测试通过；全量
-`./scripts/check.sh` 通过（Release 0 warning/0 error、API 22、Infrastructure 94、Application 13、
+`./scripts/check.sh` 通过（Release 0 warning/0 error、API 22、Infrastructure 98、Application 13、
 Worker 18、RuntimeAdapter 142、RuntimeCompatibility 27、Web 13），`./scripts/verify-dev-user.sh`、
 `./scripts/verify-third-party.sh` 和 `git diff --check` 通过。最后的 hosted-service 生命周期收尾后，
 API 集成测试再次以 22/22 通过。该结果不等于完成定义已满足，尚未完成 API 重启/Worker 崩溃、root
-与 `sav/` 两种布局、SQLite/发布故障注入和恶意 Worker 文件访问边界。
+与 `sav/` 两种布局以及 SQLite/发布故障注入；恶意 Worker 文件隔离已由 ADR-0017 移出产品边界。
 
-阻塞项：API 与 Worker 当前同 UID，protected marker 的权限模式不能替代独立 UID、mount namespace
-或其他 OS 文件视图；真实 Worker sandbox 由 P1-12 落地。在 P1-12 和上述真实恢复/故障测试完成前，
-P1-06 保持 BLOCKED，不进入 P1-07。
+依据 ADR-0017，API 与 Worker 同一非 root UID 是接受的个人自托管边界，不再以缺少额外内核隔离
+阻塞 P1-06，也不宣称抵御恶意 Worker。P1-06 仍需补齐 API 重启/Worker 崩溃、
+root 与 `sav/` 两种布局、SQLite/发布故障注入等生命周期正确性测试；这些通过后即可完成本阶段。
 
-### P1-07 — Snapshot、恢复屏障与有界输出（TODO）
+### P1-07 — 完整 Snapshot 重连与有界输出（TODO）
 
-需求映射：PLAY-004～006、PLAY-010/012、AC-002/012、ADR-003。
+需求映射：PLAY-004～006、PLAY-010/012、AC-002/012、ADR-0017。
 
-交付物：`ADR-003`；ConsoleSnapshot 序列化；短期增量环形缓冲；恢复屏障；批处理、背压和快照降级策略。
+交付物：ConsoleSnapshot 序列化与大小上限；实时批次队列；重连总是取得完整 Snapshot；批处理、
+背压、序号缺口检测和快照重新同步。不实现历史增量环形缓冲、ack 补发或 snapshot/subscribe 无丢失屏障。
 
 验证：
 
 ```bash
 dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Snapshot|Category=Backpressure'
-./scripts/test-realtime-load.sh
 ```
 
-通过条件：快照生成期间持续输出仍无缺口、重复或乱序；慢客户端不会导致无界内存；超过增量窗口时确定性降级到新快照；负载报告证明内存保持在 ADR 上限内。
+通过条件：重连用完整 Snapshot 替换本地状态；快照生成期间持续输出时要么连续应用后续批次，要么
+检测缺口并重新同步；慢客户端不会导致无界内存；队列溢出确定性降级到新快照。
 
-### P1-08 — WebSocket 恢复与输入去重（TODO）
+### P1-08 — WebSocket 快照恢复与有界输入去重（TODO）
 
 需求映射：AUTH-005、PLAY-006～008、PLAY-011、AC-002/005。
 
-交付物：版本化 WebSocket envelope、鉴权握手、断线恢复、ack、`promptId/clientMessageId` 去重和多客户端首个有效输入规则。
+交付物：版本化 WebSocket envelope、鉴权握手、完整快照恢复、当前 Worker 内有界
+`promptId/clientMessageId` 去重和多客户端首个有效输入规则。不实现 ack 历史补发、持久输入去重或
+控制流断开即退出的收敛由 P1-S01 完成。
 
 验证：
 
@@ -510,15 +540,17 @@ dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Snapshot|Categor
 dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Reconnect|Category=InputDeduplication'
 ```
 
-通过条件：浏览器断开后从最后 ack 恢复且无丢失窗口；重复消息只执行一次并返回同一结果；两个
-客户端并发回答只有一个 ACCEPTED；同一 API 实例内 Worker IPC 短断可在有界宽限期恢复，超时则
-Session 进入 CRASHED；越权恢复失败。API 重启不恢复旧 Worker 实时连接。
+通过条件：浏览器断开后取得一致完整 Snapshot 与当前 prompt；当前 Worker 内重复消息只执行一次并
+返回同一结果；两个客户端并发回答只有一个 ACCEPTED；Worker IPC 断开后有界退出且 Session 进入
+CRASHED；越权恢复失败。API 重启不恢复旧 Worker 实时连接。
 
 ### P1-09 — Session 原生存档文件 API（TODO）
 
 需求映射：SAVE-001～009、SAVE-015、AC-004/007/013/014。
 
-交付物：按 Session 列出和下载原生存档；在 Session 无活动 Worker 时上传、替换、重命名、复制和删除；路径/大小/基本格式校验；用户、游戏和 Session 隔离。文件直接位于 SessionRoot，不建立 SaveArtifact 表或 generation 存储。
+交付物：按 Session 列出和下载原生存档；在 Session 无活动 Worker 时上传、替换、重命名和删除；
+路径/大小/基本格式校验；用户和 Session 授权。文件直接位于 SessionRoot，不建立 SaveArtifact 表、
+generation、Session 间直接传输 API、签名 URL 或内容级 Game 摘要兼容证明。
 
 验证：
 
@@ -526,15 +558,16 @@ Session 进入 CRASHED；越权恢复失败。API 重启不恢复旧 Worker 实�
 dotnet test tests/CloudEmuera.Saves.IntegrationTests
 ```
 
-通过条件：跨用户和跨 Session 访问失败；上传校验大小、路径和版本；活动 Worker 存在时所有修改操作被拒绝；操作与 Worker 启动竞争时只有一方成功；显式复制产生独立物理文件；API 不解析或改写 Emuera 原生内容。
+通过条件：跨用户和跨 Session 访问失败；上传校验大小、路径和基本原生约束；活动 Worker 存在时
+所有修改操作被拒绝；操作与 Worker 启动竞争时只有一方成功；API 不解析或改写 Emuera 原生内容。
 
 ### P1-10 — 浏览器 Session 控制台和存档界面（TODO）
 
 需求映射：SESS-005/006、PLAY-002/009、SAVE-003、AC-011。
 
-交付物：登录、Session 列表、Session 创建/open/close/重开、结构化 Console、输入控件、重连状态
-和存档管理页面；移动安全区和键盘处理。
-游戏库、工作区编辑与发布等 Game 管理 UI 已随 P1-04 完成，不再属于 P1-10。
+交付物：登录、游戏包检查与只读文件查看、Session 列表、Session 创建/open/close/重开、结构化
+Console、输入控件、完整 Snapshot 重连状态和存档管理页面；移动安全区和键盘处理。删除或隐藏
+P1-04 已实现的浏览器文件写入、创建、重命名、删除和搜索入口。
 
 验证：
 
@@ -545,43 +578,53 @@ pnpm --dir e2e test
 
 通过条件：组件测试覆盖状态与错误分支；Playwright 在桌面和移动 viewport 完成登录、发布、创建 Session、输入、断线重连和存档下载；基础键盘导航和可访问性扫描无阻断错误。
 
-### P1-11 — 管理、可观测性与就绪检查（TODO）
+### P1-11 — 基本管理、诊断与就绪检查（TODO）
 
 需求映射：OPS-001、OPS-003～006、AC-007。
 
-交付物：结构化关联日志、Worker/Session 指标、管理员列表和强制停止、审计查询、live/ready/version 语义；敏感字段过滤。
+交付物：结构化关联日志、Worker/Session 基本状态和最近错误、管理员强制停止、live/ready/version
+语义及敏感字段过滤。保留现有关键审计写入，不实现通用审计浏览、专用遥测平台、进程级 CPU/RSS/FD/
+磁盘指标或容量规划面板。
 
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Operations.IntegrationTests
-./scripts/test-observability.sh
+./scripts/check.sh
+./scripts/verify-dev-user.sh
+./scripts/verify-third-party.sh
 ```
 
-通过条件：日志包含 request/session/worker/epoch 关联字段但不含秘密或默认输入全文；依赖未就绪时 ready 失败但 live 语义正确；管理员终止可审计；指标能反映 Worker 崩溃和输出速率。
+通过条件：日志包含 request/session/worker/epoch 关联字段但不含秘密或默认输入全文；数据库、DataRoot、
+迁移或启动对账未就绪时 ready 失败但 live 语义正确；管理员终止可审计；基本状态能反映 Worker 崩溃、
+Snapshot 大小和队列溢出，且不出现专用遥测或通用审计浏览入口。
 
-### P1-12 — Worker 沙箱与资源限制（TODO）
+### P1-12 — 基础 Worker 进程边界与实例级上限（TODO）
 
-需求映射：SEC、安全非功能需求、OPS-002、AC-010、ADR-002/005。
+需求映射：SEC、OPS-002、AC-010、ADR-0017。
 
-交付物：`ADR-002` 和 `ADR-005`；namespace/cgroup/seccomp/只读挂载策略；CPU、内存、进程、磁盘和输出配额；不满足能力时拒绝 ready。
+交付物：生产容器非 root；不挂 Docker socket/宿主密钥/无关路径；Worker 只接收已验证 SessionRoot
+与启动 binding；实例级最大活动 Worker、上传/展开/文件数量、存档、Snapshot/队列和最低剩余空间
+上限；容器整体 CPU/内存/PID 限制文档。不实现额外的敌对租户内核隔离或进程级资源治理，也不设置
+相应 readiness 门。
 
 验证：
 
 ```bash
-./scripts/test-worker-sandbox.sh
-./scripts/test-worker-limits.sh
+./scripts/test-production-image.sh
+./scripts/test-instance-limits.sh
 ```
 
-通过条件：Worker 不能读取其他 Session、写 Game workspace/current content、访问宿主路径、创建
-禁止的进程或任意联网；CPU/内存/磁盘超限产生明确状态；目标 Docker 配置缺少必需沙箱能力时服务不进入 ready。
+通过条件：生产进程非 root且没有敏感宿主挂载；正常 Worker 启动参数不包含 Game workspace/current
+或其他 SessionRoot；实例级上限产生稳定错误且队列不无界增长；文档明确同 UID 不提供恶意 Worker
+隔离，缺少额外内核隔离能力不影响 ready。
 
 ### P1-13 — 单容器生产进程管理与恢复（TODO）
 
 需求映射：MVP 单容器、AC-003/006/007、OPS-003。
 
-交付物：生产镜像中的 Migrator 前置检查、API 及其 Worker 子进程启动/停止编排；非 root 用户；
-信号转发、parent-death/进程组/cgroup 回收兜底；数据目录迁移、备份与恢复说明。
+交付物：保留已实现的 Migrator 前置检查；API 及其 Worker 子进程启动/停止编排；非 root 用户；
+轻量 PID 1、信号转发、parent-death/进程组回收兜底；数据目录停机备份与恢复说明。不新增完整 s6
+服务树、在线备份编排或滚动升级。
 
 验证：
 
@@ -591,15 +634,16 @@ dotnet test tests/CloudEmuera.Operations.IntegrationTests
 ```
 
 通过条件：全新数据卷可启动；进程均非 root；SIGTERM 在期限内停止 Worker 并把活动 Session 标记
-CRASHED；强制终止 API 后 Worker 在断连宽限期内退出或被回收；新 API 确认旧写权限释放后完成
-CRASHED 对账，同一 Session 可复用原 SessionRoot 重开；遗留 Worker 无法回收时 ready 失败；生产
-镜像不存在独立 Supervisor 服务；备份恢复后元数据和文件校验一致。
+CRASHED；强制终止 API 或断开控制通道后 Worker 立即开始退出或被回收；新 API 确认旧写权限释放后完成
+CRASHED 对账，同一 Session 可复用原 SessionRoot 重开；单个无法确认的遗留 Worker 只阻止对应
+Session 的 open/存档写；生产镜像不存在旧独立控制面服务；备份恢复后元数据和文件校验一致。
 
 ### P1-14 — MVP 验收、安全与性能门（TODO）
 
 需求映射：AC-001～014、设计第 17 章全部测试层级。
 
-交付物：需求—测试追踪矩阵；一键验收脚本；兼容性、安全、故障注入、性能、移动端和视觉回归报告；已知限制清单。
+交付物：需求—测试追踪矩阵；一键验收脚本；兼容性、文件格式/Web 安全、故障注入、容量、移动端
+和视觉回归报告；明确“可信参与者/可信游戏、无恶意 Worker 隔离”的已知限制清单。
 
 验证：
 
@@ -607,7 +651,9 @@ CRASHED 对账，同一 Session 可复用原 SessionRoot 重开；遗留 Worker 
 ./scripts/acceptance-mvp.sh
 ```
 
-通过条件：AC-001～014 每项至少有一个自动化测试或版本化、可重复的验收场景；脚本从干净 checkout 和空数据卷运行成功；失败报告指出具体 AC 编号；无未解释的高危安全问题；性能结果满足需求文档边界或有批准的 ADR 偏差。
+通过条件：AC-001～014 每项至少有一个自动化测试或版本化、可重复的验收场景；脚本从干净 checkout
+和空数据卷运行成功；失败报告指出具体 AC 编号；无超出 ADR-0017 已接受信任边界的未解释高危
+问题；容量结果满足实例级边界或有批准的 ADR 偏差。
 
 ## 5. Phase 2/3 进入条件
 
@@ -619,7 +665,9 @@ SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在�
 
 1. ~~完成 P1-04 剩余安全加固：真实 parser-only Validator、dirfd/fsync 内容存储、崩溃恢复/续租、
    copy lease 端口和旧 DataRoot 迁移工具。~~ 已于 2026-08-09 完成，P1-04 标记为 DONE。
-2. ~~按 ADR-0015/0016 完成 P1-05：把 Worker 管理迁入 API，移除独立 Supervisor，并实现持久
+2. ~~按 ADR-0015/0016 完成 P1-05：把 Worker 管理迁入 API，移除旧独立控制面，并实现持久
    SessionRoot 的 open/close/reopen 生命周期。~~ 已于 2026-08-11 完成，进入 P1-06。
+3. ~~按 ADR-0017 完成 P1-S01：收窄 Game、实例容量、Worker 控制流和基本诊断边界。~~ 已于
+   2026-08-12 完成，后续 P1-06～P1-14 按简化后的契约继续验证。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

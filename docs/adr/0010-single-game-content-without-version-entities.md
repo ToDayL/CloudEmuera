@@ -4,6 +4,10 @@
 
 日期：2026-08-09
 
+2026-08-12 修订说明：ADR-0017 保留单一 workspace/current、Validator、manifest/digest 和原子启用
+内部模型，但取消浏览器内文件编辑、创建、重命名、删除与搜索产品面。workspace 现作为包摄取和
+检查工作区；本文编辑器相关历史表述不再是 MVP 要求。
+
 取代：[`ADR-0009`](0009-draft-publication-and-immutable-version-identity.md)
 
 ## 背景

@@ -6,6 +6,9 @@
 复制源名称。目标代码应在 P1-04 重命名为 `GameContentRoot/Game content source`；完整复制、禁止
 链接、路径隔离和 SessionRoot 语义不变，不能据旧名称重新引入版本实体。
 
+范围说明：本文是历史平台端口记录；其中关于未来 Worker 身份、mount namespace、降权和沙箱的表述
+已由 [`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md) 取代，不构成当前 MVP 完成门。
+
 计划日期：2026-08-04
 
 对应开发步骤：`P0-02 — 平台端口与 RuntimePaths`

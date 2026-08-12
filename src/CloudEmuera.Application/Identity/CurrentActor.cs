@@ -18,7 +18,7 @@ public sealed class LoginCommand(string email, string password, bool rememberMe)
 
 public sealed class LoginResult(CurrentUser user, string authSessionId, DateTimeOffset expiresAt) { public CurrentUser User { get; } = user; public string AuthSessionId { get; } = authSessionId; public DateTimeOffset ExpiresAt { get; } = expiresAt; }
 
-public sealed class CreateUserCommand(string username, string email, string temporaryPassword, string role, string? quotaProfileId) { public string Username { get; } = username; public string Email { get; } = email; public string TemporaryPassword { get; } = temporaryPassword; public string Role { get; } = role; public string? QuotaProfileId { get; } = quotaProfileId; }
+public sealed class CreateUserCommand(string username, string email, string temporaryPassword, string role) { public string Username { get; } = username; public string Email { get; } = email; public string TemporaryPassword { get; } = temporaryPassword; public string Role { get; } = role; }
 
 public sealed class UpdateUserCommand(string? username, string? email, string? role, string? status, int expectedStateVersion) { public string? Username { get; } = username; public string? Email { get; } = email; public string? Role { get; } = role; public string? Status { get; } = status; public int ExpectedStateVersion { get; } = expectedStateVersion; }
 

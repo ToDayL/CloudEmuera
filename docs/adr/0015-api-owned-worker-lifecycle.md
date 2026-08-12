@@ -4,6 +4,10 @@
 
 日期：2026-08-11
 
+2026-08-12 修订说明：ADR-0017 保留本文的 API-owned Worker Manager、持久 WorkerLease、epoch、
+单 Worker 和故障对账，但取代每 Worker 强沙箱/资源限制以及控制通道短断重连要求。当前产品语义为
+同 UID 非 root 子进程，控制通道断开即退出；本文相关历史表述不再作为 MVP 完成门。
+
 ## 背景
 
 早期设计把 Web/API、Worker Supervisor 和每个 Session 的 Worker 分成三类进程。独立 Supervisor

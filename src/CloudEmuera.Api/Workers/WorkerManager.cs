@@ -242,8 +242,6 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         ApiWorkerSession session;
         lock (sync)
         {
-            if (sessions.Count >= options.MaxConcurrentWorkers)
-                throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerLimitExceeded, "The API Worker limit has been reached.");
             if (sessions.Values.Any(item => item.Binding.SessionId == request.Binding.SessionId))
                 throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerStartFailed, "The Session already has a Worker.");
             if (sessions.ContainsKey(request.Binding.WorkerId))
@@ -268,7 +266,6 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             ConnectDeadlineUnixMilliseconds = DateTimeOffset.UtcNow.Add(options.RegistrationTimeout).ToUnixTimeMilliseconds(),
             HeartbeatIntervalMilliseconds = checked((int)options.HeartbeatInterval.TotalMilliseconds),
             ShutdownGracePeriodMilliseconds = checked((int)options.WorkerShutdownTimeout.TotalMilliseconds),
-            DisconnectGracePeriodMilliseconds = checked((int)options.DisconnectGracePeriod.TotalMilliseconds),
             SaveLayout = (int)request.SaveLayout,
             SessionRootManifestDigest = request.SessionRootManifestDigest,
             InitialOutputSequence = request.InitialOutputSequence,
@@ -476,9 +473,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     private SessionRuntimeBinding? runtimeBinding;
     private string bootstrapPath = string.Empty;
     private string bootstrapToken = string.Empty;
-    private bool tokenConsumed;
     private bool registered;
-    private DateTimeOffset reconnectUntil;
     private long lastHeartbeatUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
     private long lastDisplaySequence;
     private int connectionCount;
@@ -743,15 +738,12 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             {
                 if (!FixedTimeEquals(bootstrapToken, token))
                     return false;
-                tokenConsumed = true;
                 bootstrapToken = string.Empty;
                 registered = true;
                 registration.TrySetResult(true);
                 return true;
             }
-            if (!tokenConsumed || !string.IsNullOrEmpty(token) || DateTimeOffset.UtcNow > reconnectUntil)
-                return false;
-            return true;
+            return false;
         }
     }
 
@@ -762,7 +754,6 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             connection?.Cancel();
             connection = value;
             connectionCount++;
-            reconnectUntil = DateTimeOffset.UtcNow.Add(options.DisconnectGracePeriod);
         }
         LogLifecycle("worker_connection_attached", connectionCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
@@ -774,7 +765,6 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             if (ReferenceEquals(connection, value))
             {
                 connection = null;
-                reconnectUntil = DateTimeOffset.UtcNow.Add(options.DisconnectGracePeriod);
                 LogLifecycle("worker_connection_disconnected");
             }
         }
@@ -1176,35 +1166,23 @@ internal sealed class WorkerManagerHostedService(
                 cancellationToken.ThrowIfCancellationRequested();
                 if (lease.ProcessIdentity is null)
                 {
-                    if (!string.Equals(lease.Status, WorkerLeaseStatus.Starting.ToString().ToUpperInvariant(), StringComparison.Ordinal))
-                    {
-                        readiness.MarkFailed(SessionRuntimeResultCodes.WorkerExitUnconfirmed);
-                        coordinator.BeginDraining();
-                        return;
-                    }
-
-                    if (!await runtimeStore.ReconcileAsync(lease, "control_plane_restarted", timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false))
-                    {
-                        readiness.MarkFailed(SessionRuntimeResultCodes.ControlPlaneReconciliationFailed);
-                        coordinator.BeginDraining();
-                        return;
-                    }
-
+                    // A legacy lease without an exact process identity is
+                    // intentionally left in place. It fences only this
+                    // Session's open/save mutations; it must not make the
+                    // entire trusted instance fail readiness.
+                    AmbiguousLeaseLog(logger, lease.Binding.SessionId, lease.Binding.WorkerId, "process_identity_missing", null);
                     continue;
                 }
 
                 if (!await ProcessIdentityProbe.TerminateExactAsync(lease.ProcessIdentity, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false))
                 {
-                    readiness.MarkFailed(SessionRuntimeResultCodes.WorkerExitUnconfirmed);
-                    coordinator.BeginDraining();
-                    return;
+                    AmbiguousLeaseLog(logger, lease.Binding.SessionId, lease.Binding.WorkerId, "exact_process_exit_unconfirmed", null);
+                    continue;
                 }
 
                 if (!await runtimeStore.ReconcileAsync(lease, "control_plane_restarted", DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false))
                 {
-                    readiness.MarkFailed(SessionRuntimeResultCodes.ControlPlaneReconciliationFailed);
-                    coordinator.BeginDraining();
-                    return;
+                    AmbiguousLeaseLog(logger, lease.Binding.SessionId, lease.Binding.WorkerId, "reconcile_not_applied", null);
                 }
             }
 
@@ -1386,4 +1364,10 @@ internal sealed class WorkerManagerHostedService(
             LogLevel.Warning,
             new EventId(2106, "WorkerShutdownPersistFailed"),
             "worker_event=shutdown_persist_failed sessionId={SessionId}");
+
+    private static readonly Action<ILogger, string, string, string, Exception?> AmbiguousLeaseLog =
+        LoggerMessage.Define<string, string, string>(
+            LogLevel.Warning,
+            new EventId(2107, "WorkerAmbiguousLease"),
+            "worker_event=ambiguous_lease sessionId={SessionId} workerId={WorkerId} reason={Reason}");
 }

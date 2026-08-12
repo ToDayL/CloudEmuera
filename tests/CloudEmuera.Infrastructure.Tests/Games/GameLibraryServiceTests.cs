@@ -47,7 +47,7 @@ public sealed class GameLibraryServiceTests
 
     [Fact]
     [Trait("Category", "GameLibrary")]
-    public async Task ValidateActivateAndEditKeepCurrentContentImmutableAndUseCas()
+    public async Task ValidateAndActivateKeepCurrentContentImmutable()
     {
         using TemporarySqliteDatabase database = new();
         Assert.True((await database.MigrateAsync()).Succeeded);
@@ -79,26 +79,10 @@ public sealed class GameLibraryServiceTests
         string currentFile = Path.Combine(database.RootPath, "games", "game_fixture", "content", "ERB", "START.ERB");
         Assert.Equal("@SYSTEM_TITLE\n", await File.ReadAllTextAsync(currentFile));
 
-        GameLibraryItem editing = await service.StartEditingAsync(actor, game.Id, activated.StateVersion);
-        GameLibraryItem edited = await service.WriteTextFileAsync(actor, game.Id, "ERB/START.ERB", "@CHANGED\n", editing.StateVersion);
-        Assert.Equal("@SYSTEM_TITLE\n", await File.ReadAllTextAsync(currentFile));
-        Assert.Equal("@CHANGED\n", await File.ReadAllTextAsync(Path.Combine(workspace, "ERB", "START.ERB")));
-
-        GameLibraryException conflict = await Assert.ThrowsAsync<GameLibraryException>(() =>
-            service.WriteTextFileAsync(actor, game.Id, "ERB/START.ERB", "stale", editing.StateVersion));
-        Assert.Equal(GameLibraryErrorCodes.StateVersionConflict, conflict.Code);
-
-        GameLibraryException unsafePath = await Assert.ThrowsAsync<GameLibraryException>(() =>
-            service.WriteTextFileAsync(actor, game.Id, "../escape.txt", "blocked", edited.StateVersion));
-        Assert.Equal(GameLibraryErrorCodes.UnsafePath, unsafePath.Code);
-        Assert.False(File.Exists(Path.Combine(database.RootPath, "games", "game_fixture", "escape.txt")));
-
-        GameLibraryItem unsafeEdit = await service.WriteTextFileAsync(actor, game.Id, "ERB/START.ERB", "@SYSTEM_TITLE\nCALLSHARP\n", edited.StateVersion);
-        GameValidationResult rejected = await service.ValidateAsync(actor, game.Id, unsafeEdit.StateVersion);
-        Assert.False(rejected.CanActivate);
-        Assert.Contains(rejected.Diagnostics, diagnostic => diagnostic.Code == "CALLSHARP_FORBIDDEN");
-        Assert.Equal(1, await scope.Context.CompatibilityDiagnostics.CountAsync(diagnostic => diagnostic.ActivationBlocking));
-        Assert.True(await scope.Context.AuditEvents.CountAsync() >= 3);
+        GameTextFile current = await service.ReadTextFileAsync(actor, game.Id, "CURRENT", "ERB/START.ERB");
+        Assert.Equal("@SYSTEM_TITLE\n", current.Content);
+        Assert.True(File.GetAttributes(currentFile).HasFlag(FileAttributes.ReadOnly) || !OperatingSystem.IsLinux());
+        Assert.True(await scope.Context.AuditEvents.CountAsync() >= 2);
     }
 
     [Fact]
@@ -134,7 +118,7 @@ public sealed class GameLibraryServiceTests
 
     [Fact]
     [Trait("Category", "GameLibrary")]
-    public async Task TextReadWriteAndSearchUseStrongEtagsAndStableCursors()
+    public async Task TextReadAndDownloadExposeOnlyReadonlyContent()
     {
         using TemporarySqliteDatabase database = new();
         Assert.True((await database.MigrateAsync()).Succeeded);
@@ -160,33 +144,11 @@ public sealed class GameLibraryServiceTests
         Assert.StartsWith("sha256:", read.ETag, StringComparison.Ordinal);
         Assert.Equal("UTF8", read.Encoding);
 
-        await File.WriteAllTextAsync(Path.Combine(workspace, "a.TXT"), "changed\n");
-        GameLibraryException changed = await Assert.ThrowsAsync<GameLibraryException>(() =>
-            service.WriteTextFileAsync(actor, game.Id, "a.TXT", "blocked", read.StateVersion, read.ETag));
-        Assert.Equal(GameLibraryErrorCodes.FileChanged, changed.Code);
-
-        GameSearchPage first = await service.SearchAsync(actor, game.Id, "WORKSPACE", "needle", limit: 1);
-        Assert.Single(first.Items);
-        Assert.NotNull(first.NextCursor);
-        GameSearchPage second = await service.SearchAsync(actor, game.Id, "WORKSPACE", "needle", first.NextCursor, 10);
-        Assert.NotEmpty(second.Items);
-        Assert.Null(second.NextCursor);
-
-        // Tamper a fully significant middle character of the signed cursor. The
-        // final base64url character only encodes four significant bits, so
-        // replacing it can decode to the same trailing byte (e.g. 'w' -> 'x')
-        // and must not be used as the tamper point.
-        string signedCursor = first.NextCursor!;
-        int tamperIndex = signedCursor.Length / 2;
-        char replacement = signedCursor[tamperIndex] == 'A' ? 'B' : 'A';
-        string tamperedCursor = signedCursor[..tamperIndex] + replacement + signedCursor[(tamperIndex + 1)..];
-        GameLibraryException cursor = await Assert.ThrowsAsync<GameLibraryException>(() =>
-            service.SearchAsync(actor, game.Id, "WORKSPACE", "needle", tamperedCursor, 1));
-        Assert.Equal(GameLibraryErrorCodes.SearchCursorInvalid, cursor.Code);
-
-        GameLibraryItem created = await service.WriteTextFileAsync(actor, game.Id, "new.TXT", "created", read.StateVersion, requireAbsent: true);
-        Assert.Equal(read.StateVersion + 1, created.StateVersion);
-        Assert.Equal("created", await File.ReadAllTextAsync(Path.Combine(workspace, "new.TXT")));
+        GameFileDownload download = await service.OpenDownloadAsync(actor, game.Id, "WORKSPACE", "a.TXT");
+        await using (download.Content)
+        using (var reader = new StreamReader(download.Content))
+            Assert.Equal("needle one\nneedle two\n", await reader.ReadToEndAsync());
+        Assert.StartsWith("sha256:", download.ETag, StringComparison.Ordinal);
     }
 
     [Fact]

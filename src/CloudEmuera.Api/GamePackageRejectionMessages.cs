@@ -25,7 +25,7 @@ internal static class GamePackageRejectionMessages
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.PathTypeConflict] = "同一路径同时被用作文件与目录。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.LinkEntryForbidden] = "压缩包包含符号链接条目，已拒绝。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.SpecialEntryForbidden] = "压缩包包含特殊文件条目，已拒绝。",
-        [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.StagingBudgetExhausted] = "暂存空间配额已满，请稍后重试。",
+        [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.StagingBudgetExhausted] = "暂存空间上限已满，请稍后重试。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.DataRootSpaceLow] = "服务器数据盘空间不足，无法接收上传。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.StagingIoFailed] = "服务器写入失败，请重试。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.IngestionCancelled] = "上传已取消。",

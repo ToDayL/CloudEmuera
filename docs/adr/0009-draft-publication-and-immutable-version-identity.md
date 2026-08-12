@@ -8,6 +8,9 @@
 [`ADR-0010`](0010-single-game-content-without-version-entities.md)。本文仅保留为历史决策记录，
 不得作为新实现依据。
 
+范围说明：本文中浏览器编辑及其他旧产品入口同样仅为历史记录；当前实现边界以
+[`ADR-0017`](0017-trusted-self-hosted-mvp-simplification.md) 和 [`ADR-0010`](0010-single-game-content-without-version-entities.md) 为准。
+
 ## 背景
 
 P1-03 已把不受信任 ZIP 收敛为有期限、只能消费一次的 READY 候选内容，但不创建 Game、

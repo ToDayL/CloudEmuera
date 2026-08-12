@@ -11,7 +11,8 @@ manifest 快照并删除旧表。以下旧字段说明只用于理解升级起�
 进程拓扑同样是历史基线：[`ADR-0015`](../adr/0015-api-owned-worker-lifecycle.md) 已决定运行期只有
 API 业务进程访问 SQLite，独立 Migrator 仍只在 API 启动前执行，Worker 不访问数据库；独立
 Supervisor 将在 P1-05 移除。本文后续 API/Supervisor 表述描述 P1-01 交付时的约束，不代表当前
-目标拓扑。Session open/close/reopen 语义由
+目标拓扑；Worker 沙箱、细粒度资源和断线恢复表述已由 [`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md)
+取代。Session open/close/reopen 语义由
 [`ADR-0016`](../adr/0016-reopenable-session-root-lifecycle.md) 规定。
 本文历史 schema 中的 `DETACHED` 也不再属于目标状态模型；后续 migration
 `20260811120000_RemoveDetachedSessionState` 已将旧值映射为 `RUNNING` 并收紧当前 CHECK，没有

@@ -4,6 +4,9 @@
 
 日期：2026-08-05
 
+范围说明：本文继续冻结 SessionRoot 私有复制和原生存档所有权；其中未来 mount namespace、降权
+或敌对租户隔离的历史设想已由 [`ADR-0017`](0017-trusted-self-hosted-mvp-simplification.md) 取代。
+
 ## 背景
 
 早期设计把运行中的存档工作副本和独立 `SaveArtifact` generation 分开，计划在每次

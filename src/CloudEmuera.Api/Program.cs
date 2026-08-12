@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http.Features;
 using System.Security.Claims;
 using System.Text.Json;
 using CloudEmuera.Api.Bootstrap;
+using CloudEmuera.Api.Configuration;
 using CloudEmuera.Api.Security;
 using CloudEmuera.Application.Auditing;
 using CloudEmuera.Application.Authorization;
@@ -17,6 +18,7 @@ using CloudEmuera.Infrastructure.Authorization;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Application.GamePackages;
 using CloudEmuera.Infrastructure.GamePackages;
+using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Sessions;
@@ -41,6 +43,17 @@ var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath);
 workerOptions.Validate();
 var workerSocketLifecycle = new WorkerSocketLifecycle(workerOptions);
 workerSocketLifecycle.Prepare();
+InstanceCapacityOptions capacityOptions = new()
+{
+    MaxActiveWorkers = builder.Configuration.GetValue<int?>("CloudEmuera:Capacity:MaxActiveWorkers") ?? InstanceCapacityOptions.DefaultMaxActiveWorkers,
+    MaxGamePackageBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxGamePackageBytes") ?? InstanceCapacityOptions.DefaultMaxGamePackageBytes,
+    MaxSessionRootBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxSessionRootBytes") ?? InstanceCapacityOptions.DefaultMaxSessionRootBytes,
+    MaxStagingReservedBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxStagingReservedBytes") ?? InstanceCapacityOptions.DefaultMaxStagingReservedBytes,
+    MinDataRootFreeBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MinDataRootFreeBytes")
+        ?? builder.Configuration.GetValue<long?>("CloudEmuera:MinDataRootFreeBytes")
+        ?? InstanceCapacityOptions.DefaultMinDataRootFreeBytes,
+};
+capacityOptions.Validate();
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
     serverOptions.AddServerHeader = false;
@@ -54,9 +67,10 @@ builder.Services.AddGrpc(grpcOptions =>
 SqliteDatabaseOptions databaseOptions = new()
 {
     DataRoot = dataRoot,
-    MinDataRootFreeBytes = builder.Configuration.GetValue<long?>("CloudEmuera:MinDataRootFreeBytes") ?? 1L * 1024 * 1024 * 1024,
+    MinDataRootFreeBytes = capacityOptions.MinDataRootFreeBytes,
 };
 builder.Services.AddSingleton(databaseOptions);
+builder.Services.AddSingleton(capacityOptions);
 builder.Services.AddScoped<CloudEmueraDbContext>(serviceProvider =>
 {
     SqliteConnectionFactory factory = new(databaseOptions, createDataRoot: true);
@@ -91,7 +105,12 @@ builder.Services.AddSingleton<ISessionOperationRecovery>(serviceProvider =>
 builder.Services.AddSingleton<SessionOperationRecoveryReadiness>();
 builder.Services.AddSingleton<SessionCommandReadiness>();
 builder.Services.AddHostedService<SessionOperationRecoveryHostedService>();
-builder.Services.AddSingleton(new GamePackageStorageOptions { DataRoot = dataRoot });
+builder.Services.AddSingleton(new GamePackageStorageOptions
+{
+    DataRoot = dataRoot,
+    MaxStagingReservedBytes = capacityOptions.MaxStagingReservedBytes,
+    MinDataRootFreeBytes = capacityOptions.MinDataRootFreeBytes,
+});
 builder.Services.AddScoped<IGamePackageIngestionService, GamePackageIngestionService>();
 builder.Services.AddScoped<IGameLibraryService, GameLibraryService>();
 string validatorAssembly = builder.Configuration["CloudEmuera:ValidatorAssembly"]
@@ -174,9 +193,6 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("game-write", context => RateLimitPartition.GetFixedWindowLimiter(
         context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
-    options.AddPolicy("game-search", context => RateLimitPartition.GetFixedWindowLimiter(
-        context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("game-validate", context => RateLimitPartition.GetFixedWindowLimiter(
         context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 6, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
@@ -195,6 +211,8 @@ builder.Services.AddHealthChecks()
     .AddCheck<SessionOperationRecoveryHealthCheck>("session_operation_recovery", tags: ["ready"]);
 
 var app = builder.Build();
+if (builder.Configuration.GetValue<long?>("CloudEmuera:MinDataRootFreeBytes") is not null)
+    ConfigurationWarnings.LegacyMinDataRootFreeBytes(app.Logger);
 if (!development)
 {
     app.UseHsts();
@@ -291,7 +309,7 @@ admin.MapPost("", async (HttpContext context, CreateUserRequest request, IAntifo
 {
     if (await ApiIdentity.RequireAdminAsync(context, authorizer).ConfigureAwait(false) is IResult denied) return denied;
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    try { CurrentUser user = await identities.CreateUserAsync(new CreateUserCommand(request.Username, request.Email, request.TemporaryPassword, request.Role, request.QuotaProfileId), ApiIdentity.Actor(context)!, context.RequestAborted).ConfigureAwait(false); return Results.Created($"/api/v1/admin/users/{user.Id}", ApiIdentity.ToResponse(user)); }
+    try { CurrentUser user = await identities.CreateUserAsync(new CreateUserCommand(request.Username, request.Email, request.TemporaryPassword, request.Role), ApiIdentity.Actor(context)!, context.RequestAborted).ConfigureAwait(false); return Results.Created($"/api/v1/admin/users/{user.Id}", ApiIdentity.ToResponse(user)); }
     catch (IdentityConflictException exception) { return ApiIdentity.Error(exception.Code, "用户数据冲突。", 409); }
     catch (IdentityValidationException exception) { return ApiIdentity.Error(exception.Code, "用户数据无效。", 400); }
 });
@@ -342,7 +360,7 @@ adminGames.MapPost("/{id}/diagnostics/{diagnosticId}:override", async (string id
 
 app.MapPost("/api/v1/game-package-ingestions", async (HttpContext context, IAntiforgery antiforgery, IGamePackageIngestionService ingestion, ApiIdempotencyStore idempotency) =>
 {
-    // Game packages stream up to the per-user package quota (default 2 GiB), far
+    // Game packages stream up to the instance package limit (default 2 GiB), far
     // above the Kestrel 30 MiB request-body default. Removing the Kestrel cap for
     // this route is safe because GamePackageIngestionService.ReceiveAsync enforces
     // the archive limit while streaming; other endpoints keep the default cap.
@@ -416,20 +434,6 @@ games.MapPut("/{id}/package", async (string id, HttpContext context, BindGamePac
         return ApiIdentity.Error(exception.Code, GamePackageRejectionMessages.Resolve(exception.Code, exception.LogicalPath), 400);
     }
 }).RequireRateLimiting("game-write");
-games.MapPost("/{id}:edit", async (string id, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    if (!ApiIdentity.TryVersion(context.Request, out int version)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要 If-Match。", 428);
-    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    return await ApiIdentity.GameResultAsync(() => library.StartEditingAsync(actor, id, version, context.RequestAborted), Results.Ok).ConfigureAwait(false);
-}).RequireRateLimiting("game-write");
-games.MapDelete("/{id}/workspace", async (string id, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    if (!ApiIdentity.TryVersion(context.Request, out int version)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要 If-Match。", 428);
-    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    return await ApiIdentity.GameResultAsync(() => library.DiscardWorkspaceAsync(actor, id, version, context.RequestAborted), Results.Ok).ConfigureAwait(false);
-}).RequireRateLimiting("game-write");
 games.MapGet("/{id}/files", async (string id, string? scope, string? path, HttpContext context, IGameLibraryService library) =>
 {
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
@@ -445,11 +449,6 @@ games.MapGet("/{id}/file", async (string id, string? scope, string path, HttpCon
         return file;
     }, file => Results.Ok(file)).ConfigureAwait(false);
 }).RequireRateLimiting("game-read");
-games.MapGet("/{id}/search", async (string id, string? scope, string q, string? cursor, int? limit, HttpContext context, IGameLibraryService library) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    return await ApiIdentity.GameResultAsync(() => library.SearchAsync(actor, id, scope, q, cursor, limit ?? 100, context.RequestAborted), page => Results.Ok(new { items = page.Items, nextCursor = page.NextCursor })).ConfigureAwait(false);
-}).RequireRateLimiting("game-search");
 games.MapGet("/{id}/download", async (string id, string? scope, string path, HttpContext context, IGameLibraryService library) =>
 {
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
@@ -467,21 +466,6 @@ games.MapGet("/{id}/operations/{operationId}", async (string id, string operatio
     GameContentOperationItem? operation = await library.GetOperationAsync(actor, id, operationId, context.RequestAborted).ConfigureAwait(false);
     return operation is null ? ApiIdentity.Error("GAME_NOT_FOUND", "资源不存在。", 404) : Results.Ok(operation);
 }).RequireRateLimiting("game-read");
-games.MapPut("/{id}/file", async (string id, string path, WriteGameFileRequest request, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    if (!ApiIdentity.TryVersion(context.Request, out int version)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要游戏 If-Match 或 X-Game-State-Version。", 428);
-    if (!ApiIdentity.TryFilePrecondition(context.Request, out string? fileETag, out bool requireAbsent)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要文件 If-Match 或 If-None-Match: *。", 428);
-    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    return await ApiIdentity.GameResultAsync(() => library.WriteTextFileAsync(actor, id, path, request.Content, version, fileETag, requireAbsent, context.RequestAborted), Results.Ok).ConfigureAwait(false);
-}).RequireRateLimiting("game-write");
-games.MapDelete("/{id}/file", async (string id, string path, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    if (!ApiIdentity.TryVersion(context.Request, out int version)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要 If-Match。", 428);
-    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    return await ApiIdentity.GameResultAsync(() => library.DeletePathAsync(actor, id, path, version, context.RequestAborted), Results.Ok).ConfigureAwait(false);
-}).RequireRateLimiting("game-write");
 games.MapPost("/{id}:validate", async (string id, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library, ApiIdempotencyStore idempotency) =>
 {
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
@@ -768,14 +752,12 @@ internal static class ApiIdentity
             int status = exception.Code switch
             {
                 GameLibraryErrorCodes.NotFound or GameLibraryErrorCodes.FileNotFound => 404,
-                GameLibraryErrorCodes.StateVersionConflict or GameLibraryErrorCodes.FileChanged => 412,
+                GameLibraryErrorCodes.StateVersionConflict => 412,
                 GameLibraryErrorCodes.Conflict or GameLibraryErrorCodes.NameConflict or GameLibraryErrorCodes.InUse
-                    or GameLibraryErrorCodes.HasNoCurrentContent or GameLibraryErrorCodes.WorkspaceNotFound
-                    or GameLibraryErrorCodes.WorkspaceAlreadyExists or GameLibraryErrorCodes.ValidationInProgress
+                    or GameLibraryErrorCodes.HasNoCurrentContent or GameLibraryErrorCodes.ValidationInProgress
                     or GameLibraryErrorCodes.ActivationInProgress => 409,
                 GameLibraryErrorCodes.ValidationFailed or GameLibraryErrorCodes.ActivationValidationFailed
-                    or GameLibraryErrorCodes.FileTypeNotEditable or GameLibraryErrorCodes.FileTooLargeToEdit
-                    or GameLibraryErrorCodes.TextEncodingUnsupported or GameLibraryErrorCodes.TextNotRepresentable => 422,
+                    or GameLibraryErrorCodes.FileTooLargeToRead or GameLibraryErrorCodes.TextEncodingUnsupported => 422,
                 GameLibraryErrorCodes.IdempotencyConflict => 409,
                 GameLibraryErrorCodes.DiagnosticOverrideNotAllowed => 409,
                 _ => 400,

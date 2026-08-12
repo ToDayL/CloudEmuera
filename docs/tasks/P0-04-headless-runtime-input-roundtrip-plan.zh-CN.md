@@ -4,6 +4,9 @@
 
 术语迁移：本文中“运行一个 GameVersion”按 ADR-0010 解释为“运行一个已物化的 Game 内容树”；
 Host 单实例限制不建立 GameVersion 产品实体。
+
+范围说明：本文是历史 Runtime 验证记录；其中关于未来 Worker namespace/资源隔离的表述已由
+[`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md) 取代。
 编写日期：2026-08-04
 对应开发步骤：`P0-04 — 无 UI Runtime 运行到 INPUT`
 前置条件：P0-00、P0-01、P0-02、P0-03 已完成

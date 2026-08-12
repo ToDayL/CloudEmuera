@@ -4,6 +4,7 @@ using CloudEmuera.Application.Games;
 using CloudEmuera.Domain.Sessions;
 using CloudEmuera.Infrastructure.Games;
 using CloudEmuera.Infrastructure.Persistence;
+using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.RuntimeAdapter;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -17,7 +18,8 @@ namespace CloudEmuera.Infrastructure.Sessions;
 /// </summary>
 public sealed class SqliteSessionRuntimeStore(
     SqliteDatabaseOptions databaseOptions,
-    TimeProvider timeProvider) : ISessionRuntimeStore
+    TimeProvider timeProvider,
+    InstanceCapacityOptions? capacityOptions = null) : ISessionRuntimeStore
 {
     public async Task<SessionRuntimeAcquireResult> TryAcquireOpenLeaseAsync(
         SessionRuntimeOpenOptions options,
@@ -70,20 +72,14 @@ public sealed class SqliteSessionRuntimeStore(
         if (await db.SessionRootMutationLeases.AnyAsync(row => row.SessionId == session.Id && row.ExpiresAt > now, cancellationToken).ConfigureAwait(false))
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.MutationLeaseActive);
 
-        QuotaProfileRow? quota = await db.Users
-            .Where(user => user.Id == session.OwnerUserId)
-            .Select(user => user.QuotaProfile)
-            .SingleOrDefaultAsync(cancellationToken)
-            .ConfigureAwait(false);
-        if (quota is null || quota.MaxActiveSessions <= 0)
+        InstanceCapacityOptions capacity = capacityOptions ?? InstanceCapacityOptions.Default;
+        if (capacity.MaxActiveWorkers <= 0)
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.InvalidConfiguration);
-
         long active = await db.Sessions
-            .CountAsync(row => row.OwnerUserId == session.OwnerUserId &&
-                (row.State == SessionState.Starting || row.State == SessionState.Running || row.State == SessionState.Stopping), cancellationToken)
+            .CountAsync(row => row.State == SessionState.Starting || row.State == SessionState.Running || row.State == SessionState.Stopping, cancellationToken)
             .ConfigureAwait(false);
-        if (active >= quota.MaxActiveSessions)
-            return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.ActiveSessionQuotaExceeded);
+        if (active >= capacity.MaxActiveWorkers)
+            return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.ActiveWorkerLimitExceeded);
 
         if (session.WorkerEpoch == long.MaxValue)
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.InvalidConfiguration);

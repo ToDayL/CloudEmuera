@@ -19,3 +19,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0014：摄取时自动把 UTF-16/UTF-32 文本文件转换为 UTF-8](0014-auto-convert-utf16-to-utf8-on-ingestion.md)
 - [ADR-0015：API 直接管理 Session Worker 生命周期](0015-api-owned-worker-lifecycle.md)
 - [ADR-0016：Session 是可反复开启的持久 SessionRoot](0016-reopenable-session-root-lifecycle.md)
+- [ADR-0017：可信参与者自托管 MVP 的简化边界](0017-trusted-self-hosted-mvp-simplification.md)
