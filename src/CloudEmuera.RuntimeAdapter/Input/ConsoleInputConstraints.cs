@@ -168,6 +168,42 @@ public sealed class IntegerInputConstraints : ConsoleInputConstraints
     }
 }
 
+public sealed class AnyValueInputConstraints : ConsoleInputConstraints
+{
+    public AnyValueInputConstraints(int? maxLength = null)
+    {
+        if (maxLength is <= 0)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidInputConstraint, "Any-value input max length must be positive.");
+        MaxLength = maxLength;
+    }
+
+    public int? MaxLength { get; }
+
+    internal override void Validate(ConsoleContractLimits limits)
+    {
+        if (MaxLength is <= 0 || MaxLength > limits.MaxInputValueLength)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidInputConstraint, "Any-value input length is outside its limit.");
+    }
+
+    internal override bool TryValidate(string value, ConsoleContractLimits limits, out ConsoleInputFailureReason failureReason)
+    {
+        if (value.Length > (MaxLength ?? limits.MaxInputValueLength))
+        {
+            failureReason = ConsoleInputFailureReason.ValueTooLong;
+            return false;
+        }
+
+        if (value.Any(char.IsControl))
+        {
+            failureReason = ConsoleInputFailureReason.ControlCharacter;
+            return false;
+        }
+
+        failureReason = ConsoleInputFailureReason.None;
+        return true;
+    }
+}
+
 public enum ConsoleInputFailureReason
 {
     None,
@@ -175,5 +211,6 @@ public enum ConsoleInputFailureReason
     ControlCharacter,
     InvalidIdentifier,
     InvalidInteger,
-    IntegerOutOfRange
+    IntegerOutOfRange,
+    SourceNotAllowed
 }

@@ -25,34 +25,58 @@ internal sealed class EmueraConsole
     private readonly IRuntimeClock clock;
     private CancellationToken cancellationToken;
     private readonly Func<string, (string AssetId, int Width, int Height)?> imageResolver;
+    private readonly int viewportWidth;
+    private readonly int viewportHeight;
     private bool isRunning = true;
+    private bool isTimeOut;
     private string windowTitle = string.Empty;
     private int generation;
+    private long lineId;
+    private long logicalLineCount;
+    private long deletedLines;
+    private string? lastLineId;
+    private bool lastLineTemporary;
+    private string? htmlIslandDrawableId;
+    private int redrawIntervalMilliseconds;
+    private readonly List<ConsoleNode> pendingLine = [];
     private StringStyle stringStyle;
     private readonly List<string> runtimeMessages = [];
     private readonly List<string> runtimeWarnings = [];
+    private readonly List<string> runtimeSystemMessages = [];
+    private readonly List<string> runtimeDebugMessages = [];
     private bool outputEnabled;
 
     public EmueraConsole(
         IGameConsole adapter,
         IRuntimeClock clock,
         CancellationToken cancellationToken,
-        Func<string, (string AssetId, int Width, int Height)?> imageResolver = null)
+        Func<string, (string AssetId, int Width, int Height)?> imageResolver = null,
+        int viewportWidth = 800,
+        int viewportHeight = 600)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
         this.cancellationToken = cancellationToken;
         this.imageResolver = imageResolver;
+        if (viewportWidth <= 0 || viewportHeight <= 0 || viewportWidth > 8_192 || viewportHeight > 8_192)
+            throw new ArgumentOutOfRangeException(nameof(viewportWidth), "The logical headless viewport is outside its limit.");
+        this.viewportWidth = viewportWidth;
+        this.viewportHeight = viewportHeight;
         stringStyle = new StringStyle(Color.Empty, FontStyle.Regular, string.Empty);
         GlobalStatic.Console = this;
     }
 
     public bool IsRunning => isRunning;
     public void SetCancellationToken(CancellationToken value) => cancellationToken = value;
-    public void BeginExecutionOutput() => outputEnabled = true;
+    public void BeginExecutionOutput()
+    {
+        outputEnabled = true;
+        if (adapter is StructuredGameConsole)
+            EmitStructured(ConsoleOperation.SetWindow(new WindowMetadata(windowTitle, viewportWidth, viewportHeight)));
+    }
     public bool Enabled => isRunning;
     public bool IsActive => isRunning;
-    public bool IsTimeOut => false;
+    public bool IsTimeOut => isTimeOut || adapter is StructuredGameConsole structured && structured.IsTimeOut;
     public bool MesSkip { get; set; }
     public bool AlwaysRefresh { get; set; }
     public bool UseUserStyle { get; set; }
@@ -77,25 +101,27 @@ internal sealed class EmueraConsole
     public nint bitmapCacheArrayIndex;
     public int LastButtonGeneration => generation;
     public int NewButtonGeneration => generation;
-    public int GetLineNo => 0;
-    public long LineCount => 0;
-    public long DeletedLines => 0;
-    public bool EmptyLine => true;
-    public bool LastLineIsTemporary => false;
-    public bool LastLineIsEmpty => false;
-    public int ClientWidth => 0;
-    public int ClientHeight => 0;
+    public int GetLineNo => checked((int)logicalLineCount);
+    public long LineCount => logicalLineCount;
+    public long DeletedLines => deletedLines;
+    public bool EmptyLine => pendingLine.Count == 0;
+    public bool LastLineIsTemporary => lastLineTemporary;
+    public bool LastLineIsEmpty => pendingLine.Count == 0;
+    public int ClientWidth => viewportWidth;
+    public int ClientHeight => viewportHeight;
     public IReadOnlyList<string> RuntimeMessages => runtimeMessages;
     public IReadOnlyList<string> RuntimeWarnings => runtimeWarnings;
+    public IReadOnlyList<string> RuntimeSystemMessages => runtimeSystemMessages;
+    public IReadOnlyList<string> RuntimeDebugMessages => runtimeDebugMessages;
 
     public void Print(string value, bool lineEnd = true) => EmitText(value);
     public void PrintSingleLine(string value) => PrintSingleLine(value, false);
-    public void PrintSingleLine(string value, bool temporary) => EmitLine(value);
+    public void PrintSingleLine(string value, bool temporary) => EmitLine(value, temporary);
     // Upstream status/progress output (for example the DEBUG-only elapsed-time
     // reports) must not be treated as script diagnostics. Warnings are recorded
     // separately from errors so the headless session only gates activation on
     // real errors; warnings are surfaced as non-blocking diagnostics.
-    public void PrintSystemLine(string value) { }
+    public void PrintSystemLine(string value) => RecordSystemMessage(value);
     public void PrintError(string value) => RecordMessage(value);
     public void PrintWarning(string value, ScriptPosition? position, int level) =>
         RecordWarning(FormatDiagnostic(value, position));
@@ -112,20 +138,43 @@ internal sealed class EmueraConsole
     public void NewLine()
     {
         if (outputEnabled)
-            adapter.Emit(new AppendNodesOperation([LineBreakNode.Instance]));
+            FlushPendingLine(force: true);
     }
-    public void PrintFlush(bool force) { }
-    public void RefreshStrings(bool forcePaint) { }
-    public void ClearText() => adapter.Emit(new ClearConsoleOperation());
+    public void PrintFlush(bool force) => FlushPendingLine(force);
+    public void RefreshStrings(bool forcePaint) => FlushPendingLine();
+    public void ClearText()
+    {
+        FlushPendingLine();
+        EmitStructured(ConsoleOperation.ClearConsole());
+        lastLineId = null;
+        lastLineTemporary = false;
+    }
     public void ClearDisplay() => ClearText();
-    public void deleteLine(int count) { }
+    public void deleteLine(int count)
+    {
+        if (count <= 0 || lastLineId is null || adapter is not StructuredGameConsole)
+            return;
+        try
+        {
+            EmitStructured(ConsoleOperation.DeleteLines([lastLineId]));
+            deletedLines = checked(deletedLines + 1);
+            lastLineId = null;
+            lastLineTemporary = false;
+        }
+        catch (ConsoleContractException)
+        {
+            // A line trimmed by the bounded scrollback is already absent.
+        }
+    }
 
     public void PrintHtml(string fragment, bool toPrintBuffer)
     {
         EmueraHtmlParseResult result = new EmueraHtmlParser().ParseWithDiagnostics(fragment);
         if (result.WasFailClosed)
             throw new NotSupportedException("The HTML fragment is outside the headless allowlist.");
-        adapter.Emit(new AppendNodesOperation(result.Nodes.Concat<ConsoleNode>([LineBreakNode.Instance])));
+        foreach (ConsoleNode node in result.Nodes)
+            AppendNode(node);
+        FlushPendingLine(force: true);
     }
 
     public void PrintImg(string name, string nameb, string namem, MixedNum height, MixedNum width, MixedNum ypos)
@@ -133,39 +182,101 @@ internal sealed class EmueraConsole
         (string AssetId, int Width, int Height)? resolved = imageResolver?.Invoke(name);
         if (resolved is null)
             throw new NotSupportedException($"Sprite '{name}' is unavailable in the headless runtime.");
-        adapter.Emit(new AppendNodesOperation([
-            new ImageNode(resolved.Value.AssetId, resolved.Value.Width, resolved.Value.Height)
-        ]));
+        int targetWidth = width is null ? resolved.Value.Width : MixedNum.ToPixel(width);
+        int targetHeight = height is null ? resolved.Value.Height : MixedNum.ToPixel(height);
+        int y = ypos is null ? 0 : MixedNum.ToPixel(ypos);
+        AppendNode(new SpriteNode(
+            resolved.Value.AssetId,
+            new ConsoleRect(0, 0, resolved.Value.Width, resolved.Value.Height),
+            new ConsoleRect(0, y, targetWidth, targetHeight)));
     }
 
     public void WaitInput(InputRequest request)
     {
-        ConsoleInputType type = request.InputType is InputType.StrValue or InputType.StrButton
-            ? ConsoleInputType.Text
-            : ConsoleInputType.Integer;
+        isTimeOut = false;
+        FlushPendingLine();
+        ConsoleInputType type = MapInputType(request.InputType);
         string defaultValue = request.HasDefValue
-            ? type == ConsoleInputType.Integer ? request.DefIntValue.ToString(System.Globalization.CultureInfo.InvariantCulture) : request.DefStrValue
+            ? type is ConsoleInputType.Integer or ConsoleInputType.IntegerButton
+                ? request.DefIntValue.ToString(CultureInfo.InvariantCulture)
+                : request.DefStrValue
             : null;
         TimeSpan? timeout = request.Timelimit > 0 ? TimeSpan.FromMilliseconds(request.Timelimit) : null;
-        var prompt = new ConsolePrompt(type, defaultValue: defaultValue, timeout: timeout);
+        ConsolePromptTimeoutAction timeoutAction = request.HasDefValue
+            ? ConsolePromptTimeoutAction.ReturnDefaultValue
+            : ConsolePromptTimeoutAction.ContinueWithoutValue;
+        var prompt = new ConsolePrompt(
+            type,
+            defaultValue: defaultValue,
+            timeout: timeout,
+            timeoutAction: timeoutAction,
+            oneInput: request.OneInput,
+            systemInput: request.IsSystemInput,
+            stopMessageSkip: request.StopMesskip,
+            displayTime: request.DisplayTime,
+            timeoutMessage: request.TimeUpMes,
+            allowedSources: ConsoleInputSource.All);
+        if (request.DisplayTime && timeout is not null)
+            EmitTimeoutCountdown(timeout.Value);
         GameConsoleInput input = adapter.Read(prompt, cancellationToken);
-        if (type == ConsoleInputType.Integer)
+        isTimeOut = adapter is StructuredGameConsole structured && structured.IsTimeOut;
+        if (isTimeOut && request.TimeUpMes is not null)
         {
-            long value = long.Parse(input.Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (request.DisplayTime && lastLineId is not null)
+            {
+                EmitStructured(ConsoleOperation.ReplaceLine(new ConsoleLine(
+                    lastLineId,
+                    [new TextNode(request.TimeUpMes)],
+                    ConsoleLineAlignment.Left,
+                    temporary: false)));
+                lastLineTemporary = false;
+            }
+            else
+            {
+                EmitLine(request.TimeUpMes, temporary: false);
+            }
+        }
+
+        if (type is ConsoleInputType.Integer or ConsoleInputType.IntegerButton)
+        {
+            if (input.Value.Length == 0)
+                return;
+            long value = long.Parse(input.Value, CultureInfo.InvariantCulture);
             if (request.IsSystemInput)
                 GlobalStatic.Process.InputSystemInteger(value);
             else
                 GlobalStatic.Process.InputInteger(value);
         }
-        else
+        else if (type is ConsoleInputType.Text or ConsoleInputType.TextButton)
         {
+            if (request.IsSystemInput)
+                GlobalStatic.Process.InputSystemInteger(request.HasDefValue ? request.DefIntValue : 0);
             GlobalStatic.Process.InputString(input.Value);
+        }
+        else if (type == ConsoleInputType.AnyValue)
+        {
+            if (long.TryParse(input.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value))
+            {
+                if (request.IsSystemInput)
+                    GlobalStatic.Process.InputSystemInteger(value);
+                else
+                    GlobalStatic.Process.InputInteger(value);
+            }
+            else
+            {
+                GlobalStatic.Process.InputString(input.Value);
+            }
         }
     }
 
     public void ReadAnyKey(bool anykey = false, bool stopMesskip = false)
     {
-        adapter.Read(new ConsolePrompt(ConsoleInputType.Text), cancellationToken);
+        isTimeOut = false;
+        FlushPendingLine();
+        adapter.Read(new ConsolePrompt(
+            anykey ? ConsoleInputType.AnyKey : ConsoleInputType.EnterKey,
+            stopMessageSkip: stopMesskip,
+            allowedSources: ConsoleInputSource.All), cancellationToken);
     }
 
     public void Quit() => isRunning = false;
@@ -183,7 +294,12 @@ internal sealed class EmueraConsole
     public void SetStringStyle(Color color) => stringStyle.Color = color;
     public void SetFont(string fontName) => stringStyle.Fontname = fontName;
     public void SetBgColor(Color color) => bgColor = color;
-    public void SetWindowTitle(string value) => windowTitle = value ?? string.Empty;
+    public void SetWindowTitle(string value)
+    {
+        windowTitle = value ?? string.Empty;
+        if (outputEnabled)
+            EmitStructured(ConsoleOperation.SetWindow(new WindowMetadata(windowTitle, viewportWidth, viewportHeight)));
+    }
     public string GetWindowTitle() => windowTitle;
     public void UpdateGeneration() => generation++;
     public void forceUpdateGeneration() => generation++;
@@ -192,73 +308,226 @@ internal sealed class EmueraConsole
     public Point GetMousePosition() => Point.Empty;
     public bool MoveMouse(Point point) => false;
 
-    public ConsoleDisplayLine[] GetDisplayLines(long lineNo) => [];
-    public ConsoleDisplayLine[] PopDisplayingLines() => [];
-    public int GetLinePointY(int lineNo) => 0;
+    public ConsoleDisplayLine[] GetDisplayLines(long lineNo) => DisplayLineList.ToArray();
+    public ConsoleDisplayLine[] PopDisplayingLines()
+    {
+        ConsoleDisplayLine[] result = DisplayLineList.ToArray();
+        DisplayLineList.Clear();
+        return result;
+    }
+    public int GetLinePointY(int lineNo) => checked(lineNo * 16);
     public string getDefStBar() => "-";
     public string getStBar(string value) => value;
     public void setStBar(string value) { }
     public void PrintBar() => EmitLine("-");
     public void printCustomBar(string value, bool isConst) => EmitLine(value);
-    public bool OutputLog(string filename, bool hideInfo) => false;
-    public bool OutputSystemLog(string filename) => false;
-    public void OutputLog(string filename) { }
-    public void DebugPrint(string value) { }
-    public void DebugClear() { }
-    public void DebugNewLine() { }
-    public void DebugAddTraceLog(string value) { }
+    public bool OutputLog(string filename, bool hideInfo) => throw new NotSupportedException("The host log file capability is blocked in the headless runtime.");
+    public bool OutputSystemLog(string filename) => throw new NotSupportedException("The host log file capability is blocked in the headless runtime.");
+    public void OutputLog(string filename) => throw new NotSupportedException("The host log file capability is blocked in the headless runtime.");
+    public void DebugPrint(string value) => RecordDebugMessage(value);
+    public void DebugClear() => runtimeDebugMessages.Clear();
+    public void DebugNewLine() => RecordDebugMessage(string.Empty);
+    public void DebugAddTraceLog(string value) => RecordDebugMessage(value);
     public void DebugRemoveTraceLog() { }
-    public void DebugClearTraceLog() { }
+    public void DebugClearTraceLog() => runtimeDebugMessages.Clear();
 
-    public void PrintShape(params object[] args) => Unsupported();
-    public void PrintHTMLIsland(params object[] args) => Unsupported();
-    public void ClearHTMLIsland() => Unsupported();
-    public void AddBackgroundImage(params object[] args) => Unsupported();
-    public void ClearBackgroundImage() => Unsupported();
-    public void RemoveBackground(params object[] args) => Unsupported();
-    public void CBG_Clear() => Unsupported();
-    public void CBG_ClearRange(params object[] args) => Unsupported();
-    public void CBG_ClearButton() => Unsupported();
-    public void CBG_ClearBMap() => Unsupported();
-    public bool CBG_SetGraphics(params object[] args) { Unsupported(); return false; }
-    public bool CBG_SetImage(params object[] args) { Unsupported(); return false; }
-    public bool CBG_SetButtonMap(params object[] args) { Unsupported(); return false; }
-    public bool CBG_SetButtonImage(params object[] args) { Unsupported(); return false; }
-    public void SetRedraw(params object[] args) { }
-    public void setRedrawTimer(params object[] args) { }
+    public void PrintShape(params object[] args)
+    {
+        if (args.Length < 1 || args[0] is not string shapeName)
+            throw new NotSupportedException("A structured shape requires a shape name.");
+        MixedNum[] parameters = args.Length > 1 && args[1] is MixedNum[] mixed ? mixed : [];
+        ConsoleShapeKind shape = shapeName.ToLowerInvariant() switch
+        {
+            "rect" => ConsoleShapeKind.Rectangle,
+            "space" => ConsoleShapeKind.Space,
+            "line" => ConsoleShapeKind.Line,
+            "ellipse" => ConsoleShapeKind.Ellipse,
+            _ => throw new NotSupportedException($"The shape '{shapeName}' is not in the structured allowlist.")
+        };
+        ConsoleRect bounds = shape == ConsoleShapeKind.Space && parameters.Length == 1
+            ? new ConsoleRect(0, 0, Math.Max(1, MixedNum.ToPixel(parameters[0])), 16)
+            : parameters.Length == 4
+                ? new ConsoleRect(
+                    MixedNum.ToPixel(parameters[0]),
+                    MixedNum.ToPixel(parameters[1]),
+                    MixedNum.ToPixel(parameters[2]),
+                    MixedNum.ToPixel(parameters[3]))
+                : new ConsoleRect(0, 0, Math.Max(1, MixedNum.ToPixel(parameters.FirstOrDefault())), 16);
+        AppendNode(new ShapeNode(shape, bounds, fill: ToConsoleColor(stringStyle.Color)));
+    }
+
+    public void PrintHTMLIsland(params object[] args)
+    {
+        if (args.Length < 1 || args[0] is not string fragment)
+            throw new NotSupportedException("An HTML Island requires a fragment.");
+        FlushPendingLine();
+        HtmlIslandNode island = new EmueraHtmlParser().ParseIsland(fragment);
+        htmlIslandDrawableId ??= "html-island";
+        EmitStructured(ConsoleOperation.UpsertDrawable(new HtmlIslandDrawable(
+            htmlIslandDrawableId,
+            island.Root,
+            new ConsoleRect(0, 0, 1, 1),
+            zIndex: 1)));
+    }
+
+    public void ClearHTMLIsland()
+    {
+        if (htmlIslandDrawableId is not null)
+        {
+            EmitStructured(ConsoleOperation.RemoveDrawable(htmlIslandDrawableId));
+            htmlIslandDrawableId = null;
+        }
+    }
+
+    public void AddBackgroundImage(params object[] args)
+    {
+        if (args.Length < 1 || args[0] is not string name)
+            throw new NotSupportedException("A background requires a manifest sprite name.");
+        (string AssetId, int Width, int Height)? resolved = imageResolver?.Invoke(name);
+        if (resolved is null)
+            throw new NotSupportedException($"Background '{name}' is unavailable in the headless runtime.");
+        long depth = args.Length > 1 ? Convert.ToInt64(args[1], CultureInfo.InvariantCulture) : 0;
+        float opacity = args.Length > 2 ? Convert.ToSingle(args[2], CultureInfo.InvariantCulture) : 1f;
+        EmitStructured(ConsoleOperation.UpsertBackground(new BackgroundLayer(
+            name,
+            new ConsoleAssetId(resolved.Value.AssetId),
+            opacity: opacity,
+            depth: depth)));
+    }
+
+    public void ClearBackgroundImage() => EmitStructured(ConsoleOperation.ClearBackgrounds());
+
+    public void RemoveBackground(params object[] args)
+    {
+        if (args.Length == 0 || args[0] is not string name)
+            throw new NotSupportedException("A background id is required.");
+        EmitStructured(ConsoleOperation.RemoveBackground(name));
+    }
+
+    public void CBG_Clear() => EmitStructured(ConsoleOperation.ClearScene());
+    public void CBG_ClearRange(params object[] args)
+    {
+        if (args.Length < 2)
+            throw new NotSupportedException("CBG_CLEAR range requires two bounds.");
+        EmitStructured(ConsoleOperation.ClearSceneRange(
+            Convert.ToInt32(args[0], CultureInfo.InvariantCulture),
+            Convert.ToInt32(args[1], CultureInfo.InvariantCulture)));
+    }
+    public void CBG_ClearButton() => EmitStructured(ConsoleOperation.ClearHitRegions());
+    public void CBG_ClearBMap() => EmitStructured(ConsoleOperation.ClearHitRegions());
+    public bool CBG_SetGraphics(params object[] args) => throw new NotSupportedException("Dynamic graphics require a bounded asset resolver.");
+    public bool CBG_SetImage(params object[] args) => throw new NotSupportedException("Dynamic graphics require a bounded asset resolver.");
+    public bool CBG_SetButtonMap(params object[] args) => throw new NotSupportedException("Dynamic button maps require a bounded asset resolver.");
+    public bool CBG_SetButtonImage(params object[] args) => throw new NotSupportedException("Dynamic button images require a bounded asset resolver.");
+    public void SetRedraw(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
+    public void setRedrawTimer(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
     public void ReloadErbFinished() { }
-    public void CustomToolTip(params object[] args) => Unsupported();
-    public void SetToolTipColor(params object[] args) => Unsupported();
-    public void SetToolTipDelay(params object[] args) => Unsupported();
-    public void SetToolTipDuration(params object[] args) => Unsupported();
-    public void SetToolTipFontName(params object[] args) => Unsupported();
-    public void SetToolTipFontSize(params object[] args) => Unsupported();
-    public void SetToolTipFormat(params object[] args) => Unsupported();
-    public void SetToolTipImg(params object[] args) => Unsupported();
+    public void CustomToolTip(params object[] args) => throw HostTooltipBlocked();
+    public void SetToolTipColor(params object[] args) => throw HostTooltipBlocked();
+    public void SetToolTipDelay(params object[] args) => throw HostTooltipBlocked();
+    public void SetToolTipDuration(params object[] args) => throw HostTooltipBlocked();
+    public void SetToolTipFontName(params object[] args) => throw HostTooltipBlocked();
+    public void SetToolTipFontSize(params object[] args) => throw HostTooltipBlocked();
+    public void SetToolTipFormat(params object[] args) => throw HostTooltipBlocked();
+    public void SetToolTipImg(params object[] args) => throw HostTooltipBlocked();
 
     private void EmitText(string value)
     {
         if (outputEnabled && !string.IsNullOrEmpty(value))
-            adapter.Emit(new AppendNodesOperation([new TextNode(value)]));
+            AppendNode(new TextNode(value, ToConsoleTextStyle()));
     }
 
     private void EmitButton(string label, string input)
     {
         if (outputEnabled && !string.IsNullOrEmpty(label))
-            adapter.Emit(new AppendNodesOperation([new ButtonNode(label, input)]));
+            AppendNode(new ButtonNode(label, input, generation: generation));
     }
 
-    private void EmitLine(string value)
+    private void EmitLine(string value) => EmitLine(value, temporary: false);
+
+    private void EmitLine(string value, bool temporary)
     {
         if (!outputEnabled)
             return;
         if (string.IsNullOrEmpty(value))
-            NewLine();
+            FlushPendingLine(force: true, temporary: temporary);
         else
-            adapter.Emit(new AppendNodesOperation([new TextNode(value), LineBreakNode.Instance]));
+        {
+            pendingLine.Add(new TextNode(value, ToConsoleTextStyle()));
+            FlushPendingLine(force: true, temporary: temporary);
+        }
     }
 
-    private static void Unsupported() => throw new NotSupportedException("The upstream desktop capability is unavailable in headless mode.");
+    private void AppendNode(ConsoleNode node)
+    {
+        if (node is LineBreakNode)
+            FlushPendingLine(force: true);
+        else
+            pendingLine.Add(node);
+    }
+
+    private void FlushPendingLine(bool force = false, bool temporary = false)
+    {
+        if (!outputEnabled || (!force && pendingLine.Count == 0))
+            return;
+        string id = $"emuera-line-{checked(++lineId):x}";
+        EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(id, pendingLine, ToAlignment(), temporary)));
+        pendingLine.Clear();
+        lastLineId = id;
+        lastLineTemporary = temporary;
+        logicalLineCount = checked(logicalLineCount + 1);
+        DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+    }
+
+    private void EmitStructured(ConsoleOperation operation)
+    {
+        if (adapter is StructuredGameConsole structured)
+            structured.EmitTransaction(new ConsoleTransaction([operation]));
+        else
+            adapter.Emit(operation);
+    }
+
+    private void EmitTimeoutCountdown(TimeSpan timeout) =>
+        EmitLine($"Time remaining: {timeout.TotalSeconds:0.0}", temporary: true);
+
+    private ConsoleTextStyle ToConsoleTextStyle()
+    {
+        ConsoleFontStyle decorations = ConsoleFontStyle.None;
+        if ((stringStyle.FontStyle & FontStyle.Bold) != 0) decorations |= ConsoleFontStyle.Bold;
+        if ((stringStyle.FontStyle & FontStyle.Italic) != 0) decorations |= ConsoleFontStyle.Italic;
+        if ((stringStyle.FontStyle & FontStyle.Underline) != 0) decorations |= ConsoleFontStyle.Underline;
+        if ((stringStyle.FontStyle & FontStyle.Strikeout) != 0) decorations |= ConsoleFontStyle.Strike;
+        return new ConsoleTextStyle(
+            ToConsoleColor(stringStyle.Color),
+            ToConsoleColor(bgColor),
+            decorations,
+            string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname);
+    }
+
+    private static CloudEmuera.RuntimeAdapter.ConsoleColor? ToConsoleColor(Color color) => color.IsEmpty
+        ? null
+        : CloudEmuera.RuntimeAdapter.ConsoleColor.FromRgba(color.R, color.G, color.B, color.A);
+
+    private ConsoleLineAlignment ToAlignment() => Alignment switch
+    {
+        DisplayLineAlignment.CENTER => ConsoleLineAlignment.Center,
+        DisplayLineAlignment.RIGHT => ConsoleLineAlignment.Right,
+        _ => ConsoleLineAlignment.Left
+    };
+
+    private static ConsoleInputType MapInputType(InputType inputType) => inputType switch
+    {
+        InputType.EnterKey => ConsoleInputType.EnterKey,
+        InputType.AnyKey => ConsoleInputType.AnyKey,
+        InputType.IntValue => ConsoleInputType.Integer,
+        InputType.StrValue => ConsoleInputType.Text,
+        InputType.Void => ConsoleInputType.WaitOnly,
+        InputType.AnyValue => ConsoleInputType.AnyValue,
+        InputType.IntButton => ConsoleInputType.IntegerButton,
+        InputType.StrButton => ConsoleInputType.TextButton,
+        InputType.PrimitiveMouseKey => ConsoleInputType.PrimitivePointerKey,
+        _ => throw new NotSupportedException($"The upstream input type '{inputType}' is unavailable.")
+    };
 
     private void RecordMessage(string value)
     {
@@ -272,8 +541,24 @@ internal sealed class EmueraConsole
             runtimeWarnings.Add(value.Trim());
     }
 
+    private void RecordSystemMessage(string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            runtimeSystemMessages.Add(value.Trim());
+    }
+
+    private void RecordDebugMessage(string value)
+    {
+        if (runtimeDebugMessages.Count >= 256)
+            runtimeDebugMessages.RemoveAt(0);
+        runtimeDebugMessages.Add(value.Length > 4_096 ? value[..4_096] : value);
+    }
+
     private static string FormatDiagnostic(string value, ScriptPosition? position) =>
         position is { } located
             ? $"{value} ({located.Filename}:{located.LineNo})"
             : value;
+
+    private static NotSupportedException HostTooltipBlocked() =>
+        new("HOST_SHIM: desktop custom tooltip capabilities are blocked in the headless runtime.");
 }

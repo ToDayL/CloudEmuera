@@ -7,7 +7,9 @@ public sealed record RuntimeAudioRequest
     public RuntimeAudioRequest(
         RuntimeFilePath resourcePath,
         bool loop = false,
-        float volume = 1f)
+        float volume = 1f,
+        string channel = "master",
+        RuntimeAudioStartPolicy startPolicy = RuntimeAudioStartPolicy.Immediate)
     {
         if (resourcePath.Area != RuntimeFileArea.GameContent)
         {
@@ -26,6 +28,14 @@ public sealed record RuntimeAudioRequest
         ResourcePath = resourcePath;
         Loop = loop;
         Volume = volume;
+        ConsoleContractValidation.ValidateIdentifier(channel, nameof(channel), ConsoleContractLimits.Default.MaxMediaChannelLength);
+        if (!Enum.IsDefined(startPolicy))
+        {
+            throw new ArgumentOutOfRangeException(nameof(startPolicy));
+        }
+
+        Channel = channel;
+        StartPolicy = startPolicy;
     }
 
     public RuntimeFilePath ResourcePath { get; }
@@ -33,6 +43,16 @@ public sealed record RuntimeAudioRequest
     public bool Loop { get; }
 
     public float Volume { get; }
+
+    public string Channel { get; }
+
+    public RuntimeAudioStartPolicy StartPolicy { get; }
+}
+
+public enum RuntimeAudioStartPolicy
+{
+    Immediate,
+    OnUserGesture
 }
 
 public enum RuntimeAudioPlaybackResult

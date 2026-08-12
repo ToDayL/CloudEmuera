@@ -19,7 +19,7 @@ public sealed class ApiWorkerOpenOptionsFactory(
             options.ControlPlaneInstanceId,
             workerId,
             RuntimeBaseline.CloudEmueraIntegrationVersion,
-            checked((int)IpcProtocol.CurrentVersion),
+            checked((int)StructuredIpcProtocol.CurrentVersion),
             $"uds/{workerId}",
             options.LeaseDuration,
             timeProvider.GetUtcNow());

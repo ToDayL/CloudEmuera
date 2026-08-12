@@ -20,3 +20,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0015：API 直接管理 Session Worker 生命周期](0015-api-owned-worker-lifecycle.md)
 - [ADR-0016：Session 是可反复开启的持久 SessionRoot](0016-reopenable-session-root-lifecycle.md)
 - [ADR-0017：可信参与者自托管 MVP 的简化边界](0017-trusted-self-hosted-mvp-simplification.md)
+- [ADR-0018：Emuera 完整结构化交互状态、能力矩阵、计时语义和 IPC major 升级](0018-emuera-structured-interaction-model.md)

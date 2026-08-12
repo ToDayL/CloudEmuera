@@ -5,7 +5,10 @@ public enum ConsoleNodeKind
     Text,
     LineBreak,
     Button,
-    Image
+    Image,
+    Sprite,
+    Shape,
+    HtmlIsland
 }
 
 /// <summary>
@@ -56,7 +59,8 @@ public sealed class ButtonNode : ConsoleNode
         IEnumerable<ConsoleNode> children,
         string value,
         string? tooltip = null,
-        bool enabled = true)
+        bool enabled = true,
+        long generation = 0)
     {
         ArgumentNullException.ThrowIfNull(children);
         ConsoleContractValidation.ValidateText(
@@ -110,19 +114,23 @@ public sealed class ButtonNode : ConsoleNode
         Value = value;
         Tooltip = tooltip;
         Enabled = enabled;
+        if (generation < 0)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Button generation cannot be negative.");
+        Generation = generation;
     }
 
     public ButtonNode(
         string value,
         IEnumerable<ConsoleNode> children,
         string? tooltip = null,
-        bool enabled = true)
-        : this(children, value, tooltip, enabled)
+        bool enabled = true,
+        long generation = 0)
+        : this(children, value, tooltip, enabled, generation)
     {
     }
 
-    public ButtonNode(string label, string value, string? tooltip = null, bool enabled = true)
-        : this([new TextNode(label)], value, tooltip, enabled)
+    public ButtonNode(string label, string value, string? tooltip = null, bool enabled = true, long generation = 0)
+        : this([new TextNode(label)], value, tooltip, enabled, generation)
     {
     }
 
@@ -135,6 +143,8 @@ public sealed class ButtonNode : ConsoleNode
     public string? Tooltip { get; }
 
     public bool Enabled { get; }
+
+    public long Generation { get; }
 }
 
 public sealed class ImageNode : ConsoleNode
@@ -161,6 +171,34 @@ public sealed class ImageNode : ConsoleNode
         Width = width;
         Height = height;
         AltText = altText;
+        Destination = width is { } w && height is { } h ? new ConsoleRect(0, 0, w, h) : null;
+    }
+
+    public ImageNode(
+        ConsoleAssetId assetId,
+        ConsoleRect? sourceRect,
+        ConsoleRect? destination,
+        string? altText = null,
+        bool decorative = false,
+        int zIndex = 0)
+    {
+        assetId.Validate(ConsoleContractLimits.Default);
+        if (sourceRect is { } source && (source.Width <= 0 || source.Height <= 0))
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "The image source rectangle is invalid.");
+        if (destination is { } target && (target.Width <= 0 || target.Height <= 0))
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "The image destination rectangle is invalid.");
+        if (altText is not null)
+            ConsoleContractValidation.ValidateText(altText, nameof(altText), ConsoleContractLimits.Default.MaxAltTextLength, ConsoleContractViolationReason.AltTextTooLong);
+        if (zIndex is < -1_000_000 or > 1_000_000)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "Image z-index is outside its limit.");
+        AssetId = assetId;
+        Width = destination?.Width;
+        Height = destination?.Height;
+        AltText = altText;
+        SourceRect = sourceRect;
+        Destination = destination;
+        Decorative = decorative;
+        ZIndex = zIndex;
     }
 
     public ImageNode(
@@ -181,6 +219,14 @@ public sealed class ImageNode : ConsoleNode
     public int? Height { get; }
 
     public string? AltText { get; }
+
+    public ConsoleRect? SourceRect { get; }
+
+    public ConsoleRect? Destination { get; }
+
+    public bool Decorative { get; }
+
+    public int ZIndex { get; }
 
     private static void ValidateDimension(int? dimension, string parameterName, int maximum)
     {
@@ -277,6 +323,9 @@ internal static class ConsoleNodeValidation
                     throw new ConsoleContractException(ConsoleContractViolationReason.EmptyValue, "A button value is required.");
                 }
 
+                if (button.Generation < 0)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Button generation cannot be negative.");
+
                 if (button.Tooltip is not null)
                 {
                     ConsoleContractValidation.ValidateText(
@@ -319,6 +368,21 @@ internal static class ConsoleNodeValidation
                         ConsoleContractViolationReason.AltTextTooLong);
                 }
 
+                if (image.SourceRect is { } source && (source.Width <= 0 || source.Height <= 0) ||
+                    image.Destination is { } destination && (destination.Width <= 0 || destination.Height <= 0))
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "Image rectangles must be positive.");
+
+                break;
+            case SpriteNode sprite:
+                sprite.AssetId.Validate(limits);
+                if (sprite.Frame < 0 || sprite.Frame > limits.MaxSpriteFrames)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidSpriteFrame, "Sprite frame is outside its limit.");
+                break;
+            case ShapeNode shape:
+                shape.Validate(limits);
+                break;
+            case HtmlIslandNode island:
+                island.Validate(limits);
                 break;
             default:
                 throw new ConsoleContractException(

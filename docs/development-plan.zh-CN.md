@@ -509,11 +509,11 @@ API 集成测试再次以 22/22 通过。API 重启/Worker 崩溃、root 与 `sa
 依据 ADR-0017，API 与 Worker 同一非 root UID 是接受的个人自托管边界，不再以缺少额外内核隔离
 阻塞 P1-06，也不宣称抵御恶意 Worker。
 
-### P1-07 — Emuera 运行时语义与完整结构化交互协议（NEXT）
+### P1-07 — Emuera 运行时语义与完整结构化交互协议（DONE）
 
 需求映射：SESS-004、PLAY-001～004、PLAY-007～012、COMP-002～009、AC-005/008/009/011/012，
-ADR-0004。进入实现前必须新增 ADR，冻结浏览器可安全表达的完整 Emuera Console/Input/Media 能力矩阵、
-事件归约语义和明确禁止的桌面/外部能力；不得以无声 no-op、丢字段或普通文本降级冒充兼容。
+ADR-0004、ADR-0018。已冻结浏览器可安全表达的完整 Emuera Console/Input/Media 能力矩阵、事件归约
+语义和明确禁止的桌面/外部能力；不得以无声 no-op、丢字段或普通文本降级冒充兼容。
 
 详细方案：[`tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md`](tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md)。
 

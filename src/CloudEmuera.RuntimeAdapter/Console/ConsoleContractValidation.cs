@@ -65,6 +65,16 @@ internal static class ConsoleContractValidation
             >= 'A' and <= 'Z' or
             >= '0' and <= '9' or '-' or '_' or '.' or '~';
 
+    public static void ValidateLogicalName(string value, string parameterName, int maxLength)
+    {
+        if (value is null)
+            throw new ConsoleContractException(ConsoleContractViolationReason.NullValue, $"{parameterName} is required.", parameterName);
+        if (value.Length == 0 || value.Length > maxLength)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidIdentifier, $"{parameterName} has an invalid length.", parameterName);
+        if (value.Any(character => char.IsControl(character) || character is '<' or '>' or '"' or '\''))
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidIdentifier, $"{parameterName} contains an invalid character.", parameterName);
+    }
+
     public static void ValidateFontStyle(ConsoleFontStyle style, string parameterName = "decorations")
     {
         const ConsoleFontStyle known =

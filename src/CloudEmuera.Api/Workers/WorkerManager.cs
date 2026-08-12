@@ -7,7 +7,7 @@ using System.Threading.Channels;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V2;
+using CloudEmuera.Ipc.V3;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Grpc.AspNetCore.Server;
@@ -62,8 +62,8 @@ public sealed class WorkerManagerHost : IAsyncDisposable
         });
         builder.Services.AddGrpc(grpcOptions =>
         {
-            grpcOptions.MaxReceiveMessageSize = IpcLimits.MaxEnvelopeBytes;
-            grpcOptions.MaxSendMessageSize = IpcLimits.MaxEnvelopeBytes;
+            grpcOptions.MaxReceiveMessageSize = StructuredIpcLimits.MaxEnvelopeBytes;
+            grpcOptions.MaxSendMessageSize = StructuredIpcLimits.MaxEnvelopeBytes;
         });
         builder.Logging.ClearProviders();
         builder.Logging.AddJsonConsole(loggingOptions => loggingOptions.IncludeScopes = false);
@@ -305,11 +305,11 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         lock (sync)
             sessions.TryGetValue(registration.WorkerId, out session);
         bool registered = session?.IsRegistered == true;
-        IpcValidationResult validation = IpcValidator.ValidateWorkerEnvelope(
+        IpcValidationResult validation = StructuredIpcValidator.ValidateWorkerEnvelope(
             registration,
             registered,
             registered ? session!.Binding : null,
-            options.ControlPlaneInstanceId);
+            StructuredIpcProtocol.CapabilitySetDigest);
         if (!validation.IsValid)
         {
             LogRejected(validation.ReasonCode, registration);
@@ -336,14 +336,20 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
 
     public async Task ReceiveAsync(ApiWorkerConnection connection, WorkerEnvelope message)
     {
-        IpcValidationResult validation = IpcValidator.ValidateWorkerEnvelope(
+        IpcValidationResult validation = StructuredIpcValidator.ValidateWorkerEnvelope(
             message,
             registered: true,
             connection.Session.Binding,
-            connection.Session.ControlPlaneInstanceId);
+            StructuredIpcProtocol.CapabilitySetDigest);
         if (!validation.IsValid)
         {
             connection.Session.RecordProtocolError(validation.ReasonCode);
+            connection.Cancel();
+            return;
+        }
+        if (!string.Equals(message.ControlPlaneInstanceId, connection.Session.ControlPlaneInstanceId, StringComparison.Ordinal))
+        {
+            connection.Session.RecordProtocolError(IpcReasonCodes.ControlPlaneMismatch);
             connection.Cancel();
             return;
         }
@@ -556,6 +562,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             ExpectedWorkerId = Binding.WorkerId,
             ExpectedWorkerEpoch = Binding.WorkerEpoch,
             ExpectedCompatibilityProfile = request.CompatibilityProfile,
+            ExpectedCapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
             DeadlineUnixMilliseconds = deadline.ToUnixTimeMilliseconds(),
         }), cancellationToken).ConfigureAwait(false);
     }
@@ -576,6 +583,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             PromptId = promptId,
             ClientMessageId = clientMessageId,
             Value = value,
+            Source = InputSource.Keyboard,
             DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.AddSeconds(10).ToUnixTimeMilliseconds(),
         }), cancellationToken).ConfigureAwait(false);
     }
@@ -774,14 +782,27 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     {
         lock (sync)
         {
-            if (batch.LastSequence <= lastDisplaySequence)
+            long snapshotSequence = batch.IsSnapshot && batch.Snapshot is not null
+                ? batch.Snapshot.SnapshotSequence
+                : 0;
+            long firstTransactionSequence = batch.Transactions.Count == 0 ? 0 : batch.Transactions[0].Sequence;
+            long lastSequence = batch.Transactions.Count == 0
+                ? snapshotSequence
+                : batch.Transactions[^1].Sequence;
+            if (lastSequence <= lastDisplaySequence)
                 return false;
-            if (!batch.IsSnapshot && batch.FirstSequence != lastDisplaySequence + 1)
+            if (batch.IsSnapshot)
+            {
+                if (batch.Snapshot is null ||
+                    batch.Transactions.Count != 0 && firstTransactionSequence != snapshotSequence + 1)
+                    return false;
+            }
+            else if (batch.Transactions.Count == 0 || firstTransactionSequence != lastDisplaySequence + 1)
             {
                 RecordProtocolError(IpcReasonCodes.OutputResumeGap);
                 return false;
             }
-            lastDisplaySequence = batch.LastSequence;
+            lastDisplaySequence = lastSequence;
             displayBatches.Add(batch.Clone());
             return true;
         }
@@ -790,12 +811,13 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     internal void RecordProtocolError(string reasonCode) =>
         _ = PublishAsync(new WorkerEnvelope
         {
-            ProtocolVersion = IpcProtocol.CurrentVersion,
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = IpcProtocol.NewMessageId("protocol"),
             SessionId = Binding.SessionId,
             WorkerId = Binding.WorkerId,
             WorkerEpoch = Binding.WorkerEpoch,
             ControlPlaneInstanceId = ControlPlaneInstanceId,
+            CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
             RuntimeFailed = new RuntimeFailed
             {
                 StableCode = reasonCode,
@@ -909,34 +931,37 @@ public sealed class ApiWorkerSession : IAsyncDisposable
 
     private WorkerCommandEnvelope CreateEnvelope(string messageId, StartRuntime payload) => new()
     {
-        ProtocolVersion = IpcProtocol.CurrentVersion,
+        ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
         MessageId = messageId,
         SessionId = Binding.SessionId,
         WorkerId = Binding.WorkerId,
         WorkerEpoch = Binding.WorkerEpoch,
         ControlPlaneInstanceId = ControlPlaneInstanceId,
+        CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
         StartRuntime = payload,
     };
 
     private WorkerCommandEnvelope CreateEnvelope(string messageId, SubmitInput payload) => new()
     {
-        ProtocolVersion = IpcProtocol.CurrentVersion,
+        ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
         MessageId = messageId,
         SessionId = Binding.SessionId,
         WorkerId = Binding.WorkerId,
         WorkerEpoch = Binding.WorkerEpoch,
         ControlPlaneInstanceId = ControlPlaneInstanceId,
+        CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
         SubmitInput = payload,
     };
 
     private WorkerCommandEnvelope CreateEnvelope(string messageId, StopWorker payload) => new()
     {
-        ProtocolVersion = IpcProtocol.CurrentVersion,
+        ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
         MessageId = messageId,
         SessionId = Binding.SessionId,
         WorkerId = Binding.WorkerId,
         WorkerEpoch = Binding.WorkerEpoch,
         ControlPlaneInstanceId = ControlPlaneInstanceId,
+        CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
         Stop = payload,
     };
 
@@ -1041,21 +1066,23 @@ internal sealed class WorkerControlGrpcService(WorkerManager manager) : WorkerCo
         RegistrationDecision decision = manager.Register(registration);
         var response = new WorkerCommandEnvelope
         {
-            ProtocolVersion = IpcProtocol.CurrentVersion,
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = IpcProtocol.NewMessageId("registration"),
             CorrelationId = registration.MessageId,
             SessionId = registration.SessionId,
             WorkerId = registration.WorkerId,
             WorkerEpoch = registration.WorkerEpoch,
             ControlPlaneInstanceId = manager.ControlPlaneInstanceId,
+            CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
             RegistrationResult = new RegistrationResult
             {
                 Accepted = decision.Accepted,
                 ReasonCode = decision.ReasonCode,
-                NegotiatedProtocolVersion = decision.Accepted ? IpcProtocol.CurrentVersion : 0,
+                NegotiatedProtocolVersion = decision.Accepted ? StructuredIpcProtocol.CurrentVersion : 0,
                 RuntimeIntegrationVersion = RuntimeBaseline.CloudEmueraIntegrationVersion,
                 UpstreamCommit = RuntimeBaseline.UpstreamCommit,
                 ControlPlaneInstanceId = manager.ControlPlaneInstanceId,
+                CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
             },
         };
         await responseStream.WriteAsync(response).ConfigureAwait(false);

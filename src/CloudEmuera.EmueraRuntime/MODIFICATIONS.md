@@ -17,6 +17,26 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-12 — P1-07 structured Console/Input/Media boundary
+
+- Headless glue changes (the pinned `Upstream/` source tree remains unchanged):
+  `UpstreamHeadless/HeadlessEmueraConsole.cs` now translates line layout,
+  temporary/replaced lines, manifest-backed Sprite/background/Shape/HTML Island
+  state, logical viewport metadata, all supported input kinds and monotonic
+  timeout results into RuntimeAdapter transactions. `HeadlessPlatformStubs.cs`
+  keeps desktop-only declarations isolated and routes audio through the
+  structured media port.
+- CloudEmuera contracts add bounded ConsoleSnapshot state, v3 protobuf
+  transactions/snapshots, executable-free HTML AST nodes, prompt timing/source
+  payloads and media channel revisions. Unsupported dynamic graphics and
+  desktop/external capabilities fail closed with matrix reason codes.
+- Scope: P1-07, ADR-0018, PLAY-001/002/003/004/007/008/009 and COMP-002～009.
+  No vendored upstream file was modified for this slice; the upstream commit
+  and license tree remain byte-for-byte anchored.
+- Verification: `scripts/verify-emuera-capabilities.sh`, structured
+  RuntimeAdapter/IPC/Worker mapper contract tests and the dev-Docker solution
+  build. Full repository verification is recorded in the P1-07 handoff.
+
 ## 2026-08-05 — P0-04 headless integration
 
 - Modified upstream files:

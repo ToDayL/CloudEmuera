@@ -3,14 +3,43 @@ namespace CloudEmuera.RuntimeAdapter;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1720", Justification = "Integer is part of the stable runtime input vocabulary.")]
 public enum ConsoleInputType
 {
+    EnterKey,
+    AnyKey,
+    Integer,
     Text,
-    Integer
+    AnyValue,
+    IntegerButton,
+    TextButton,
+    PrimitivePointerKey,
+    WaitOnly,
+    PrimitiveMouseKey = PrimitivePointerKey
 }
 
 public enum ConsolePromptTimeoutBehavior
 {
     Cancel,
-    ReturnDefaultValue
+    ReturnDefaultValue,
+    ContinueWithoutValue,
+    CancelRuntime = Cancel
+}
+
+public enum ConsolePromptTimeoutAction
+{
+    ReturnDefaultValue,
+    ContinueWithoutValue,
+    CancelRuntime
+}
+
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1720", Justification = "Pointer is a stable input-source vocabulary term.")]
+[Flags]
+public enum ConsoleInputSource
+{
+    None = 0,
+    Keyboard = 1,
+    Button = 2,
+    Pointer = 4,
+    System = 8,
+    All = Keyboard | Button | Pointer | System
 }
 
 /// <summary>
@@ -27,7 +56,16 @@ public sealed class ConsolePrompt
         string? defaultValue = null,
         ConsoleInputConstraints? constraints = null,
         TimeSpan? timeout = null,
-        ConsolePromptTimeoutBehavior timeoutBehavior = ConsolePromptTimeoutBehavior.Cancel)
+        ConsolePromptTimeoutBehavior timeoutBehavior = ConsolePromptTimeoutBehavior.Cancel,
+        bool oneInput = false,
+        bool systemInput = false,
+        bool stopMessageSkip = false,
+        bool displayTime = false,
+        string? timeoutMessage = null,
+        ConsolePromptTimeoutAction? timeoutAction = null,
+        ConsoleInputSource allowedSources = ConsoleInputSource.All,
+        long openedAtUnixMilliseconds = 0,
+        long deadlineUnixMilliseconds = 0)
     {
         ValidateInputType(inputType);
         ValidateTimeout(timeout);
@@ -38,6 +76,20 @@ public sealed class ConsolePrompt
         Constraints = constraints ?? CreateDefaultConstraints(inputType);
         Timeout = timeout;
         TimeoutBehavior = timeoutBehavior;
+        OneInput = oneInput;
+        SystemInput = systemInput;
+        StopMessageSkip = stopMessageSkip;
+        DisplayTime = displayTime;
+        TimeoutMessage = timeoutMessage;
+        TimeoutAction = timeoutAction ?? timeoutBehavior switch
+        {
+            ConsolePromptTimeoutBehavior.ReturnDefaultValue => ConsolePromptTimeoutAction.ReturnDefaultValue,
+            ConsolePromptTimeoutBehavior.ContinueWithoutValue => ConsolePromptTimeoutAction.ContinueWithoutValue,
+            _ => ConsolePromptTimeoutAction.CancelRuntime
+        };
+        AllowedSources = allowedSources;
+        OpenedAtUnixMilliseconds = openedAtUnixMilliseconds;
+        DeadlineUnixMilliseconds = deadlineUnixMilliseconds;
     }
 
     public ConsolePrompt(
@@ -46,8 +98,18 @@ public sealed class ConsolePrompt
         string? defaultValue = null,
         ConsoleInputConstraints? constraints = null,
         TimeSpan? timeout = null,
-        ConsolePromptTimeoutBehavior timeoutBehavior = ConsolePromptTimeoutBehavior.Cancel)
-        : this(string.Empty, inputType, promptText, defaultValue, constraints, timeout, timeoutBehavior)
+        ConsolePromptTimeoutBehavior timeoutBehavior = ConsolePromptTimeoutBehavior.Cancel,
+        bool oneInput = false,
+        bool systemInput = false,
+        bool stopMessageSkip = false,
+        bool displayTime = false,
+        string? timeoutMessage = null,
+        ConsolePromptTimeoutAction? timeoutAction = null,
+        ConsoleInputSource allowedSources = ConsoleInputSource.All,
+        long openedAtUnixMilliseconds = 0,
+        long deadlineUnixMilliseconds = 0)
+        : this(string.Empty, inputType, promptText, defaultValue, constraints, timeout, timeoutBehavior, oneInput, systemInput,
+            stopMessageSkip, displayTime, timeoutMessage, timeoutAction, allowedSources, openedAtUnixMilliseconds, deadlineUnixMilliseconds)
     {
     }
 
@@ -69,8 +131,39 @@ public sealed class ConsolePrompt
 
     public ConsolePromptTimeoutBehavior TimeoutBehavior { get; }
 
+    public bool OneInput { get; }
+
+    public bool SystemInput { get; }
+
+    public bool StopMessageSkip { get; }
+
+    public bool DisplayTime { get; }
+
+    public string? TimeoutMessage { get; }
+
+    public string? TimeUpMes => TimeoutMessage;
+
+    public ConsolePromptTimeoutAction TimeoutAction { get; }
+
+    public ConsoleInputSource AllowedSources { get; }
+
+    public long OpenedAtUnixMilliseconds { get; }
+
+    public long DeadlineUnixMilliseconds { get; }
+
+    public bool HasDeadline => DeadlineUnixMilliseconds > 0;
+
     public ConsolePrompt WithPromptId(string promptId) =>
-        new(promptId, InputType, PromptText, DefaultValue, Constraints, Timeout, TimeoutBehavior);
+        new(promptId, InputType, PromptText, DefaultValue, Constraints, Timeout, TimeoutBehavior, OneInput, SystemInput,
+            StopMessageSkip, DisplayTime, TimeoutMessage, TimeoutAction, AllowedSources, OpenedAtUnixMilliseconds, DeadlineUnixMilliseconds);
+
+    public ConsolePrompt WithTiming(DateTimeOffset openedAt, long? deadlineUnixMilliseconds)
+    {
+        long opened = openedAt.ToUnixTimeMilliseconds();
+        long deadline = deadlineUnixMilliseconds ?? 0;
+        return new ConsolePrompt(PromptId, InputType, PromptText, DefaultValue, Constraints, Timeout, TimeoutBehavior, OneInput,
+            SystemInput, StopMessageSkip, DisplayTime, TimeoutMessage, TimeoutAction, AllowedSources, opened, deadline);
+    }
 
     internal void Validate(ConsoleContractLimits limits)
     {
@@ -96,8 +189,19 @@ public sealed class ConsolePrompt
     {
         if (TimeoutBehavior is not ConsolePromptTimeoutBehavior.Cancel and not ConsolePromptTimeoutBehavior.ReturnDefaultValue)
         {
-            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Unknown prompt timeout behavior.");
+            if (TimeoutBehavior is not ConsolePromptTimeoutBehavior.ContinueWithoutValue)
+                throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Unknown prompt timeout behavior.");
         }
+
+        if (TimeoutAction is not ConsolePromptTimeoutAction.CancelRuntime and not ConsolePromptTimeoutAction.ReturnDefaultValue and
+            not ConsolePromptTimeoutAction.ContinueWithoutValue)
+        {
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Unknown prompt timeout action.");
+        }
+
+        const ConsoleInputSource knownSources = ConsoleInputSource.All;
+        if ((AllowedSources & ~knownSources) != ConsoleInputSource.None || AllowedSources == ConsoleInputSource.None)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "The prompt input source set is invalid.");
 
         if (PromptText is not null)
         {
@@ -118,6 +222,19 @@ public sealed class ConsolePrompt
                 allowControlCharacters: Constraints is TextInputConstraints { AllowControlCharacters: true });
         }
 
+        if (TimeoutMessage is not null)
+        {
+            ConsoleContractValidation.ValidateText(
+                TimeoutMessage,
+                nameof(TimeoutMessage),
+                limits.MaxPromptTextLength,
+                ConsoleContractViolationReason.PromptTextTooLong);
+        }
+
+        if (OpenedAtUnixMilliseconds < 0 || DeadlineUnixMilliseconds < 0 ||
+            DeadlineUnixMilliseconds > 0 && DeadlineUnixMilliseconds < OpenedAtUnixMilliseconds)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Prompt timing metadata is invalid.");
+
         Constraints.Validate(limits);
         if (DefaultValue is not null && !Constraints.TryValidate(DefaultValue, limits, out _))
         {
@@ -126,7 +243,8 @@ public sealed class ConsolePrompt
                 "The prompt default value does not satisfy its constraints.");
         }
 
-        if (TimeoutBehavior == ConsolePromptTimeoutBehavior.ReturnDefaultValue && DefaultValue is null)
+        if ((TimeoutBehavior == ConsolePromptTimeoutBehavior.ReturnDefaultValue ||
+             TimeoutAction == ConsolePromptTimeoutAction.ReturnDefaultValue) && DefaultValue is null)
         {
             throw new ConsoleContractException(
                 ConsoleContractViolationReason.InvalidPrompt,
@@ -137,14 +255,16 @@ public sealed class ConsolePrompt
     private static ConsoleInputConstraints CreateDefaultConstraints(ConsoleInputType inputType) =>
         inputType switch
         {
-            ConsoleInputType.Text => new TextInputConstraints(),
-            ConsoleInputType.Integer => new IntegerInputConstraints(),
-            _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Unknown input type.")
+            ConsoleInputType.Integer or ConsoleInputType.IntegerButton => new IntegerInputConstraints(),
+            ConsoleInputType.AnyValue => new AnyValueInputConstraints(),
+            _ => new TextInputConstraints(),
         };
 
     private static void ValidateInputType(ConsoleInputType inputType)
     {
-        if (inputType is not ConsoleInputType.Text and not ConsoleInputType.Integer)
+        if (inputType is not ConsoleInputType.EnterKey and not ConsoleInputType.AnyKey and not ConsoleInputType.Integer and
+            not ConsoleInputType.Text and not ConsoleInputType.AnyValue and not ConsoleInputType.IntegerButton and
+            not ConsoleInputType.TextButton and not ConsoleInputType.PrimitivePointerKey and not ConsoleInputType.WaitOnly)
         {
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Unknown input type.", nameof(inputType));
         }

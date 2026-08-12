@@ -62,6 +62,23 @@ public sealed class EmueraHtmlParser
 
     public IReadOnlyList<ConsoleNode> Parse(string fragment) => ParseWithDiagnostics(fragment).Nodes;
 
+    /// <summary>Parses an HTML Island into the executable-free AST contract.</summary>
+    public HtmlIslandNode ParseIsland(string fragment)
+    {
+        try
+        {
+            return new HtmlIslandNode(new SafeHtmlIslandParser(limits).Parse(fragment));
+        }
+        catch (ConsoleContractException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is FormatException or OverflowException)
+        {
+            throw new ConsoleContractException(ConsoleContractViolationReason.MalformedHtml, "The HTML Island is malformed.");
+        }
+    }
+
     public EmueraHtmlParseResult ParseWithDiagnostics(string fragment)
     {
         ArgumentNullException.ThrowIfNull(fragment);

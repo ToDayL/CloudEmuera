@@ -1,7 +1,7 @@
 using System.Net.Sockets;
 using System.Threading.Channels;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V2;
+using CloudEmuera.Ipc.V3;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
@@ -159,8 +159,8 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
             new GrpcChannelOptions
             {
                 HttpHandler = handler,
-                MaxReceiveMessageSize = IpcLimits.MaxEnvelopeBytes,
-                MaxSendMessageSize = IpcLimits.MaxEnvelopeBytes
+                MaxReceiveMessageSize = StructuredIpcLimits.MaxEnvelopeBytes,
+                MaxSendMessageSize = StructuredIpcLimits.MaxEnvelopeBytes
             });
         var client = new WorkerControl.WorkerControlClient(channel);
         using AsyncDuplexStreamingCall<WorkerEnvelope, WorkerCommandEnvelope> call = client.Connect(
@@ -174,7 +174,11 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
         }
 
         WorkerCommandEnvelope registrationEnvelope = call.ResponseStream.Current;
-        IpcValidationResult validation = IpcValidator.ValidateWorkerCommandEnvelope(registrationEnvelope, binding, bootstrap.ControlPlaneInstanceId);
+        IpcValidationResult validation = StructuredIpcValidator.ValidateCommandEnvelope(
+            registrationEnvelope,
+            binding,
+            bootstrap.ControlPlaneInstanceId,
+            bootstrap.CapabilitySetDigest);
         if (!validation.IsValid || registrationEnvelope.PayloadCase != WorkerCommandEnvelope.PayloadOneofCase.RegistrationResult)
         {
             throw new WorkerRegistrationRejectedException(validation.ReasonCode);
@@ -185,7 +189,7 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
             throw new WorkerRegistrationRejectedException(registrationEnvelope.RegistrationResult.ReasonCode);
         }
 
-        if (registrationEnvelope.RegistrationResult.NegotiatedProtocolVersion != IpcProtocol.CurrentVersion ||
+        if (registrationEnvelope.RegistrationResult.NegotiatedProtocolVersion != StructuredIpcProtocol.CurrentVersion ||
             !string.Equals(
                 registrationEnvelope.RegistrationResult.RuntimeIntegrationVersion,
                 CloudEmuera.RuntimeAdapter.RuntimeBaseline.CloudEmueraIntegrationVersion,
@@ -207,7 +211,11 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
             while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
             {
                 WorkerCommandEnvelope command = call.ResponseStream.Current;
-                IpcValidationResult commandValidation = IpcValidator.ValidateWorkerCommandEnvelope(command, binding, bootstrap.ControlPlaneInstanceId);
+                IpcValidationResult commandValidation = StructuredIpcValidator.ValidateCommandEnvelope(
+                    command,
+                    binding,
+                    bootstrap.ControlPlaneInstanceId,
+                    bootstrap.CapabilitySetDigest);
                 if (!commandValidation.IsValid)
                 {
                     throw new InvalidDataException(commandValidation.ReasonCode);
@@ -295,21 +303,23 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
 
     private WorkerEnvelope CreateRegistration() => new()
     {
-        ProtocolVersion = bootstrap.ProtocolVersion,
+        ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
         MessageId = IpcProtocol.NewMessageId("reg"),
         SessionId = binding.SessionId,
         WorkerId = binding.WorkerId,
         WorkerEpoch = binding.WorkerEpoch,
         ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+        CapabilitySetDigest = bootstrap.CapabilitySetDigest,
         Registration = new WorkerRegistration
         {
             StartupToken = Interlocked.Exchange(ref registrationAttempted, 1) == 0 ? bootstrap.BootstrapToken : string.Empty,
             RuntimeIntegrationVersion = CloudEmuera.RuntimeAdapter.RuntimeBaseline.CloudEmueraIntegrationVersion,
             UpstreamCommit = CloudEmuera.RuntimeAdapter.RuntimeBaseline.UpstreamCommit,
             ProcessId = Environment.ProcessId,
-            LastOutputSequence = Interlocked.Read(ref lastOutputSequence),
             ProcessBootId = WorkerProcessIdentityProbe.ReadBootId(),
-            ProcessStartTicks = WorkerProcessIdentityProbe.ReadStartTicks(Environment.ProcessId)
+            ProcessStartTicks = WorkerProcessIdentityProbe.ReadStartTicks(Environment.ProcessId),
+            LastOutputSequence = Interlocked.Read(ref lastOutputSequence),
+            CapabilitySetDigest = bootstrap.CapabilitySetDigest
         }
     };
 

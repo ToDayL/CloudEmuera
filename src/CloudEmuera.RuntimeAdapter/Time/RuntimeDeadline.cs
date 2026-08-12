@@ -35,6 +35,18 @@ public readonly struct RuntimeDeadline
         return new RuntimeDeadline(clock, clock.GetTimestamp(), delay);
     }
 
+    /// <summary>
+    /// Creates a deadline from a timestamp captured when the prompt opened.
+    /// This keeps timeout authority monotonic even when the wait starts later
+    /// than the prompt publication (for example after a browser reconnect).
+    /// </summary>
+    public static RuntimeDeadline FromStart(IRuntimeClock clock, long startingTimestamp, TimeSpan delay)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        ArgumentOutOfRangeException.ThrowIfLessThan(delay, TimeSpan.Zero);
+        return new RuntimeDeadline(clock, startingTimestamp, delay);
+    }
+
     public TimeSpan Remaining
     {
         get

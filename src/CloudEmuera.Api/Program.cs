@@ -61,8 +61,8 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 });
 builder.Services.AddGrpc(grpcOptions =>
 {
-    grpcOptions.MaxReceiveMessageSize = CloudEmuera.Ipc.IpcLimits.MaxEnvelopeBytes;
-    grpcOptions.MaxSendMessageSize = CloudEmuera.Ipc.IpcLimits.MaxEnvelopeBytes;
+    grpcOptions.MaxReceiveMessageSize = CloudEmuera.Ipc.StructuredIpcLimits.MaxEnvelopeBytes;
+    grpcOptions.MaxSendMessageSize = CloudEmuera.Ipc.StructuredIpcLimits.MaxEnvelopeBytes;
 });
 SqliteDatabaseOptions databaseOptions = new()
 {

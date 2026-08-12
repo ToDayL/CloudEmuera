@@ -1,0 +1,524 @@
+namespace CloudEmuera.RuntimeAdapter;
+
+/// <summary>Logical pixels used by the structured runtime contract.</summary>
+public readonly record struct ConsolePoint
+{
+    public ConsolePoint(int x, int y)
+    {
+        ValidateCoordinate(x, nameof(x));
+        ValidateCoordinate(y, nameof(y));
+        X = x;
+        Y = y;
+    }
+
+    public int X { get; }
+
+    public int Y { get; }
+
+    private static void ValidateCoordinate(int value, string parameterName)
+    {
+        if (value is < -1_000_000 or > 1_000_000)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A logical coordinate is outside its limit.", parameterName);
+    }
+}
+
+public readonly record struct ConsoleSize
+{
+    public ConsoleSize(int width, int height)
+    {
+        if (width <= 0 || height <= 0 || width > 8_192 || height > 8_192)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A logical size is outside its limit.");
+        Width = width;
+        Height = height;
+    }
+
+    public int Width { get; }
+
+    public int Height { get; }
+}
+
+public readonly record struct ConsoleRect
+{
+    public ConsoleRect(int x, int y, int width, int height)
+    {
+        _ = new ConsolePoint(x, y);
+        if (width <= 0 || height <= 0 || width > 8_192 || height > 8_192)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A rectangle size is outside its limit.");
+        if ((long)x + width is < -1_000_000 or > 1_000_000 || (long)y + height is < -1_000_000 or > 1_000_000)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A rectangle is outside its coordinate limit.");
+        X = x;
+        Y = y;
+        Width = width;
+        Height = height;
+    }
+
+    public int X { get; }
+
+    public int Y { get; }
+
+    public int Width { get; }
+
+    public int Height { get; }
+}
+
+public enum ConsoleLineAlignment
+{
+    Left,
+    Center,
+    Right
+}
+
+public enum ConsoleBackgroundMode
+{
+    Stretch,
+    Contain,
+    Cover,
+    Center,
+    Repeat
+}
+
+public enum ConsoleShapeKind
+{
+    Rectangle,
+    Ellipse,
+    Line,
+    Polygon,
+    Space
+}
+
+public enum ConsoleMediaPlaybackState
+{
+    Stopped,
+    Requested
+}
+
+public enum ConsoleMediaStartPolicy
+{
+    Immediate,
+    OnUserGesture
+}
+
+/// <summary>Closed font information; it is a logical manifest family, never a host font name.</summary>
+public sealed record ConsoleFontSpec
+{
+    public ConsoleFontSpec(string family = "default", int size = 16, int lineHeight = 0)
+    {
+        ConsoleContractValidation.ValidateLogicalName(family, nameof(family), 128);
+        if (size is <= 0 or > 256)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidFont, "Font size is outside its limit.", nameof(size));
+        if (lineHeight < 0 || lineHeight > 512)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidFont, "Line height is outside its limit.", nameof(lineHeight));
+        Family = family;
+        Size = size;
+        LineHeight = lineHeight;
+    }
+
+    public string Family { get; }
+
+    public int Size { get; }
+
+    public int LineHeight { get; }
+}
+
+public sealed class ConsoleLine
+{
+    public ConsoleLine(
+        string lineId,
+        IEnumerable<ConsoleNode> nodes,
+        ConsoleLineAlignment alignment = ConsoleLineAlignment.Left,
+        bool temporary = false)
+    {
+        ConsoleContractValidation.ValidateIdentifier(lineId, nameof(lineId), ConsoleContractLimits.Default.MaxLineIdLength);
+        ArgumentNullException.ThrowIfNull(nodes);
+        ConsoleNode[] copy = nodes.ToArray();
+        if (copy.Length > ConsoleContractLimits.Default.MaxNodesPerLine)
+            throw new ConsoleContractException(ConsoleContractViolationReason.LineTooLarge, "A console line has too many nodes.");
+        ConsoleNodeValidation.ValidateBatchIfNotEmpty(copy, ConsoleContractLimits.Default);
+        ValidateAlignment(alignment);
+        LineId = lineId;
+        Nodes = Array.AsReadOnly(copy);
+        Alignment = alignment;
+        Temporary = temporary;
+    }
+
+    public string LineId { get; }
+
+    public IReadOnlyList<ConsoleNode> Nodes { get; }
+
+    public ConsoleLineAlignment Alignment { get; }
+
+    public bool Temporary { get; }
+
+    public ConsoleLine WithNodes(IEnumerable<ConsoleNode> nodes, bool? temporary = null, ConsoleLineAlignment? alignment = null) =>
+        new(LineId, nodes, alignment ?? Alignment, temporary ?? Temporary);
+
+    private static void ValidateAlignment(ConsoleLineAlignment alignment)
+    {
+        if (alignment is not ConsoleLineAlignment.Left and not ConsoleLineAlignment.Center and not ConsoleLineAlignment.Right)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidAlignment, "Unknown line alignment.");
+    }
+}
+
+public sealed class BackgroundLayer
+{
+    public BackgroundLayer(
+        string layerId,
+        ConsoleAssetId assetId,
+        ConsoleBackgroundMode mode = ConsoleBackgroundMode.Cover,
+        float opacity = 1f,
+        long depth = 0)
+    {
+        ConsoleContractValidation.ValidateIdentifier(layerId, nameof(layerId), ConsoleContractLimits.Default.MaxLayerIdLength);
+        assetId.Validate(ConsoleContractLimits.Default);
+        ValidateOpacity(opacity);
+        if (depth is < -1_000_000 or > 1_000_000)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "Background depth is outside its limit.");
+        if (mode is not ConsoleBackgroundMode.Stretch and not ConsoleBackgroundMode.Contain and not ConsoleBackgroundMode.Cover and
+            not ConsoleBackgroundMode.Center and not ConsoleBackgroundMode.Repeat)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidBackgroundMode, "Unknown background mode.");
+        LayerId = layerId;
+        AssetId = assetId;
+        Mode = mode;
+        Opacity = opacity;
+        Depth = depth;
+    }
+
+    public string LayerId { get; }
+
+    public ConsoleAssetId AssetId { get; }
+
+    public ConsoleBackgroundMode Mode { get; }
+
+    public float Opacity { get; }
+
+    public long Depth { get; }
+
+    internal static void ValidateOpacity(float value)
+    {
+        if (float.IsNaN(value) || float.IsInfinity(value) || value is < 0f or > 1f)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidOpacity, "Opacity must be a finite value from 0 to 1.");
+    }
+}
+
+public abstract class CanvasDrawable
+{
+    private protected CanvasDrawable(string drawableId, ConsoleRect bounds, int zIndex, float opacity)
+    {
+        ConsoleContractValidation.ValidateIdentifier(drawableId, nameof(drawableId), ConsoleContractLimits.Default.MaxDrawableIdLength);
+        BackgroundLayer.ValidateOpacity(opacity);
+        if (zIndex is < -1_000_000 or > 1_000_000)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "Drawable z-index is outside its limit.");
+        DrawableId = drawableId;
+        Bounds = bounds;
+        ZIndex = zIndex;
+        Opacity = opacity;
+    }
+
+    public string DrawableId { get; }
+
+    public ConsoleRect Bounds { get; }
+
+    public int ZIndex { get; }
+
+    public float Opacity { get; }
+}
+
+public sealed class SpriteDrawable : CanvasDrawable
+{
+    public SpriteDrawable(
+        string drawableId,
+        ConsoleAssetId assetId,
+        ConsoleRect sourceRect,
+        ConsoleRect bounds,
+        int zIndex = 0,
+        float opacity = 1f,
+        int frame = 0)
+        : base(drawableId, bounds, zIndex, opacity)
+    {
+        assetId.Validate(ConsoleContractLimits.Default);
+        if (frame < 0 || frame > ConsoleContractLimits.Default.MaxSpriteFrames)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidSpriteFrame, "Sprite frame is outside its limit.");
+        AssetId = assetId;
+        SourceRect = sourceRect;
+        Frame = frame;
+    }
+
+    public ConsoleAssetId AssetId { get; }
+
+    public ConsoleRect SourceRect { get; }
+
+    public int Frame { get; }
+}
+
+public sealed class ShapeDrawable : CanvasDrawable
+{
+    public ShapeDrawable(
+        string drawableId,
+        ConsoleShapeKind shape,
+        ConsoleRect bounds,
+        ConsoleColor? fill = null,
+        ConsoleColor? stroke = null,
+        int zIndex = 0,
+        float opacity = 1f,
+        IEnumerable<ConsolePoint>? points = null)
+        : base(drawableId, bounds, zIndex, opacity)
+    {
+        if (shape is not ConsoleShapeKind.Rectangle and not ConsoleShapeKind.Ellipse and not ConsoleShapeKind.Line and
+            not ConsoleShapeKind.Polygon and not ConsoleShapeKind.Space)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidShape, "Unknown shape kind.");
+        ConsolePoint[] pointCopy = (points ?? Array.Empty<ConsolePoint>()).ToArray();
+        if (pointCopy.Length > ConsoleContractLimits.Default.MaxGeometryPoints)
+            throw new ConsoleContractException(ConsoleContractViolationReason.GeometryTooLarge, "A shape has too many points.");
+        if (shape == ConsoleShapeKind.Polygon && pointCopy.Length < 3 || shape == ConsoleShapeKind.Line && pointCopy.Length != 2)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidShape, "The shape point count is invalid.");
+        Shape = shape;
+        Fill = fill;
+        Stroke = stroke;
+        Points = Array.AsReadOnly(pointCopy);
+    }
+
+    public ConsoleShapeKind Shape { get; }
+
+    public ConsoleColor? Fill { get; }
+
+    public ConsoleColor? Stroke { get; }
+
+    public IReadOnlyList<ConsolePoint> Points { get; }
+}
+
+public sealed class HtmlIslandDrawable : CanvasDrawable
+{
+    public HtmlIslandDrawable(string drawableId, ConsoleHtmlNode root, ConsoleRect bounds, int zIndex = 0, float opacity = 1f)
+        : base(drawableId, bounds, zIndex, opacity)
+    {
+        Root = root ?? throw new ArgumentNullException(nameof(root));
+        Root.Validate(ConsoleContractLimits.Default, 1);
+    }
+
+    public ConsoleHtmlNode Root { get; }
+}
+
+public sealed class HitRegion
+{
+    public HitRegion(
+        string regionId,
+        ConsoleRect bounds,
+        string inputValue,
+        bool enabled = true,
+        string? tooltip = null)
+    {
+        ConsoleContractValidation.ValidateIdentifier(regionId, nameof(regionId), ConsoleContractLimits.Default.MaxHitRegionIdLength);
+        ConsoleContractValidation.ValidateText(inputValue, nameof(inputValue), ConsoleContractLimits.Default.MaxButtonValueLength, ConsoleContractViolationReason.ButtonValueTooLong);
+        if (inputValue.Length == 0)
+            throw new ConsoleContractException(ConsoleContractViolationReason.EmptyValue, "A hit region input value is required.");
+        if (tooltip is not null)
+            ConsoleContractValidation.ValidateText(tooltip, nameof(tooltip), ConsoleContractLimits.Default.MaxTooltipLength, ConsoleContractViolationReason.TooltipTooLong);
+        RegionId = regionId;
+        Bounds = bounds;
+        InputValue = inputValue;
+        Enabled = enabled;
+        Tooltip = tooltip;
+    }
+
+    public string RegionId { get; }
+
+    public ConsoleRect Bounds { get; }
+
+    public string InputValue { get; }
+
+    public bool Enabled { get; }
+
+    public string? Tooltip { get; }
+}
+
+public sealed class CanvasScene
+{
+    public CanvasScene(IEnumerable<CanvasDrawable>? drawables = null, IEnumerable<HitRegion>? hitRegions = null)
+    {
+        CanvasDrawable[] drawableCopy = (drawables ?? Array.Empty<CanvasDrawable>()).ToArray();
+        HitRegion[] hitRegionCopy = (hitRegions ?? Array.Empty<HitRegion>()).ToArray();
+        if (drawableCopy.Length > ConsoleContractLimits.Default.MaxDrawables || hitRegionCopy.Length > ConsoleContractLimits.Default.MaxHitRegions)
+            throw new ConsoleContractException(ConsoleContractViolationReason.SceneTooLarge, "The canvas scene exceeds its limit.");
+        if (drawableCopy.GroupBy(item => item.DrawableId, StringComparer.Ordinal).Any(group => group.Count() != 1) ||
+            hitRegionCopy.GroupBy(item => item.RegionId, StringComparer.Ordinal).Any(group => group.Count() != 1))
+            throw new ConsoleContractException(ConsoleContractViolationReason.DuplicateIdentifier, "Scene identifiers must be unique.");
+        Drawables = Array.AsReadOnly(drawableCopy);
+        HitRegions = Array.AsReadOnly(hitRegionCopy);
+    }
+
+    public IReadOnlyList<CanvasDrawable> Drawables { get; }
+
+    public IReadOnlyList<HitRegion> HitRegions { get; }
+}
+
+public sealed class MediaChannelState
+{
+    public MediaChannelState(
+        string channel,
+        ConsoleAssetId? assetId,
+        ConsoleMediaPlaybackState playbackState,
+        bool loop,
+        float volume,
+        long revision,
+        ConsoleMediaStartPolicy startPolicy = ConsoleMediaStartPolicy.Immediate)
+    {
+        ConsoleContractValidation.ValidateIdentifier(channel, nameof(channel), ConsoleContractLimits.Default.MaxMediaChannelLength);
+        if (assetId is { } value)
+            value.Validate(ConsoleContractLimits.Default);
+        BackgroundLayer.ValidateOpacity(volume);
+        if (revision < 0)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidMediaRevision, "Media revision cannot be negative.");
+        if (playbackState is not ConsoleMediaPlaybackState.Stopped and not ConsoleMediaPlaybackState.Requested)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidMediaState, "Unknown media playback state.");
+        if (startPolicy is not ConsoleMediaStartPolicy.Immediate and not ConsoleMediaStartPolicy.OnUserGesture)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidMediaStartPolicy, "Unknown media start policy.");
+        Channel = channel;
+        AssetId = assetId;
+        PlaybackState = playbackState;
+        Loop = loop;
+        Volume = volume;
+        Revision = revision;
+        StartPolicy = startPolicy;
+    }
+
+    public string Channel { get; }
+
+    public ConsoleAssetId? AssetId { get; }
+
+    public ConsoleMediaPlaybackState PlaybackState { get; }
+
+    public bool Loop { get; }
+
+    public float Volume { get; }
+
+    public long Revision { get; }
+
+    public ConsoleMediaStartPolicy StartPolicy { get; }
+}
+
+public sealed class MediaState
+{
+    public MediaState(IEnumerable<MediaChannelState>? channels = null)
+    {
+        MediaChannelState[] copy = (channels ?? Array.Empty<MediaChannelState>()).ToArray();
+        if (copy.Length > ConsoleContractLimits.Default.MaxMediaChannels)
+            throw new ConsoleContractException(ConsoleContractViolationReason.MediaTooLarge, "The media state exceeds its channel limit.");
+        if (copy.GroupBy(item => item.Channel, StringComparer.Ordinal).Any(group => group.Count() != 1))
+            throw new ConsoleContractException(ConsoleContractViolationReason.DuplicateIdentifier, "Media channel identifiers must be unique.");
+        Channels = Array.AsReadOnly(copy);
+    }
+
+    public IReadOnlyList<MediaChannelState> Channels { get; }
+}
+
+public sealed class WindowMetadata
+{
+    public WindowMetadata(
+        string title = "",
+        int viewportWidth = 0,
+        int viewportHeight = 0,
+        ConsoleColor? defaultForeground = null,
+        ConsoleColor? defaultBackground = null,
+        ConsoleFontSpec? defaultFont = null)
+    {
+        ConsoleContractValidation.ValidateText(title, nameof(title), ConsoleContractLimits.Default.MaxWindowTitleLength, ConsoleContractViolationReason.WindowMetadataTooLong);
+        if (viewportWidth < 0 || viewportHeight < 0 || viewportWidth > 8_192 || viewportHeight > 8_192)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidViewport, "The logical viewport is outside its limit.");
+        Title = title;
+        ViewportWidth = viewportWidth;
+        ViewportHeight = viewportHeight;
+        DefaultForeground = defaultForeground;
+        DefaultBackground = defaultBackground;
+        DefaultFont = defaultFont ?? new ConsoleFontSpec();
+    }
+
+    public string Title { get; }
+
+    public int ViewportWidth { get; }
+
+    public int ViewportHeight { get; }
+
+    public ConsoleColor? DefaultForeground { get; }
+
+    public ConsoleColor? DefaultBackground { get; }
+
+    public ConsoleFontSpec DefaultFont { get; }
+}
+
+/// <summary>Parsed, executable-free HTML island tree.</summary>
+public abstract class ConsoleHtmlNode
+{
+    private protected ConsoleHtmlNode() { }
+
+    internal abstract void Validate(ConsoleContractLimits limits, int depth);
+}
+
+public sealed class ConsoleHtmlTextNode : ConsoleHtmlNode
+{
+    public ConsoleHtmlTextNode(string text)
+    {
+        ConsoleContractValidation.ValidateText(text, nameof(text), ConsoleContractLimits.Default.MaxTextLength, ConsoleContractViolationReason.TextTooLong);
+        Text = text;
+    }
+
+    public string Text { get; }
+
+    internal override void Validate(ConsoleContractLimits limits, int depth) =>
+        ConsoleContractValidation.ValidateText(Text, nameof(Text), limits.MaxTextLength, ConsoleContractViolationReason.TextTooLong);
+}
+
+public sealed class ConsoleHtmlBreakNode : ConsoleHtmlNode
+{
+    public static ConsoleHtmlBreakNode Instance { get; } = new();
+
+    internal override void Validate(ConsoleContractLimits limits, int depth) { }
+}
+
+public sealed class ConsoleHtmlElementNode : ConsoleHtmlNode
+{
+    public ConsoleHtmlElementNode(
+        string tag,
+        IEnumerable<ConsoleHtmlNode> children,
+        ConsoleTextStyle? style = null,
+        string? assetId = null,
+        string? altText = null)
+    {
+        ConsoleContractValidation.ValidateLogicalName(tag, nameof(tag), ConsoleContractLimits.Default.MaxHtmlTagNameLength);
+        ArgumentNullException.ThrowIfNull(children);
+        ConsoleHtmlNode[] copy = children.ToArray();
+        if (copy.Length > ConsoleContractLimits.Default.MaxHtmlChildren)
+            throw new ConsoleContractException(ConsoleContractViolationReason.HtmlNodeLimitExceeded, "An HTML element has too many children.");
+        if (assetId is not null)
+            new ConsoleAssetId(assetId).Validate(ConsoleContractLimits.Default);
+        if (altText is not null)
+            ConsoleContractValidation.ValidateText(altText, nameof(altText), ConsoleContractLimits.Default.MaxAltTextLength, ConsoleContractViolationReason.AltTextTooLong);
+        Tag = tag.ToLowerInvariant();
+        Children = Array.AsReadOnly(copy);
+        Style = style ?? ConsoleTextStyle.Default;
+        AssetId = assetId;
+        AltText = altText;
+    }
+
+    public string Tag { get; }
+
+    public IReadOnlyList<ConsoleHtmlNode> Children { get; }
+
+    public ConsoleTextStyle Style { get; }
+
+    public string? AssetId { get; }
+
+    public string? AltText { get; }
+
+    internal override void Validate(ConsoleContractLimits limits, int depth)
+    {
+        if (depth > limits.MaxHtmlNestingDepth)
+            throw new ConsoleContractException(ConsoleContractViolationReason.HtmlNestingLimitExceeded, "The HTML tree is too deep.");
+        ConsoleContractValidation.ValidateLogicalName(Tag, nameof(Tag), limits.MaxHtmlTagNameLength);
+        if (Tag is not ("span" or "div" or "p" or "b" or "strong" or "i" or "em" or "u" or "s" or "strike" or "img"))
+            throw new ConsoleContractException(ConsoleContractViolationReason.UnsupportedHtml, "The HTML element is not allowlisted.");
+        if (Children.Count > limits.MaxHtmlChildren)
+            throw new ConsoleContractException(ConsoleContractViolationReason.HtmlNodeLimitExceeded, "The HTML tree has too many children.");
+        foreach (ConsoleHtmlNode child in Children)
+            child.Validate(limits, depth + 1);
+    }
+}

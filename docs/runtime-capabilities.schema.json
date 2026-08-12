@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloudemuera.local/schema/runtime-capabilities-v1.json",
+  "title": "CloudEmuera Emuera runtime capability matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "matrixVersion",
+    "upstreamCommit",
+    "runtimeIntegrationVersion",
+    "protocolVersion",
+    "capabilitySetDigest",
+    "capabilities"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "matrixVersion": { "type": "string", "const": "p1-07" },
+    "upstreamCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "runtimeIntegrationVersion": { "type": "string", "minLength": 1 },
+    "protocolVersion": { "type": "integer", "const": 3 },
+    "capabilitySetDigest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/capability" }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capabilityId",
+        "upstreamCommit",
+        "upstreamEntrypoints",
+        "category",
+        "classification",
+        "reasonCode",
+        "adapterTypes",
+        "ipcTypes",
+        "fixtureScenarios",
+        "testNames",
+        "securityNotes"
+      ],
+      "properties": {
+        "capabilityId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "upstreamCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "upstreamEntrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "category": {
+          "type": "string",
+          "enum": ["console", "input", "timer", "html", "image", "drawing", "font", "audio", "host", "protocol", "resource"]
+        },
+        "classification": {
+          "type": "string",
+          "enum": ["Supported", "Compatible", "Experimental", "Blocked"]
+        },
+        "reasonCode": { "type": "string", "minLength": 1 },
+        "adapterTypes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "ipcTypes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "fixtureScenarios": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "testNames": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "securityNotes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

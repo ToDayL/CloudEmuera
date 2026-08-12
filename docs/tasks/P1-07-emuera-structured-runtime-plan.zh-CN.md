@@ -1,6 +1,6 @@
 # P1-07：Emuera 运行时语义与完整结构化交互协议详细开发方案
 
-状态：计划中
+状态：已完成
 
 设计日期：2026-08-12
 
@@ -12,6 +12,7 @@ NFR-008/011/013/014、AC-005、AC-008、AC-009、AC-011、AC-012
 关联决策：[`ADR-0003`](../adr/0003-console-snapshot-bounds.md)、
 [`ADR-0004`](../adr/0004-runtime-rich-content-allowlist.md)、
 [`ADR-0005`](../adr/0005-vendored-emuera-source.md)、
+[`ADR-0018`](../adr/0018-emuera-structured-interaction-model.md)、
 [`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md)
 
 前置任务：P0-01～P0-05、P1-05、P1-06
@@ -410,6 +411,9 @@ PromptTiming(deadlineUnixMilliseconds, serverNowUnixMilliseconds,
              remainingMilliseconds)
 ```
 
+无 timeout 的 prompt 以 `deadlineUnixMilliseconds=0`、`remainingMilliseconds=0` 表示；该状态仍可
+通过 heartbeat 上报 opened/server-now 展示时间，但不能伪造正的剩余时间。
+
 输入命令除字符串 value 外增加受限 source/pointer/key payload union；字段必须与当前 prompt 类型
 匹配。输入结果不得默认回传输入全文；只有解释器/客户端正确性确需的规范值才返回，并遵守日志脱敏。
 
@@ -538,6 +542,12 @@ git diff --check
 对应 trait 和 `verify-emuera-capabilities.sh` 属于本阶段交付物；实现时若真实项目名变化，必须同步修改
 为 solution 中可执行的命令。
 
+2026-08-12 dev Docker 验证结果：RuntimeAdapter 149/149、v3 IPC 契约 13/13、Worker 集成
+19/19、固定上游 RuntimeCompatibility 27/27；`verify-runtime-fixtures.sh` 报告 schema 1、2 个
+fixture、18 个文件，`verify-emuera-capabilities.sh` 报告 19 个能力、177 个唯一入口；完整
+`scripts/check.sh` 通过（Release 0 warning/0 error，Web typecheck、13 个测试和 production build
+均通过），`verify-dev-user.sh`、`verify-third-party.sh` 与 `git diff --check` 通过。
+
 ## 15. 实施切片
 
 ### 切片 1：ADR、上游审计和能力矩阵
@@ -630,3 +640,10 @@ P1-07 只有在以下条件全部满足后才能标记 DONE：
 - P1-15 用授权代表游戏和四浏览器矩阵补最终视觉/音频证据，但不能替代 P1-07 的真实解释器与协议测试；
 - 未来升级上游时，新增/改变的入口必须先更新能力矩阵和 ADR，再更新 integration version；缺少映射
   的上游变化必须使 CI 失败。
+
+## 18. 完成记录
+
+2026-08-12：P1-07 已完成。新增 ADR-0018、结构化 Console/Input/Media RuntimeAdapter、v3
+Worker IPC、双向 mapper、能力矩阵与静态验证门；真实 headless fixture 和生产 Worker UDS 链路已
+验证。P1-08/P1-09/P1-11 继续消费本阶段冻结的 Snapshot、transaction、prompt timing 和 media
+语义。

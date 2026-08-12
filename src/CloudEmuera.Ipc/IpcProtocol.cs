@@ -108,7 +108,9 @@ public sealed record WorkerBootstrapDocument
 {
     public int SchemaVersion { get; init; } = IpcProtocol.BootstrapSchemaVersion;
 
-    public uint ProtocolVersion { get; init; } = IpcProtocol.CurrentVersion;
+    public uint ProtocolVersion { get; init; } = StructuredIpcProtocol.CurrentVersion;
+
+    public string CapabilitySetDigest { get; init; } = StructuredIpcProtocol.CapabilitySetDigest;
 
     public string SessionId { get; init; } = string.Empty;
 
@@ -153,7 +155,8 @@ public sealed record WorkerBootstrapDocument
             throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
         }
 
-        if (ProtocolVersion != IpcProtocol.CurrentVersion)
+        if (ProtocolVersion != StructuredIpcProtocol.CurrentVersion ||
+            !string.Equals(CapabilitySetDigest, StructuredIpcProtocol.CapabilitySetDigest, StringComparison.Ordinal))
         {
             throw new InvalidDataException(IpcReasonCodes.UnsupportedProtocolVersion);
         }

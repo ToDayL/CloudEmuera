@@ -130,7 +130,13 @@ internal static class RuntimeScenarioRunner
             ConsoleFontStyle expectedStyle = fixtureId == "v18-core" ? ConsoleFontStyle.Bold : ConsoleFontStyle.Italic;
             Check(snapshot.VisibleNodes.OfType<TextNode>().Any(node => node.Style.Decorations.HasFlag(expectedStyle)), "Expected HTML style node was not emitted.", errors, ref assertions);
             string sprite = fixtureId == "v18-core" ? "V18_SPRITE" : "EMEE_SPRITE";
-            Check(snapshot.VisibleNodes.OfType<ImageNode>().Any(node => node.AssetId.Value == sprite), "Expected sprite ImageNode was not emitted.", errors, ref assertions);
+            Check(
+                snapshot.VisibleNodes.Any(node =>
+                    node is ImageNode image && image.AssetId.Value == sprite ||
+                    node is SpriteNode spriteNode && spriteNode.AssetId.Value == sprite),
+                "Expected structured sprite node was not emitted.",
+                errors,
+                ref assertions);
             Check(audioPort.PlayedRequests.Count == 0, "Fixture unexpectedly requested audio playback.", errors, ref assertions);
             Check(!fileSystem.FileExists(new RuntimeFilePath(RuntimeFileArea.Save, "save00.sav")), "P0-04 created save00.sav.", errors, ref assertions);
             Check(!fileSystem.FileExists(new RuntimeFilePath(RuntimeFileArea.Save, "global.sav")), "P0-04 created global.sav.", errors, ref assertions);

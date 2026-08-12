@@ -26,6 +26,9 @@ internal static class RuntimeTranscriptProjector
 
                     break;
                 case ImageNode:
+                case SpriteNode:
+                case ShapeNode:
+                case HtmlIslandNode:
                     break;
             }
         }

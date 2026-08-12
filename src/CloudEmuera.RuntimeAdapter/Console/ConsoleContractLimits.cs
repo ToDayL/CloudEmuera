@@ -44,6 +44,46 @@ public sealed record ConsoleContractLimits
 
     public int MaxInputValueLength { get; init; } = 16_384;
 
+    public int MaxLineIdLength { get; init; } = 128;
+
+    public int MaxLayerIdLength { get; init; } = 128;
+
+    public int MaxDrawableIdLength { get; init; } = 128;
+
+    public int MaxHitRegionIdLength { get; init; } = 128;
+
+    public int MaxMediaChannelLength { get; init; } = 64;
+
+    public int MaxWindowTitleLength { get; init; } = 512;
+
+    public int MaxFontFamilyLength { get; init; } = 128;
+
+    public int MaxNodesPerLine { get; init; } = 512;
+
+    public int MaxScrollbackLines { get; init; } = 4_096;
+
+    public int MaxScrollbackNodes { get; init; } = 8_192;
+
+    public int MaxScrollbackTextLength { get; init; } = 524_288;
+
+    public int MaxBackgroundLayers { get; init; } = 64;
+
+    public int MaxDrawables { get; init; } = 2_048;
+
+    public int MaxHitRegions { get; init; } = 2_048;
+
+    public int MaxMediaChannels { get; init; } = 32;
+
+    public int MaxTransactionOperations { get; init; } = 128;
+
+    public int MaxGeometryPoints { get; init; } = 256;
+
+    public int MaxHtmlTagNameLength { get; init; } = 32;
+
+    public int MaxHtmlChildren { get; init; } = 256;
+
+    public int MaxSpriteFrames { get; init; } = 4_096;
+
     public void Validate()
     {
         ValidatePositive(MaxTextLength, nameof(MaxTextLength));
@@ -64,6 +104,26 @@ public sealed record ConsoleContractLimits
         ValidatePositive(MaxPromptTextLength, nameof(MaxPromptTextLength));
         ValidatePositive(MaxPromptDefaultValueLength, nameof(MaxPromptDefaultValueLength));
         ValidatePositive(MaxInputValueLength, nameof(MaxInputValueLength));
+        ValidatePositive(MaxLineIdLength, nameof(MaxLineIdLength));
+        ValidatePositive(MaxLayerIdLength, nameof(MaxLayerIdLength));
+        ValidatePositive(MaxDrawableIdLength, nameof(MaxDrawableIdLength));
+        ValidatePositive(MaxHitRegionIdLength, nameof(MaxHitRegionIdLength));
+        ValidatePositive(MaxMediaChannelLength, nameof(MaxMediaChannelLength));
+        ValidatePositive(MaxWindowTitleLength, nameof(MaxWindowTitleLength));
+        ValidatePositive(MaxFontFamilyLength, nameof(MaxFontFamilyLength));
+        ValidatePositive(MaxNodesPerLine, nameof(MaxNodesPerLine));
+        ValidatePositive(MaxScrollbackLines, nameof(MaxScrollbackLines));
+        ValidatePositive(MaxScrollbackNodes, nameof(MaxScrollbackNodes));
+        ValidatePositive(MaxScrollbackTextLength, nameof(MaxScrollbackTextLength));
+        ValidatePositive(MaxBackgroundLayers, nameof(MaxBackgroundLayers));
+        ValidatePositive(MaxDrawables, nameof(MaxDrawables));
+        ValidatePositive(MaxHitRegions, nameof(MaxHitRegions));
+        ValidatePositive(MaxMediaChannels, nameof(MaxMediaChannels));
+        ValidatePositive(MaxTransactionOperations, nameof(MaxTransactionOperations));
+        ValidatePositive(MaxGeometryPoints, nameof(MaxGeometryPoints));
+        ValidatePositive(MaxHtmlTagNameLength, nameof(MaxHtmlTagNameLength));
+        ValidatePositive(MaxHtmlChildren, nameof(MaxHtmlChildren));
+        ValidatePositive(MaxSpriteFrames, nameof(MaxSpriteFrames));
     }
 
     private static void ValidatePositive(int value, string parameterName)
@@ -114,7 +174,25 @@ public enum ConsoleContractViolationReason
     UnsupportedHtml,
     HistoryLimitInvalid,
     InputReceiptLimitInvalid,
-    MessageConflict
+    MessageConflict,
+    InvalidGeometry,
+    InvalidFont,
+    InvalidAlignment,
+    InvalidBackgroundMode,
+    InvalidOpacity,
+    InvalidSpriteFrame,
+    InvalidShape,
+    GeometryTooLarge,
+    LineTooLarge,
+    SceneTooLarge,
+    DuplicateIdentifier,
+    InvalidMediaRevision,
+    InvalidMediaState,
+    InvalidMediaStartPolicy,
+    MediaTooLarge,
+    WindowMetadataTooLong,
+    InvalidViewport,
+    HtmlNodeLimitExceeded
 }
 
 /// <summary>

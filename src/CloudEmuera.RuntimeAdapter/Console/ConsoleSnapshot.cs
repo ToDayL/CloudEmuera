@@ -1,6 +1,24 @@
 namespace CloudEmuera.RuntimeAdapter;
 
-public sealed record ConsoleTruncationMetadata(bool WasTruncated, long DroppedNodeCount);
+public sealed record ConsoleTruncationMetadata(
+    bool WasTruncated,
+    long DroppedNodeCount,
+    long DroppedLineCount = 0,
+    long DroppedTextLength = 0);
+
+public abstract record StructuredConsoleResumeResult;
+
+public sealed record StructuredConsoleUpToDateResult(long CurrentSequence) : StructuredConsoleResumeResult;
+
+public sealed record StructuredConsoleDeltaBatchResult(
+    long FromSequence,
+    long ToSequence,
+    IReadOnlyList<SequencedConsoleTransaction> Transactions) : StructuredConsoleResumeResult;
+
+public sealed record StructuredConsoleSnapshotWithDeltasResult(
+    ConsoleSnapshot Snapshot,
+    IReadOnlyList<SequencedConsoleTransaction> TransactionsAfterSnapshot,
+    long CurrentSequence) : StructuredConsoleResumeResult;
 
 public sealed class ConsoleSnapshot
 {
@@ -30,13 +48,61 @@ public sealed class ConsoleSnapshot
         SnapshotSequence = snapshotSequence;
         VisibleNodes = Array.AsReadOnly(copy);
         VisibleLines = BuildLines(copy);
+        Scrollback = BuildLegacyScrollback(copy);
+        BackgroundLayers = Array.Empty<BackgroundLayer>();
+        CanvasScene = new CanvasScene();
+        MediaState = new MediaState();
+        WindowMetadata = new WindowMetadata();
         CurrentPrompt = currentPrompt;
         WasTruncated = wasTruncated;
         DroppedNodeCount = droppedNodeCount;
+        Truncation = new ConsoleTruncationMetadata(wasTruncated, droppedNodeCount);
         ConsoleNodeMetrics metrics = ConsoleSizeEstimator.MeasureNodes(copy);
         VisibleNodeCount = metrics.NodeCount;
         VisibleTextLength = metrics.TextLength;
         EstimatedBytes = ConsoleSizeEstimator.MeasureSnapshot(metrics, currentPrompt);
+    }
+
+    public ConsoleSnapshot(
+        long snapshotSequence,
+        IEnumerable<ConsoleLine> scrollback,
+        IEnumerable<BackgroundLayer>? backgroundLayers = null,
+        CanvasScene? canvasScene = null,
+        MediaState? mediaState = null,
+        ConsolePrompt? currentPrompt = null,
+        WindowMetadata? windowMetadata = null,
+        ConsoleTruncationMetadata? truncation = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(snapshotSequence);
+        ArgumentNullException.ThrowIfNull(scrollback);
+        ConsoleLine[] lines = scrollback.ToArray();
+        ConsoleContractLimits.Default.Validate();
+        if (lines.Length > ConsoleContractLimits.Default.MaxScrollbackLines)
+            throw new ConsoleContractException(ConsoleContractViolationReason.LineTooLarge, "The scrollback exceeds its line limit.");
+        if (lines.SelectMany(line => line.Nodes).Count() > ConsoleContractLimits.Default.MaxScrollbackNodes)
+            throw new ConsoleContractException(ConsoleContractViolationReason.NodeExceedsHistoryBudget, "The scrollback exceeds its node limit.");
+        if (currentPrompt is not null)
+            currentPrompt.Validate(ConsoleContractLimits.Default);
+        ConsoleTruncationMetadata metadata = truncation ?? new ConsoleTruncationMetadata(false, 0);
+        if (metadata.DroppedNodeCount < 0 || metadata.DroppedLineCount < 0 || metadata.DroppedTextLength < 0)
+            throw new ArgumentOutOfRangeException(nameof(truncation));
+
+        SnapshotSequence = snapshotSequence;
+        Scrollback = Array.AsReadOnly(lines);
+        BackgroundLayers = Array.AsReadOnly((backgroundLayers ?? Array.Empty<BackgroundLayer>()).ToArray());
+        CanvasScene = canvasScene ?? new CanvasScene();
+        MediaState = mediaState ?? new MediaState();
+        WindowMetadata = windowMetadata ?? new WindowMetadata();
+        CurrentPrompt = currentPrompt;
+        WasTruncated = metadata.WasTruncated;
+        DroppedNodeCount = metadata.DroppedNodeCount;
+        Truncation = metadata;
+        VisibleNodes = Array.AsReadOnly(FlattenLines(lines));
+        VisibleLines = Array.AsReadOnly(lines.Select(line => line.Nodes).ToArray());
+        ConsoleNodeMetrics metrics = ConsoleSizeEstimator.MeasureNodes(VisibleNodes);
+        VisibleNodeCount = metrics.NodeCount;
+        VisibleTextLength = metrics.TextLength;
+        EstimatedBytes = ConsoleSizeEstimator.MeasureStructuredSnapshot(this, metrics);
     }
 
     public static ConsoleSnapshot Empty { get; } = new(0, Array.Empty<ConsoleNode>());
@@ -49,13 +115,23 @@ public sealed class ConsoleSnapshot
 
     public IReadOnlyList<IReadOnlyList<ConsoleNode>> VisibleLines { get; }
 
+    public IReadOnlyList<ConsoleLine> Scrollback { get; }
+
+    public IReadOnlyList<BackgroundLayer> BackgroundLayers { get; }
+
+    public CanvasScene CanvasScene { get; }
+
+    public MediaState MediaState { get; }
+
+    public WindowMetadata WindowMetadata { get; }
+
     public ConsolePrompt? CurrentPrompt { get; }
 
     public bool WasTruncated { get; }
 
     public long DroppedNodeCount { get; }
 
-    public ConsoleTruncationMetadata Truncation => new(WasTruncated, DroppedNodeCount);
+    public ConsoleTruncationMetadata Truncation { get; }
 
     public int VisibleNodeCount { get; }
 
@@ -99,5 +175,41 @@ public sealed class ConsoleSnapshot
         }
 
         return Array.AsReadOnly(lines.ToArray());
+    }
+
+    private static System.Collections.ObjectModel.ReadOnlyCollection<ConsoleLine> BuildLegacyScrollback(IReadOnlyList<ConsoleNode> nodes)
+    {
+        var lines = new List<ConsoleLine>();
+        var current = new List<ConsoleNode>();
+        int lineNumber = 0;
+        foreach (ConsoleNode node in nodes)
+        {
+            if (node is LineBreakNode)
+            {
+                lines.Add(new ConsoleLine($"legacy-{lineNumber++}", current));
+                current.Clear();
+            }
+            else
+            {
+                current.Add(node);
+            }
+        }
+
+        if (current.Count != 0 || lines.Count == 0)
+            lines.Add(new ConsoleLine($"legacy-{lineNumber}", current));
+        return Array.AsReadOnly(lines.ToArray());
+    }
+
+    private static ConsoleNode[] FlattenLines(IReadOnlyList<ConsoleLine> lines)
+    {
+        var nodes = new List<ConsoleNode>();
+        foreach (ConsoleLine line in lines)
+        {
+            nodes.AddRange(line.Nodes);
+            nodes.Add(LineBreakNode.Instance);
+        }
+        if (nodes.Count > 0 && nodes[^1] is LineBreakNode)
+            nodes.RemoveAt(nodes.Count - 1);
+        return nodes.ToArray();
     }
 }

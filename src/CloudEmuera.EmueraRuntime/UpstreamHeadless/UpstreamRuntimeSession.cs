@@ -116,6 +116,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         Process runtimeProcess = process ?? throw new InvalidOperationException("The upstream runtime is not initialized.");
         runtimeProcess.SetHeadlessCancellationToken(runCancellationToken);
         runtimeProcess.DoScript();
+        console.PrintFlush(force: false);
         runCancellationToken.ThrowIfCancellationRequested();
         if (console.RuntimeMessages.Count > initializationMessageCount)
         {

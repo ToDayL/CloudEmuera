@@ -1,0 +1,389 @@
+syntax = "proto3";
+
+option csharp_namespace = "CloudEmuera.Ipc.V3";
+
+package cloudemuera.ipc.v3;
+
+service WorkerControl {
+  rpc Connect(stream WorkerEnvelope) returns (stream WorkerCommandEnvelope);
+}
+
+message WorkerEnvelope {
+  uint32 protocol_version = 1;
+  string message_id = 2;
+  string session_id = 3;
+  string worker_id = 4;
+  uint64 worker_epoch = 5;
+  string correlation_id = 6;
+  string control_plane_instance_id = 7;
+  string capability_set_digest = 8;
+  oneof payload {
+    WorkerRegistration registration = 10;
+    WorkerReady ready = 11;
+    WorkerHeartbeat heartbeat = 12;
+    DisplayBatch display_batch = 13;
+    InputResult input_result = 14;
+    RuntimeCompleted runtime_completed = 15;
+    RuntimeFailed runtime_failed = 16;
+    WorkerStopped worker_stopped = 17;
+    WorkerCommandResult command_result = 18;
+  }
+}
+
+message WorkerRegistration {
+  string startup_token = 1;
+  string runtime_integration_version = 2;
+  string upstream_commit = 3;
+  int64 process_id = 4;
+  string capability_set_digest = 5;
+  string process_boot_id = 6;
+  int64 process_start_ticks = 7;
+  int64 last_output_sequence = 8;
+}
+
+message WorkerReady {
+  string runtime_integration_version = 1;
+  string upstream_commit = 2;
+  int64 last_output_sequence = 3;
+  string compatibility_profile = 4;
+  string capability_set_digest = 5;
+  string session_root_manifest_digest = 6;
+  SaveLayout save_layout = 7;
+}
+
+message WorkerHeartbeat {
+  int64 monotonic_timestamp_ticks = 1;
+  int64 output_sequence = 2;
+  bool waiting_for_input = 3;
+  string current_prompt_id = 4;
+  PromptTiming prompt_timing = 5;
+  int64 resident_memory_bytes = 6;
+}
+
+message DisplayBatch {
+  repeated ConsoleTransaction transactions = 1;
+  bool is_snapshot = 2;
+  ConsoleSnapshot snapshot = 3;
+}
+
+message InputResult {
+  string prompt_id = 1;
+  string client_message_id = 2;
+  InputResultKind kind = 3;
+  string reason_code = 4;
+  string normalized_value = 5;
+  bool has_normalized_value = 6;
+}
+
+message RuntimeCompleted {
+  string status = 1;
+  int64 last_output_sequence = 2;
+}
+
+message RuntimeFailed {
+  string stable_code = 1;
+  string phase = 2;
+  string safe_message = 3;
+  bool fatal = 4;
+  int64 last_output_sequence = 5;
+}
+
+message WorkerStopped {
+  string reason_code = 1;
+  int64 last_output_sequence = 2;
+  bool graceful = 3;
+}
+
+message WorkerCommandEnvelope {
+  uint32 protocol_version = 1;
+  string message_id = 2;
+  string correlation_id = 3;
+  string session_id = 4;
+  uint64 worker_epoch = 5;
+  string worker_id = 6;
+  string control_plane_instance_id = 7;
+  string capability_set_digest = 8;
+  oneof payload {
+    RegistrationResult registration_result = 10;
+    StartRuntime start_runtime = 11;
+    SubmitInput submit_input = 12;
+    StopWorker stop = 13;
+  }
+}
+
+message RegistrationResult {
+  bool accepted = 1;
+  string reason_code = 2;
+  uint32 negotiated_protocol_version = 3;
+  string capability_set_digest = 4;
+  string runtime_integration_version = 5;
+  string upstream_commit = 6;
+  string control_plane_instance_id = 7;
+}
+
+message StartRuntime {
+  string expected_session_id = 1;
+  string expected_worker_id = 2;
+  uint64 expected_worker_epoch = 3;
+  string expected_compatibility_profile = 4;
+  int64 deadline_unix_milliseconds = 5;
+  string expected_capability_set_digest = 6;
+}
+
+message SubmitInput {
+  string prompt_id = 1;
+  string client_message_id = 2;
+  string value = 3;
+  InputSource source = 4;
+  oneof payload {
+    PointerPayload pointer = 5;
+    KeyPayload key = 6;
+  }
+  int64 deadline_unix_milliseconds = 7;
+}
+
+message StopWorker {
+  int64 deadline_unix_milliseconds = 1;
+  string reason_code = 2;
+}
+
+message WorkerCommandResult {
+  string command_type = 1;
+  bool accepted = 2;
+  string reason_code = 3;
+}
+
+message ConsoleTransaction {
+  int64 sequence = 1;
+  repeated ConsoleOperation operations = 2;
+}
+
+message ConsoleSnapshot {
+  int64 snapshot_sequence = 1;
+  repeated ConsoleLine scrollback = 2;
+  repeated BackgroundLayer background_layers = 3;
+  CanvasScene canvas_scene = 4;
+  MediaState media_state = 5;
+  ConsolePrompt current_prompt = 6;
+  bool has_current_prompt = 7;
+  WindowMetadata window_metadata = 8;
+  TruncationMetadata truncation = 9;
+}
+
+message ConsoleOperation {
+  oneof payload {
+    AppendNodes append_nodes = 1;
+    ClearScrollback clear_scrollback = 2;
+    OpenPrompt open_prompt = 3;
+    ClosePrompt close_prompt = 4;
+    AppendLine append_line = 5;
+    AppendInline append_inline = 6;
+    ReplaceLine replace_line = 7;
+    DeleteLines delete_lines = 8;
+    SetWindowMetadata set_window_metadata = 9;
+    UpsertBackground upsert_background = 10;
+    RemoveBackground remove_background = 11;
+    ClearBackgrounds clear_backgrounds = 12;
+    UpsertDrawable upsert_drawable = 13;
+    RemoveDrawable remove_drawable = 14;
+    ClearSceneRange clear_scene_range = 15;
+    ClearScene clear_scene = 16;
+    UpsertHitRegion upsert_hit_region = 17;
+    RemoveHitRegion remove_hit_region = 18;
+    ClearHitRegions clear_hit_regions = 19;
+    SetMediaChannel set_media_channel = 20;
+    StopMediaChannel stop_media_channel = 21;
+    StopAllMedia stop_all_media = 22;
+  }
+}
+
+message AppendNodes { repeated ConsoleNode nodes = 1; }
+message ClearScrollback {}
+message OpenPrompt { ConsolePrompt prompt = 1; }
+message ClosePrompt { string prompt_id = 1; PromptCloseReason reason = 2; }
+message AppendLine { ConsoleLine line = 1; }
+message AppendInline { string line_id = 1; repeated ConsoleNode nodes = 2; }
+message ReplaceLine { ConsoleLine line = 1; }
+message DeleteLines { repeated string line_ids = 1; }
+message SetWindowMetadata { WindowMetadata metadata = 1; }
+message UpsertBackground { BackgroundLayer layer = 1; }
+message RemoveBackground { string layer_id = 1; }
+message ClearBackgrounds {}
+message UpsertDrawable { CanvasDrawable drawable = 1; }
+message RemoveDrawable { string drawable_id = 1; }
+message ClearSceneRange { int32 minimum_z_index = 1; int32 maximum_z_index = 2; }
+message ClearScene {}
+message UpsertHitRegion { HitRegion region = 1; }
+message RemoveHitRegion { string region_id = 1; }
+message ClearHitRegions {}
+message SetMediaChannel { MediaChannelState channel = 1; }
+message StopMediaChannel { string channel = 1; }
+message StopAllMedia {}
+
+message ConsoleLine {
+  string line_id = 1;
+  repeated ConsoleNode nodes = 2;
+  LineAlignment alignment = 3;
+  bool temporary = 4;
+}
+
+message ConsoleNode {
+  oneof kind {
+    TextNode text = 1;
+    LineBreakNode line_break = 2;
+    ButtonNode button = 3;
+    ImageNode image = 4;
+    SpriteNode sprite = 5;
+    ShapeNode shape = 6;
+    HtmlIslandNode html_island = 7;
+  }
+}
+
+message TextNode { string text = 1; TextStyle style = 2; }
+message LineBreakNode {}
+message ButtonNode {
+  repeated TextNode label = 1;
+  string value = 2;
+  string tooltip = 3;
+  bool enabled = 4;
+  int64 generation = 5;
+}
+message ImageNode {
+  string asset_id = 1;
+  Rect source_rect = 2;
+  bool has_source_rect = 3;
+  Rect destination = 4;
+  bool has_destination = 5;
+  string alt_text = 6;
+  bool decorative = 7;
+  int32 z_index = 8;
+}
+message SpriteNode {
+  string asset_id = 1;
+  Rect source_rect = 2;
+  Rect destination = 3;
+  int32 frame = 4;
+  int32 z_index = 5;
+  float opacity = 6;
+  string alt_text = 7;
+}
+message ShapeNode {
+  ShapeKind shape = 1;
+  Rect bounds = 2;
+  ConsoleColor fill = 3;
+  bool has_fill = 4;
+  ConsoleColor stroke = 5;
+  bool has_stroke = 6;
+  int32 z_index = 7;
+  repeated Point points = 8;
+}
+message HtmlIslandNode { HtmlNode root = 1; Rect layout = 2; bool has_layout = 3; }
+
+message HtmlNode {
+  oneof kind {
+    string text = 1;
+    HtmlBreak break_node = 2;
+    HtmlElement element = 3;
+  }
+}
+message HtmlBreak {}
+message HtmlElement {
+  string tag = 1;
+  repeated HtmlNode children = 2;
+  TextStyle style = 3;
+  string asset_id = 4;
+  bool has_asset_id = 5;
+  string alt_text = 6;
+}
+
+message TextStyle {
+  ConsoleColor foreground = 1;
+  bool has_foreground = 2;
+  ConsoleColor background = 3;
+  bool has_background = 4;
+  uint32 decorations = 5;
+  string font_family = 6;
+  int32 font_size = 7;
+  int32 line_height = 8;
+}
+message ConsoleColor { uint32 red = 1; uint32 green = 2; uint32 blue = 3; uint32 alpha = 4; }
+message Point { int32 x = 1; int32 y = 2; }
+message Rect { int32 x = 1; int32 y = 2; int32 width = 3; int32 height = 4; }
+
+message BackgroundLayer {
+  string layer_id = 1;
+  string asset_id = 2;
+  BackgroundMode mode = 3;
+  float opacity = 4;
+  int64 depth = 5;
+}
+message CanvasScene { repeated CanvasDrawable drawables = 1; repeated HitRegion hit_regions = 2; }
+message CanvasDrawable {
+  oneof kind {
+    SpriteDrawable sprite = 1;
+    ShapeDrawable shape = 2;
+    HtmlIslandDrawable html_island = 3;
+  }
+}
+message SpriteDrawable { string drawable_id = 1; string asset_id = 2; Rect source_rect = 3; Rect bounds = 4; int32 z_index = 5; float opacity = 6; int32 frame = 7; }
+message ShapeDrawable { string drawable_id = 1; ShapeKind shape = 2; Rect bounds = 3; ConsoleColor fill = 4; bool has_fill = 5; ConsoleColor stroke = 6; bool has_stroke = 7; int32 z_index = 8; float opacity = 9; repeated Point points = 10; }
+message HtmlIslandDrawable { string drawable_id = 1; HtmlNode root = 2; Rect bounds = 3; int32 z_index = 4; float opacity = 5; }
+message HitRegion { string region_id = 1; Rect bounds = 2; string input_value = 3; bool enabled = 4; string tooltip = 5; }
+message MediaState { repeated MediaChannelState channels = 1; }
+message MediaChannelState { string channel = 1; string asset_id = 2; bool has_asset_id = 3; MediaPlaybackState playback_state = 4; bool loop = 5; float volume = 6; int64 revision = 7; MediaStartPolicy start_policy = 8; }
+message WindowMetadata { string title = 1; int32 viewport_width = 2; int32 viewport_height = 3; ConsoleColor default_foreground = 4; bool has_default_foreground = 5; ConsoleColor default_background = 6; bool has_default_background = 7; TextStyle default_font = 8; }
+message TruncationMetadata { bool was_truncated = 1; int64 dropped_node_count = 2; int64 dropped_line_count = 3; int64 dropped_text_length = 4; }
+
+message ConsolePrompt {
+  string prompt_id = 1;
+  InputType input_type = 2;
+  string prompt_text = 3;
+  string default_value = 4;
+  bool has_default_value = 5;
+  InputConstraints constraints = 6;
+  bool one_input = 7;
+  bool system_input = 8;
+  bool stop_message_skip = 9;
+  InputSource allowed_sources = 10;
+  int64 opened_at_unix_milliseconds = 11;
+  int64 deadline_unix_milliseconds = 12;
+  bool has_deadline = 13;
+  bool display_time = 14;
+  string timeout_message = 15;
+  TimeoutAction timeout_action = 16;
+}
+message PromptTiming { int64 opened_at_unix_milliseconds = 1; int64 deadline_unix_milliseconds = 2; int64 server_now_unix_milliseconds = 3; int64 remaining_milliseconds = 4; }
+message InputConstraints { oneof kind { TextInputConstraints text = 1; IntegerInputConstraints integer = 2; AnyValueInputConstraints any_value = 3; } }
+message TextInputConstraints { int32 max_length = 1; bool has_max_length = 2; bool allow_control_characters = 3; }
+message IntegerInputConstraints { int64 minimum = 1; int64 maximum = 2; bool has_minimum = 3; bool has_maximum = 4; bool allow_sign = 5; }
+message AnyValueInputConstraints { int32 max_length = 1; bool has_max_length = 2; }
+message PointerPayload { Point position = 1; int32 button = 2; bool pressed = 3; }
+message KeyPayload { int32 key_code = 1; bool control = 2; bool alt = 3; bool shift = 4; }
+
+enum SaveLayout {
+  SAVE_LAYOUT_UNSPECIFIED = 0;
+  SAVE_LAYOUT_ROOT = 1;
+  SAVE_LAYOUT_SAV_DIRECTORY = 2;
+}
+
+enum InputType {
+  INPUT_TYPE_UNSPECIFIED = 0;
+  INPUT_TYPE_ENTER_KEY = 1;
+  INPUT_TYPE_ANY_KEY = 2;
+  INPUT_TYPE_INTEGER = 3;
+  INPUT_TYPE_TEXT = 4;
+  INPUT_TYPE_ANY_VALUE = 5;
+  INPUT_TYPE_INTEGER_BUTTON = 6;
+  INPUT_TYPE_TEXT_BUTTON = 7;
+  INPUT_TYPE_PRIMITIVE_POINTER_KEY = 8;
+  INPUT_TYPE_WAIT_ONLY = 9;
+}
+enum InputSource { INPUT_SOURCE_UNSPECIFIED = 0; INPUT_SOURCE_KEYBOARD = 1; INPUT_SOURCE_BUTTON = 2; INPUT_SOURCE_POINTER = 4; INPUT_SOURCE_SYSTEM = 8; }
+enum TimeoutAction { TIMEOUT_ACTION_UNSPECIFIED = 0; TIMEOUT_ACTION_RETURN_DEFAULT = 1; TIMEOUT_ACTION_CONTINUE_WITHOUT_VALUE = 2; TIMEOUT_ACTION_CANCEL_RUNTIME = 3; }
+enum InputResultKind { INPUT_RESULT_KIND_UNSPECIFIED = 0; INPUT_RESULT_KIND_ACCEPTED = 1; INPUT_RESULT_KIND_DUPLICATE = 2; INPUT_RESULT_KIND_STALE_PROMPT = 3; INPUT_RESULT_KIND_NO_ACTIVE_PROMPT = 4; INPUT_RESULT_KIND_INVALID_COMMAND = 5; INPUT_RESULT_KIND_INVALID_FORMAT = 6; INPUT_RESULT_KIND_CONFLICT = 7; INPUT_RESULT_KIND_CANCELLED = 8; INPUT_RESULT_KIND_TIMED_OUT = 9; }
+enum PromptCloseReason { PROMPT_CLOSE_REASON_UNSPECIFIED = 0; PROMPT_CLOSE_REASON_COMPLETED = 1; PROMPT_CLOSE_REASON_INPUT_ACCEPTED = 2; PROMPT_CLOSE_REASON_CANCELLED = 3; PROMPT_CLOSE_REASON_TIMED_OUT = 4; PROMPT_CLOSE_REASON_EXPLICIT = 5; }
+enum LineAlignment { LINE_ALIGNMENT_UNSPECIFIED = 0; LINE_ALIGNMENT_LEFT = 1; LINE_ALIGNMENT_CENTER = 2; LINE_ALIGNMENT_RIGHT = 3; }
+enum BackgroundMode { BACKGROUND_MODE_UNSPECIFIED = 0; BACKGROUND_MODE_STRETCH = 1; BACKGROUND_MODE_CONTAIN = 2; BACKGROUND_MODE_COVER = 3; BACKGROUND_MODE_CENTER = 4; BACKGROUND_MODE_REPEAT = 5; }
+enum ShapeKind { SHAPE_KIND_UNSPECIFIED = 0; SHAPE_KIND_RECTANGLE = 1; SHAPE_KIND_ELLIPSE = 2; SHAPE_KIND_LINE = 3; SHAPE_KIND_POLYGON = 4; SHAPE_KIND_SPACE = 5; }
+enum MediaPlaybackState { MEDIA_PLAYBACK_STATE_UNSPECIFIED = 0; MEDIA_PLAYBACK_STATE_STOPPED = 1; MEDIA_PLAYBACK_STATE_REQUESTED = 2; }
+enum MediaStartPolicy { MEDIA_START_POLICY_UNSPECIFIED = 0; MEDIA_START_POLICY_IMMEDIATE = 1; MEDIA_START_POLICY_ON_USER_GESTURE = 2; }

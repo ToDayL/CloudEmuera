@@ -80,9 +80,29 @@ public sealed class InputCoordinator
     }
 
     public void OpenPrompt(ConsolePrompt prompt)
+        => OpenPrompt(prompt, clock: null);
+
+    /// <summary>
+    /// Opens a prompt and, when a clock is supplied, captures its monotonic
+    /// start timestamp and wall-clock display metadata at publication time.
+    /// </summary>
+    public void OpenPrompt(ConsolePrompt prompt, IRuntimeClock? clock)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         prompt.Validate(limits);
+
+        ConsolePrompt effectivePrompt = prompt;
+        long? startTimestamp = null;
+        if (clock is not null)
+        {
+            startTimestamp = clock.GetTimestamp();
+            DateTimeOffset openedAt = clock.UtcNow;
+            long? deadline = prompt.Timeout is { } timeout && timeout != Timeout.InfiniteTimeSpan
+                ? openedAt.Add(timeout).ToUnixTimeMilliseconds()
+                : null;
+            effectivePrompt = prompt.WithTiming(openedAt, deadline);
+            effectivePrompt.Validate(limits);
+        }
 
         lock (sync)
         {
@@ -93,15 +113,15 @@ public sealed class InputCoordinator
                     "A console prompt is already active.");
             }
 
-            if (waiters.ContainsKey(prompt.PromptId) || completedPromptIds.Contains(prompt.PromptId))
+            if (waiters.ContainsKey(effectivePrompt.PromptId) || completedPromptIds.Contains(effectivePrompt.PromptId))
             {
                 throw new ConsoleContractException(
                     ConsoleContractViolationReason.InvalidPrompt,
                     "A prompt id cannot be reused by the same coordinator.");
             }
 
-            currentPrompt = prompt;
-            waiters.Add(prompt.PromptId, new PromptWaitState(prompt));
+            currentPrompt = effectivePrompt;
+            waiters.Add(effectivePrompt.PromptId, new PromptWaitState(effectivePrompt, startTimestamp));
         }
     }
 
@@ -113,7 +133,7 @@ public sealed class InputCoordinator
         {
             if (receipts.TryGetValue(command.ClientMessageId, out Receipt? receipt))
             {
-                return receipt.PromptId == command.PromptId && receipt.Value == command.Value
+                return receipt.PromptId == command.PromptId && receipt.Fingerprint == command.Fingerprint
                     ? ConsoleInputResult.Duplicate(command, receipt.Result)
                     : ConsoleInputResult.Conflict(command);
             }
@@ -142,7 +162,17 @@ public sealed class InputCoordinator
                 return result;
             }
 
-            if (!currentPrompt.Constraints.TryValidate(command.Value, limits, out ConsoleInputFailureReason valueFailure))
+            if ((currentPrompt.AllowedSources & command.Source) != command.Source)
+            {
+                result = ConsoleInputResult.InvalidFormat(command, ConsoleInputFailureReason.SourceNotAllowed);
+                AddReceipt(command, result);
+                return result;
+            }
+
+            string value = currentPrompt.OneInput && command.Value.Length > 1
+                ? command.Value[..1]
+                : command.Value;
+            if (!currentPrompt.Constraints.TryValidate(value, limits, out ConsoleInputFailureReason valueFailure))
             {
                 result = ConsoleInputResult.InvalidFormat(command, valueFailure);
                 AddReceipt(command, result);
@@ -150,7 +180,7 @@ public sealed class InputCoordinator
             }
 
             ConsolePrompt prompt = currentPrompt;
-            var input = new GameConsoleInput(prompt.PromptId, prompt.InputType, command.Value);
+            var input = new GameConsoleInput(prompt.PromptId, prompt.InputType, value);
             result = ConsoleInputResult.Accepted(command, input);
             currentPrompt = null;
             MarkPromptCompleted(prompt.PromptId);
@@ -198,7 +228,9 @@ public sealed class InputCoordinator
             if (prompt.Timeout is not null && prompt.Timeout != Timeout.InfiniteTimeSpan)
             {
                 delayCancellation = new CancellationTokenSource();
-                RuntimeDeadline deadline = RuntimeDeadline.After(clock, prompt.Timeout.Value);
+                RuntimeDeadline deadline = waiter.StartTimestamp is long startTimestamp
+                    ? RuntimeDeadline.FromStart(clock, startTimestamp, prompt.Timeout.Value)
+                    : RuntimeDeadline.After(clock, prompt.Timeout.Value);
                 Task delayTask = deadline.DelayAsync(delayCancellation.Token).AsTask();
                 if (!waiter.Completion.Task.IsCompleted)
                 {
@@ -306,7 +338,7 @@ public sealed class InputCoordinator
 
             currentPrompt = null;
             MarkPromptCompleted(prompt.PromptId);
-            GameConsoleInput? defaultInput = prompt.TimeoutBehavior == ConsolePromptTimeoutBehavior.ReturnDefaultValue &&
+            GameConsoleInput? defaultInput = prompt.TimeoutAction == ConsolePromptTimeoutAction.ReturnDefaultValue &&
                 prompt.DefaultValue is not null
                 ? new GameConsoleInput(prompt.PromptId, prompt.InputType, prompt.DefaultValue, isDefaultValue: true)
                 : null;
@@ -377,7 +409,7 @@ public sealed class InputCoordinator
 
     private void AddReceipt(ConsoleInputCommand command, ConsoleInputResult result)
     {
-        receipts[command.ClientMessageId] = new Receipt(command.PromptId, command.Value, result);
+        receipts[command.ClientMessageId] = new Receipt(command.PromptId, command.Fingerprint, result);
         receiptOrder.Enqueue(command.ClientMessageId);
         while (receipts.Count > maxReceiptCount)
         {
@@ -400,11 +432,13 @@ public sealed class InputCoordinator
         }
     }
 
-    private sealed record Receipt(string PromptId, string Value, ConsoleInputResult Result);
+    private sealed record Receipt(string PromptId, string Fingerprint, ConsoleInputResult Result);
 
-    private sealed class PromptWaitState(ConsolePrompt prompt)
+    private sealed class PromptWaitState(ConsolePrompt prompt, long? startTimestamp)
     {
         public ConsolePrompt Prompt { get; } = prompt;
+
+        public long? StartTimestamp { get; } = startTimestamp;
 
         public TaskCompletionSource<ConsoleInputResult> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -22,6 +22,18 @@
 - 接受任意 HTML 并交给 Web renderer 做消毒：把上游安全边界推迟到另一个进程，无法证明 RuntimeAdapter 的公共契约没有 URL/事件能力。
 - 让 `<img>`/`<a>` 直接映射为节点：会把资源加载和导航语义混入本地 Console，超出 P0-03 的需求。
 
+## P1-07 扩展
+
+ADR-0018 将本 ADR 的 fragment allowlist 扩展到结构化 HTML Island：允许的标签、文本、换行、有限
+样式和 manifest `assetId` 仍先解析为 executable-free AST，再进入 `HtmlIslandNode` 或
+`HtmlIslandDrawable`。扩展不改变本 ADR 的边界：原始 HTML/CSS、脚本、事件属性、链接、任意 URL、
+`data:`/`blob:` 资源和宿主路径仍然 fail closed；HTML Island 不能取得浏览器或 Worker 的对象所有权。
+
+P1-07 的 `ButtonNode`、`HitRegion` 和 `ConsolePrompt` 分别承载按钮/工具提示文本和输入语义，
+不通过 HTML 属性重新引入事件处理器。工具提示的桌面专用自定义格式、图片和 WinForms 定时参数
+属于 `HOST_SHIM`，headless 执行时产生稳定的阻断诊断；安全的按钮/命中区域 tooltip 仍作为有界
+结构化文本传输。
+
 ## 后果
 
 P0-01 的 `<b>`/`<i>` 场景有稳定结构化表示，危险输入只能成为文本或明确失败。允许列表扩展时必须增加嵌套、大小写、错误闭合和攻击属性测试，并同步更新本 ADR 与威胁矩阵；浏览器 CSP 和 renderer 安全验收不在本 ADR 范围内。

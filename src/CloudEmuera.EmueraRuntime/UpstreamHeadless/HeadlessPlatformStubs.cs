@@ -74,8 +74,9 @@ namespace MinorShift.Emuera.Forms
 
     internal sealed class HeadlessPictureBox
     {
-        public int Height => 0;
-        public System.Drawing.Rectangle ClientRectangle => System.Drawing.Rectangle.Empty;
+        public int Width => 800;
+        public int Height => 600;
+        public System.Drawing.Rectangle ClientRectangle => new(0, 0, Width, Height);
         public System.Drawing.Point PointToClient(System.Drawing.Point point) => point;
     }
 
@@ -186,7 +187,13 @@ namespace System.Windows.Forms
             ReadOnlySpan<char> text,
             System.Drawing.Font font,
             System.Drawing.Size proposedSize,
-            TextFormatFlags flags) => new(text.Length * 8, proposedSize.Height);
+            TextFormatFlags flags)
+        {
+            int fontSize = font is null ? 16 : Math.Max(1, (int)Math.Round(font.Size));
+            int width = checked(text.Length * Math.Max(1, (fontSize * 2) / 3));
+            int height = proposedSize.Height > 0 ? proposedSize.Height : checked(fontSize + 4);
+            return new(width, height);
+        }
         public static void DrawText(
             System.Drawing.Graphics graphics,
             ReadOnlySpan<char> text,

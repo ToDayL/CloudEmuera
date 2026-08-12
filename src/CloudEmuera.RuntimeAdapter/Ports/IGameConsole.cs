@@ -18,7 +18,9 @@ public sealed record GameConsoleInput
             nameof(promptId),
             ConsoleContractLimits.Default.MaxPromptIdLength);
         ArgumentNullException.ThrowIfNull(value);
-        if (inputType is not ConsoleInputType.Text and not ConsoleInputType.Integer)
+        if (inputType is not ConsoleInputType.EnterKey and not ConsoleInputType.AnyKey and not ConsoleInputType.Integer and
+            not ConsoleInputType.Text and not ConsoleInputType.AnyValue and not ConsoleInputType.IntegerButton and
+            not ConsoleInputType.TextButton and not ConsoleInputType.PrimitivePointerKey and not ConsoleInputType.WaitOnly)
         {
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Unknown input type.", nameof(inputType));
         }

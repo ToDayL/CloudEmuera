@@ -40,6 +40,9 @@ internal static class ConsoleSizeEstimator
             LineBreakNode => new(1, 0, 16),
             ButtonNode button => MeasureButton(button),
             ImageNode image => MeasureImage(image),
+            SpriteNode sprite => MeasureSprite(sprite),
+            ShapeNode shape => MeasureShape(shape),
+            HtmlIslandNode island => MeasureHtmlIsland(island),
             _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Unknown console node type.")
         };
 
@@ -66,13 +69,45 @@ internal static class ConsoleSizeEstimator
         {
             AppendNodesOperation append => checked(64L + MeasureNodes(append.Nodes).EstimatedBytes),
             ClearConsoleOperation => 32L,
+            ClearScrollbackOperation => 32L,
             OpenPromptOperation open => checked(64L + MeasurePrompt(open.Prompt)),
             ClosePromptOperation close => checked(48L + close.PromptId.Length * 2L),
+            AppendLineOperation line => checked(64L + line.Line.LineId.Length * 2L + MeasureNodes(line.Line.Nodes).EstimatedBytes),
+            AppendInlineOperation inline => checked(64L + inline.LineId.Length * 2L + MeasureNodes(inline.Nodes).EstimatedBytes),
+            ReplaceLineOperation line => checked(64L + line.Line.LineId.Length * 2L + MeasureNodes(line.Line.Nodes).EstimatedBytes),
+            DeleteLinesOperation delete => checked(48L + delete.LineIds.Sum(id => id.Length * 2L)),
+            SetWindowMetadataOperation window => checked(64L + window.Metadata.Title.Length * 2L + window.Metadata.DefaultFont.Family.Length * 2L),
+            UpsertBackgroundOperation background => checked(64L + background.Layer.LayerId.Length * 2L + background.Layer.AssetId.Value.Length * 2L),
+            RemoveBackgroundOperation remove => checked(32L + remove.LayerId.Length * 2L),
+            ClearBackgroundsOperation => 24L,
+            UpsertDrawableOperation drawable => checked(128L + drawable.Drawable.DrawableId.Length * 2L),
+            RemoveDrawableOperation remove => checked(32L + remove.DrawableId.Length * 2L),
+            ClearSceneRangeOperation => 32L,
+            ClearSceneOperation => 24L,
+            UpsertHitRegionOperation hit => checked(64L + hit.Region.RegionId.Length * 2L + hit.Region.InputValue.Length * 2L),
+            RemoveHitRegionOperation remove => checked(32L + remove.RegionId.Length * 2L),
+            ClearHitRegionsOperation => 24L,
+            SetMediaChannelOperation media => checked(64L + media.Channel.Channel.Length * 2L + (media.Channel.AssetId?.Value.Length ?? 0) * 2L),
+            StopMediaChannelOperation stop => checked(32L + stop.Channel.Length * 2L),
+            StopAllMediaOperation => 24L,
             _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Unknown console operation type.")
         };
 
     public static long MeasureSnapshot(ConsoleNodeMetrics visible, ConsolePrompt? prompt) =>
         checked(SnapshotOverhead + visible.EstimatedBytes + MeasurePrompt(prompt));
+
+    public static long MeasureStructuredSnapshot(ConsoleSnapshot snapshot, ConsoleNodeMetrics visible)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        long value = checked(SnapshotOverhead + visible.EstimatedBytes + MeasurePrompt(snapshot.CurrentPrompt));
+        value = checked(value + snapshot.Scrollback.Sum(line => 32L + line.LineId.Length * 2L + MeasureNodes(line.Nodes).EstimatedBytes));
+        value = checked(value + snapshot.BackgroundLayers.Sum(layer => 64L + layer.LayerId.Length * 2L + layer.AssetId.Value.Length * 2L));
+        value = checked(value + snapshot.CanvasScene.Drawables.Sum(MeasureDrawable));
+        value = checked(value + snapshot.CanvasScene.HitRegions.Sum(region => 64L + region.RegionId.Length * 2L + region.InputValue.Length * 2L));
+        value = checked(value + snapshot.MediaState.Channels.Sum(channel => 64L + channel.Channel.Length * 2L + (channel.AssetId?.Value.Length ?? 0) * 2L));
+        value = checked(value + 64L + snapshot.WindowMetadata.Title.Length * 2L + snapshot.WindowMetadata.DefaultFont.Family.Length * 2L);
+        return value;
+    }
 
     private static ConsoleNodeMetrics MeasureButton(ButtonNode button)
     {
@@ -92,6 +127,37 @@ internal static class ConsoleSizeEstimator
         NodeCount: 1,
         TextLength: image.AltText?.Length ?? 0,
         EstimatedBytes: checked(72L + image.AssetId.Value.Length * 2L + (image.AltText?.Length ?? 0) * 2L));
+
+    private static ConsoleNodeMetrics MeasureSprite(SpriteNode sprite) => new(
+        NodeCount: 1,
+        TextLength: sprite.AltText?.Length ?? 0,
+        EstimatedBytes: checked(112L + sprite.AssetId.Value.Length * 2L + (sprite.AltText?.Length ?? 0) * 2L));
+
+    private static ConsoleNodeMetrics MeasureShape(ShapeNode shape) => new(
+        NodeCount: 1,
+        TextLength: 0,
+        EstimatedBytes: checked(96L + shape.Points.Count * 16L));
+
+    private static ConsoleNodeMetrics MeasureHtmlIsland(HtmlIslandNode island) => new(
+        NodeCount: 1,
+        TextLength: 0,
+        EstimatedBytes: checked(96L + MeasureHtmlNode(island.Root)));
+
+    private static long MeasureHtmlNode(ConsoleHtmlNode node) => node switch
+    {
+        ConsoleHtmlTextNode text => checked(32L + text.Text.Length * 2L),
+        ConsoleHtmlBreakNode => 8L,
+        ConsoleHtmlElementNode element => checked(48L + element.Tag.Length * 2L + (element.AssetId?.Length ?? 0) * 2L + element.Children.Sum(MeasureHtmlNode)),
+        _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Unknown HTML node type.")
+    };
+
+    private static long MeasureDrawable(CanvasDrawable drawable) => drawable switch
+    {
+        SpriteDrawable sprite => checked(128L + sprite.DrawableId.Length * 2L + sprite.AssetId.Value.Length * 2L),
+        ShapeDrawable shape => checked(112L + shape.DrawableId.Length * 2L + shape.Points.Count * 16L),
+        HtmlIslandDrawable island => checked(112L + island.DrawableId.Length * 2L + MeasureHtmlNode(island.Root)),
+        _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Unknown canvas drawable type.")
+    };
 
     private static long MeasureStyle(ConsoleTextStyle style) =>
         checked(16L + (style.Foreground is null ? 0 : 4) + (style.Background is null ? 0 : 4));

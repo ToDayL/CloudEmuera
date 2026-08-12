@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.Text;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V2;
+using CloudEmuera.Ipc.V3;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;
-using ProtoConsoleOperation = CloudEmuera.Ipc.V2.ConsoleOperation;
+using ProtoConsoleOperation = CloudEmuera.Ipc.V3.ConsoleOperation;
 using Xunit;
 
 namespace CloudEmuera.Worker.IntegrationTests;
@@ -57,28 +57,24 @@ public sealed class WorkerProcessIsolationTests
 
         WorkerEnvelope promptBatch = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                value.DisplayBatch.Operations.Any(operation =>
-                    operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
+                ContainsOpenPrompt(value.DisplayBatch),
             TimeSpan.FromSeconds(15));
-        string promptId = promptBatch.DisplayBatch.Operations
-            .Where(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
-            .Select(operation => operation.OpenPrompt.Prompt.PromptId)
-            .Single();
+        string promptId = GetPromptId(promptBatch.DisplayBatch);
 
         await session.SendInputAsync(promptId, $"client_{fixtureId}", input);
         WorkerEnvelope accepted = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
-                value.InputResult.Kind == InputResultKind.InputResultAccepted,
+                value.InputResult.Kind == InputResultKind.Accepted,
             TimeSpan.FromSeconds(5));
         Assert.Equal(promptId, accepted.InputResult.PromptId);
-        Assert.Equal(input, accepted.InputResult.Value);
+        Assert.Equal(input, accepted.InputResult.NormalizedValue);
 
         // The same client message is submitted before the runtime has a chance
         // to expose another prompt. InputCoordinator must make this a no-op.
         await session.SendInputAsync(promptId, $"client_{fixtureId}", input);
         WorkerEnvelope duplicate = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
-                value.InputResult.Kind == InputResultKind.InputResultDuplicate,
+                value.InputResult.Kind == InputResultKind.Duplicate,
             TimeSpan.FromSeconds(5));
         Assert.Equal(accepted.InputResult.ClientMessageId, duplicate.InputResult.ClientMessageId);
 
@@ -125,8 +121,7 @@ public sealed class WorkerProcessIsolationTests
             TimeSpan.FromSeconds(15));
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                value.DisplayBatch.Operations.Any(operation =>
-                    operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
+                ContainsOpenPrompt(value.DisplayBatch),
             TimeSpan.FromSeconds(15));
 
         await session.StopAsync(TimeSpan.FromSeconds(5));
@@ -156,8 +151,7 @@ public sealed class WorkerProcessIsolationTests
             TimeSpan.FromSeconds(15));
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                value.DisplayBatch.Operations.Any(operation =>
-                    operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
+                ContainsOpenPrompt(value.DisplayBatch),
             TimeSpan.FromSeconds(15));
         await session.DisconnectCurrentConnectionForTestAsync();
         Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(15)));
@@ -183,12 +177,9 @@ public sealed class WorkerProcessIsolationTests
             TimeSpan.FromSeconds(15));
         WorkerEnvelope promptBatch = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                value.DisplayBatch.Operations.Any(operation =>
-                    operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
+                ContainsOpenPrompt(value.DisplayBatch),
             TimeSpan.FromSeconds(15));
-        string promptId = promptBatch.DisplayBatch.Operations
-            .Single(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
-            .OpenPrompt.Prompt.PromptId;
+        string promptId = GetPromptId(promptBatch.DisplayBatch);
 
         // P1-05 has no public API business IPC. This independent
         // probe process exercises the WorkerControl endpoint and exits after
@@ -240,11 +231,13 @@ public sealed class WorkerProcessIsolationTests
             WorkerBootstrapFile.DeleteIfOwned(probeBootstrapPath);
         }
 
-        Assert.False(session.HasExited);
+        Assert.False(
+            session.HasExited,
+            $"exitCode={session.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "running"}{Environment.NewLine}{session.ProcessDiagnostics}");
         await session.SendInputAsync(promptId, "client_control_exit", "7");
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
-                value.InputResult.Kind == InputResultKind.InputResultAccepted,
+                value.InputResult.Kind == InputResultKind.Accepted,
             TimeSpan.FromSeconds(5));
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.WorkerStopped,
@@ -271,24 +264,24 @@ public sealed class WorkerProcessIsolationTests
             TimeSpan.FromSeconds(15));
         WorkerEnvelope promptBatch = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                value.DisplayBatch.Operations.Any(operation =>
-                    operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
+                ContainsOpenPrompt(value.DisplayBatch),
             TimeSpan.FromSeconds(15));
-        string promptId = promptBatch.DisplayBatch.Operations
-            .Single(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
-            .OpenPrompt.Prompt.PromptId;
+        string promptId = GetPromptId(promptBatch.DisplayBatch);
         await session.SendRawAsync(new WorkerCommandEnvelope
         {
-            ProtocolVersion = IpcProtocol.CurrentVersion,
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = "wrong_binding_command",
             SessionId = "other_session",
-            WorkerId = session.Binding.WorkerId,
-            WorkerEpoch = session.Binding.WorkerEpoch,
-            SubmitInput = new SubmitInput
+                WorkerId = session.Binding.WorkerId,
+                WorkerEpoch = session.Binding.WorkerEpoch,
+                ControlPlaneInstanceId = manager.ControlPlaneInstanceId,
+                CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+                SubmitInput = new SubmitInput
             {
                 PromptId = promptId,
                 ClientMessageId = "wrong_binding_client",
                 Value = "7",
+                Source = InputSource.Keyboard,
                 DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.AddSeconds(5).ToUnixTimeMilliseconds()
             }
         });
@@ -338,12 +331,9 @@ public sealed class WorkerProcessIsolationTests
             TimeSpan.FromSeconds(15));
         WorkerEnvelope promptBatch = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                value.DisplayBatch.Operations.Any(operation =>
-                    operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
+                ContainsOpenPrompt(value.DisplayBatch),
             TimeSpan.FromSeconds(15));
-        string promptId = promptBatch.DisplayBatch.Operations
-            .Single(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
-            .OpenPrompt.Prompt.PromptId;
+        string promptId = GetPromptId(promptBatch.DisplayBatch);
 
         await session.SendInputAsync(promptId, "client_logging", secretInput);
         await session.WaitForAsync(
@@ -387,18 +377,18 @@ public sealed class WorkerProcessIsolationTests
                 second.WaitForAsync(value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready, TimeSpan.FromSeconds(15)));
             WorkerEnvelope firstPrompt = await first.WaitForAsync(
                 value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                    value.DisplayBatch.Operations.Any(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
+                    ContainsOpenPrompt(value.DisplayBatch),
                 TimeSpan.FromSeconds(15));
             WorkerEnvelope secondPrompt = await second.WaitForAsync(
                 value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                    value.DisplayBatch.Operations.Any(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt),
+                    ContainsOpenPrompt(value.DisplayBatch),
                 TimeSpan.FromSeconds(15));
             await Task.WhenAll(
                 CompleteSessionAsync(first, firstPrompt, "one"),
                 CompleteSessionAsync(second, secondPrompt, "two"));
 
-            Assert.All(first.DisplayBatches, batch => Assert.True(batch.FirstSequence > 0));
-            Assert.All(second.DisplayBatches, batch => Assert.True(batch.FirstSequence > 0));
+            Assert.All(first.DisplayBatches, batch => Assert.True(BatchLastSequence(batch) > 0));
+            Assert.All(second.DisplayBatches, batch => Assert.True(BatchLastSequence(batch) > 0));
             Assert.Equal(firstFixture.PublishedDigest, firstFixture.ComputePublishedDigest());
             Assert.Equal(secondFixture.PublishedDigest, secondFixture.ComputePublishedDigest());
         }
@@ -413,13 +403,11 @@ public sealed class WorkerProcessIsolationTests
         WorkerEnvelope promptBatch,
         string value)
     {
-        string promptId = promptBatch.DisplayBatch.Operations
-            .Single(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
-            .OpenPrompt.Prompt.PromptId;
+        string promptId = GetPromptId(promptBatch.DisplayBatch);
         await session.SendInputAsync(promptId, $"client_{value}", value == "one" ? "1" : "2");
         await session.WaitForAsync(
             eventValue => eventValue.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
-                eventValue.InputResult.Kind == InputResultKind.InputResultAccepted,
+                eventValue.InputResult.Kind == InputResultKind.Accepted,
             TimeSpan.FromSeconds(5));
         await session.WaitForAsync(
             eventValue => eventValue.PayloadCase == WorkerEnvelope.PayloadOneofCase.WorkerStopped,
@@ -437,22 +425,56 @@ public sealed class WorkerProcessIsolationTests
         Assert.True(predicate(session.ProcessDiagnostics), session.ProcessDiagnostics);
     }
 
+    private static bool ContainsOpenPrompt(DisplayBatch batch) =>
+        batch.IsSnapshot && batch.Snapshot is { HasCurrentPrompt: true } ||
+        batch.Transactions.Any(transaction => transaction.Operations.Any(operation =>
+            operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt));
+
+    private static string GetPromptId(DisplayBatch batch)
+    {
+        if (batch.IsSnapshot && batch.Snapshot is { HasCurrentPrompt: true } snapshot)
+            return snapshot.CurrentPrompt.PromptId;
+
+        return batch.Transactions
+            .SelectMany(transaction => transaction.Operations)
+            .Where(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
+            .Select(operation => operation.OpenPrompt.Prompt.PromptId)
+            .Single();
+    }
+
+    private static long BatchLastSequence(DisplayBatch batch) =>
+        batch.Transactions.Count == 0
+            ? batch.Snapshot?.SnapshotSequence ?? 0
+            : batch.Transactions[batch.Transactions.Count - 1].Sequence;
+
     private static string ProjectTranscript(IEnumerable<DisplayBatch> batches)
     {
         var nodes = new List<CloudEmuera.RuntimeAdapter.ConsoleNode>();
-        foreach (DisplayBatch batch in batches.OrderBy(item => item.LastSequence))
+        foreach (DisplayBatch batch in batches.OrderBy(BatchLastSequence))
         {
             if (batch.IsSnapshot)
-                nodes.Clear();
-            foreach (ProtoConsoleOperation operation in batch.Operations)
             {
-                CloudEmuera.RuntimeAdapter.ConsoleOperation runtimeOperation = ConsoleWireMapper.FromProto(operation);
+                nodes.Clear();
+                if (batch.Snapshot is not null)
+                    nodes.AddRange(batch.Snapshot.Scrollback
+                        .SelectMany(line => line.Nodes)
+                        .Select(StructuredConsoleWireMapper.FromProto));
+            }
+
+            foreach (ProtoConsoleOperation operation in batch.Transactions.SelectMany(transaction => transaction.Operations))
+            {
+                CloudEmuera.RuntimeAdapter.ConsoleOperation runtimeOperation = StructuredConsoleWireMapper.FromProto(operation);
                 switch (runtimeOperation)
                 {
                     case AppendNodesOperation append:
                         nodes.AddRange(append.Nodes);
                         break;
+                    case AppendLineOperation appendLine:
+                        nodes.AddRange(appendLine.Line.Nodes);
+                        nodes.Add(CloudEmuera.RuntimeAdapter.LineBreakNode.Instance);
+                        break;
                     case ClearConsoleOperation:
+                    case ClearScrollbackOperation:
                         nodes.Clear();
                         break;
                 }

@@ -7,6 +7,6 @@
   </ItemGroup>
   <ItemGroup>
     <Protobuf Include="Protos/worker.proto" GrpcServices="Both" />
+    <Protobuf Include="Protos/structured-worker.proto" GrpcServices="Both" />
   </ItemGroup>
 </Project>
-

@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V2;
+using CloudEmuera.Ipc.V3;
 using CloudEmuera.RuntimeAdapter;
 using Microsoft.Extensions.Logging;
 
@@ -221,7 +221,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             if (state is WorkerRuntimeState.Stopping or WorkerRuntimeState.Stopped)
             {
                 inputResult = new WorkerInputResult(
-                    InputResultKind.InputResultWorkerStopping,
+                    InputResultKind.InvalidCommand,
                     IpcReasonCodes.WorkerStopping,
                     string.Empty);
                 goto send;
@@ -231,7 +231,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > envelope.SubmitInput.DeadlineUnixMilliseconds)
         {
             inputResult = new WorkerInputResult(
-                InputResultKind.InputResultInvalidCommand,
+                InputResultKind.InvalidCommand,
                 IpcReasonCodes.DeadlineExceeded,
                 string.Empty);
             goto send;
@@ -240,7 +240,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         if (console is null)
         {
             inputResult = new WorkerInputResult(
-                InputResultKind.InputResultNoActivePrompt,
+                InputResultKind.NoActivePrompt,
                 "no_active_prompt",
                 string.Empty);
             goto send;
@@ -248,20 +248,37 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
         try
         {
+            ConsolePointerPayload? pointer = envelope.SubmitInput.PayloadCase == SubmitInput.PayloadOneofCase.Pointer
+                ? new ConsolePointerPayload(
+                    envelope.SubmitInput.Pointer.Position.X,
+                    envelope.SubmitInput.Pointer.Position.Y,
+                    envelope.SubmitInput.Pointer.Button,
+                    envelope.SubmitInput.Pointer.Pressed)
+                : null;
+            ConsoleKeyPayload? key = envelope.SubmitInput.PayloadCase == SubmitInput.PayloadOneofCase.Key
+                ? new ConsoleKeyPayload(
+                    envelope.SubmitInput.Key.KeyCode,
+                    envelope.SubmitInput.Key.Control,
+                    envelope.SubmitInput.Key.Alt,
+                    envelope.SubmitInput.Key.Shift)
+                : null;
             var command = new ConsoleInputCommand(
                 envelope.SubmitInput.PromptId,
                 envelope.SubmitInput.ClientMessageId,
-                envelope.SubmitInput.Value);
+                envelope.SubmitInput.Value,
+                (ConsoleInputSource)(int)envelope.SubmitInput.Source,
+                pointer,
+                key);
             ConsoleInputResult result = console.SubmitInput(command);
             inputResult = new WorkerInputResult(
-                ConsoleWireMapper.ToProto(result.Kind),
+                ToProto(result.Kind),
                 result.ReasonCode ?? result.Kind.ToString(),
                 result.Value ?? string.Empty);
         }
         catch (ConsoleContractException exception)
         {
             inputResult = new WorkerInputResult(
-                InputResultKind.InputResultInvalidCommand,
+                InputResultKind.InvalidCommand,
                 exception.ReasonCode,
                 string.Empty);
         }
@@ -269,20 +286,22 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     send:
         var response = new WorkerEnvelope
         {
-            ProtocolVersion = IpcProtocol.CurrentVersion,
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = IpcProtocol.NewMessageId("input"),
             CorrelationId = envelope.MessageId,
             SessionId = binding.SessionId,
             WorkerId = binding.WorkerId,
             WorkerEpoch = binding.WorkerEpoch,
             ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+            CapabilitySetDigest = bootstrap.CapabilitySetDigest,
             InputResult = new InputResult
             {
                 PromptId = envelope.SubmitInput.PromptId,
                 ClientMessageId = envelope.SubmitInput.ClientMessageId,
                 Kind = inputResult.Kind,
                 ReasonCode = inputResult.ReasonCode,
-                Value = inputResult.Value
+                NormalizedValue = inputResult.Value,
+                HasNormalizedValue = inputResult.Value.Length != 0
             }
         };
         await connection.SendControlAsync(response, cancellationToken).ConfigureAwait(false);
@@ -337,13 +356,14 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 fileSystem,
                 console.Clock,
                 new RuntimeImageMetadataPort(fileSystem),
-                new NoOpRuntimeAudioPort(),
+                new StructuredRuntimeAudioPort(console, fileSystem),
                 bootstrap.CompatibilityProfile,
                 TimeSpan.FromMilliseconds(bootstrap.RuntimeInitializationTimeoutMilliseconds),
                 bootstrap.RuntimeExecutionTimeoutMilliseconds < 0
                     ? Timeout.InfiniteTimeSpan
                     : TimeSpan.FromMilliseconds(bootstrap.RuntimeExecutionTimeoutMilliseconds)));
             runtimeCancellation = new CancellationTokenSource();
+            console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
 
             EmueraRuntimeResult initialized = await host.InitializeAsync(runtimeCancellation.Token).ConfigureAwait(false);
             if (initialized.Status != EmueraRuntimeStatus.Completed)
@@ -365,16 +385,15 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 }
             }
 
-            console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
-
             await connection.SendControlAsync(new WorkerEnvelope
             {
-                ProtocolVersion = IpcProtocol.CurrentVersion,
+                ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
                 MessageId = IpcProtocol.NewMessageId("ready"),
                 SessionId = binding.SessionId,
                 WorkerId = binding.WorkerId,
                 WorkerEpoch = binding.WorkerEpoch,
                 ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+                CapabilitySetDigest = bootstrap.CapabilitySetDigest,
                 Ready = new WorkerReady
                 {
                     RuntimeIntegrationVersion = initialized.IntegrationVersion,
@@ -382,7 +401,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                     SaveLayout = saveLayout == RuntimeSaveLayout.Root ? SaveLayout.Root : SaveLayout.SavDirectory,
                     LastOutputSequence = console.StateStore.CurrentSequence,
                     CompatibilityProfile = bootstrap.CompatibilityProfile,
-                    SessionRootManifestDigest = bootstrap.SessionRootManifestDigest
+                    SessionRootManifestDigest = bootstrap.SessionRootManifestDigest,
+                    CapabilitySetDigest = bootstrap.CapabilitySetDigest
                 }
             }).ConfigureAwait(false);
             LogLifecycle("runtime_ready");
@@ -438,7 +458,10 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            LogLifecycle("runtime_failed", "runtime_worker_failure", LogLevel.Error);
+            LogLifecycle(
+                "runtime_failed",
+                $"runtime_worker_failure:{exception.GetType().Name}:{SafeMessage(exception.Message)}",
+                LogLevel.Error);
             await SendFailureCodeAsync("runtime_worker_failure", "execution", SafeMessage(exception.Message)).ConfigureAwait(false);
             Complete(WorkerExitCodes.RuntimeExecutionFailed);
         }
@@ -528,80 +551,67 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task<bool> SendPendingOutputAsync(StructuredGameConsole gameConsole, CancellationToken cancellationToken)
     {
-        ConsoleResumeResult result = gameConsole.ReadSince(Interlocked.Read(ref lastSentSequence));
-        if (result is ConsoleUpToDateResult)
+        StructuredConsoleResumeResult result = gameConsole.StateStore.ReadStructuredSince(Interlocked.Read(ref lastSentSequence));
+        if (result is StructuredConsoleUpToDateResult)
             return true;
 
-        if (result is ConsoleSnapshotWithDeltasResult snapshotResult &&
-            snapshotResult.Snapshot.SnapshotSequence > Interlocked.Read(ref lastSentSequence))
+        if (result is StructuredConsoleSnapshotWithDeltasResult snapshotResult)
         {
-            List<CloudEmuera.Ipc.V2.ConsoleOperation> snapshotOperations = [];
-            snapshotOperations.Add(new CloudEmuera.Ipc.V2.ConsoleOperation { ClearConsole = new ClearConsole() });
-            if (snapshotResult.Snapshot.VisibleNodes.Count != 0)
-            {
-                snapshotOperations.Add(new CloudEmuera.Ipc.V2.ConsoleOperation
-                {
-                    AppendNodes = new AppendNodes()
-                }.WithNodes(snapshotResult.Snapshot.VisibleNodes));
-            }
-
-            if (snapshotResult.Snapshot.CurrentPrompt is not null)
-            {
-                snapshotOperations.Add(new CloudEmuera.Ipc.V2.ConsoleOperation
-                {
-                    OpenPrompt = new OpenPrompt { Prompt = ConsoleWireMapper.ToProto(snapshotResult.Snapshot.CurrentPrompt) }
-                });
-            }
-
-            if (snapshotOperations.Count != 0)
+            SequencedConsoleTransaction[] transactions = snapshotResult.TransactionsAfterSnapshot.ToArray();
+            if (transactions.Length == 0)
             {
                 var snapshotBatch = new DisplayBatch
                 {
-                    FirstSequence = snapshotResult.Snapshot.SnapshotSequence,
-                    LastSequence = snapshotResult.Snapshot.SnapshotSequence,
                     IsSnapshot = true,
-                    SnapshotSequence = snapshotResult.Snapshot.SnapshotSequence,
-                    WasTruncated = snapshotResult.Snapshot.WasTruncated,
-                    DroppedNodeCount = snapshotResult.Snapshot.DroppedNodeCount
+                    Snapshot = StructuredConsoleWireMapper.ToProto(snapshotResult.Snapshot)
                 };
-                snapshotBatch.Operations.AddRange(snapshotOperations);
                 await SendDisplayAsync(snapshotBatch, cancellationToken).ConfigureAwait(false);
                 Interlocked.Exchange(ref lastSentSequence, snapshotResult.Snapshot.SnapshotSequence);
                 connection.SetLastOutputSequence(snapshotResult.Snapshot.SnapshotSequence);
             }
+            else
+            {
+                bool firstBatch = true;
+                foreach (SequencedConsoleTransaction[] batch in transactions.Chunk(StructuredIpcLimits.MaxTransactions))
+                {
+                    var displayBatch = new DisplayBatch
+                    {
+                        IsSnapshot = firstBatch
+                    };
+                    if (firstBatch)
+                        displayBatch.Snapshot = StructuredConsoleWireMapper.ToProto(snapshotResult.Snapshot);
+                    displayBatch.Transactions.AddRange(batch.Select(StructuredConsoleWireMapper.ToProto));
+                    await SendDisplayAsync(displayBatch, cancellationToken).ConfigureAwait(false);
+                    Interlocked.Exchange(ref lastSentSequence, batch[^1].Sequence);
+                    connection.SetLastOutputSequence(batch[^1].Sequence);
+                    firstBatch = false;
+                }
+            }
+            return true;
         }
 
-        IReadOnlyList<SequencedConsoleEvent> events = result switch
+        StructuredConsoleDeltaBatchResult delta = (StructuredConsoleDeltaBatchResult)result;
+        foreach (SequencedConsoleTransaction[] batch in delta.Transactions.Chunk(StructuredIpcLimits.MaxTransactions))
         {
-            ConsoleDeltaBatchResult delta => delta.Events,
-            ConsoleSnapshotWithDeltasResult snapshot => snapshot.EventsAfterSnapshot,
-            _ => Array.Empty<SequencedConsoleEvent>()
-        };
-        foreach (SequencedConsoleEvent[] batch in events.Chunk(IpcLimits.MaxDisplayOperations))
-        {
-            var displayBatch = new DisplayBatch
-            {
-                FirstSequence = batch[0].Sequence,
-                LastSequence = batch[^1].Sequence
-            };
-            displayBatch.Operations.AddRange(batch.Select(item => ConsoleWireMapper.ToProto(item.Operation)));
+            var displayBatch = new DisplayBatch();
+            displayBatch.Transactions.AddRange(batch.Select(StructuredConsoleWireMapper.ToProto));
             await SendDisplayAsync(displayBatch, cancellationToken).ConfigureAwait(false);
             Interlocked.Exchange(ref lastSentSequence, batch[^1].Sequence);
             connection.SetLastOutputSequence(batch[^1].Sequence);
         }
-
         return true;
     }
 
     private Task SendDisplayAsync(DisplayBatch batch, CancellationToken cancellationToken) =>
         connection.SendDisplayAsync(new WorkerEnvelope
         {
-            ProtocolVersion = IpcProtocol.CurrentVersion,
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = IpcProtocol.NewMessageId("display"),
             SessionId = binding.SessionId,
             WorkerId = binding.WorkerId,
             WorkerEpoch = binding.WorkerEpoch,
             ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+            CapabilitySetDigest = bootstrap.CapabilitySetDigest,
             DisplayBatch = batch
         }, cancellationToken);
 
@@ -613,19 +623,31 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             StructuredGameConsole? gameConsole = console;
             await connection.SendControlAsync(new WorkerEnvelope
             {
-                ProtocolVersion = IpcProtocol.CurrentVersion,
+                ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
                 MessageId = IpcProtocol.NewMessageId("heartbeat"),
                 SessionId = binding.SessionId,
                 WorkerId = binding.WorkerId,
                 WorkerEpoch = binding.WorkerEpoch,
                 ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+                CapabilitySetDigest = bootstrap.CapabilitySetDigest,
                 Heartbeat = new WorkerHeartbeat
                 {
                     MonotonicTimestampTicks = Stopwatch.GetTimestamp(),
                     OutputSequence = gameConsole?.StateStore.CurrentSequence ?? 0,
                     WaitingForInput = gameConsole?.CurrentPrompt is not null,
                     ResidentMemoryBytes = Environment.WorkingSet,
-                    CurrentPromptId = gameConsole?.CurrentPrompt?.PromptId ?? string.Empty
+                    CurrentPromptId = gameConsole?.CurrentPrompt?.PromptId ?? string.Empty,
+                    PromptTiming = gameConsole?.CurrentPrompt is { } prompt
+                        ? new PromptTiming
+                        {
+                            OpenedAtUnixMilliseconds = prompt.OpenedAtUnixMilliseconds,
+                            DeadlineUnixMilliseconds = prompt.DeadlineUnixMilliseconds,
+                            ServerNowUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            RemainingMilliseconds = prompt.HasDeadline
+                                ? Math.Max(0, prompt.DeadlineUnixMilliseconds - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+                                : 0
+                        }
+                        : null
                 }
             }, cancellationToken).ConfigureAwait(false);
         }
@@ -637,12 +659,13 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         {
             await connection.SendControlAsync(new WorkerEnvelope
             {
-                ProtocolVersion = IpcProtocol.CurrentVersion,
+                ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
                 MessageId = IpcProtocol.NewMessageId("completed"),
                 SessionId = binding.SessionId,
                 WorkerId = binding.WorkerId,
                 WorkerEpoch = binding.WorkerEpoch,
                 ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+                CapabilitySetDigest = bootstrap.CapabilitySetDigest,
                 RuntimeCompleted = new RuntimeCompleted
                 {
                     Status = result.Status.ToString().ToLowerInvariant(),
@@ -675,18 +698,19 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         long? lastSequence = null) =>
         connection.SendControlAsync(new WorkerEnvelope
         {
-            ProtocolVersion = IpcProtocol.CurrentVersion,
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = IpcProtocol.NewMessageId("failed"),
             SessionId = binding.SessionId,
             WorkerId = binding.WorkerId,
             WorkerEpoch = binding.WorkerEpoch,
             ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+            CapabilitySetDigest = bootstrap.CapabilitySetDigest,
             RuntimeFailed = new RuntimeFailed
             {
                 StableCode = NormalizeCode(code),
                 Phase = NormalizeCode(phase),
-                SafeMessage = message.Length > IpcLimits.MaxProtocolErrorMessageLength
-                    ? message[..IpcLimits.MaxProtocolErrorMessageLength]
+                SafeMessage = message.Length > StructuredIpcLimits.MaxProtocolErrorMessageLength
+                    ? message[..StructuredIpcLimits.MaxProtocolErrorMessageLength]
                     : message,
                 Fatal = true,
                 LastOutputSequence = lastSequence ?? Interlocked.Read(ref lastSentSequence)
@@ -745,12 +769,13 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         {
             await connection.SendControlAsync(new WorkerEnvelope
             {
-                ProtocolVersion = IpcProtocol.CurrentVersion,
+                ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
                 MessageId = IpcProtocol.NewMessageId("stopped"),
                 SessionId = binding.SessionId,
                 WorkerId = binding.WorkerId,
                 WorkerEpoch = binding.WorkerEpoch,
                 ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+                CapabilitySetDigest = bootstrap.CapabilitySetDigest,
                 WorkerStopped = new WorkerStopped
                 {
                     ReasonCode = NormalizeCode(reason),
@@ -783,14 +808,15 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     {
         await connection.SendControlAsync(new WorkerEnvelope
         {
-            ProtocolVersion = IpcProtocol.CurrentVersion,
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = IpcProtocol.NewMessageId("command"),
             CorrelationId = command.MessageId,
             SessionId = binding.SessionId,
             WorkerId = binding.WorkerId,
             WorkerEpoch = binding.WorkerEpoch,
             ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
-            CommandResult = new CloudEmuera.Ipc.V2.WorkerCommandResult
+            CapabilitySetDigest = bootstrap.CapabilitySetDigest,
+            CommandResult = new WorkerCommandResult
             {
                 CommandType = command.PayloadCase switch
                 {
@@ -821,9 +847,9 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             safe = safe.Replace(path, "<runtime-path>", StringComparison.Ordinal);
         }
 
-        return safe.Length <= IpcLimits.MaxProtocolErrorMessageLength
+        return safe.Length <= StructuredIpcLimits.MaxProtocolErrorMessageLength
             ? safe
-            : safe[..IpcLimits.MaxProtocolErrorMessageLength];
+            : safe[..StructuredIpcLimits.MaxProtocolErrorMessageLength];
     }
 
     private static string NormalizeCode(string value)
@@ -850,6 +876,20 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             throw new WorkerSessionRootException(code, "The SessionRoot contains an invalid metadata file.");
     }
 
+    private static InputResultKind ToProto(ConsoleInputResultKind kind) => kind switch
+    {
+        ConsoleInputResultKind.Accepted => InputResultKind.Accepted,
+        ConsoleInputResultKind.Duplicate => InputResultKind.Duplicate,
+        ConsoleInputResultKind.StalePrompt => InputResultKind.StalePrompt,
+        ConsoleInputResultKind.NoActivePrompt => InputResultKind.NoActivePrompt,
+        ConsoleInputResultKind.InvalidFormat => InputResultKind.InvalidFormat,
+        ConsoleInputResultKind.MessageConflict => InputResultKind.Conflict,
+        ConsoleInputResultKind.InvalidCommand => InputResultKind.InvalidCommand,
+        ConsoleInputResultKind.Cancelled => InputResultKind.Cancelled,
+        ConsoleInputResultKind.TimedOut => InputResultKind.TimedOut,
+        _ => InputResultKind.InvalidCommand
+    };
+
     private sealed record WorkerInputResult(InputResultKind Kind, string ReasonCode, string Value);
 
     private sealed record StartReceipt
@@ -872,16 +912,5 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     {
         public string Code { get; } = code;
         public string SafeMessage { get; } = safeMessage;
-    }
-}
-
-internal static class WorkerProtoCollectionExtensions
-{
-    public static CloudEmuera.Ipc.V2.ConsoleOperation WithNodes(
-        this CloudEmuera.Ipc.V2.ConsoleOperation operation,
-        IEnumerable<CloudEmuera.RuntimeAdapter.ConsoleNode> nodes)
-    {
-        operation.AppendNodes.Nodes.AddRange(nodes.Select(ConsoleWireMapper.ToProto));
-        return operation;
     }
 }

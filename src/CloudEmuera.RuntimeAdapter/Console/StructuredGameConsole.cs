@@ -10,6 +10,7 @@ public sealed class StructuredGameConsole : IGameConsole
     private readonly object sync = new();
     private readonly IRuntimeClock clock;
     private readonly IPromptIdGenerator promptIdGenerator;
+    private bool isTimeOut;
 
     public StructuredGameConsole()
         : this(new TimeProviderRuntimeClock(), ConsoleHistoryOptions.Default, new GuidPromptIdGenerator())
@@ -53,6 +54,27 @@ public sealed class StructuredGameConsole : IGameConsole
 
     public ConsolePrompt? CurrentPrompt => StateStore.CurrentPrompt;
 
+    public SequencedConsoleTransaction EmitTransaction(ConsoleTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        lock (sync)
+        {
+            return StateStore.ApplyTransaction(transaction);
+        }
+    }
+
+    /// <summary>Whether the most recently completed read ended by timeout.</summary>
+    public bool IsTimeOut
+    {
+        get
+        {
+            lock (sync)
+            {
+                return isTimeOut;
+            }
+        }
+    }
+
     public void Emit(ConsoleOperation operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
@@ -62,8 +84,10 @@ public sealed class StructuredGameConsole : IGameConsole
             {
                 case OpenPromptOperation open:
                     ConsolePrompt assignedPrompt = AssignPromptId(open.Prompt);
-                    var assignedOperation = new OpenPromptOperation(assignedPrompt);
-                    InputCoordinator.OpenPrompt(assignedPrompt);
+                    InputCoordinator.OpenPrompt(assignedPrompt, clock);
+                    ConsolePrompt openedPrompt = InputCoordinator.CurrentPrompt!;
+                    var assignedOperation = new OpenPromptOperation(openedPrompt);
+                    isTimeOut = false;
                     try
                     {
                         StateStore.Apply(assignedOperation);
@@ -95,6 +119,7 @@ public sealed class StructuredGameConsole : IGameConsole
             ConsoleInputResult result = InputCoordinator.Submit(command);
             if (result.Kind == ConsoleInputResultKind.Accepted)
             {
+                isTimeOut = false;
                 CloseStatePromptIfCurrent(command.PromptId, ConsolePromptCloseReason.InputAccepted);
             }
 
@@ -115,7 +140,9 @@ public sealed class StructuredGameConsole : IGameConsole
         lock (sync)
         {
             assignedPrompt = AssignPromptId(prompt);
-            InputCoordinator.OpenPrompt(assignedPrompt);
+            InputCoordinator.OpenPrompt(assignedPrompt, clock);
+            assignedPrompt = InputCoordinator.CurrentPrompt!;
+            isTimeOut = false;
             try
             {
                 StateStore.Apply(new OpenPromptOperation(assignedPrompt));
@@ -154,17 +181,25 @@ public sealed class StructuredGameConsole : IGameConsole
             switch (result.Kind)
             {
                 case ConsoleInputResultKind.Accepted:
+                    isTimeOut = false;
                     CloseStatePromptIfCurrent(assignedPrompt.PromptId, ConsolePromptCloseReason.InputAccepted);
                     return result.Input!;
                 case ConsoleInputResultKind.TimedOut:
+                    isTimeOut = true;
                     CloseStatePromptIfCurrent(assignedPrompt.PromptId, ConsolePromptCloseReason.TimedOut);
                     if (result.Input is not null)
                     {
                         return result.Input;
                     }
 
+                    if (assignedPrompt.TimeoutAction == ConsolePromptTimeoutAction.ContinueWithoutValue)
+                    {
+                        return new GameConsoleInput(assignedPrompt.PromptId, assignedPrompt.InputType, string.Empty);
+                    }
+
                     throw new ConsolePromptTimeoutException(assignedPrompt.PromptId);
                 case ConsoleInputResultKind.Cancelled:
+                    isTimeOut = false;
                     CloseStatePromptIfCurrent(assignedPrompt.PromptId, ConsolePromptCloseReason.Cancelled);
                     throw new ConsolePromptCancelledException(assignedPrompt.PromptId, cancellationToken);
                 default:

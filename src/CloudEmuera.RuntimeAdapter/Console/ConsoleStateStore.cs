@@ -18,6 +18,17 @@ public sealed class ConsoleStateStore
     private long droppedNodeCount;
     private ConsoleSnapshot baselineSnapshot = ConsoleSnapshot.Empty;
     private bool sequenceInitialized;
+    private bool structuredMode;
+    private List<ConsoleLine> structuredScrollback = [];
+    private Dictionary<string, BackgroundLayer> backgroundLayers = new(StringComparer.Ordinal);
+    private Dictionary<string, CanvasDrawable> drawables = new(StringComparer.Ordinal);
+    private Dictionary<string, HitRegion> hitRegions = new(StringComparer.Ordinal);
+    private Dictionary<string, MediaChannelState> mediaChannels = new(StringComparer.Ordinal);
+    private WindowMetadata windowMetadata = new();
+    private readonly List<SequencedConsoleTransaction> transactionHistory = [];
+    private long droppedLineCount;
+    private long droppedTextLength;
+    private long generatedLineId;
 
     public ConsoleStateStore()
         : this(ConsoleHistoryOptions.Default)
@@ -89,7 +100,9 @@ public sealed class ConsoleStateStore
         {
             lock (sync)
             {
-                return CreateSnapshot(currentSequence, visibleNodes, currentPrompt);
+                return structuredMode
+                    ? CreateStructuredSnapshot(currentSequence)
+                    : CreateSnapshot(currentSequence, visibleNodes, currentPrompt);
             }
         }
     }
@@ -120,6 +133,28 @@ public sealed class ConsoleStateStore
         }
     }
 
+    public bool IsStructuredMode
+    {
+        get
+        {
+            lock (sync)
+            {
+                return structuredMode;
+            }
+        }
+    }
+
+    public IReadOnlyList<SequencedConsoleTransaction> TransactionHistory
+    {
+        get
+        {
+            lock (sync)
+            {
+                return Array.AsReadOnly(transactionHistory.ToArray());
+            }
+        }
+    }
+
     /// <summary>
     /// Starts a fresh runtime's console sequence after a persisted Session
     /// sequence. This must be called before the first operation; it preserves
@@ -142,12 +177,302 @@ public sealed class ConsoleStateStore
         }
     }
 
+    /// <summary>
+    /// Applies a structured transaction atomically. The candidate state is
+    /// built entirely off to the side; sequence allocation and publication
+    /// happen only after every operation and budget check succeeds.
+    /// </summary>
+    public SequencedConsoleTransaction ApplyTransaction(ConsoleTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+
+        lock (sync)
+        {
+            EnsureStructuredState();
+            var candidate = new StructuredCandidate(
+                structuredScrollback.ToList(),
+                new Dictionary<string, BackgroundLayer>(backgroundLayers, StringComparer.Ordinal),
+                new Dictionary<string, CanvasDrawable>(drawables, StringComparer.Ordinal),
+                new Dictionary<string, HitRegion>(hitRegions, StringComparer.Ordinal),
+                new Dictionary<string, MediaChannelState>(mediaChannels, StringComparer.Ordinal),
+                windowMetadata,
+                currentPrompt,
+                droppedLineCount,
+                droppedNodeCount,
+                droppedTextLength);
+            candidate.WasTruncated = wasTruncated;
+
+            foreach (ConsoleOperation operation in transaction.Operations)
+                ApplyStructuredOperation(candidate, operation);
+
+            FitStructuredCandidate(candidate);
+            long operationSequence = NextSequence();
+            ConsoleSnapshot snapshot = CreateStructuredSnapshot(
+                operationSequence,
+                candidate.Scrollback,
+                candidate.BackgroundLayers,
+                candidate.Drawables,
+                candidate.HitRegions,
+                candidate.MediaChannels,
+                candidate.WindowMetadata,
+                candidate.CurrentPrompt,
+                candidate.WasTruncated,
+                candidate.DroppedNodeCount,
+                candidate.DroppedLineCount,
+                candidate.DroppedTextLength);
+            if (snapshot.EstimatedBytes > options.MaxEstimatedBytes)
+            {
+                throw new ConsoleContractException(
+                    ConsoleContractViolationReason.NodeExceedsHistoryBudget,
+                    "The structured console snapshot exceeds its configured budget.");
+            }
+
+            structuredScrollback = candidate.Scrollback;
+            backgroundLayers = candidate.BackgroundLayers;
+            drawables = candidate.Drawables;
+            hitRegions = candidate.HitRegions;
+            mediaChannels = candidate.MediaChannels;
+            windowMetadata = candidate.WindowMetadata;
+            currentPrompt = candidate.CurrentPrompt;
+            visibleNodes.Clear();
+            visibleNodes.AddRange(FlattenStructuredLines(structuredScrollback));
+            wasTruncated = candidate.WasTruncated;
+            droppedNodeCount = candidate.DroppedNodeCount;
+            droppedLineCount = candidate.DroppedLineCount;
+            droppedTextLength = candidate.DroppedTextLength;
+            currentSequence = operationSequence;
+            structuredMode = true;
+
+            var sequenced = new SequencedConsoleTransaction(operationSequence, transaction);
+            transactionHistory.Add(sequenced);
+            if (transactionHistory.Count > options.MaxDeltaCount)
+            {
+                baselineSnapshot = snapshot;
+                transactionHistory.Clear();
+            }
+
+            return sequenced;
+        }
+    }
+
+    public SequencedConsoleTransaction ApplyStructured(ConsoleTransaction transaction) => ApplyTransaction(transaction);
+
+    public ConsoleSnapshot StructuredSnapshot
+    {
+        get
+        {
+            lock (sync)
+            {
+                EnsureStructuredState();
+                return CreateStructuredSnapshot(currentSequence);
+            }
+        }
+    }
+
+    private void EnsureStructuredState()
+    {
+        if (structuredMode)
+            return;
+
+        structuredScrollback = BuildStructuredLines(visibleNodes);
+        backgroundLayers = new Dictionary<string, BackgroundLayer>(StringComparer.Ordinal);
+        drawables = new Dictionary<string, CanvasDrawable>(StringComparer.Ordinal);
+        hitRegions = new Dictionary<string, HitRegion>(StringComparer.Ordinal);
+        mediaChannels = new Dictionary<string, MediaChannelState>(StringComparer.Ordinal);
+        windowMetadata = new WindowMetadata();
+        baselineSnapshot = CreateStructuredSnapshot(currentSequence);
+        transactionHistory.Clear();
+        structuredMode = true;
+    }
+
+    private void ApplyStructuredOperation(StructuredCandidate candidate, ConsoleOperation operation)
+    {
+        switch (operation)
+        {
+            case AppendNodesOperation append:
+                AppendNodes(candidate.Scrollback, append.Nodes);
+                break;
+            case ClearConsoleOperation:
+            case ClearScrollbackOperation:
+                candidate.Scrollback.Clear();
+                break;
+            case OpenPromptOperation open:
+                if (candidate.CurrentPrompt is not null)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.PromptAlreadyActive, "A console prompt is already active.");
+                open.Prompt.Validate(limits);
+                candidate.CurrentPrompt = open.Prompt;
+                break;
+            case ClosePromptOperation close:
+                if (candidate.CurrentPrompt is null)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.PromptAlreadyCompleted, "There is no active console prompt.");
+                if (!string.Equals(candidate.CurrentPrompt.PromptId, close.PromptId, StringComparison.Ordinal))
+                    throw new ConsoleContractException(ConsoleContractViolationReason.PromptIdMismatch, "The close operation does not match the active prompt.");
+                candidate.CurrentPrompt = null;
+                break;
+            case AppendLineOperation appendLine:
+                if (candidate.Scrollback.Any(line => line.LineId == appendLine.Line.LineId))
+                    throw new ConsoleContractException(ConsoleContractViolationReason.DuplicateIdentifier, "The line id is already present.");
+                candidate.Scrollback.Add(appendLine.Line);
+                break;
+            case AppendInlineOperation inline:
+                ConsoleLine inlineLine = FindLine(candidate.Scrollback, inline.LineId);
+                if (inline.Nodes.Any(node => node is LineBreakNode))
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Inline output cannot contain a line break.");
+                candidate.Scrollback[candidate.Scrollback.IndexOf(inlineLine)] = inlineLine.WithNodes(inlineLine.Nodes.Concat(inline.Nodes));
+                break;
+            case ReplaceLineOperation replace:
+                int replaceIndex = candidate.Scrollback.FindIndex(line => line.LineId == replace.Line.LineId);
+                if (replaceIndex < 0)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidIdentifier, "The line id does not exist.");
+                candidate.Scrollback[replaceIndex] = replace.Line;
+                break;
+            case DeleteLinesOperation delete:
+                foreach (string lineId in delete.LineIds)
+                {
+                    int index = candidate.Scrollback.FindIndex(line => line.LineId == lineId);
+                    if (index < 0)
+                        throw new ConsoleContractException(ConsoleContractViolationReason.InvalidIdentifier, "The line id does not exist.");
+                    candidate.Scrollback.RemoveAt(index);
+                }
+                break;
+            case SetWindowMetadataOperation window:
+                candidate.WindowMetadata = window.Metadata;
+                break;
+            case UpsertBackgroundOperation background:
+                candidate.BackgroundLayers[background.Layer.LayerId] = background.Layer;
+                break;
+            case RemoveBackgroundOperation removeBackground:
+                candidate.BackgroundLayers.Remove(removeBackground.LayerId);
+                break;
+            case ClearBackgroundsOperation:
+                candidate.BackgroundLayers.Clear();
+                break;
+            case UpsertDrawableOperation drawable:
+                candidate.Drawables[drawable.Drawable.DrawableId] = drawable.Drawable;
+                break;
+            case RemoveDrawableOperation removeDrawable:
+                candidate.Drawables.Remove(removeDrawable.DrawableId);
+                break;
+            case ClearSceneRangeOperation range:
+                foreach (string id in candidate.Drawables.Values
+                    .Where(item => item.ZIndex >= range.MinimumZIndex && item.ZIndex <= range.MaximumZIndex)
+                    .Select(item => item.DrawableId)
+                    .ToArray())
+                    candidate.Drawables.Remove(id);
+                break;
+            case ClearSceneOperation:
+                candidate.Drawables.Clear();
+                candidate.HitRegions.Clear();
+                break;
+            case UpsertHitRegionOperation hit:
+                candidate.HitRegions[hit.Region.RegionId] = hit.Region;
+                break;
+            case RemoveHitRegionOperation removeHit:
+                candidate.HitRegions.Remove(removeHit.RegionId);
+                break;
+            case ClearHitRegionsOperation:
+                candidate.HitRegions.Clear();
+                break;
+            case SetMediaChannelOperation media:
+                candidate.MediaChannels[media.Channel.Channel] = media.Channel;
+                break;
+            case StopMediaChannelOperation stop:
+                if (candidate.MediaChannels.TryGetValue(stop.Channel, out MediaChannelState? current))
+                {
+                    candidate.MediaChannels[stop.Channel] = new MediaChannelState(
+                        stop.Channel,
+                        current.AssetId,
+                        ConsoleMediaPlaybackState.Stopped,
+                        current.Loop,
+                        current.Volume,
+                        checked(current.Revision + 1),
+                        current.StartPolicy);
+                }
+                break;
+            case StopAllMediaOperation:
+                foreach (MediaChannelState mediaChannel in candidate.MediaChannels.Values.ToArray())
+                    candidate.MediaChannels[mediaChannel.Channel] = new MediaChannelState(
+                        mediaChannel.Channel,
+                        mediaChannel.AssetId,
+                        ConsoleMediaPlaybackState.Stopped,
+                        mediaChannel.Loop,
+                        mediaChannel.Volume,
+                        checked(mediaChannel.Revision + 1),
+                        mediaChannel.StartPolicy);
+                break;
+            default:
+                throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "The console operation is not part of the structured contract.");
+        }
+
+        if (candidate.BackgroundLayers.Count > limits.MaxBackgroundLayers ||
+            candidate.Drawables.Count > limits.MaxDrawables ||
+            candidate.HitRegions.Count > limits.MaxHitRegions ||
+            candidate.MediaChannels.Count > limits.MaxMediaChannels)
+            throw new ConsoleContractException(ConsoleContractViolationReason.SceneTooLarge, "The structured scene or media state exceeds its limit.");
+    }
+
+    private void FitStructuredCandidate(StructuredCandidate candidate)
+    {
+        ConsoleNode[] flattened = FlattenStructuredLines(candidate.Scrollback);
+        ConsoleNodeMetrics metrics = ConsoleSizeEstimator.MeasureNodes(flattened);
+        while (candidate.Scrollback.Count > limits.MaxScrollbackLines ||
+               metrics.NodeCount > Math.Min(limits.MaxScrollbackNodes, options.MaxVisibleNodes) ||
+               metrics.TextLength > Math.Min(limits.MaxScrollbackTextLength, options.MaxVisibleTextLength))
+        {
+            if (candidate.Scrollback.Count == 0)
+                break;
+            ConsoleLine removed = candidate.Scrollback[0];
+            ConsoleNodeMetrics removedMetrics = ConsoleSizeEstimator.MeasureNodes(removed.Nodes);
+            if (candidate.Scrollback.Count == 1 &&
+                (removedMetrics.NodeCount > Math.Min(limits.MaxScrollbackNodes, options.MaxVisibleNodes) ||
+                 removedMetrics.TextLength > Math.Min(limits.MaxScrollbackTextLength, options.MaxVisibleTextLength)))
+                throw new ConsoleContractException(ConsoleContractViolationReason.NodeExceedsHistoryBudget, "A single structured line exceeds its budget.");
+            candidate.Scrollback.RemoveAt(0);
+            metrics -= removedMetrics;
+            candidate.DroppedLineCount = checked(candidate.DroppedLineCount + 1);
+            candidate.DroppedNodeCount = checked(candidate.DroppedNodeCount + removedMetrics.NodeCount);
+            candidate.DroppedTextLength = checked(candidate.DroppedTextLength + removedMetrics.TextLength);
+            candidate.WasTruncated = true;
+        }
+    }
+
+    private static ConsoleLine FindLine(IReadOnlyList<ConsoleLine> lines, string lineId) =>
+        lines.FirstOrDefault(line => string.Equals(line.LineId, lineId, StringComparison.Ordinal))
+        ?? throw new ConsoleContractException(ConsoleContractViolationReason.InvalidIdentifier, "The line id does not exist.");
+
+    private void AppendNodes(List<ConsoleLine> lines, IReadOnlyList<ConsoleNode> nodes)
+    {
+        if (lines.Count == 0)
+            lines.Add(new ConsoleLine(NextGeneratedLineId(), Array.Empty<ConsoleNode>()));
+        foreach (ConsoleNode node in nodes)
+        {
+            if (node is LineBreakNode)
+            {
+                lines.Add(new ConsoleLine(NextGeneratedLineId(), Array.Empty<ConsoleNode>()));
+                continue;
+            }
+
+            ConsoleLine last = lines[^1];
+            if (last.Nodes.Count >= limits.MaxNodesPerLine)
+                throw new ConsoleContractException(ConsoleContractViolationReason.LineTooLarge, "The current line exceeds its node limit.");
+            lines[^1] = last.WithNodes(last.Nodes.Append(node));
+        }
+    }
+
+    private string NextGeneratedLineId() => $"line-{checked(++generatedLineId):x}";
+
     public SequencedConsoleEvent Apply(ConsoleOperation operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
 
         lock (sync)
         {
+            if (structuredMode)
+            {
+                SequencedConsoleTransaction structured = ApplyTransaction(new ConsoleTransaction([operation]));
+                return new SequencedConsoleEvent(structured.Sequence, operation);
+            }
+
             long operationEstimatedBytes = ConsoleSizeEstimator.MeasureOperation(operation);
             if (operationEstimatedBytes > options.MaxEstimatedBytes)
             {
@@ -224,6 +549,55 @@ public sealed class ConsoleStateStore
         }
     }
 
+    /// <summary>
+    /// Reads the lossless structured transaction stream used by the v3 Worker
+    /// protocol. Legacy <see cref="ReadSince"/> intentionally remains a
+    /// compatibility API for the historical v2 tests and cannot represent
+    /// scenes, media or window metadata without flattening them.
+    /// </summary>
+    public StructuredConsoleResumeResult ReadStructuredSince(long lastSequence)
+    {
+        lock (sync)
+        {
+            if (!structuredMode)
+                EnsureStructuredState();
+
+            if (lastSequence < 0 || lastSequence > currentSequence)
+            {
+                throw new ConsoleContractException(
+                    ConsoleContractViolationReason.InvalidCursor,
+                    "The structured console cursor is outside the current sequence range.",
+                    nameof(lastSequence));
+            }
+
+            if (lastSequence == currentSequence)
+                return new StructuredConsoleUpToDateResult(currentSequence);
+
+            if (lastSequence == 0 || transactionHistory.Count == 0 || lastSequence < baselineSnapshot.SnapshotSequence)
+            {
+                return new StructuredConsoleSnapshotWithDeltasResult(
+                    baselineSnapshot,
+                    transactionHistory.ToArray(),
+                    currentSequence);
+            }
+
+            long firstSequence = transactionHistory[0].Sequence;
+            long lastHistorySequence = transactionHistory[^1].Sequence;
+            if (lastHistorySequence == currentSequence && lastSequence >= firstSequence - 1)
+            {
+                return new StructuredConsoleDeltaBatchResult(
+                    lastSequence,
+                    currentSequence,
+                    transactionHistory.Where(item => item.Sequence > lastSequence).ToArray());
+            }
+
+            return new StructuredConsoleSnapshotWithDeltasResult(
+                baselineSnapshot,
+                transactionHistory.ToArray(),
+                currentSequence);
+        }
+    }
+
     public SequencedConsoleEvent ApplyOperation(ConsoleOperation operation) => Apply(operation);
 
     private PreparedMutation PrepareMutation(ConsoleOperation operation)
@@ -240,6 +614,7 @@ public sealed class ConsoleStateStore
                 return new PreparedMutation(fit.Nodes, currentPrompt, wasTruncated || fit.DroppedCount != 0, checked(droppedNodeCount + fit.DroppedCount), fit.DroppedCount != 0);
             }
             case ClearConsoleOperation:
+            case ClearScrollbackOperation:
                 return new PreparedMutation([], currentPrompt, wasTruncated, droppedNodeCount, DroppedThisOperation: false);
             case OpenPromptOperation open:
             {
@@ -351,6 +726,120 @@ public sealed class ConsoleStateStore
     private ConsoleSnapshot CreateSnapshot(long sequence, IEnumerable<ConsoleNode> nodes, ConsolePrompt? prompt)
     {
         return new ConsoleSnapshot(sequence, nodes, prompt, wasTruncated, droppedNodeCount);
+    }
+
+    private ConsoleSnapshot CreateStructuredSnapshot(long sequence)
+    {
+        return CreateStructuredSnapshot(
+            sequence,
+            structuredScrollback,
+            backgroundLayers,
+            drawables,
+            hitRegions,
+            mediaChannels,
+            windowMetadata,
+            currentPrompt,
+            wasTruncated,
+            droppedNodeCount,
+            droppedLineCount,
+            droppedTextLength);
+    }
+
+    private static ConsoleSnapshot CreateStructuredSnapshot(
+        long sequence,
+        IReadOnlyList<ConsoleLine> scrollback,
+        IReadOnlyDictionary<string, BackgroundLayer> backgrounds,
+        IReadOnlyDictionary<string, CanvasDrawable> structuredDrawables,
+        IReadOnlyDictionary<string, HitRegion> structuredHitRegions,
+        IReadOnlyDictionary<string, MediaChannelState> channels,
+        WindowMetadata metadata,
+        ConsolePrompt? prompt,
+        bool truncated,
+        long droppedNodes,
+        long droppedLines,
+        long droppedText)
+    {
+        return new ConsoleSnapshot(
+            sequence,
+            scrollback,
+            backgrounds.Values.OrderBy(layer => layer.Depth).ThenBy(layer => layer.LayerId, StringComparer.Ordinal),
+            new CanvasScene(
+                structuredDrawables.Values.OrderBy(drawable => drawable.ZIndex).ThenBy(drawable => drawable.DrawableId, StringComparer.Ordinal),
+                structuredHitRegions.Values.OrderBy(region => region.RegionId, StringComparer.Ordinal)),
+            new MediaState(channels.Values.OrderBy(channel => channel.Channel, StringComparer.Ordinal)),
+            prompt,
+            metadata,
+            new ConsoleTruncationMetadata(truncated, droppedNodes, droppedLines, droppedText));
+    }
+
+    private List<ConsoleLine> BuildStructuredLines(IEnumerable<ConsoleNode> nodes)
+    {
+        var lines = new List<ConsoleLine>();
+        var current = new List<ConsoleNode>();
+        foreach (ConsoleNode node in nodes)
+        {
+            if (node is LineBreakNode)
+            {
+                lines.Add(new ConsoleLine(NextGeneratedLineId(), current));
+                current = [];
+            }
+            else
+            {
+                current.Add(node);
+            }
+        }
+
+        if (current.Count != 0)
+            lines.Add(new ConsoleLine(NextGeneratedLineId(), current));
+        return lines;
+    }
+
+    private static ConsoleNode[] FlattenStructuredLines(IEnumerable<ConsoleLine> lines)
+    {
+        var nodes = new List<ConsoleNode>();
+        foreach (ConsoleLine line in lines)
+        {
+            nodes.AddRange(line.Nodes);
+            nodes.Add(LineBreakNode.Instance);
+        }
+        if (nodes.Count > 0)
+            nodes.RemoveAt(nodes.Count - 1);
+        return nodes.ToArray();
+    }
+
+    private sealed class StructuredCandidate(
+        List<ConsoleLine> scrollback,
+        Dictionary<string, BackgroundLayer> backgroundLayers,
+        Dictionary<string, CanvasDrawable> drawables,
+        Dictionary<string, HitRegion> hitRegions,
+        Dictionary<string, MediaChannelState> mediaChannels,
+        WindowMetadata windowMetadata,
+        ConsolePrompt? currentPrompt,
+        long droppedLineCount,
+        long droppedNodeCount,
+        long droppedTextLength)
+    {
+        public List<ConsoleLine> Scrollback { get; } = scrollback;
+
+        public Dictionary<string, BackgroundLayer> BackgroundLayers { get; } = backgroundLayers;
+
+        public Dictionary<string, CanvasDrawable> Drawables { get; } = drawables;
+
+        public Dictionary<string, HitRegion> HitRegions { get; } = hitRegions;
+
+        public Dictionary<string, MediaChannelState> MediaChannels { get; } = mediaChannels;
+
+        public WindowMetadata WindowMetadata { get; set; } = windowMetadata;
+
+        public ConsolePrompt? CurrentPrompt { get; set; } = currentPrompt;
+
+        public long DroppedLineCount { get; set; } = droppedLineCount;
+
+        public long DroppedNodeCount { get; set; } = droppedNodeCount;
+
+        public long DroppedTextLength { get; set; } = droppedTextLength;
+
+        public bool WasTruncated { get; set; }
     }
 
     private sealed record PreparedMutation(

@@ -1642,7 +1642,9 @@ public sealed partial class SqliteSessionApplicationService(
         string RuntimeVersion,
         RuntimeSaveLayout SaveLayout,
         string SourceManifestDigest,
-        IReadOnlyList<FrozenManifestEntry> Entries)
+        IReadOnlyList<FrozenManifestEntry> Entries,
+        string CapabilityMatrixVersion = RuntimeBaseline.CapabilityMatrixVersion,
+        string CapabilitySetDigest = RuntimeBaseline.CapabilitySetDigest)
     {
         public SessionRootPublishedManifest ToPublishedManifest(string contentIdentity) => new(
             Entries.Select(entry => new SessionRootManifestEntry(
