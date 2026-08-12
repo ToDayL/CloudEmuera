@@ -1,10 +1,9 @@
 # P1-06：幂等 Session 创建、开启与关闭纵切详细开发方案
 
-状态：未验收（2026-08-12；主要纵切已实现，但安全隔离与完整故障恢复验收仍未完成）
+状态：已完成（2026-08-12）
 
-范围说明：本文保留纵切实现和未验收项的历史记录；其中敌对租户沙箱、细粒度资源治理及 Worker
-断线恢复表述已由 [`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md) 取代，当前
-简化范围以 P1-S01 为准。
+范围说明：本文保留纵切实现的历史设计；其中敌对租户沙箱、细粒度资源治理及 Worker 断线恢复表述
+已由 [`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md) 取代，完成范围以 P1-S01 为准。
 
 设计日期：2026-08-12
 
@@ -21,8 +20,8 @@ AC-001、AC-003、AC-004、AC-006、AC-007、AC-013、AC-014
 
 前置任务：P0-05、P1-01～P1-05
 
-后续任务：P1-07 Snapshot、P1-08 Realtime/Input、P1-09 Save、P1-10 Session UI、
-P1-11 管理员控制、P1-12 沙箱与资源治理
+后续任务：P1-07 Emuera 结构化运行时、P1-08 Snapshot、P1-09 Realtime/Input、P1-10 Save、
+P1-11 Session UI、P1-12 管理员控制、P1-13 基础进程边界与实例级上限
 
 ## 1. 目标结果
 
@@ -58,15 +57,15 @@ P1-06 在 P1-05 已完成的 API Worker Manager 和持久租约内核上增加�
 
 ### 2.2 明确留给后续任务
 
-- P1-07 才实现 ConsoleSnapshot、增量窗口、恢复屏障和输出背压；
-- P1-08 才公开 WebSocket、浏览器输入和 `promptId/clientMessageId` 协议。P1-06 只冻结
+- P1-07 先补全 Emuera Console/Input/Media 语义与 Worker 结构化协议；
+- P1-08 才实现完整 ConsoleSnapshot 的实时队列、恢复和输出背压；
+- P1-09 才公开 WebSocket、浏览器输入和 `promptId/clientMessageId` 协议。P1-06 只冻结
   `STOPPING` 后输入门禁与 close 线性化契约；
-- P1-09 才公开存档 list/upload/rename/delete API。P1-06 交付停止态 SessionRoot mutation lease
+- P1-10 才公开存档 list/upload/rename/delete API。P1-06 交付停止态 SessionRoot mutation lease
   端口并验证它与 open 互斥，不提前定义存档格式；
-- P1-10 才实现正式 Session 浏览器界面。本阶段不把现有占位 UI 当验收入口；
-- P1-11 才公开管理员 Worker 列表和 force-stop；用户 close 不接受 `force=true`；
-- P1-12 才完成 namespace/cgroup/seccomp/rlimit。P1-06 不能宣称上传游戏已达到不受信任多租户的
-  完整运行沙箱；
+- P1-11 才实现正式 Session 浏览器界面。本阶段不把现有占位 UI 当验收入口；
+- P1-12 才公开管理员 Worker 列表和 force-stop；用户 close 不接受 `force=true`；
+- P1-13 只补生产非 root、敏感挂载和实例级上限；依据 ADR-0017 不建设敌对租户沙箱；
 - 不实现 Session delete、rename、clone、GameVersion、自动重启、指令级恢复或跨 API 接管；
 - 不在 close 时复制/提交 SessionRoot，也不创建 SaveArtifact、generation 或通用“最终自动存档”。
 
@@ -95,7 +94,7 @@ P1-06 在 P1-05 已完成的 API Worker Manager 和持久租约内核上增加�
    `WorkerManager.Workers`。需增加 Application 级当前 Worker 路由端口和单一生命周期 facade。
 5. 请求取消 token 当前可贯穿已经获取 lease 的后序启动。P1-06 必须明确“提交前可取消，提交后由
    服务生命周期继续收敛”，不能让浏览器断开留下永久 `STARTING/STOPPING`。
-6. open 目前只检查 WorkerLease。为 P1-09 的停止态存档写竞争，需要共同的 SessionRoot mutation
+6. open 目前只检查 WorkerLease。为 P1-10 的停止态存档写竞争，需要共同的 SessionRoot mutation
    lease 事实，使两个事务按同一互斥协议裁决。
 
 这些调整补齐已接受 ADR 的实现边界，不改变进程拓扑、Session 状态集合或存档所有权，因此本阶段
@@ -175,7 +174,7 @@ Content-Type: application/json
 GET /api/v1/sessions?gameId=game_...&state=CLOSED&cursor=...&limit=50
 ```
 
-- 只列当前用户 Session；管理员跨用户视图留给 P1-11；
+- 只列当前用户 Session；管理员跨用户视图留给 P1-12；
 - 可选 `gameId` 和单个 `state` 过滤；`limit` 默认 50、最大 100；
 - 排序固定为 `(createdAt DESC, id DESC)`；签名 cursor 绑定 user/filter/末尾 tuple/版本，拒绝篡改；
 - 查询投影不得加载 manifest JSON、目录路径或 WorkerLease 大对象；目标满足 NFR-006；
@@ -210,8 +209,8 @@ GET /api/v1/sessions/{sessionId}
 }
 ```
 
-`currentPromptId`、root path、manifest 全文、PID 和 lease endpoint 不在普通详情中。P1-08 通过授权
-实时协议取得 prompt；P1-11 通过管理员 DTO 取得受控进程诊断。
+`currentPromptId`、root path、manifest 全文、PID 和 lease endpoint 不在普通详情中。P1-09 通过授权
+实时协议取得 prompt；P1-12 通过管理员 DTO 取得受控进程诊断。
 
 ### 5.5 开启
 
@@ -248,7 +247,7 @@ X-CSRF-TOKEN: ...
 - `CRASHED`：无 Worker 可关闭，返回 `200` 且保留 `CRASHED/closeReason`，不得伪装成正常关闭；
 - `CREATING`：返回 `409 SESSION_NOT_READY`；
 - 请求体不接受 `force`、deadline 或 autosave policy。用户关闭使用服务端安全默认 deadline，要求
-  Runtime 停止并刷新已有写入，但不合成通用存档；管理员强停留给 P1-11；
+  Runtime 停止并刷新已有写入，但不合成通用存档；管理员强停留给 P1-12；
 - 超过同步等待预算返回 `202`。只有确认 Worker 退出后才返回/最终记录 `CLOSED`；无法确认退出时
   保持 fail-closed lease/readiness 屏障并返回稳定故障，不授予其他写者。
 
@@ -286,7 +285,7 @@ entity、P1-05 runtime binding 或 protobuf 类型。OpenAPI 必须包含 header
 - `IIdempotentCommandStore`：begin/read/complete success/complete failure；
 - `ISessionLifecycleExecutor`：按 Session 串行执行本 API 实例的 open/close，并提供有界等待；
 - `ICurrentWorkerRouter`：按完整 persisted binding 取得当前进程 handle；
-- `ISessionRootMutationLeaseStore`：供 P1-09 获取停止态文件写权；
+- `ISessionRootMutationLeaseStore`：供 P1-10 获取停止态文件写权；
 - `ISessionOperationRecovery`：启动和周期恢复 create/幂等 pending/mutation lease。
 
 HTTP handler 只做认证上下文、CSRF、header/body 绑定、调用用例和错误映射，不直接使用
@@ -381,7 +380,7 @@ expires_at INTEGER NOT NULL
 - 获取 mutation lease 的 `BEGIN IMMEDIATE` 同时要求 Session 为 `CLOSED/CRASHED`、不存在
   WorkerLease、旧 Worker 写权限已确认释放；
 - P1-05 open lease 事务增加“不存在 mutation lease”条件；
-- lease 只建立未来 P1-09 的互斥事实，P1-06 不公开存档 API；
+- lease 只建立未来 P1-10 的互斥事实，P1-06 不公开存档 API；
 - API 重启后只有核对 staging/operation ownership 的恢复器可以续作或释放，不能仅因过期就与未知
   文件替换并发。
 
@@ -458,7 +457,7 @@ root 内标记和 `emuera.config` save layout。任一不一致返回 `SESSION_R
 - prepare 使用 manifest bytes 加固定 metadata/alias 安全余量预留，复制过程以实际 bytes 再强制；
 - 同一事务汇总活动 create reservation，结合事务前读取的 DataRoot free bytes 与配置安全余量，防止
   并发创建都承诺同一空间；磁盘事实仍可能变化，因此每次写/fsync 的 ENOSPC 都是可恢复失败；
-- 成功后 reservation 结算/释放，但 Session 运行期磁盘上限继续由 P1-12 计量；
+- 成功后 reservation 结算/释放，但 Session 运行期实例级边界继续由 P1-13 验证；
 - 创建数量不限；只能因单 Session 大小、DataRoot 安全空间、速率限制或安全策略拒绝。
 
 ## 9. 创建故障恢复
@@ -644,7 +643,7 @@ git diff --check
 
 - 运行两种原生存档布局、双 Session、close/reopen、crash/reopen 和 Game 更新隔离场景；
 - 生成/校验 OpenAPI，核对日志、指标、readiness 和敏感信息；
-- 更新 requirements/design/development plan、migration 数量、配置示例和 P1-07/P1-09 交接；
+- 更新 requirements/design/development plan、migration 数量、配置示例和 P1-07/P1-10 交接；
 - 完整 `check.sh`、权限、第三方和 diff 检查。
 
 ## 14. 完成定义
@@ -666,12 +665,12 @@ P1-06 只有在以下条件全部满足后才能标记 DONE：
 
 ## 15. 后续任务交接
 
-- P1-07/P1-08 只消费 Session 当前 binding、状态和 Worker event/input 端口，不直接启动/停止进程；
-- P1-08 在 `BeginStopping` 后必须返回 `SESSION_NOT_ACCEPTING_INPUT`，并继续使用 epoch fencing；
-- P1-09 必须通过 `ISessionRootMutationLeaseStore` 修改原生存档，不能只在文件操作前做一次状态查询；
-- P1-10 的“一步开始”是两个独立 HTTP 命令和两个幂等键，UI 必须展示 create/open 各自失败；
-- P1-11 force-stop 复用当前 Worker router/coordinator，使用管理员授权和不同 reason/audit；
-- P1-12 可更换复制优化或 Worker mount 实现，但不能改变 private persistent SessionRoot 和 protected
+- P1-07～P1-09 只消费 Session 当前 binding、状态和 Worker event/input 端口，不直接启动/停止进程；
+- P1-09 在 `BeginStopping` 后必须返回 `SESSION_NOT_ACCEPTING_INPUT`，并继续使用 epoch fencing；
+- P1-10 必须通过 `ISessionRootMutationLeaseStore` 修改原生存档，不能只在文件操作前做一次状态查询；
+- P1-11 的“一步开始”是两个独立 HTTP 命令和两个幂等键，UI 必须展示 create/open 各自失败；
+- P1-12 force-stop 复用当前 Worker router/coordinator，使用管理员授权和不同 reason/audit；
+- P1-13 可更换复制优化或 Worker 启动实现，但不能改变 private persistent SessionRoot 和 protected
   metadata identity 契约。
 
 ## 16. 实际实现记录
@@ -680,7 +679,7 @@ P1-06 只有在以下条件全部满足后才能标记 DONE：
 `session_creation_operations` 持久阶段和同文件系统 staging 原子发布；open/close 通过
 `SessionLifecycleExecutor` 调用 P1-05 coordinator，HTTP 断开不取消已提交的后续副作用。
 `idempotency_records` 已改为显式 `IN_PROGRESS/SUCCEEDED/FAILED`，并由启动/周期恢复器处理未完成
-create 与生命周期命令；`session_root_mutation_leases` 已作为 P1-09 的停止态写互斥端口。恢复器
+create 与生命周期命令；`session_root_mutation_leases` 已作为 P1-10 的停止态写互斥端口。恢复器
 现在必须等待可调度的 lifecycle reconciliation，并再次确认没有未决 Session 命令后才开放 readiness。
 
 已在仓库 dev Docker 中验证：真实 Kestrel HTTP + Worker create/open/close/reopen、epoch 递增、
@@ -688,17 +687,7 @@ cursor 第二页、相同 key 的跨 scope 隔离以及 Game Blocked 后 reopen 
 测试通过；全量 `./scripts/check.sh` 通过（Release 0 warning/0 error、API 22、Infrastructure 94、
 Application 13、Worker 18、RuntimeAdapter 142、RuntimeCompatibility 27、Web 13）；
 `./scripts/verify-dev-user.sh`、`./scripts/verify-third-party.sh` 和 `git diff --check` 通过。
-最后的 hosted-service 生命周期收尾后，API 集成测试再次以 22/22 通过。上述结果仍不能替代本方案
-完成定义，尚缺 API 重启/Worker 崩溃、两种存档布局和故障注入验收。
-
-本方案仍不能标记 DONE，原因如下：
-
-1. API 与 Worker 当前以同一 UID 运行，SessionRoot 的 protected marker/metadata 仍主要依赖文件
-   mode；Worker 没有独立 UID、mount namespace 或其他 OS 文件视图，不能诚实宣称 Worker 无法访问
-   metadata、SQLite 或其他 SessionRoot。真实 namespace/cgroup/seccomp/rlimit 边界属于 P1-12，
-   在该边界落地前 P1-06 的不受信任 Worker 验收保持阻塞。
-2. 尚缺 API 重启、Worker crash/natural exit、root 与 `sav/` 两种布局、SQLite/发布故障注入以及
-   恶意 Worker 读写 metadata/其他 SessionRoot 的真实集成测试；当前真实 HTTP 测试覆盖的是单实例
-   root 布局的可重开链路。
-3. Session 审计的在线请求路径已写入 RequestId，但后台恢复/完成仍未持久化原始请求关联；完整
-   审计关联和全量 readiness/restart 证据仍需补齐。
+最后的 hosted-service 生命周期收尾后，API 集成测试再次以 22/22 通过。2026-08-12 已完成 API
+重启/Worker 崩溃、两种存档布局、SQLite/发布故障注入和恢复验收，P1-06 标记为 DONE。API 与 Worker
+同 UID 的边界按 ADR-0017 归类为可信参与者自托管约束，不再作为 P1-06 的未完成项，也不宣称敌对
+租户隔离。

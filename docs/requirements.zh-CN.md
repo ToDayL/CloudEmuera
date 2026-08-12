@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | 草案 v0.4 |
+| 文档状态 | 草案 v0.5 |
 | 日期 | 2026-08-12 |
 | 对应英文文档 | [requirements.en.md](./requirements.en.md) |
 | 目标读者 | 产品、前端、后端、运行时、运维与测试开发者 |
@@ -43,7 +43,8 @@ CloudEmuera 将使用 Emuera.EM+EE 作为运行时基线，并保留面向 `Emue
 - 本地账户或单一外部身份提供商登录。
 - 游戏包上传、校验、查看与启用；不提供浏览器内 ERB/CSV 文件写入能力。
 - Session 创建、列表、开启、连接、重连、显式关闭和重新开启。
-- 文字、样式、按钮、基础 HTML、图片、Sprite 和基础音频事件。
+- 完整结构化支持固定 Emuera.EM+EE 基线中可由浏览器安全表达的文字、行与布局、按钮、HTML/HTML
+  Island、图片/Sprite、背景、Shape/CBG、字体、动画和音频语义；明确禁止的宿主能力除外。
 - 用户输入、超时输入和移动端软键盘。
 - 每个 Session 独立的存档空间，以及存档导入、导出、重命名和删除。
 - 管理员查看 Worker/Session 基本状态并强制停止 Session。
@@ -149,7 +150,9 @@ Session 1 ── 1 私有 SessionRoot
 ### 6.4 游戏显示与交互
 
 - **PLAY-001**：Worker 必须向 API 输出结构化显示事件，而不是把未验证的原始 HTML 直接交给浏览器执行。
-- **PLAY-002**：显示模型必须支持文字、前景/背景色、字体样式、换行、按钮、工具提示、图片、Sprite、背景图层和基础音频控制。
+- **PLAY-002**：显示模型必须完整支持固定 Emuera.EM+EE 基线中可由浏览器安全表达的文字、前景/
+  背景色、字体与布局、换行和临时行更新、按钮、工具提示、图片、Sprite、背景图层、Shape/CBG、
+  HTML Island、动画及音频控制；不得以无声 no-op、丢字段或普通文本降级冒充兼容。
 - **PLAY-003**：实现的 Emuera HTML 子集必须使用允许列表解析；脚本、事件属性和任意 URL 不得进入浏览器 DOM。
 - **PLAY-004**：每个输出事件必须包含 Session 内单调递增的 `sequence`。
 - **PLAY-005**：Worker 必须维护一个有界 ConsoleSnapshot；实时批次只需保留到已发送或被更新的快照替代，不要求保存可供历史补发的增量窗口。
@@ -503,14 +506,15 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 
 - 单 Docker 容器、单 API 控制面进程、SQLite 和挂载的数据目录。
 - API 内的 Worker Manager 直接管理每 Session 一个独立子进程；运行期只有 API 访问 SQLite。
-- WebSocket 重连、ConsoleSnapshot、存档隔离和基础 Web 渲染。
+- WebSocket 重连、ConsoleSnapshot、存档隔离，以及固定 Emuera.EM+EE 基线全部 Supported 能力的
+  结构化 Web 渲染和输入。
 - 游戏包上传、内部摄取工作区、当前内容原子启用与基础诊断；不提供浏览器内文件写入工具。
 
 ### Phase 2：自托管完善
 
 - Docker 镜像、健康检查、日志、文件系统备份和升级流程。
 - 关键审计、停机备份、基本诊断和管理员强制停止；不建设资源指标平台或通用审计控制台。
-- 更完整的 HTML、Sprite、音频与移动端兼容。
+- 不把 MVP 已承诺的 Emuera HTML、绘图、Sprite、音频或移动端兼容推迟到本阶段。
 
 ### Phase 3：挂起与恢复
 

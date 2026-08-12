@@ -2,7 +2,7 @@
 
 | Item | Value |
 | --- | --- |
-| Document status | Draft v0.4 |
+| Document status | Draft v0.5 |
 | Date | 2026-08-12 |
 | Chinese counterpart | [requirements.zh-CN.md](./requirements.zh-CN.md) |
 | Intended audience | Product, frontend, backend, runtime, operations, and test engineers |
@@ -44,7 +44,9 @@ CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit comp
 - Local accounts or one external identity provider.
 - Game package upload, validation, browsing, and activation; no browser-based ERB/CSV file writes.
 - Session creation, listing, opening, connection, reconnection, explicit closure, and reopening.
-- Text, styles, buttons, basic HTML, images, sprites, and basic audio events.
+- Complete structured support for the text, line and layout, button, HTML/HTML Island, image/sprite,
+  background, Shape/CBG, font, animation, and audio semantics of the pinned Emuera.EM+EE baseline that
+  can be represented safely in a browser, excluding explicitly prohibited host capabilities.
 - User input, timed input, and mobile soft keyboards.
 - Per-Session isolated save spaces, with save import, export, rename, and deletion.
 - Administrative inspection of basic Worker/Session state and force-stop of a Session.
@@ -142,7 +144,11 @@ Session 1 ── 1 private SessionRoot
 ### 6.4 Game display and interaction
 
 - **PLAY-001**: Workers must emit structured display events to the API instead of passing unvalidated raw HTML to browser execution.
-- **PLAY-002**: The display model must support text, foreground/background colors, font styles, line breaks, buttons, tooltips, images, sprites, background layers, and basic audio control.
+- **PLAY-002**: The display model must completely support the text, foreground/background color, font and
+  layout, line break and temporary-line update, button, tooltip, image, sprite, background-layer, Shape/CBG,
+  HTML Island, animation, and audio-control semantics of the pinned Emuera.EM+EE baseline that can be
+  represented safely in a browser. Silent no-ops, dropped fields, and plain-text fallbacks must not be
+  presented as compatibility.
 - **PLAY-003**: The implemented Emuera HTML subset must be parsed with an allowlist. Scripts, event-handler attributes, and arbitrary URLs must not enter the browser DOM.
 - **PLAY-004**: Every output event must contain a monotonically increasing Session-local `sequence`.
 - **PLAY-005**: The Worker must maintain a bounded ConsoleSnapshot. Real-time batches need only remain until sent or replaced by a newer snapshot; a historical replay window is not required.
@@ -476,14 +482,16 @@ Session management must copy every valid regular file and directory in the Game'
 
 - One Docker container, one API control-plane process, SQLite, and one mounted data directory.
 - An in-process API Worker Manager directly manages one independent child process per Session; only the API accesses SQLite at runtime.
-- WebSocket reconnection, ConsoleSnapshot, save isolation, and basic Web rendering.
+- WebSocket reconnection, ConsoleSnapshot, save isolation, and structured Web rendering and input for every
+  Supported capability in the pinned Emuera.EM+EE baseline.
 - Game package upload, an internal ingestion workspace, atomic current-content activation, and baseline diagnostics; no browser-based file writes.
 
 ### Phase 2: Self-hosted hardening
 
 - Docker image, health checks, logs, filesystem backups, and upgrade procedures.
 - Critical audit, offline backup, basic diagnostics, and administrative force-stop; no resource-metrics platform or general audit console.
-- Broader HTML, sprite, audio, and mobile compatibility.
+- The Emuera HTML, drawing, sprite, audio, and mobile compatibility promised by the MVP must not be deferred
+  to this phase.
 
 ### Phase 3: Suspension and recovery
 

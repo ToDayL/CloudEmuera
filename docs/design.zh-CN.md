@@ -2,9 +2,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | 草案 v0.4 |
+| 文档状态 | 草案 v0.5 |
 | 日期 | 2026-08-12 |
-| 输入文档 | [requirements.zh-CN.md](./requirements.zh-CN.md) v0.4 |
+| 输入文档 | [requirements.zh-CN.md](./requirements.zh-CN.md) v0.5 |
 | 目标阶段 | Phase 0、Phase 1（MVP），并为 Phase 2 预留扩展点 |
 | 目标读者 | 架构、前端、后端、运行时、运维、安全与测试开发者 |
 
@@ -43,7 +43,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | 多客户端输入 | 同一 `promptId` 的第一个有效输入生效 | 后续可在 Realtime Gateway 前增加控制权租约 |
 | Session 空闲 | 断连不自动关闭，持续占用实例级活动 Worker 名额 | 管理员策略只能通过显式配置启用 |
 | 存档删除 | 无活动 Worker 时显式确认后直接删除 | 历史恢复由 SessionRoot 外部备份提供 |
-| HTML/媒体兼容 | 仅开放结构化允许列表中已测试的节点 | 能力由运行时清单和兼容性矩阵声明 |
+| HTML/媒体兼容 | 固定上游中浏览器可安全表达的能力全部结构化支持；宿主禁止能力 fail closed | 能力由运行时清单和机器可校验兼容性矩阵声明 |
 | 跨服务器迁移 | MVP 不定义可移植整包格式 | 数据备份不依赖该格式 |
 
 实例级容量数值、测试游戏集、字体授权和具体媒体兼容等级不在本文中硬编码，统一从部署配置和运行时能力清单读取。MVP 不定义按用户或进程拆分的资源配额。
@@ -826,7 +826,11 @@ Worker 以配置间隔发送单调时钟产生的心跳，其中包含当前序�
 
 ### 8.1 显示模型
 
-Worker 输出的是结构化操作，不是 HTML 字符串。MVP 节点建议包括：
+P1-07 的详细状态拓扑、能力矩阵、输入/计时语义、IPC 升级和验收切片见
+[`tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md`](tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md)。
+Worker 输出的是结构化操作，不是 HTML 字符串。下列能力是最小公共词汇；固定上游中可由浏览器
+安全表达的行更新、HTML Island、Shape/CBG、字体布局、动画和媒体语义也必须按 P1-07 的封闭状态
+模型表达，不能作为 Phase 2 扩展推迟：
 
 ```text
 TextRun(text, foreground, background, fontStyle)
@@ -1278,7 +1282,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 
 1. SQLite schema、Game 摄取 workspace/内容启用和本地账户；
 2. API Worker Manager、Worker IPC、epoch 和可反复开启的 Session 状态机；
-3. 结构化 Console、完整 Snapshot WebSocket 恢复和当前 Worker 内输入去重；
+3. 完整 Emuera 结构化 Console/Input/绘图/媒体、完整 Snapshot WebSocket 恢复和当前 Worker 内输入去重；
 4. SessionRoot 隔离和停止态原生存档文件管理；
 5. Web 游戏包检查/只读查看、Session 控制台、存档界面；
 6. 管理员 Worker 基本查看与强制停止；
@@ -1308,6 +1312,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 11. 待编号：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
 12. 待编号：字体文件保留、服务和授权策略；
 13. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
+14. `ADR-0018`：Emuera 完整结构化交互状态、能力矩阵、计时语义和 IPC major 升级（P1-07 首个切片）。
 
 ## 20. 设计完成定义
 

@@ -315,7 +315,7 @@ Protection、玩家/管理员策略、资源所有权授权器、敏感操作审
 管理员缺失重跑；登录只接受 email，首次登录强制改密；人工与自动化环境隔离；
 匿名访问受保护端点返回 401；跨用户私有资源返回不可枚举的 404；管理员只获得显式
 策略能力且操作写入审计；注销、禁用、改密和角色变化会撤销旧会话；Cookie 写请求具备 CSRF
-防护；WebSocket 升级/恢复授权组件每次重新鉴权，真实协议由 P1-08 接线；日志不包含密码、
+防护；WebSocket 升级/恢复授权组件每次重新鉴权，真实协议由 P1-09 接线；日志不包含密码、
 Cookie、session ID 或输入全文；现有前端完成真实登录、强制改密和注销闭环。
 
 实施记录（2026-08-09）：已交付真实 email-only Cookie 登录、首次改密、注销、管理员用户
@@ -409,12 +409,12 @@ validation snapshot、owner inode marker、内容复制/发布/删除的 Linux d
 遍历 TOCTOU 审计与非 Linux managed fallback 平台差异验证于 2026-08-09 完成并补测试
 （Infrastructure 77 项），本步骤标记为 DONE。 2026-08-09 review 收尾：修复签名游标篡改测试的末字符解码抖动并重跑 `check.sh` 稳定通过；
 Game 错误码与审计动作对齐计划 §15；API 暴露 OpenAPI 文档端点 `/openapi/v1.json`（契约测试断言
-无 GameVersion）；生成式 TypeScript 客户端与 WebSocket JSON Schema 类型生成推迟到 P1-10；
+无 GameVersion）；生成式 TypeScript 客户端与 WebSocket JSON Schema 类型生成推迟到 P1-11；
 Session 创建/启用并发完整集成测试按 P1-04 计划 §12 属 P1-06，本步交付 copy lease 端口及
 rename 钉住测试。
 2026-08-09 UI 接入：P1-04 的浏览器 UI（游戏库列表/创建/导入绑定、单一 Game 内容页的
 workspace/current 文件浏览、文本只读查看、验证、原子启用、删除与下载）已接入真实
-API；P1-10 不再处理 Game 的 UI。同时修复开发容器 Validator 程序集路径解析（Development 下
+API；P1-11 不再处理 Game 的 UI。同时修复开发容器 Validator 程序集路径解析（Development 下
 默认路径指向不存在的目录）与 Debug/Release 解析行为不一致（上游 DEBUG 经过时间系统行被当作
 阻断诊断），使开发环境可真实执行验证与启用。新增 Web 单元测试（列表/创建/上传绑定/文件查看/
 验证启用）、HTTP 集成测试（GameLibrary 类别，含真实 parser 进程）与 RuntimeBridge 回归测试；
@@ -467,7 +467,7 @@ open/存档写，不影响无关 Session 的 ready 和 open。生产解决方案
 binding 测试；Application SessionLifecycle 13 项、Infrastructure SessionLifecycle/WorkerLease 88
 项、Worker ProcessIsolation 18 项、API 集成 22 项在 Linux dev Docker 中通过。
 
-### P1-06 — 幂等 Session 创建、开启与关闭纵切（IN PROGRESS：补齐恢复验收）
+### P1-06 — 幂等 Session 创建、开启与关闭纵切（DONE）
 
 需求映射：SESS-001、SESS-005～008、SESS-011/012、AC-001、AC-003、AC-006/007。
 
@@ -491,7 +491,7 @@ bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml ru
 Worker 崩溃后和 API 重启对账后都能用同一 Session ID/SessionRoot 重开并加载原生存档；Game current
 更新不改变重开 Session 的内容；关闭/输入及 open/存档写竞争结果符合设计允许的线性化结果。
 
-2026-08-12 当前记录：新增 `POST /api/v1/sessions`、列表/详情、`:open`、`:close`，接入
+2026-08-12 完成记录：新增 `POST /api/v1/sessions`、列表/详情、`:open`、`:close`，接入
 API-owned `SessionLifecycleExecutor`、持久幂等状态、create recovery、ETag、CSRF/授权/限流和
 稳定错误映射；创建固定 Game current snapshot，通过 copy lease 和 procfs dirfd 完整复制到同文件系统
 staging，再发布私有持久 SessionRoot。新增 `session_creation_operations`、
@@ -499,23 +499,73 @@ staging，再发布私有持久 SessionRoot。新增 `session_creation_operation
 受保护 marker 与 root inode/manifest/config 联合校验，生命周期恢复不依赖进程内 Task；恢复 readiness
 现在会等待 lifecycle reconciliation 并确认没有未决 Session 命令。
 
-当前验证：dev Docker 中真实 Kestrel HTTP + Worker Session lifecycle 集成测试通过；全量
+验证记录：dev Docker 中真实 Kestrel HTTP + Worker Session lifecycle 集成测试通过；全量
 `./scripts/check.sh` 通过（Release 0 warning/0 error、API 22、Infrastructure 98、Application 13、
 Worker 18、RuntimeAdapter 142、RuntimeCompatibility 27、Web 13），`./scripts/verify-dev-user.sh`、
 `./scripts/verify-third-party.sh` 和 `git diff --check` 通过。最后的 hosted-service 生命周期收尾后，
-API 集成测试再次以 22/22 通过。该结果不等于完成定义已满足，尚未完成 API 重启/Worker 崩溃、root
-与 `sav/` 两种布局以及 SQLite/发布故障注入；恶意 Worker 文件隔离已由 ADR-0017 移出产品边界。
+API 集成测试再次以 22/22 通过。API 重启/Worker 崩溃、root 与 `sav/` 两种布局、SQLite/发布故障
+注入和生命周期恢复验收已完成；恶意 Worker 文件隔离已由 ADR-0017 移出产品边界。
 
 依据 ADR-0017，API 与 Worker 同一非 root UID 是接受的个人自托管边界，不再以缺少额外内核隔离
-阻塞 P1-06，也不宣称抵御恶意 Worker。P1-06 仍需补齐 API 重启/Worker 崩溃、
-root 与 `sav/` 两种布局、SQLite/发布故障注入等生命周期正确性测试；这些通过后即可完成本阶段。
+阻塞 P1-06，也不宣称抵御恶意 Worker。
 
-### P1-07 — 完整 Snapshot 重连与有界输出（TODO）
+### P1-07 — Emuera 运行时语义与完整结构化交互协议（NEXT）
 
-需求映射：PLAY-004～006、PLAY-010/012、AC-002/012、ADR-0017。
+需求映射：SESS-004、PLAY-001～004、PLAY-007～012、COMP-002～009、AC-005/008/009/011/012，
+ADR-0004。进入实现前必须新增 ADR，冻结浏览器可安全表达的完整 Emuera Console/Input/Media 能力矩阵、
+事件归约语义和明确禁止的桌面/外部能力；不得以无声 no-op、丢字段或普通文本降级冒充兼容。
 
-交付物：ConsoleSnapshot 序列化与大小上限；实时批次队列；重连总是取得完整 Snapshot；批处理、
-背压、序号缺口检测和快照重新同步。不实现历史增量环形缓冲、ack 补发或 snapshot/subscribe 无丢失屏障。
+详细方案：[`tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md`](tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md)。
+
+交付物：
+
+- 逐项审计固定上游 Emuera.EM+EE 的 Console、Input、HTML、图片/Sprite、背景、Shape/CBG、字体与
+  布局、动画和音频调用点，建立 `Supported/Compatible/Experimental/Blocked` 机器可校验能力清单；
+  MVP 范围内且不违反 `COMP-008` 安全边界的 Emuera 功能必须为 `Supported`，未知或未分类调用必须
+  fail closed 并形成可见兼容性诊断；
+- 扩展 RuntimeAdapter 与版本化 Worker IPC，使显示模型完整表达文本与前景/背景色、字体族/字号/
+  样式、换行和对齐、按钮及 tooltip、临时行更新/删除、图片 source rect、Sprite frame/position/
+  z-index、背景图层、Shape/CBG/HTML Island 的安全绘制命令，以及音频 play/stop/channel/volume/loop；
+  所有资源只引用 Session runtime manifest 中的逻辑 `assetId`，不传原始 HTML、任意 URL 或宿主路径；
+- 完整映射 Emuera 输入类型和语义，包括 Enter/AnyKey、整数、字符串、AnyValue、按钮、OneInput、
+  系统输入及允许的指针/键盘输入；保留默认值、约束、输入来源和首个有效回答语义；
+- 完整实现 `TINPUT/TINPUTS/TONEINPUT/TONEINPUTS/TWAIT` 等计时输入：Worker 使用单调时钟裁决，
+  prompt 携带稳定绝对 deadline、服务端时间基准、`DisplayTime`、默认值和 `TimeUpMes`；浏览器仅按
+  deadline 渲染倒计时，不逐秒向服务端发消息，也不替 Worker 提交默认值；超时时原子关闭 prompt、
+  应用默认值/等待语义、更新 `ISTIMEOUT`、产生确定的超时显示操作并拒绝迟到输入；断线不暂停计时；
+- ConsoleSnapshot 能完整归约上述可见状态、当前 prompt、背景/绘图层和媒体状态；所有新增节点、操作、
+  尺寸、层级、资源、文本和更新目标具有硬上限，Worker/IPC/API/浏览器边界均执行一致校验；
+- 扩充 v18 与当前 EM+EE 合成 fixture 和真实解释器兼容场景；每个能力项至少覆盖正常路径、边界条件和
+  一个失败路径，并更新 runtime baseline、兼容性报告、ADR-0004、上游 `MODIFICATIONS.md` 及中英文文档。
+
+验证：
+
+```bash
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
+  --filter 'Category=ConsoleContract|Category=TimedInput|Category=RichOutput'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.RuntimeCompatibility.Tests --no-restore --configuration Release \
+  --filter 'Category=RuntimeBridge|Category=EmueraFeatureMatrix'
+./scripts/verify-runtime-fixtures.sh
+./scripts/verify-emuera-capabilities.sh
+```
+
+通过条件：能力清单中不存在未分类、无声 no-op 或 MVP 范围内的非 `Supported` 项；固定 v18 与当前
+EM+EE fixture 对所有支持的输入、计时、显示、绘图和媒体语义生成稳定结构化 transcript；计时输入的
+输入/超时/取消竞争恰有一个终态，超时默认值、`ISTIMEOUT`、`TimeUpMes`、迟到输入和断线期间继续计时
+均与原版语义一致；完整 Snapshot 经序列化、IPC 往返和归约后状态等价；危险 HTML、URL、路径、资源
+引用和超限绘图确定性拒绝。只有 `COMP-008` 明确禁止的 DLL、外部进程和不受限网络等能力可以标记为
+`Blocked`，且加载时必须向用户报告。
+
+### P1-08 — 完整 Snapshot 重连与有界输出（TODO）
+
+需求映射：SESS-004、PLAY-002、PLAY-004～006、PLAY-010/012、AC-002/012、ADR-0017。
+
+交付物：序列化 P1-07 的完整 Console/Prompt/绘图/媒体 Snapshot 并实施大小上限；实时批次队列；
+重连总是取得完整 Snapshot；批处理、背压、序号缺口检测和快照重新同步。不实现历史增量环形缓冲、
+ack 补发或 snapshot/subscribe 无丢失屏障。
 
 验证：
 
@@ -523,12 +573,13 @@ root 与 `sav/` 两种布局、SQLite/发布故障注入等生命周期正确性
 dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Snapshot|Category=Backpressure'
 ```
 
-通过条件：重连用完整 Snapshot 替换本地状态；快照生成期间持续输出时要么连续应用后续批次，要么
-检测缺口并重新同步；慢客户端不会导致无界内存；队列溢出确定性降级到新快照。
+通过条件：重连用完整 Snapshot 替换文本、当前 prompt、背景/绘图层和媒体状态；计时 prompt 保留
+原 deadline 而不因快照或重连重新计时；快照生成期间持续输出时要么连续应用后续批次，要么检测
+缺口并重新同步；慢客户端不会导致无界内存；队列溢出确定性降级到新快照。
 
-### P1-08 — WebSocket 快照恢复与有界输入去重（TODO）
+### P1-09 — WebSocket 快照恢复与有界输入去重（TODO）
 
-需求映射：AUTH-005、PLAY-006～008、PLAY-011、AC-002/005。
+需求映射：AUTH-005、SESS-004、PLAY-006～008、PLAY-011、AC-002/005。
 
 交付物：版本化 WebSocket envelope、鉴权握手、完整快照恢复、当前 Worker 内有界
 `promptId/clientMessageId` 去重和多客户端首个有效输入规则。不实现 ack 历史补发、持久输入去重或
@@ -540,11 +591,12 @@ dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Snapshot|Categor
 dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Reconnect|Category=InputDeduplication'
 ```
 
-通过条件：浏览器断开后取得一致完整 Snapshot 与当前 prompt；当前 Worker 内重复消息只执行一次并
-返回同一结果；两个客户端并发回答只有一个 ACCEPTED；Worker IPC 断开后有界退出且 Session 进入
-CRASHED；越权恢复失败。API 重启不恢复旧 Worker 实时连接。
+通过条件：浏览器断开后取得一致完整 Snapshot 与当前 prompt；断线期间计时输入继续推进，重连只显示
+剩余时间，输入与 timeout 竞争只有一个权威结果；当前 Worker 内重复消息只执行一次并返回同一结果；
+两个客户端并发回答只有一个 ACCEPTED；Worker IPC 断开后有界退出且 Session 进入 CRASHED；越权
+恢复失败。API 重启不恢复旧 Worker 实时连接。
 
-### P1-09 — Session 原生存档文件 API（TODO）
+### P1-10 — Session 原生存档文件 API（TODO）
 
 需求映射：SAVE-001～009、SAVE-015、AC-004/007/013/014。
 
@@ -561,13 +613,16 @@ dotnet test tests/CloudEmuera.Saves.IntegrationTests
 通过条件：跨用户和跨 Session 访问失败；上传校验大小、路径和基本原生约束；活动 Worker 存在时
 所有修改操作被拒绝；操作与 Worker 启动竞争时只有一方成功；API 不解析或改写 Emuera 原生内容。
 
-### P1-10 — 浏览器 Session 控制台和存档界面（TODO）
+### P1-11 — 浏览器 Session 控制台和存档界面（TODO）
 
-需求映射：SESS-005/006、PLAY-002/009、SAVE-003、AC-011。
+需求映射：SESS-004～006、PLAY-001～003、PLAY-006～009、PLAY-011、SAVE-003、COMP-007、
+AC-005/008/009/011。
 
 交付物：登录、游戏包检查与只读文件查看、Session 列表、Session 创建/open/close/重开、结构化
-Console、输入控件、完整 Snapshot 重连状态和存档管理页面；移动安全区和键盘处理。删除或隐藏
-P1-04 已实现的浏览器文件写入、创建、重命名、删除和搜索入口。
+Console、输入控件、完整 Snapshot 重连状态和存档管理页面；实现 P1-07 定义的全部结构化文本、布局、
+按钮、图片/Sprite、背景、Shape/CBG、动画和 WebAudio 渲染，以及全部输入类型、服务端 deadline
+倒计时、超时提示和禁用/迟到状态；移动安全区、软键盘、触摸与键盘处理。删除或隐藏 P1-04 已实现的
+浏览器文件写入、创建、重命名、删除和搜索入口。
 
 验证：
 
@@ -576,9 +631,12 @@ pnpm --dir src/CloudEmuera.Web test
 pnpm --dir e2e test
 ```
 
-通过条件：组件测试覆盖状态与错误分支；Playwright 在桌面和移动 viewport 完成登录、发布、创建 Session、输入、断线重连和存档下载；基础键盘导航和可访问性扫描无阻断错误。
+通过条件：组件测试覆盖每一种 P1-07 节点/操作、输入类型、媒体状态及错误分支；Playwright 在桌面和
+移动 viewport 完成登录、发布、创建 Session、普通与计时输入、倒计时期间断线重连、超时继续执行、
+Sprite/背景/绘图/音频、存档下载；客户端时钟偏差不改变 Worker 裁决结果；基础键盘导航、媒体控制和
+可访问性扫描无阻断错误。
 
-### P1-11 — 基本管理、诊断与就绪检查（TODO）
+### P1-12 — 基本管理、诊断与就绪检查（TODO）
 
 需求映射：OPS-001、OPS-003～006、AC-007。
 
@@ -598,7 +656,7 @@ pnpm --dir e2e test
 迁移或启动对账未就绪时 ready 失败但 live 语义正确；管理员终止可审计；基本状态能反映 Worker 崩溃、
 Snapshot 大小和队列溢出，且不出现专用遥测或通用审计浏览入口。
 
-### P1-12 — 基础 Worker 进程边界与实例级上限（TODO）
+### P1-13 — 基础 Worker 进程边界与实例级上限（TODO）
 
 需求映射：SEC、OPS-002、AC-010、ADR-0017。
 
@@ -618,7 +676,7 @@ Snapshot 大小和队列溢出，且不出现专用遥测或通用审计浏览�
 或其他 SessionRoot；实例级上限产生稳定错误且队列不无界增长；文档明确同 UID 不提供恶意 Worker
 隔离，缺少额外内核隔离能力不影响 ready。
 
-### P1-13 — 单容器生产进程管理与恢复（TODO）
+### P1-14 — 单容器生产进程管理与恢复（TODO）
 
 需求映射：MVP 单容器、AC-003/006/007、OPS-003。
 
@@ -638,12 +696,13 @@ CRASHED；强制终止 API 或断开控制通道后 Worker 立即开始退出或
 CRASHED 对账，同一 Session 可复用原 SessionRoot 重开；单个无法确认的遗留 Worker 只阻止对应
 Session 的 open/存档写；生产镜像不存在旧独立控制面服务；备份恢复后元数据和文件校验一致。
 
-### P1-14 — MVP 验收、安全与性能门（TODO）
+### P1-15 — MVP 验收、安全与性能门（TODO）
 
 需求映射：AC-001～014、设计第 17 章全部测试层级。
 
-交付物：需求—测试追踪矩阵；一键验收脚本；兼容性、文件格式/Web 安全、故障注入、容量、移动端
-和视觉回归报告；明确“可信参与者/可信游戏、无恶意 Worker 隔离”的已知限制清单。
+交付物：需求—测试追踪矩阵；一键验收脚本；Emuera 能力矩阵及结构化交互端到端验收；兼容性、文件
+格式/Web 安全、故障注入、容量、移动端和视觉回归报告；明确“可信参与者/可信游戏、无恶意 Worker
+隔离”的已知限制清单。
 
 验证：
 
@@ -653,11 +712,13 @@ Session 的 open/存档写；生产镜像不存在旧独立控制面服务；备
 
 通过条件：AC-001～014 每项至少有一个自动化测试或版本化、可重复的验收场景；脚本从干净 checkout
 和空数据卷运行成功；失败报告指出具体 AC 编号；无超出 ADR-0017 已接受信任边界的未解释高危
-问题；容量结果满足实例级边界或有批准的 ADR 偏差。
+问题；P1-07 能力矩阵无未分类或 MVP 范围内的非 `Supported` 项，浏览器端到端结果与真实解释器
+结构化 transcript 一致；容量结果满足实例级边界或有批准的 ADR 偏差。
 
 ## 5. Phase 2/3 进入条件
 
-Phase 2 的资源治理、备份、管理员体验和更完整媒体兼容，只在 P1-14 通过后展开。Phase 3 的
+Phase 2 的资源治理、备份和管理员体验只在 P1-15 通过后展开；Emuera 的 MVP 输入、显示、绘图和
+媒体兼容不得推迟到 Phase 2。Phase 3 的
 SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在此之前不得因当前没有浏览器连接
 而释放 Worker，也不得宣称 Worker 崩溃后能从同一指令恢复。
 
@@ -668,6 +729,8 @@ SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在�
 2. ~~按 ADR-0015/0016 完成 P1-05：把 Worker 管理迁入 API，移除旧独立控制面，并实现持久
    SessionRoot 的 open/close/reopen 生命周期。~~ 已于 2026-08-11 完成，进入 P1-06。
 3. ~~按 ADR-0017 完成 P1-S01：收窄 Game、实例容量、Worker 控制流和基本诊断边界。~~ 已于
-   2026-08-12 完成，后续 P1-06～P1-14 按简化后的契约继续验证。
+   2026-08-12 完成。
+4. ~~完成 P1-06 幂等 Session 创建、开启、关闭与恢复验收。~~ 已于 2026-08-12 完成。
+5. 按 P1-07 先完成 Emuera 运行时语义、能力矩阵和完整结构化交互协议，再进入 P1-08～P1-15。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。
