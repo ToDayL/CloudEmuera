@@ -440,23 +440,48 @@ docker compose -f compose.dev.yaml run --rm api \
 binding 测试；Application SessionLifecycle 13 项、Infrastructure SessionLifecycle/WorkerLease 88
 项、Worker ProcessIsolation 18 项、API 集成 21 项在 Linux dev Docker 中通过。
 
-### P1-06 — 幂等 Session 创建、开启与关闭纵切（TODO）
+### P1-06 — 幂等 Session 创建、开启与关闭纵切（BLOCKED：未完成验收）
 
 需求映射：SESS-001、SESS-005～008、SESS-011/012、AC-001、AC-003、AC-006/007。
 
+详细方案：[`tasks/P1-06-idempotent-session-http-lifecycle-plan.zh-CN.md`](tasks/P1-06-idempotent-session-http-lifecycle-plan.zh-CN.md)。
+
 交付物：创建、列表、详情、open、close HTTP API；创建/open/close 独立幂等键；Game + source
-content digest/manifest 固定；API Worker Manager 编排；关闭与输入、open 与存档写的并发语义。
+content digest/manifest 固定；API Worker Manager 编排；关闭与输入、open 与存档写的并发语义；
+持久 create operation、API-only SessionRoot marker、生命周期命令恢复和停止态 mutation lease。
 
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Api.IntegrationTests --filter 'Category=SessionLifecycle'
+./scripts/dev-up.sh
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
+  --filter Category=SessionLifecycle'
 ```
 
 通过条件：相同幂等键并发创建只产生一个 `CLOSED` Session 和一棵 SessionRoot，且不占活动配额；
 同一游戏可创建两个隔离 Session；重复 open/close 不重复执行副作用；关闭后输入被拒绝；关闭后、
 Worker 崩溃后和 API 重启对账后都能用同一 Session ID/SessionRoot 重开并加载原生存档；Game current
 更新不改变重开 Session 的内容；关闭/输入及 open/存档写竞争结果符合设计允许的线性化结果。
+
+2026-08-12 当前记录：新增 `POST /api/v1/sessions`、列表/详情、`:open`、`:close`，接入
+API-owned `SessionLifecycleExecutor`、持久幂等状态、create recovery、ETag、CSRF/授权/限流和
+稳定错误映射；创建固定 Game current snapshot，通过 copy lease 和 procfs dirfd 完整复制到同文件系统
+staging，再发布私有持久 SessionRoot。新增 `session_creation_operations`、
+`session_root_mutation_leases` 和 `20260811175156_AddIdempotentSessionLifecycle` migration；
+受保护 marker 与 root inode/manifest/config 联合校验，生命周期恢复不依赖进程内 Task；恢复 readiness
+现在会等待 lifecycle reconciliation 并确认没有未决 Session 命令。
+
+当前验证：dev Docker 中真实 Kestrel HTTP + Worker Session lifecycle 集成测试通过；全量
+`./scripts/check.sh` 通过（Release 0 warning/0 error、API 22、Infrastructure 94、Application 13、
+Worker 18、RuntimeAdapter 142、RuntimeCompatibility 27、Web 13），`./scripts/verify-dev-user.sh`、
+`./scripts/verify-third-party.sh` 和 `git diff --check` 通过。最后的 hosted-service 生命周期收尾后，
+API 集成测试再次以 22/22 通过。该结果不等于完成定义已满足，尚未完成 API 重启/Worker 崩溃、root
+与 `sav/` 两种布局、SQLite/发布故障注入和恶意 Worker 文件访问边界。
+
+阻塞项：API 与 Worker 当前同 UID，protected marker 的权限模式不能替代独立 UID、mount namespace
+或其他 OS 文件视图；真实 Worker sandbox 由 P1-12 落地。在 P1-12 和上述真实恢复/故障测试完成前，
+P1-06 保持 BLOCKED，不进入 P1-07。
 
 ### P1-07 — Snapshot、恢复屏障与有界输出（TODO）
 

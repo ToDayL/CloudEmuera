@@ -1,11 +1,13 @@
 using System.IO.Compression;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Net.Http.Json;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Application.GamePackages;
 using CloudEmuera.Contracts.Games;
 using CloudEmuera.Contracts.Identity;
+using CloudEmuera.Contracts.Sessions;
 using CloudEmuera.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -19,7 +21,8 @@ namespace CloudEmuera.Api.IntegrationTests;
 /// UI drives through validate/activate.</summary>
 public sealed class GameLibraryApiContractTests : IDisposable
 {
-    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid():N}");
+    private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid().ToString("N")[..16]}");
+    private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
     private IdentityFactory? _factory;
 
     [Fact]
@@ -101,6 +104,150 @@ public sealed class GameLibraryApiContractTests : IDisposable
         HttpResponseMessage download = await client.GetAsync($"/api/v1/games/{game.Id}/download?scope=CURRENT&path=ERB%2FSTART.ERB");
         Assert.Equal(HttpStatusCode.OK, download.StatusCode);
         Assert.NotNull(download.Content.Headers.ContentDisposition);
+    }
+
+    [Fact]
+    [Trait("Category", "SessionLifecycle")]
+    public async Task SessionCreateOpenCloseAndReopenUseDurableHttpLifecycle()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
+        _factory = new IdentityFactory(_dataRoot, useKestrel: true);
+        _factory.StartKestrel();
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = _factory.KestrelBaseAddress,
+            HandleCookies = true,
+            AllowAutoRedirect = false,
+        });
+
+        string csrf = await GetCsrfAsync(client);
+        Assert.True((await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf)).IsSuccessStatusCode);
+        csrf = await GetCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("HTTP Session Fixture", "PRIVATE"), csrf))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
+        csrf = await GetCsrfAsync(client);
+        using MemoryStream archive = CreateArchive();
+        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", archive.ToArray(), "application/zip", csrf, "session-ingest"))
+            .Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
+            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, "session-bind"))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
+        csrf = await GetCsrfAsync(client);
+        GameValidationResult validation = await (await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, "session-validate"))
+            .Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
+        Assert.True(validation.CanActivate, string.Join(',', validation.Diagnostics.Select(item => item.Code)));
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem current = await (await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, "session-activate"))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Activation response was missing.");
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage createdResponse = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
+            new CreateSessionRequest(current.Id, "HTTP Session"), csrf, idempotencyKey: "session-create");
+        Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
+        SessionResponse created = await createdResponse.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Session create response was missing.");
+        Assert.Equal("CLOSED", created.State);
+        Assert.NotNull(createdResponse.Headers.ETag);
+        Assert.Equal($"/api/v1/sessions/{created.Id}", createdResponse.Headers.Location?.ToString());
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage createReplay = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
+            new CreateSessionRequest(current.Id, "HTTP Session"), csrf, idempotencyKey: "session-create");
+        SessionResponse replayed = await createReplay.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Session replay response was missing.");
+        Assert.Equal(HttpStatusCode.Created, createReplay.StatusCode);
+        Assert.Equal(created.Id, replayed.Id);
+
+        // The same key is deliberately reused across create/open/close scopes;
+        // scope separation must prevent a false idempotency conflict.
+        (HttpResponseMessage openedResponse, SessionResponse opened) = await WaitForLifecycleAsync(client, created.Id, "open", "session-create");
+        Assert.Equal("RUNNING", opened.State);
+        Assert.Equal(1, opened.WorkerEpoch);
+
+        (HttpResponseMessage closedResponse, SessionResponse closed) = await WaitForLifecycleAsync(client, created.Id, "close", "session-create");
+        Assert.Equal("CLOSED", closed.State);
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem blockedGame = await (await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/admin/games/{current.Id}:block",
+            new SetGameBlockedRequest(true), csrf, current.StateVersion))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Block response was missing.");
+        Assert.Equal("BLOCKED", blockedGame.Status);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage blockedOpen = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/sessions/{created.Id}:open", new { }, csrf, idempotencyKey: "session-open-blocked");
+        ApiError blockedOpenError = await blockedOpen.Content.ReadFromJsonAsync<ApiError>() ?? throw new Xunit.Sdk.XunitException("Blocked reopen error was missing.");
+        Assert.Equal(HttpStatusCode.Conflict, blockedOpen.StatusCode);
+        Assert.Equal("GAME_BLOCKED", blockedOpenError.Code);
+
+        csrf = await GetCsrfAsync(client);
+        GameLibraryItem unblockedGame = await (await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/admin/games/{current.Id}:block",
+            new SetGameBlockedRequest(false), csrf, blockedGame.StateVersion))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Unblock response was missing.");
+        Assert.Equal("ACTIVE", unblockedGame.Status);
+
+        (HttpResponseMessage reopenedResponse, SessionResponse reopened) = await WaitForLifecycleAsync(client, created.Id, "open", "session-reopen");
+        Assert.Equal("RUNNING", reopened.State);
+        Assert.Equal(2, reopened.WorkerEpoch);
+
+        (_, _) = await WaitForLifecycleAsync(client, created.Id, "close", "session-reclose");
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage secondCreateResponse = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
+            new CreateSessionRequest(current.Id, "HTTP Session 2"), csrf, idempotencyKey: "session-create-2");
+        Assert.Equal(HttpStatusCode.Created, secondCreateResponse.StatusCode);
+
+        HttpResponseMessage firstPageResponse = await client.GetAsync("/api/v1/sessions?limit=1");
+        string firstPageBody = await firstPageResponse.Content.ReadAsStringAsync();
+        Assert.True(firstPageResponse.StatusCode == HttpStatusCode.OK, $"Session list failed: {(int)firstPageResponse.StatusCode} {firstPageBody}");
+        Assert.StartsWith("{", firstPageBody, StringComparison.Ordinal);
+        SessionListResponse firstPage = JsonSerializer.Deserialize<SessionListResponse>(firstPageBody, WebJsonOptions) ?? throw new Xunit.Sdk.XunitException("Session list response was missing.");
+        Assert.Single(firstPage.Items);
+        Assert.NotNull(firstPage.NextCursor);
+        HttpResponseMessage secondPageResponse = await client.GetAsync($"/api/v1/sessions?limit=1&cursor={Uri.EscapeDataString(firstPage.NextCursor!)}");
+        Assert.Equal(HttpStatusCode.OK, secondPageResponse.StatusCode);
+        SessionListResponse secondPage = await secondPageResponse.Content.ReadFromJsonAsync<SessionListResponse>() ?? throw new Xunit.Sdk.XunitException("Session cursor page was missing.");
+        Assert.Single(secondPage.Items);
+        Assert.NotEqual(firstPage.Items[0].Id, secondPage.Items[0].Id);
+
+        async Task<(HttpResponseMessage Response, SessionResponse Value)> WaitForLifecycleAsync(
+            HttpClient httpClient,
+            string sessionId,
+            string operation,
+            string key)
+        {
+            string initialCsrf = await GetCsrfAsync(httpClient);
+            HttpResponseMessage initial = await SendJsonAsync(httpClient, HttpMethod.Post,
+                $"/api/v1/sessions/{sessionId}:{operation}", new { }, initialCsrf, idempotencyKey: key);
+            SessionResponse initialValue = await initial.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException($"Session {operation} response was missing.");
+            if (initial.StatusCode == HttpStatusCode.OK)
+                return (initial, initialValue);
+            Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+
+            string expectedState = operation == "open" ? "RUNNING" : "CLOSED";
+            List<string> attempts = [$"{(int)initial.StatusCode}:{initialValue.State}:epoch={initialValue.WorkerEpoch}"];
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                HttpResponseMessage detailResponse = await httpClient.GetAsync($"/api/v1/sessions/{sessionId}");
+                SessionResponse detail = await detailResponse.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException($"Session detail response was missing.");
+                attempts.Add($"detail:{detail.State}:epoch={detail.WorkerEpoch}");
+                if (detail.State == expectedState)
+                {
+                    string requestCsrf = await GetCsrfAsync(httpClient);
+                    HttpResponseMessage response = await SendJsonAsync(httpClient, HttpMethod.Post,
+                        $"/api/v1/sessions/{sessionId}:{operation}", new { }, requestCsrf, idempotencyKey: key);
+                    SessionResponse value = await response.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException($"Session {operation} replay response was missing.");
+                    if (response.StatusCode == HttpStatusCode.OK)
+                        return (response, value);
+                    Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+                }
+                await Task.Delay(250);
+            }
+
+            throw new Xunit.Sdk.XunitException($"Session {operation} did not complete within the integration-test deadline: {string.Join(',', attempts)}");
+        }
     }
 
     [Fact]
@@ -438,12 +585,35 @@ public sealed class GameLibraryApiContractTests : IDisposable
         return await client.SendAsync(request);
     }
 
-    private sealed class IdentityFactory(string dataRoot) : WebApplicationFactory<Program>
+    private sealed class IdentityFactory(string dataRoot, bool useKestrel = false) : WebApplicationFactory<Program>
     {
+        private readonly int _kestrelPort = GetFreeTcpPort();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
             builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["CloudEmuera:DataPath"] = dataRoot }));
+        }
+
+        public void StartKestrel()
+        {
+            if (!useKestrel)
+                throw new InvalidOperationException("This factory was not configured for Kestrel.");
+            ClientOptions.BaseAddress = new Uri($"http://127.0.0.1:{_kestrelPort}", UriKind.Absolute);
+            UseKestrel(options =>
+            {
+                options.Listen(IPAddress.Loopback, _kestrelPort);
+            });
+            StartServer();
+        }
+
+        public Uri KestrelBaseAddress => new($"http://127.0.0.1:{_kestrelPort}", UriKind.Absolute);
+
+        private static int GetFreeTcpPort()
+        {
+            using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
         }
     }
 

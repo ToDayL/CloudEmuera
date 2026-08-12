@@ -24,6 +24,8 @@ public static class SessionRuntimeResultCodes
     public const string ControlPlaneReconciliationFailed = "control_plane_reconciliation_failed";
     public const string ProcessIdentityMismatch = "process_identity_mismatch";
     public const string InvalidBinding = "invalid_binding";
+    public const string SessionMutationInProgress = "session_mutation_in_progress";
+    public const string GameBlocked = "game_blocked";
 }
 
 public sealed class SessionRuntimeException(string code, string message, Exception? innerException = null)
@@ -65,7 +67,11 @@ public sealed record SessionRuntimeBinding(
     string SessionRootManifestDigest,
     string RuntimeVersion,
     long InitialOutputSequence,
-    string RuntimeManifestJson);
+    string RuntimeManifestJson,
+    string OwnerUserId = "",
+    string GameId = "",
+    long SourceContentRevision = 0,
+    string SourceContentDigest = "");
 
 public sealed record SessionRuntimeLease(
     SessionRuntimeBinding Binding,
@@ -81,6 +87,8 @@ public enum SessionRuntimeAcquireFailure
     SessionNotOpenable,
     ActiveSessionQuotaExceeded,
     WorkerAlreadyLeased,
+    MutationLeaseActive,
+    GameBlocked,
     InvalidConfiguration,
 }
 
@@ -274,11 +282,16 @@ public sealed class SessionRuntimeCoordinator(
             throw new SessionRuntimeException(MapAcquireFailure(acquired.Failure), "The Session cannot be opened.");
 
         SessionRuntimeLease lease = acquired.Lease!;
+        // The lease transaction is the open linearization point.  A request
+        // cancellation may abort that transaction, but once it commits the
+        // API host must finish spawn/ready/compensation independently of the
+        // browser connection.
+        CancellationToken operationCancellationToken = CancellationToken.None;
         IWorkerProcessHandle? process = null;
         SessionRuntimeBinding binding = lease.Binding;
         try
         {
-            SessionRootRuntimeDescriptor root = await rootInspector.InspectAsync(lease, cancellationToken).ConfigureAwait(false);
+            SessionRootRuntimeDescriptor root = await rootInspector.InspectAsync(lease, operationCancellationToken).ConfigureAwait(false);
             binding = binding with
             {
                 SessionRootPath = root.AbsoluteSessionRoot,
@@ -298,23 +311,23 @@ public sealed class SessionRuntimeCoordinator(
                     Timeout.InfiniteTimeSpan,
                     Environment.ProcessId,
                     string.Empty),
-                cancellationToken).ConfigureAwait(false);
+                operationCancellationToken).ConfigureAwait(false);
             SessionRuntimeWriteResult identityResult = await store.RecordProcessIdentityAsync(
                 binding,
                 process.Identity,
                 timeProvider.GetUtcNow(),
-                cancellationToken).ConfigureAwait(false);
+                operationCancellationToken).ConfigureAwait(false);
             if (!identityResult.Applied || identityResult.Binding is null)
                 throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerStaleEpoch, "The Worker lease changed during launch.");
             binding = identityResult.Binding;
             process.UpdateRuntimeBinding(binding);
 
-            WorkerReadyInfo ready = await process.WaitForReadyAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+            WorkerReadyInfo ready = await process.WaitForReadyAsync(TimeSpan.FromSeconds(30), operationCancellationToken).ConfigureAwait(false);
             SessionRuntimeWriteResult readyResult = await store.MarkReadyAsync(
                 binding,
                 ready,
                 timeProvider.GetUtcNow(),
-                cancellationToken).ConfigureAwait(false);
+                operationCancellationToken).ConfigureAwait(false);
             if (!readyResult.Applied || readyResult.Binding is null)
                 throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerStaleEpoch, "The Worker ready event was stale.");
             binding = readyResult.Binding;
@@ -384,6 +397,10 @@ public sealed class SessionRuntimeCoordinator(
             return new SessionRuntimeCloseResult(SessionRuntimeCompletionResult.Stale());
         binding = stoppingResult.Binding;
         process.UpdateRuntimeBinding(binding, persistenceReady: true);
+        // BeginStopping is the close/input linearization point.  The rest of
+        // the stop and exit-confirmation sequence must not be cancelled by a
+        // disconnected HTTP client.
+        CancellationToken operationCancellationToken = CancellationToken.None;
 
         SessionRuntimeTerminalState terminalState = SessionRuntimeTerminalState.Closed;
         string reasonCode = request.ReasonCode;
@@ -393,8 +410,8 @@ public sealed class SessionRuntimeCoordinator(
             await process.RequestStopAsync(
                 request.Force ? "admin_force_stopped" : reasonCode,
                 timeProvider.GetUtcNow().AddSeconds(request.Force ? 5 : 15),
-                cancellationToken).ConfigureAwait(false);
-            WorkerExitInfo exit = await process.WaitForExitAsync(TimeSpan.FromSeconds(request.Force ? 5 : 15), cancellationToken).ConfigureAwait(false);
+                operationCancellationToken).ConfigureAwait(false);
+            WorkerExitInfo exit = await process.WaitForExitAsync(TimeSpan.FromSeconds(request.Force ? 5 : 15), operationCancellationToken).ConfigureAwait(false);
             lastOutputSequence = Math.Max(lastOutputSequence, exit.LastOutputSequence);
             if (!exit.ProcessExited)
             {
@@ -432,6 +449,8 @@ public sealed class SessionRuntimeCoordinator(
         SessionRuntimeAcquireFailure.SessionNotOpenable => SessionRuntimeResultCodes.SessionNotOpenable,
         SessionRuntimeAcquireFailure.ActiveSessionQuotaExceeded => SessionRuntimeResultCodes.ActiveSessionQuotaExceeded,
         SessionRuntimeAcquireFailure.WorkerAlreadyLeased => SessionRuntimeResultCodes.WorkerStaleEpoch,
+        SessionRuntimeAcquireFailure.MutationLeaseActive => SessionRuntimeResultCodes.SessionMutationInProgress,
+        SessionRuntimeAcquireFailure.GameBlocked => SessionRuntimeResultCodes.GameBlocked,
         SessionRuntimeAcquireFailure.InvalidConfiguration => SessionRuntimeResultCodes.SessionNotOpenable,
         _ => SessionRuntimeResultCodes.InvalidBinding,
     };

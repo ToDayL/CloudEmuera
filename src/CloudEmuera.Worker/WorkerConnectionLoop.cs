@@ -147,9 +147,12 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
             {
                 return;
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
             {
-                LogLifecycle("connection_retry", "connection_failed", LogLevel.Warning);
+                string reason = exception is RpcException rpcException
+                    ? $"connection_failed:{rpcException.StatusCode}"
+                    : $"connection_failed:{exception.GetType().Name}";
+                LogLifecycle("connection_retry", reason, LogLevel.Warning);
                 if (!hadConnection && DateTimeOffset.UtcNow >= connectDeadline)
                 {
                     registrationAccepted.TrySetException(

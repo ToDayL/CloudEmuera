@@ -1,5 +1,6 @@
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Domain.Sessions;
+using CloudEmuera.Infrastructure.Games;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Infrastructure.Tests.Support;
@@ -143,6 +144,30 @@ public sealed class SqliteSessionRuntimeStoreTests
     }
 
     [Fact]
+    public async Task BlockedGameRejectsReopenInsideTheOpenTransaction()
+    {
+        using TemporarySqliteDatabase database = new();
+        await SeedSessionsAsync(database, quota: 4, "sess_fixture");
+        await using (DbContextScope scope = database.OpenContext(SqliteConnectionAccess.ReadWrite))
+        {
+            GameRow game = await scope.Context.Games.SingleAsync(row => row.Id == "game_fixture");
+            game.Status = GameStatus.Blocked;
+            game.StateVersion++;
+            await scope.Context.SaveChangesAsync();
+        }
+
+        SqliteSessionRuntimeStore store = new(database.Options, TimeProvider.System);
+        SessionRuntimeAcquireResult result = await store.TryAcquireOpenLeaseAsync(
+            OpenOptions("sess_fixture", "ctl_blocked", "wrk_blocked", DateTimeOffset.UtcNow));
+
+        Assert.Equal(SessionRuntimeAcquireFailure.GameBlocked, result.Failure);
+        await using DbContextScope verify = database.OpenContext();
+        SessionRow session = await verify.Context.Sessions.SingleAsync(row => row.Id == "sess_fixture");
+        Assert.Equal(SessionState.Closed, session.State);
+        Assert.False(await verify.Context.WorkerLeases.AnyAsync(row => row.SessionId == "sess_fixture"));
+    }
+
+    [Fact]
     public async Task SameEpochStaleStateVersionCannotStopOrCompleteAfterHeartbeat()
     {
         using TemporarySqliteDatabase database = new();
@@ -240,6 +265,8 @@ public sealed class SqliteSessionRuntimeStoreTests
         scope.Context.Users.Add(PersistenceFixtures.CreateUser());
         scope.Context.Games.Add(PersistenceFixtures.CreateGame());
         await scope.Context.SaveChangesAsync();
+        string gameDirectory = Path.Combine(database.RootPath, "games", "game_fixture");
+        GameStorageOwnerMarker.Initialize(gameDirectory, "game_fixture", "usr_fixture");
 
         foreach (string sessionId in sessionIds)
         {

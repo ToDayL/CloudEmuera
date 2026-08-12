@@ -10,6 +10,9 @@ public sealed class SqliteDatabaseOptions
 
     public int BusyTimeoutMilliseconds { get; init; } = PersistenceLimits.DefaultBusyTimeoutMilliseconds;
 
+    /// <summary>Space that must remain free on the DataRoot filesystem after reservations.</summary>
+    public long MinDataRootFreeBytes { get; init; } = 1L * 1024 * 1024 * 1024;
+
     public string MigrationsAssembly { get; init; } = typeof(CloudEmueraDbContext).Assembly.GetName().Name!;
 
     /// <summary>Optional operator-supplied, identity-bound plan for the legacy Game collapse.</summary>
@@ -36,6 +39,11 @@ public sealed class SqliteDatabaseOptions
         if (BusyTimeoutMilliseconds is < PersistenceLimits.MinimumBusyTimeoutMilliseconds or > PersistenceLimits.MaximumBusyTimeoutMilliseconds)
         {
             throw new SqlitePathException("Busy timeout is outside the supported range.");
+        }
+
+        if (MinDataRootFreeBytes < 0)
+        {
+            throw new SqlitePathException("The DataRoot free-space safety threshold cannot be negative.");
         }
 
         if (string.IsNullOrWhiteSpace(MigrationsAssembly))

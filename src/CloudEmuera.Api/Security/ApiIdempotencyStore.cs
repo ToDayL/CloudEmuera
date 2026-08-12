@@ -38,8 +38,10 @@ internal sealed class ApiIdempotencyStore(CloudEmueraDbContext db, TimeProvider 
         {
             if (!string.Equals(existing.RequestDigest, requestDigest, StringComparison.Ordinal))
                 throw new GameLibraryException(GameLibraryErrorCodes.IdempotencyConflict, "The idempotency key was already used for another request.");
-            if (string.Equals(existing.ResponseJson, "{}", StringComparison.Ordinal))
+            if (existing.Status == IdempotencyRecordStatus.InProgress)
                 throw new GameLibraryException(GameLibraryErrorCodes.Conflict, "The idempotent request is still in progress.");
+            if (existing.Status == IdempotencyRecordStatus.Failed)
+                throw new GameLibraryException(existing.ErrorCode ?? GameLibraryErrorCodes.Conflict, "The idempotent request previously failed.");
             T? replay = JsonSerializer.Deserialize<T>(existing.ResponseJson, JsonOptions);
             if (replay is null) throw new GameLibraryException(GameLibraryErrorCodes.Conflict, "The idempotency record is invalid.");
             return new(replay, existing.ResponseStatus, true);
@@ -51,9 +53,11 @@ internal sealed class ApiIdempotencyStore(CloudEmueraDbContext db, TimeProvider 
             Scope = scope,
             IdempotencyKey = key,
             RequestDigest = requestDigest,
+            Status = IdempotencyRecordStatus.InProgress,
             ResponseStatus = statusCode,
-            ResponseJson = "{}",
+            ResponseJson = "null",
             CreatedAt = now,
+            UpdatedAt = now,
             ExpiresAt = now.AddHours(24),
         };
         await using (Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction =
@@ -80,8 +84,10 @@ internal sealed class ApiIdempotencyStore(CloudEmueraDbContext db, TimeProvider 
                 if (raced is null || raced.ExpiresAt <= now) throw;
                 if (!string.Equals(raced.RequestDigest, requestDigest, StringComparison.Ordinal))
                     throw new GameLibraryException(GameLibraryErrorCodes.IdempotencyConflict, "The idempotency key was already used for another request.");
-                if (string.Equals(raced.ResponseJson, "{}", StringComparison.Ordinal))
+                if (raced.Status == IdempotencyRecordStatus.InProgress)
                     throw new GameLibraryException(GameLibraryErrorCodes.Conflict, "The idempotent request is still in progress.");
+                if (raced.Status == IdempotencyRecordStatus.Failed)
+                    throw new GameLibraryException(raced.ErrorCode ?? GameLibraryErrorCodes.Conflict, "The idempotent request previously failed.");
                 T? replay = JsonSerializer.Deserialize<T>(raced.ResponseJson, JsonOptions);
                 if (replay is null) throw new GameLibraryException(GameLibraryErrorCodes.Conflict, "The idempotency record is invalid.");
                 return new(replay, raced.ResponseStatus, true);
@@ -94,20 +100,43 @@ internal sealed class ApiIdempotencyStore(CloudEmueraDbContext db, TimeProvider 
             T value = await action().ConfigureAwait(false);
             string responseJson = JsonSerializer.Serialize(value, JsonOptions);
             string? resourceId = value is GameLibraryItem item ? item.Id : null;
+            DateTimeOffset completedAt = timeProvider.GetUtcNow();
             int changed = await db.IdempotencyRecords
-                .Where(row => row.ActorUserId == actor.UserId && row.Scope == scope && row.IdempotencyKey == key && row.RequestDigest == requestDigest && row.ResponseJson == "{}")
+                .Where(row => row.ActorUserId == actor.UserId && row.Scope == scope && row.IdempotencyKey == key && row.RequestDigest == requestDigest && row.Status == IdempotencyRecordStatus.InProgress)
                 .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(row => row.Status, IdempotencyRecordStatus.Succeeded)
                     .SetProperty(row => row.ResponseJson, responseJson)
-                    .SetProperty(row => row.ResourceId, resourceId), cancellationToken)
+                    .SetProperty(row => row.ResourceId, resourceId)
+                    .SetProperty(row => row.UpdatedAt, completedAt)
+                    .SetProperty(row => row.CompletedAt, completedAt), cancellationToken)
                 .ConfigureAwait(false);
             if (changed != 1) throw new GameLibraryException(GameLibraryErrorCodes.Conflict, "The idempotency record was lost.");
             return new(value, statusCode, false);
         }
-        catch
+        catch (Exception exception)
         {
-            await db.IdempotencyRecords
-                .Where(row => row.ActorUserId == actor.UserId && row.Scope == scope && row.IdempotencyKey == key && row.RequestDigest == requestDigest && row.ResponseJson == "{}")
-                .ExecuteDeleteAsync(CancellationToken.None).ConfigureAwait(false);
+            string errorCode = exception is GameLibraryException gameException
+                ? gameException.Code
+                : GameLibraryErrorCodes.Conflict;
+            try
+            {
+                await db.IdempotencyRecords
+                    .Where(row => row.ActorUserId == actor.UserId && row.Scope == scope && row.IdempotencyKey == key && row.RequestDigest == requestDigest && row.Status == IdempotencyRecordStatus.InProgress)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(row => row.Status, IdempotencyRecordStatus.Failed)
+                        .SetProperty(row => row.ResponseStatus, StatusCodes.Status409Conflict)
+                        .SetProperty(row => row.ResponseJson, "{}")
+                        .SetProperty(row => row.ErrorCode, errorCode)
+                        .SetProperty(row => row.UpdatedAt, timeProvider.GetUtcNow())
+                        .SetProperty(row => row.CompletedAt, timeProvider.GetUtcNow()), CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Preserve the original operation exception.  A later request
+                // will either observe the durable FAILED row or retry only if
+                // this completion write itself was unavailable.
+            }
             throw;
         }
     }

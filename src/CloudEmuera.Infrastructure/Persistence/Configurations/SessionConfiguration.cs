@@ -50,7 +50,7 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
         ConfigureTime(builder.Property(row => row.LastActivityAt), "last_activity_at");
         builder.Property(row => row.ClosedAt).HasColumnName("closed_at").HasColumnType("INTEGER").HasConversion(SqliteValueConverters.NullableDateTimeOffsetToUnixMilliseconds, SqliteValueConverters.NullableDateTimeOffsetComparer);
 
-        builder.HasIndex(row => new { row.OwnerUserId, row.CreatedAt }).HasDatabaseName("ix_sessions_owner_created").IsDescending(false, true);
+        builder.HasIndex(row => new { row.OwnerUserId, row.CreatedAt, row.Id }).HasDatabaseName("ix_sessions_owner_created").IsDescending(false, true, true);
         builder.HasIndex(row => new { row.OwnerUserId, row.State }).HasDatabaseName("ix_sessions_owner_state");
         builder.HasIndex(row => new { row.State, row.LastActivityAt }).HasDatabaseName("ix_sessions_state_activity");
         builder.HasIndex(row => row.GameId).HasDatabaseName("ix_sessions_game");

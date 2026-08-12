@@ -35,6 +35,9 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
             if (!Directory.Exists(root))
                 throw InvalidRoot("The SessionRoot directory does not exist.");
             EnsurePrivateDirectory(root);
+            SessionRootProtectedMarker protectedMarker = SessionRootProtectedMarkerStore.Read(databaseOptions, lease.Binding.SessionId);
+            ValidateProtectedMarker(lease, root, protectedMarker);
+            ValidateProtectedRuntimeManifest(lease, root);
             ValidateTree(root);
 
             string metadataPath = Path.Combine(root, SessionRootLayoutBuilder.BindingMetadataFileName);
@@ -51,6 +54,9 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
             if (!string.IsNullOrWhiteSpace(lease.Binding.SessionRootManifestDigest) &&
                 !string.Equals(lease.Binding.SessionRootManifestDigest, metadata.ManifestDigest, StringComparison.OrdinalIgnoreCase))
                 throw InvalidRoot("The SessionRoot manifest digest does not match its persisted binding.");
+            if (!string.Equals(protectedMarker.SourceManifestDigest, metadata.ManifestDigest, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(protectedMarker.MaterializedManifestDigest, metadata.ManifestDigest, StringComparison.OrdinalIgnoreCase))
+                throw InvalidRoot("The protected and runtime SessionRoot markers disagree.");
 
             string configurationPath = Path.Combine(root, "emuera.config");
             RuntimePathUtilities.ThrowIfReparsePoint(configurationPath, "emuera.config", RuntimeFileArea.Configuration, missingIsAllowed: false);
@@ -100,6 +106,47 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
                 RuntimePathUtilities.ThrowIfHardLink(file.FullName, Path.GetRelativePath(root, file.FullName), RuntimeFileArea.GameContent);
             else if (entry is not DirectoryInfo)
                 throw InvalidRoot("The SessionRoot contains a non-regular filesystem entry.");
+        }
+    }
+
+    private static void ValidateProtectedMarker(
+        SessionRuntimeLease lease,
+        string root,
+        SessionRootProtectedMarker marker)
+    {
+        if (marker.SchemaVersion != 1 ||
+            !string.Equals(marker.SessionId, lease.Binding.SessionId, StringComparison.Ordinal) ||
+            (!string.IsNullOrEmpty(lease.Binding.OwnerUserId) && !string.Equals(marker.OwnerUserId, lease.Binding.OwnerUserId, StringComparison.Ordinal)) ||
+            (!string.IsNullOrEmpty(lease.Binding.GameId) && !string.Equals(marker.GameId, lease.Binding.GameId, StringComparison.Ordinal)) ||
+            (lease.Binding.SourceContentRevision > 0 && marker.SourceContentRevision != lease.Binding.SourceContentRevision) ||
+            (!string.IsNullOrEmpty(lease.Binding.SourceContentDigest) && !string.Equals(marker.SourceContentDigest, lease.Binding.SourceContentDigest, StringComparison.OrdinalIgnoreCase)) ||
+            (!string.IsNullOrEmpty(lease.Binding.SessionRootManifestDigest) && !string.Equals(marker.MaterializedManifestDigest, lease.Binding.SessionRootManifestDigest, StringComparison.OrdinalIgnoreCase)) ||
+            marker.SaveLayout != (RuntimeSaveLayout)lease.Binding.SaveLayout ||
+            (!string.IsNullOrEmpty(lease.Binding.RuntimeVersion) && !string.Equals(marker.RuntimeVersion, lease.Binding.RuntimeVersion, StringComparison.Ordinal)))
+            throw InvalidRoot("The protected SessionRoot marker does not match the persisted binding.");
+
+        if (!SessionRootProtectedMarkerStore.SameRootIdentity(marker, root))
+            throw InvalidRoot("The SessionRoot device or inode changed.");
+    }
+
+    private static void ValidateProtectedRuntimeManifest(SessionRuntimeLease lease, string root)
+    {
+        string container = Directory.GetParent(root)?.FullName
+            ?? throw InvalidRoot("The SessionRoot container is missing.");
+        EnsurePrivateDirectory(container);
+        string metadataDirectory = Path.Combine(container, "metadata");
+        RuntimePathUtilities.ThrowIfReparsePoint(metadataDirectory, "protected-metadata", RuntimeFileArea.Configuration, missingIsAllowed: false);
+        EnsurePrivateDirectory(metadataDirectory);
+        string path = Path.Combine(metadataDirectory, "runtime-manifest.json");
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(path, "protected-runtime-manifest", RuntimeFileArea.Configuration);
+        RuntimePathUtilities.ThrowIfReparsePoint(path, "protected-runtime-manifest", RuntimeFileArea.Configuration, missingIsAllowed: false);
+        RuntimePathUtilities.ThrowIfHardLink(path, "protected-runtime-manifest", RuntimeFileArea.Configuration);
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+        if (!string.IsNullOrWhiteSpace(lease.Binding.RuntimeManifestJson))
+        {
+            using JsonDocument expected = JsonDocument.Parse(lease.Binding.RuntimeManifestJson);
+            if (!JsonElement.DeepEquals(document.RootElement, expected.RootElement))
+                throw InvalidRoot("The protected runtime manifest does not match its persisted binding.");
         }
     }
 

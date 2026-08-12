@@ -509,7 +509,7 @@ P1-01 已固定 `close_reason/closed_at` 列名；在可重开模型中，它们
 `STARTING` 时清空；历史由 `audit_events` 保留。若未来重命名列，必须使用新增 migration，不回改
 首版 migration。
 
-常用索引：`(owner_user_id, created_at DESC)`、`(state, last_activity_at)`、`(game_id)`、
+常用索引：`(owner_user_id, created_at DESC, id DESC)`、`(state, last_activity_at)`、`(game_id)`、
 `(game_id, source_content_digest)`。
 
 #### worker_leases
@@ -536,15 +536,58 @@ actor_user_id TEXT NOT NULL
 scope TEXT NOT NULL                -- SESSION_CREATE 等
 idempotency_key TEXT NOT NULL
 request_digest TEXT NOT NULL
+status TEXT NOT NULL              -- IN_PROGRESS | SUCCEEDED | FAILED
 response_status INTEGER NOT NULL
 response_json TEXT NOT NULL
 resource_id TEXT NULL
 created_at INTEGER NOT NULL
+updated_at INTEGER NOT NULL
+completed_at INTEGER NULL
+error_code TEXT NULL
 expires_at INTEGER NOT NULL
 PRIMARY KEY(actor_user_id, scope, idempotency_key)
 ```
 
 同一键但请求摘要不同返回 `409 IDEMPOTENCY_KEY_REUSED`。
+
+`IN_PROGRESS` 是可恢复的持久事实，不能用 `response_json = '{}'` 判断；`SUCCEEDED/FAILED` 保存
+版本化成功 DTO 或安全错误 DTO，terminal 记录至少保留客户端重试窗口。旧版本空 JSON 哨兵在
+`20260811175156_AddIdempotentSessionLifecycle` 前滚 migration 中转换为 `IN_PROGRESS`，其他旧响应
+转换为 `SUCCEEDED`。
+
+#### session_creation_operations
+
+```text
+id TEXT PK                         -- scop_...
+session_id TEXT UNIQUE NOT NULL FK sessions
+actor_user_id TEXT NOT NULL FK users
+status TEXT NOT NULL               -- PREPARED | COPYING | ROOT_PUBLISHED | COMMITTED | FAILED
+staging_path TEXT UNIQUE NOT NULL
+reserved_bytes INTEGER NOT NULL
+expected_file_count INTEGER NOT NULL
+expected_content_bytes INTEGER NOT NULL
+attempt_count INTEGER NOT NULL
+last_error_code TEXT NULL
+created_at INTEGER NOT NULL
+updated_at INTEGER NOT NULL
+completed_at INTEGER NULL
+state_version INTEGER NOT NULL
+```
+
+#### session_root_mutation_leases
+
+```text
+session_id TEXT PK FK sessions
+operation_id TEXT UNIQUE NOT NULL  -- mut_...
+actor_user_id TEXT NOT NULL FK users
+purpose TEXT NOT NULL               -- SAVE_IMPORT | SAVE_RENAME | SAVE_DELETE | SAVE_COPY
+acquired_at INTEGER NOT NULL
+expires_at INTEGER NOT NULL
+```
+
+停止态 mutation lease 与 `worker_leases` 在同一 `BEGIN IMMEDIATE` 互斥裁决；P1-06 只交付端口，
+存档 HTTP 用例留给 P1-09。创建 operation 和生命周期幂等命令由 API 启动/周期恢复器处理，不能只
+依赖 API 进程内任务。
 
 #### audit_events
 

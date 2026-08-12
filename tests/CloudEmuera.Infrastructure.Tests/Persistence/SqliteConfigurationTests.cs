@@ -37,7 +37,7 @@ public sealed class SqliteConfigurationTests
         Assert.DoesNotContain(entityTypes.SelectMany(entity => entity.GetProperties()), property => property.IsShadowProperty());
         Assert.All(entityTypes.SelectMany(entity => entity.GetForeignKeys()), foreignKey => Assert.NotEqual(DeleteBehavior.Cascade, foreignKey.DeleteBehavior));
         Assert.Equal(
-            14,
+            16,
             entityTypes.Count(entity => entity.GetTableName() is not null));
     }
 

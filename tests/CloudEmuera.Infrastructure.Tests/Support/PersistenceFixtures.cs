@@ -106,6 +106,7 @@ internal static class PersistenceFixtures
         ResponseStatus = 201,
         ResponseJson = "{}",
         CreatedAt = CreatedAt,
+        UpdatedAt = CreatedAt,
         ExpiresAt = CreatedAt.AddHours(1),
     };
 

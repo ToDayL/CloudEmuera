@@ -1,6 +1,8 @@
 using System.Text.Json;
 using CloudEmuera.Application.Sessions.Runtime;
+using CloudEmuera.Application.Games;
 using CloudEmuera.Domain.Sessions;
+using CloudEmuera.Infrastructure.Games;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Microsoft.Data.Sqlite;
@@ -22,6 +24,21 @@ public sealed class SqliteSessionRuntimeStore(
         CancellationToken cancellationToken = default)
     {
         ValidateOpenOptions(options);
+        string? gameId = await ReadSessionGameIdAsync(options.SessionId, cancellationToken).ConfigureAwait(false);
+        if (gameId is null)
+            return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.SessionNotFound);
+
+        FileStream gameMutationLock;
+        try
+        {
+            gameMutationLock = await AcquireGameMutationLockAsync(gameId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is DirectoryNotFoundException or FileNotFoundException or UnauthorizedAccessException or InvalidDataException or ArgumentException or GameLibraryException)
+        {
+            return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.InvalidConfiguration);
+        }
+        await using (gameMutationLock.ConfigureAwait(false))
+        {
         await using SqliteConnection connection = OpenConnection();
         await using CloudEmueraDbContext db = CreateContext(connection);
         await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, cancellationToken).ConfigureAwait(false);
@@ -31,8 +48,27 @@ public sealed class SqliteSessionRuntimeStore(
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.SessionNotFound);
         if (!session.State.CanOpen())
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.SessionNotOpenable);
+        GameStatus? gameStatus = await db.Games.AsNoTracking()
+            .Where(row => row.Id == session.GameId)
+            .Select(row => (GameStatus?)row.Status)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (gameStatus is null or GameStatus.Deleted)
+            return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.SessionNotOpenable);
+        if (gameStatus == GameStatus.Blocked)
+            return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.GameBlocked);
         if (await db.WorkerLeases.AnyAsync(row => row.SessionId == session.Id, cancellationToken).ConfigureAwait(false))
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.WorkerAlreadyLeased);
+        DateTimeOffset now = options.Now == default ? timeProvider.GetUtcNow() : options.Now;
+        // A mutation lease is a time-bounded fencing fact.  Reclaim only the
+        // exact expired row while holding the same immediate transaction used
+        // for open, so a live unexpired writer can never be stolen.
+        await db.SessionRootMutationLeases
+            .Where(row => row.SessionId == session.Id && row.ExpiresAt <= now)
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (await db.SessionRootMutationLeases.AnyAsync(row => row.SessionId == session.Id && row.ExpiresAt > now, cancellationToken).ConfigureAwait(false))
+            return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.MutationLeaseActive);
 
         QuotaProfileRow? quota = await db.Users
             .Where(user => user.Id == session.OwnerUserId)
@@ -52,7 +88,6 @@ public sealed class SqliteSessionRuntimeStore(
         if (session.WorkerEpoch == long.MaxValue)
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.InvalidConfiguration);
 
-        DateTimeOffset now = options.Now == default ? timeProvider.GetUtcNow() : options.Now;
         long nextEpoch = session.WorkerEpoch + 1;
         int nextStateVersion = checked(session.StateVersion + 1);
         int updated = await db.Sessions
@@ -113,8 +148,52 @@ public sealed class SqliteSessionRuntimeStore(
             ResolveManifestDigest(session.RuntimeManifestJson),
             session.RuntimeVersion,
             session.LastOutputSequence,
-            session.RuntimeManifestJson);
+            session.RuntimeManifestJson,
+            session.OwnerUserId,
+            session.GameId,
+            session.SourceContentRevision,
+            session.SourceContentDigest);
         return SessionRuntimeAcquireResult.Success(new SessionRuntimeLease(binding, session.OwnerUserId, session.State, now, lease.ExpiresAt));
+        }
+    }
+
+    private async Task<string?> ReadSessionGameIdAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        await using SqliteConnection connection = OpenConnection(SqliteConnectionAccess.ReadOnly);
+        await using CloudEmueraDbContext db = CreateContext(connection);
+        return await db.Sessions.AsNoTracking()
+            .Where(row => row.Id == sessionId)
+            .Select(row => row.GameId)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<FileStream> AcquireGameMutationLockAsync(string gameId, CancellationToken cancellationToken)
+    {
+        if (gameId.Length is < 6 or > 64 || !gameId.StartsWith("game_", StringComparison.Ordinal) ||
+            gameId.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('_' or '-')))
+            throw new ArgumentException("The Game ID is invalid.", nameof(gameId));
+        string root = Path.GetFullPath(databaseOptions.DataRoot);
+        string directory = Path.GetFullPath(Path.Combine(root, "games", gameId));
+        if (!RuntimePathUtilities.IsStrictlyWithin(directory, root) || !Directory.Exists(directory))
+            throw new DirectoryNotFoundException(directory);
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(directory, "game-storage");
+        GameStorageOwnerMarker.Validate(directory, gameId);
+
+        string path = Path.Combine(directory, ".mutation.lock");
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (DateTimeOffset.UtcNow < deadline)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     public async Task<SessionRuntimeWriteResult> RecordProcessIdentityAsync(
@@ -306,7 +385,11 @@ public sealed class SqliteSessionRuntimeStore(
                     ResolveManifestDigest(session.RuntimeManifestJson),
                     session.RuntimeVersion,
                     session.LastOutputSequence,
-                    session.RuntimeManifestJson),
+                    session.RuntimeManifestJson,
+                    session.OwnerUserId,
+                    session.GameId,
+                    session.SourceContentRevision,
+                    session.SourceContentDigest),
                 lease.Pid != null && lease.ProcessBootId != null && lease.ProcessStartTicks != null
                     ? new WorkerProcessIdentity(lease.Pid.Value, lease.ProcessBootId, lease.ProcessStartTicks.Value)
                     : null,
@@ -368,11 +451,13 @@ public sealed class SqliteSessionRuntimeStore(
     private static void ValidateReady(SessionRuntimeBinding binding, WorkerReadyInfo ready)
     {
         ArgumentNullException.ThrowIfNull(ready);
-        if (string.IsNullOrWhiteSpace(ready.RuntimeIntegrationVersion) || string.IsNullOrWhiteSpace(ready.UpstreamCommit) ||
-            !string.Equals(ready.RuntimeIntegrationVersion, RuntimeBaseline.CloudEmueraIntegrationVersion, StringComparison.Ordinal) ||
-            !string.Equals(ready.UpstreamCommit, RuntimeBaseline.UpstreamCommit, StringComparison.Ordinal) ||
-            ready.SaveLayout is < 0 or > 1 || ready.SaveLayout != binding.SaveLayout || ready.LastOutputSequence < 0 ||
-            !string.Equals(ready.CompatibilityProfile, binding.CompatibilityProfile, StringComparison.Ordinal))
+        bool valid = !string.IsNullOrWhiteSpace(ready.RuntimeIntegrationVersion) &&
+            !string.IsNullOrWhiteSpace(ready.UpstreamCommit) &&
+            string.Equals(ready.RuntimeIntegrationVersion, RuntimeBaseline.CloudEmueraIntegrationVersion, StringComparison.Ordinal) &&
+            string.Equals(ready.UpstreamCommit, RuntimeBaseline.UpstreamCommit, StringComparison.Ordinal) &&
+            ready.SaveLayout is >= 0 and <= 1 && ready.SaveLayout == binding.SaveLayout && ready.LastOutputSequence >= 0 &&
+            string.Equals(ready.CompatibilityProfile, binding.CompatibilityProfile, StringComparison.Ordinal);
+        if (!valid)
             throw new ArgumentException("The Worker ready event is invalid.", nameof(ready));
     }
 
@@ -408,8 +493,19 @@ public sealed class SqliteSessionRuntimeStore(
             using JsonDocument document = JsonDocument.Parse(manifestJson);
             foreach (string property in new[] { "saveLayout", "SaveLayout" })
             {
-                if (document.RootElement.TryGetProperty(property, out JsonElement value) && value.TryGetInt32(out int layout) && layout is 0 or 1)
+                if (!document.RootElement.TryGetProperty(property, out JsonElement value))
+                    continue;
+                if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int layout) && layout is 0 or 1)
                     return layout;
+                if (value.ValueKind == JsonValueKind.String)
+                {
+                    string? text = value.GetString();
+                    if (Enum.TryParse(text, ignoreCase: true, out RuntimeSaveLayout enumLayout) &&
+                        enumLayout is RuntimeSaveLayout.Root or RuntimeSaveLayout.SavDirectory)
+                        return (int)enumLayout;
+                    if (int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out layout) && layout is 0 or 1)
+                        return layout;
+                }
             }
         }
         catch (JsonException)
@@ -424,7 +520,16 @@ public sealed class SqliteSessionRuntimeStore(
         try
         {
             using JsonDocument document = JsonDocument.Parse(manifestJson);
-            foreach (string property in new[] { "manifestDigest", "ManifestDigest", "contentManifestDigest" })
+            foreach (string property in new[]
+            {
+                "manifestDigest",
+                "ManifestDigest",
+                "contentManifestDigest",
+                "sourceManifestDigest",
+                "SourceManifestDigest",
+                "materializedManifestDigest",
+                "MaterializedManifestDigest",
+            })
             {
                 if (document.RootElement.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.String)
                     return value.GetString() ?? string.Empty;

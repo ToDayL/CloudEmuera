@@ -49,4 +49,8 @@ public sealed class SessionRow
     public GameRow? Game { get; set; }
 
     public WorkerLeaseRow? WorkerLease { get; set; }
+
+    public SessionCreationOperationRow? CreationOperation { get; set; }
+
+    public SessionRootMutationLeaseRow? MutationLease { get; set; }
 }

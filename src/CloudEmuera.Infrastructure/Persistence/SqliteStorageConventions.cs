@@ -21,6 +21,8 @@ public static class SqliteStorageConventions
     public const string GameFilesTable = "game_files";
     public const string CompatibilityDiagnosticsTable = "compatibility_diagnostics";
     public const string GameContentCopyLeasesTable = "game_content_copy_leases";
+    public const string SessionCreationOperationsTable = "session_creation_operations";
+    public const string SessionRootMutationLeasesTable = "session_root_mutation_leases";
 }
 
 public static class PersistenceLimits
@@ -50,6 +52,8 @@ public static class PersistenceLimits
     public const int RequestIdMaxLength = 128;
     public const int ReasonCodeMaxLength = 128;
     public const int EmailMaxLength = 254;
+    public const int OperationIdMaxLength = 64;
+    public const int MutationPurposeMaxLength = 32;
 
     public const int DefaultBusyTimeoutMilliseconds = 5_000;
     public const int MinimumBusyTimeoutMilliseconds = 100;
@@ -96,6 +100,22 @@ public enum WorkerLeaseStatus
     Starting,
     Active,
     Stopping,
+}
+
+public enum IdempotencyRecordStatus
+{
+    InProgress,
+    Succeeded,
+    Failed,
+}
+
+public enum SessionCreationOperationStatus
+{
+    Prepared,
+    Copying,
+    RootPublished,
+    Committed,
+    Failed,
 }
 
 public enum AuditActorType

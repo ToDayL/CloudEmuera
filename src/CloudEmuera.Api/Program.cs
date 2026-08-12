@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.Features;
 using System.Security.Claims;
+using System.Text.Json;
 using CloudEmuera.Api.Bootstrap;
 using CloudEmuera.Api.Security;
 using CloudEmuera.Application.Auditing;
@@ -8,6 +9,7 @@ using CloudEmuera.Application.Identity;
 using CloudEmuera.Contracts;
 using CloudEmuera.Contracts.Identity;
 using CloudEmuera.Contracts.Games;
+using CloudEmuera.Contracts.Sessions;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Infrastructure.Games;
 using CloudEmuera.Infrastructure.Identity;
@@ -17,6 +19,8 @@ using CloudEmuera.Application.GamePackages;
 using CloudEmuera.Infrastructure.GamePackages;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
+using CloudEmuera.Application.Sessions;
+using CloudEmuera.Domain.Sessions;
 using CloudEmuera.Api.Workers;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -47,7 +51,11 @@ builder.Services.AddGrpc(grpcOptions =>
     grpcOptions.MaxReceiveMessageSize = CloudEmuera.Ipc.IpcLimits.MaxEnvelopeBytes;
     grpcOptions.MaxSendMessageSize = CloudEmuera.Ipc.IpcLimits.MaxEnvelopeBytes;
 });
-SqliteDatabaseOptions databaseOptions = new() { DataRoot = dataRoot };
+SqliteDatabaseOptions databaseOptions = new()
+{
+    DataRoot = dataRoot,
+    MinDataRootFreeBytes = builder.Configuration.GetValue<long?>("CloudEmuera:MinDataRootFreeBytes") ?? 1L * 1024 * 1024 * 1024,
+};
 builder.Services.AddSingleton(databaseOptions);
 builder.Services.AddScoped<CloudEmueraDbContext>(serviceProvider =>
 {
@@ -72,6 +80,17 @@ builder.Services.AddHostedService<WorkerManagerHostedService>();
 builder.Services.AddSingleton<ISessionRootRuntimeInspector, SessionRootRuntimeInspector>();
 builder.Services.AddSingleton<ISessionWorkerControl>(serviceProvider => serviceProvider.GetRequiredService<WorkerManager>());
 builder.Services.AddSingleton<SessionRuntimeCoordinator>();
+builder.Services.AddSingleton<ICurrentWorkerRouter>(serviceProvider => serviceProvider.GetRequiredService<WorkerManager>());
+builder.Services.AddSingleton<IWorkerOpenOptionsFactory, ApiWorkerOpenOptionsFactory>();
+builder.Services.AddSingleton<ISessionLifecycleExecutor, SessionLifecycleExecutor>();
+builder.Services.AddSingleton<ISessionRootMutationLeaseStore, SqliteSessionRootMutationLeaseStore>();
+builder.Services.AddSingleton<SqliteIdempotencyStore>();
+builder.Services.AddSingleton<ISessionApplicationService, SqliteSessionApplicationService>();
+builder.Services.AddSingleton<ISessionOperationRecovery>(serviceProvider =>
+    (ISessionOperationRecovery)serviceProvider.GetRequiredService<ISessionApplicationService>());
+builder.Services.AddSingleton<SessionOperationRecoveryReadiness>();
+builder.Services.AddSingleton<SessionCommandReadiness>();
+builder.Services.AddHostedService<SessionOperationRecoveryHostedService>();
 builder.Services.AddSingleton(new GamePackageStorageOptions { DataRoot = dataRoot });
 builder.Services.AddScoped<IGamePackageIngestionService, GamePackageIngestionService>();
 builder.Services.AddScoped<IGameLibraryService, GameLibraryService>();
@@ -161,12 +180,19 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("game-validate", context => RateLimitPartition.GetFixedWindowLimiter(
         context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 6, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("session-read", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 180, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
+    options.AddPolicy("session-write", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });
 builder.Services.AddAntiforgery(options => options.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks()
     .AddCheck<BootstrapHealthCheck>("identity_bootstrap", tags: ["ready"])
-    .AddCheck<WorkerRuntimeHealthCheck>("worker_runtime", tags: ["ready"]);
+    .AddCheck<WorkerRuntimeHealthCheck>("worker_runtime", tags: ["ready"])
+    .AddCheck<SessionOperationRecoveryHealthCheck>("session_operation_recovery", tags: ["ready"]);
 
 var app = builder.Build();
 if (!development)
@@ -483,6 +509,110 @@ games.MapPost("/{id}:activate", async (string id, HttpContext context, IAntiforg
     }, Results.Ok).ConfigureAwait(false);
 }).RequireRateLimiting("game-validate");
 
+var sessions = app.MapGroup("/api/v1/sessions").RequireAuthorization();
+sessions.MapPost("", async (HttpContext context, CreateSessionRequest? request, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, IAntiforgery antiforgery, ISessionApplicationService service, SessionCommandReadiness readiness) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    if (!readiness.IsReady) return ApiIdentity.Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", 503);
+    if (request is null) return ApiIdentity.Error("VALIDATION_FAILED", "请求体无效。", 400);
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
+    if (!ApiIdentity.TryIdempotencyKey(idempotencyKey, out string key)) return ApiIdentity.Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
+    try
+    {
+        SessionCommandResult result = await service.CreateAsync(actor, new CreateSessionCommand(request.GameId, request.Name, key), context.RequestAborted).ConfigureAwait(false);
+        return ApiIdentity.SessionCommand(context, result);
+    }
+    catch (SessionApplicationException exception)
+    {
+        return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
+    }
+}).RequireRateLimiting("session-write")
+  .Accepts<CreateSessionRequest>("application/json")
+  .Produces<SessionResponse>(StatusCodes.Status201Created)
+  .Produces<SessionResponse>(StatusCodes.Status202Accepted)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status409Conflict)
+  .Produces<ApiError>(StatusCodes.Status413PayloadTooLarge)
+  .Produces<ApiError>(StatusCodes.Status428PreconditionRequired)
+  .Produces<ApiError>(StatusCodes.Status429TooManyRequests)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
+sessions.MapGet("", async (string? gameId, string? state, string? cursor, int? limit, HttpContext context, ISessionApplicationService service) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    SessionState? parsedState = null;
+    if (!string.IsNullOrWhiteSpace(state))
+    {
+        if (!Enum.TryParse(state, ignoreCase: true, out SessionState value) || !Enum.IsDefined(value))
+            return ApiIdentity.Error(SessionErrorCodes.ValidationFailed, "Session state 无效。", 400);
+        parsedState = value;
+    }
+    try
+    {
+        SessionListPage page = await service.ListAsync(actor, new SessionListQuery(gameId, parsedState, cursor, limit ?? 50), context.RequestAborted).ConfigureAwait(false);
+        ApiIdentity.SetSessionPageETag(context, page);
+        return Results.Ok(ApiIdentity.ToResponse(page));
+    }
+    catch (SessionApplicationException exception)
+    {
+        return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
+    }
+}).RequireRateLimiting("session-read")
+  .Produces<SessionListResponse>(StatusCodes.Status200OK)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status401Unauthorized)
+  .Produces<ApiError>(StatusCodes.Status429TooManyRequests);
+
+sessions.MapGet("/{sessionId}", async (string sessionId, HttpContext context, ISessionApplicationService service) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    try
+    {
+        SessionView? view = await service.GetAsync(actor, sessionId, context.RequestAborted).ConfigureAwait(false);
+        if (view is null) return ApiIdentity.Error(SessionErrorCodes.SessionNotFound, "Session 不存在。", 404);
+        ApiIdentity.SetSessionETag(context, view);
+        return Results.Ok(ApiIdentity.ToResponse(view));
+    }
+    catch (SessionApplicationException exception)
+    {
+        return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
+    }
+}).RequireRateLimiting("session-read")
+  .Produces<SessionResponse>(StatusCodes.Status200OK)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status401Unauthorized)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status429TooManyRequests);
+
+sessions.MapPost("/{sessionId}:open", async (string sessionId, HttpContext context, JsonElement body, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, IAntiforgery antiforgery, ISessionApplicationService service, SessionCommandReadiness readiness) =>
+{
+    return await ApiIdentity.ExecuteSessionLifecycleAsync(context, sessionId, body, idempotencyKey, antiforgery, readiness, service.OpenAsync).ConfigureAwait(false);
+}).RequireRateLimiting("session-write")
+  .Accepts<JsonElement>("application/json")
+  .Produces<SessionResponse>(StatusCodes.Status200OK)
+  .Produces<SessionResponse>(StatusCodes.Status202Accepted)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status409Conflict)
+  .Produces<ApiError>(StatusCodes.Status428PreconditionRequired)
+  .Produces<ApiError>(StatusCodes.Status429TooManyRequests)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
+sessions.MapPost("/{sessionId}:close", async (string sessionId, HttpContext context, JsonElement body, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, IAntiforgery antiforgery, ISessionApplicationService service, SessionCommandReadiness readiness) =>
+{
+    return await ApiIdentity.ExecuteSessionLifecycleAsync(context, sessionId, body, idempotencyKey, antiforgery, readiness, service.CloseAsync).ConfigureAwait(false);
+}).RequireRateLimiting("session-write")
+  .Accepts<JsonElement>("application/json")
+  .Produces<SessionResponse>(StatusCodes.Status200OK)
+  .Produces<SessionResponse>(StatusCodes.Status202Accepted)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status409Conflict)
+  .Produces<ApiError>(StatusCodes.Status428PreconditionRequired)
+  .Produces<ApiError>(StatusCodes.Status429TooManyRequests)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
 app.MapFallback("/api/{**path}", () => ApiIdentity.Error("NOT_FOUND", "资源不存在。", StatusCodes.Status404NotFound));
 app.MapFallbackToFile("index.html");
 app.Run();
@@ -533,7 +663,8 @@ internal static class ValidatorAssemblyResolver
 
 internal static class ApiIdentity
 {
-    public static IResult Error(string code, string message, int status) => Results.Json(new ApiError(code, message, $"req_{Guid.CreateVersion7():N}"), statusCode: status);
+    public static IResult Error(string code, string message, int status) => Error(code, message, status, null);
+    public static IResult Error(string code, string message, int status, object? details) => Results.Json(new ApiError(code, message, $"req_{Guid.CreateVersion7():N}", details), statusCode: status);
     public static Task WriteErrorAsync(HttpContext context, string code, string message, int status)
     {
         context.Response.StatusCode = status;
@@ -552,6 +683,82 @@ internal static class ApiIdentity
     public static IResult GameActorError(HttpContext context) => Actor(context) is null
         ? Error("UNAUTHENTICATED", "需要登录。", StatusCodes.Status401Unauthorized)
         : Error("PASSWORD_CHANGE_REQUIRED", "请先修改密码。", StatusCodes.Status403Forbidden);
+
+    public static SessionResponse ToResponse(SessionView value) => new(
+        value.SchemaVersion,
+        value.Id,
+        value.Name,
+        new SessionGameResponse(value.Game.Id, value.Game.Name),
+        value.SourceContentDigest,
+        value.SourceContentRevision,
+        value.RuntimeVersion,
+        value.State.ToString().ToUpperInvariant(),
+        value.StateVersion,
+        value.WorkerEpoch,
+        value.WaitingForInput,
+        value.CreatedAt,
+        value.StartedAt,
+        value.LastActivityAt,
+        value.ClosedAt,
+        value.CloseReason);
+
+    public static SessionListResponse ToResponse(SessionListPage value) =>
+        new(value.Items.Select(ToResponse).ToArray(), value.NextCursor);
+
+    public static void SetSessionETag(HttpContext context, SessionView value) =>
+        context.Response.Headers.ETag = QuoteETag(value.StateVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    public static void SetSessionPageETag(HttpContext context, SessionListPage value)
+    {
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(value.Items.Select(item => new { item.Id, item.StateVersion, item.LastActivityAt }));
+        string digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        context.Response.Headers.ETag = QuoteETag($"sha256:{digest}");
+    }
+
+    public static IResult SessionCommand(HttpContext context, SessionCommandResult result)
+    {
+        if (!result.Succeeded)
+        {
+            SessionCommandFailure failure = result.Failure ?? new("SESSION_COMMAND_FAILED", "Session 操作失败。", 503);
+            return Error(failure.Code, failure.Message, failure.StatusCode, failure.Details);
+        }
+
+        SessionView value = result.Value!;
+        SetSessionETag(context, value);
+        context.Response.Headers.Location = $"/api/v1/sessions/{value.Id}";
+        SessionResponse response = ToResponse(value);
+        return result.StatusCode == StatusCodes.Status201Created
+            ? Results.Created($"/api/v1/sessions/{value.Id}", response)
+            : Results.Json(response, statusCode: result.StatusCode);
+    }
+
+    public static async Task<IResult> ExecuteSessionLifecycleAsync(
+        HttpContext context,
+        string sessionId,
+        JsonElement body,
+        string? idempotencyKey,
+        IAntiforgery antiforgery,
+        SessionCommandReadiness readiness,
+        Func<CurrentActor, SessionLifecycleCommand, CancellationToken, Task<SessionCommandResult>> operation)
+    {
+        if (GameActor(context) is not CurrentActor actor) return GameActorError(context);
+        if (!readiness.IsReady) return Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", StatusCodes.Status503ServiceUnavailable);
+        if (body.ValueKind != JsonValueKind.Object || body.EnumerateObject().Any())
+            return Error(SessionErrorCodes.ValidationFailed, "生命周期请求体必须是空 JSON 对象。", 400);
+        if (!await ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false))
+            return Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
+        if (!TryIdempotencyKey(idempotencyKey, out string key))
+            return Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
+        try
+        {
+            SessionCommandResult result = await operation(actor, new SessionLifecycleCommand(sessionId, key), context.RequestAborted).ConfigureAwait(false);
+            return SessionCommand(context, result);
+        }
+        catch (SessionApplicationException exception)
+        {
+            return Error(exception.Code, exception.Message, exception.StatusCode);
+        }
+    }
 
     public static async Task<IResult> GameResultAsync<T>(Func<Task<T>> action, Func<T, IResult> success)
     {
@@ -627,7 +834,12 @@ internal static class ApiIdentity
 
     public static bool TryIdempotencyKey(HttpRequest request, out string key)
     {
-        key = request.Headers["Idempotency-Key"].ToString().Trim();
+        return TryIdempotencyKey(request.Headers["Idempotency-Key"].ToString(), out key);
+    }
+
+    public static bool TryIdempotencyKey(string? value, out string key)
+    {
+        key = (value ?? string.Empty).Trim();
         return key.Length is > 0 and <= 256 && !key.Any(char.IsControl);
     }
 

@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
+using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V2;
@@ -129,7 +130,7 @@ public sealed class ApiControlPlaneIdentity
     public long ProcessStartTicks { get; }
 }
 
-public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl
+public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICurrentWorkerRouter
 {
     private readonly WorkerManagerOptions options;
     private readonly ILoggerFactory loggerFactory;
@@ -157,6 +158,22 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl
     public string ControlPlaneInstanceId => options.ControlPlaneInstanceId;
 
     public bool IsDraining => Volatile.Read(ref draining) != 0;
+
+    public Task<CurrentWorkerRoute?> GetCurrentAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (sync)
+        {
+            ApiWorkerSession? worker = sessions.Values.SingleOrDefault(item =>
+                string.Equals(item.Binding.SessionId, sessionId, StringComparison.Ordinal));
+            return Task.FromResult<CurrentWorkerRoute?>(worker is null
+                ? null
+                : new CurrentWorkerRoute(worker.RuntimeBinding, new ApiWorkerProcessHandle(worker)));
+        }
+    }
 
     public IReadOnlyCollection<ApiWorkerSession> Workers
     {
@@ -955,10 +972,13 @@ internal sealed class ApiWorkerProcessHandle(ApiWorkerSession session) : IWorker
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
             timeout,
             cancellationToken).ConfigureAwait(false);
+        RuntimeSaveLayout saveLayout = ready.Ready.SaveLayout == SaveLayout.Root
+            ? RuntimeSaveLayout.Root
+            : RuntimeSaveLayout.SavDirectory;
         WorkerReadyInfo result = new(
             ready.Ready.RuntimeIntegrationVersion,
             ready.Ready.UpstreamCommit,
-            (int)ready.Ready.SaveLayout,
+            (int)saveLayout,
             ready.Ready.LastOutputSequence,
             ready.Ready.CompatibilityProfile,
             ready.Ready.SessionRootManifestDigest);

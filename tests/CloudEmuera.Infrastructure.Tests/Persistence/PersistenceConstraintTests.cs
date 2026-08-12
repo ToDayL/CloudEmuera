@@ -180,10 +180,13 @@ public sealed class PersistenceConstraintTests
             Scope = "SESSION_CREATE",
             IdempotencyKey = "request-1",
             RequestDigest = "sha256:" + new string('c', 64),
+            Status = IdempotencyRecordStatus.Succeeded,
             ResponseStatus = 201,
             ResponseJson = "{}",
             CreatedAt = PersistenceFixtures.CreatedAt,
+            UpdatedAt = PersistenceFixtures.CreatedAt,
             ExpiresAt = PersistenceFixtures.CreatedAt.AddHours(1),
+            CompletedAt = PersistenceFixtures.CreatedAt,
         });
         await scope.Context.SaveChangesAsync();
     }

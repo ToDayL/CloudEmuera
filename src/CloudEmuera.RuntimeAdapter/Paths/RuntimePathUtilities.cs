@@ -122,6 +122,25 @@ public static partial class RuntimePathUtilities
         RuntimeFileArea? area = null,
         bool missingIsAllowed = true)
     {
+        // GameContentCopyLeaseStore exposes an already-open Linux directory
+        // through /proc/self/fd/N. The fd was opened with O_DIRECTORY and
+        // O_NOFOLLOW; treating that kernel-owned link as a normal path
+        // reparse point would force the materializer to reopen mutable
+        // Game.current by name and lose the copy-lease guarantee.
+        if (IsTrustedProcDirectoryFd(path))
+        {
+            if (!Directory.Exists(path))
+            {
+                throw new RuntimeFileAccessException(
+                    RuntimePathReasonCodes.EntryNotFound,
+                    "The trusted directory descriptor is no longer available.",
+                    logicalPath,
+                    area);
+            }
+
+            return;
+        }
+
         if (TryGetUnixEntryType(path, out UnixEntryType unixEntryType) &&
             unixEntryType == UnixEntryType.SymbolicLink)
         {
@@ -181,6 +200,9 @@ public static partial class RuntimePathUtilities
         string logicalPath,
         RuntimeFileArea? area = null)
     {
+        if (IsTrustedProcDirectoryFd(path))
+            return;
+
         string fullPath = Path.GetFullPath(path);
         var existingAncestors = new List<string>();
         DirectoryInfo? current = new DirectoryInfo(fullPath);
@@ -236,6 +258,33 @@ public static partial class RuntimePathUtilities
         catch (EntryPointNotFoundException)
         {
         }
+    }
+
+    private static bool IsTrustedProcDirectoryFd(string path)
+    {
+        if (!OperatingSystem.IsLinux())
+            return false;
+
+        string fullPath;
+        try { fullPath = Path.GetFullPath(path); }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException)
+        {
+            return false;
+        }
+
+        const string prefix = "/proc/self/fd/";
+        string descriptor = fullPath.StartsWith(prefix, StringComparison.Ordinal)
+            ? fullPath[prefix.Length..]
+            : string.Empty;
+        if (descriptor.Length == 0 || descriptor.Contains(Path.DirectorySeparatorChar) ||
+            !int.TryParse(descriptor, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int descriptorNumber) ||
+            descriptorNumber < 0)
+            return false;
+
+        // Only a live descriptor that currently resolves to a directory is
+        // eligible for the copy-lease fast path. A syntax-only exception would
+        // let an arbitrary /proc/self/fd/N value bypass reparse validation.
+        return Directory.Exists($"{prefix}{descriptorNumber.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
     }
 
     private static FileSystemInfo CreateFileSystemInfo(string path)

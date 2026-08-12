@@ -25,6 +25,8 @@ public sealed class CloudEmueraDbContext(DbContextOptions<CloudEmueraDbContext> 
     public DbSet<GameFileRow> GameFiles => Set<GameFileRow>();
     public DbSet<CompatibilityDiagnosticRow> CompatibilityDiagnostics => Set<CompatibilityDiagnosticRow>();
     public DbSet<GameContentCopyLeaseRow> GameContentCopyLeases => Set<GameContentCopyLeaseRow>();
+    public DbSet<SessionCreationOperationRow> SessionCreationOperations => Set<SessionCreationOperationRow>();
+    public DbSet<SessionRootMutationLeaseRow> SessionRootMutationLeases => Set<SessionRootMutationLeaseRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

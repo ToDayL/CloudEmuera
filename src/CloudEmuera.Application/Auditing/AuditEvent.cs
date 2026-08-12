@@ -20,4 +20,13 @@ public static class AuditActions
     public const string PasswordReset = "USER_PASSWORD_RESET";
     public const string GamePackageIngested = "GAME_PACKAGE_INGESTED";
     public const string GamePackageRejected = "GAME_PACKAGE_REJECTED";
+    public const string SessionCreateRequested = "SESSION_CREATE_REQUESTED";
+    public const string SessionCreated = "SESSION_CREATED";
+    public const string SessionCreateFailed = "SESSION_CREATE_FAILED";
+    public const string SessionOpenRequested = "SESSION_OPEN_REQUESTED";
+    public const string SessionOpened = "SESSION_OPENED";
+    public const string SessionOpenFailed = "SESSION_OPEN_FAILED";
+    public const string SessionCloseRequested = "SESSION_CLOSE_REQUESTED";
+    public const string SessionClosed = "SESSION_CLOSED";
+    public const string SessionCloseFailed = "SESSION_CLOSE_FAILED";
 }
