@@ -15,7 +15,10 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
-    <PackageVersion Include="System.Drawing.Common" Version="10.0.0" />
+    <!-- The pinned Emuera upstream is built around GDI+. Version 6 retains the
+         documented Unix opt-in needed by the isolated Linux Worker; later
+         releases hard-block non-Windows execution. -->
+    <PackageVersion Include="System.Drawing.Common" Version="6.0.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
   </ItemGroup>

@@ -13,12 +13,6 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
     private static readonly HashSet<string> UnsupportedHeadlessIdentifiers = new(StringComparer.OrdinalIgnoreCase)
     {
         "CALLSHARP", "GETKEY", "GETKEYTRIGGERED", "MOUSEX", "MOUSEY", "MOUSEB", "GETTEXTBOX", "SETTEXTBOX",
-        "GCREATED", "GWIDTH", "GHEIGHT", "GGETCOLOR", "GCREATE", "GCREATEFROMFILE", "GDISPOSE", "GCLEAR",
-        "GFILLRECTANGLE", "GDRAWSPRITE", "GSETCOLOR", "GDRAWG", "GDRAWGWITHMASK", "GSETBRUSH", "GSETFONT",
-        "GSETPEN", "GSAVE", "GLOAD", "GDRAWGWITHROTATE", "GDRAWTEXT", "GGETFONT", "GGETFONTSIZE",
-        "GGETFONTSTYLE", "GGETTEXTSIZE", "GGETBRUSH", "GGETPEN", "GGETPENWIDTH", "GDRAWLINE", "GDASHSTYLE",
-        "SPRITEGETCOLOR", "SPRITECREATE", "SPRITEDISPOSE", "SPRITEANIMECREATE", "SPRITEANIMEADDFRAME",
-        "SPRITEDISPOSEALL"
     };
     private readonly object sync = new();
     private readonly EmueraRuntimeOptions options;
@@ -311,7 +305,17 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 options.AudioPort,
                 cancellationToken,
                 name => sprites.TryGetValue(name, out SpriteDefinition? sprite)
-                    ? (sprite.Name, sprite.Width, sprite.Height)
+                    ? new RuntimeSpriteDefinition(
+                        sprite.AssetId,
+                        sprite.SourceX,
+                        sprite.SourceY,
+                        sprite.SourceWidth,
+                        sprite.SourceHeight,
+                        sprite.DestinationOffsetX,
+                        sprite.DestinationOffsetY,
+                        sprite.DestinationWidth,
+                        sprite.DestinationHeight,
+                        sprite.AnimationFrames)
                     : null,
                 options.UpstreamGateAcquired);
             bool initialized = session.InitializeAsync(options.Paths).GetAwaiter().GetResult();
@@ -343,8 +347,7 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 while (next < line.Length && char.IsWhiteSpace(line[next]))
                     next++;
                 bool invocation = next < line.Length && line[next] == '(';
-                if (invocation && (identifier.StartsWith("CBG", StringComparison.OrdinalIgnoreCase) ||
-                    UnsupportedHeadlessIdentifiers.Contains(identifier)))
+                if (invocation && UnsupportedHeadlessIdentifiers.Contains(identifier))
                 {
                     throw new NotSupportedException($"{identifier} is unavailable in the headless runtime.");
                 }
@@ -380,48 +383,153 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
 
     private ReadOnlyDictionary<string, SpriteDefinition> LoadSprites(CancellationToken cancellationToken)
     {
-        RuntimeFilePath spriteCsv = new(RuntimeFileArea.GameContent, "resources/sprites.csv");
-        if (!options.FileSystem.FileExists(spriteCsv, cancellationToken))
+        RuntimeFilePath resources = new(RuntimeFileArea.GameContent, "resources");
+        if (!options.FileSystem.DirectoryExists(resources, cancellationToken))
         {
             return new ReadOnlyDictionary<string, SpriteDefinition>(new Dictionary<string, SpriteDefinition>());
         }
 
         var result = new Dictionary<string, SpriteDefinition>(StringComparer.OrdinalIgnoreCase);
-        string content = ReadText(spriteCsv, SelectEncoding(), cancellationToken);
-        foreach (string rawLine in content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
+        foreach (RuntimeFilePath spriteCsv in EnumerateResourceCsvFiles(resources, cancellationToken))
         {
-            if (string.IsNullOrWhiteSpace(rawLine))
+            string? currentAnimationName = null;
+            string relative = spriteCsv.RelativePath.Value;
+            string directory = relative.Contains('/')
+                ? relative[..(relative.LastIndexOf('/') + 1)]
+                : "resources/";
+            string content = ReadText(spriteCsv, SelectEncoding(), cancellationToken);
+            foreach (string rawLine in content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
             {
-                continue;
-            }
+                string trimmed = rawLine.Trim();
+                if (trimmed.Length == 0 || trimmed.StartsWith(';'))
+                    continue;
 
-            string[] fields = rawLine.Split(',');
-            if (fields.Length != 6 ||
-                !int.TryParse(fields[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int x) ||
-                !int.TryParse(fields[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int y) ||
-                !int.TryParse(fields[4], NumberStyles.None, CultureInfo.InvariantCulture, out int width) ||
-                !int.TryParse(fields[5], NumberStyles.None, CultureInfo.InvariantCulture, out int height) || width <= 0 || height <= 0)
-            {
-                throw new InvalidDataException("resources/sprites.csv contains an invalid sprite row.");
-            }
+                string[] fields = trimmed.Split(',');
+                if (fields.Length < 2)
+                    continue;
+                string name = fields[0].Trim().ToUpperInvariant();
+                string filename = fields[1].Trim();
+                if (filename.Equals("ANIME", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (currentAnimationName is not null && result[currentAnimationName].AnimationFrames.Length == 0)
+                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an animated Sprite without frames.");
+                    if (fields.Length < 4 || !TryInt(fields[2], out int animeWidth) || !TryInt(fields[3], out int animeHeight) ||
+                        animeWidth <= 0 || animeHeight <= 0 || animeWidth > 8_192 || animeHeight > 8_192)
+                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid animated Sprite declaration.");
+                    if (!result.TryAdd(name, new SpriteDefinition(
+                        name, string.Empty, null, 0, 0, animeWidth, animeHeight, 0, 0, animeWidth, animeHeight, [])))
+                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains a duplicate Sprite name.");
+                    currentAnimationName = name;
+                    continue;
+                }
+                if (name.Length == 0 || filename.Length == 0)
+                    continue;
 
-            string name = fields[0].Trim();
-            string filename = fields[1].Trim();
-            RuntimeFilePath imagePath = new(RuntimeFileArea.GameContent, $"resources/{filename}");
-            RuntimeImageMetadata metadata = options.ImagePort.Load(imagePath, cancellationToken);
-            if (x < 0 || y < 0 || x > metadata.Width - width || y > metadata.Height - height)
-            {
-                throw new InvalidDataException("A sprite rectangle is outside its source image.");
-            }
+                RuntimeFilePath imagePath = new(RuntimeFileArea.GameContent, directory + filename);
+                RuntimeImageMetadata metadata = options.ImagePort.Load(imagePath, cancellationToken);
+                int x = 0;
+                int y = 0;
+                int width = metadata.Width;
+                int height = metadata.Height;
+                if (fields.Length >= 6 &&
+                    (!TryInt(fields[2], out x) || !TryInt(fields[3], out y) ||
+                     !TryInt(fields[4], out width) || !TryInt(fields[5], out height)))
+                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite rectangle.");
+                if (width <= 0 || height <= 0 || x < 0 || y < 0 || x > metadata.Width - width || y > metadata.Height - height)
+                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an out-of-bounds Sprite rectangle.");
 
-            if (!result.TryAdd(name, new SpriteDefinition(name, imagePath, width, height)))
-            {
-                throw new InvalidDataException("resources/sprites.csv contains a duplicate sprite name.");
+                int offsetX = 0;
+                int offsetY = 0;
+                if (fields.Length >= 8 && (!TryInt(fields[6], out offsetX) || !TryInt(fields[7], out offsetY)))
+                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite offset.");
+                int destinationWidth = width;
+                int destinationHeight = height;
+                if (fields.Length >= 11 && (!TryInt(fields[9], out destinationWidth) || !TryInt(fields[10], out destinationHeight)))
+                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite destination size.");
+                if (destinationWidth <= 0 || destinationHeight <= 0)
+                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains a non-positive Sprite destination size.");
+
+                if (currentAnimationName is not null && name.Equals(currentAnimationName, StringComparison.OrdinalIgnoreCase))
+                {
+                    int delay = 1_000;
+                    if (fields.Length >= 9 && (!TryInt(fields[8], out delay) || delay <= 0))
+                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid animated Sprite delay.");
+                    SpriteDefinition animation = result[currentAnimationName];
+                    if (animation.AnimationFrames.Length >= ConsoleContractLimits.Default.MaxSpriteFrames)
+                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains too many animated Sprite frames.");
+                    int clippedLeft = Math.Max(0, offsetX);
+                    int clippedTop = Math.Max(0, offsetY);
+                    int clippedRight = Math.Min(animation.DestinationWidth, checked(offsetX + width));
+                    int clippedBottom = Math.Min(animation.DestinationHeight, checked(offsetY + height));
+                    if (clippedRight <= clippedLeft || clippedBottom <= clippedTop)
+                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an animated Sprite frame outside its canvas.");
+                    int clippedSourceX = checked(x + clippedLeft - offsetX);
+                    int clippedSourceY = checked(y + clippedTop - offsetY);
+                    int clippedWidth = clippedRight - clippedLeft;
+                    int clippedHeight = clippedBottom - clippedTop;
+                    result[currentAnimationName] = animation with
+                    {
+                        AssetId = animation.AssetId.Length == 0 ? metadata.ResourceId : animation.AssetId,
+                        Path = animation.AssetId.Length == 0 ? imagePath : animation.Path,
+                        SourceX = animation.AssetId.Length == 0 ? x : animation.SourceX,
+                        SourceY = animation.AssetId.Length == 0 ? y : animation.SourceY,
+                        SourceWidth = animation.AssetId.Length == 0 ? width : animation.SourceWidth,
+                        SourceHeight = animation.AssetId.Length == 0 ? height : animation.SourceHeight,
+                        AnimationFrames = animation.AnimationFrames.Append(new RuntimeSpriteFrame(
+                            metadata.ResourceId, clippedSourceX, clippedSourceY, clippedWidth, clippedHeight,
+                            clippedLeft, clippedTop, delay)).ToArray()
+                    };
+                    continue;
+                }
+
+                if (currentAnimationName is not null && result[currentAnimationName].AnimationFrames.Length == 0)
+                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an animated Sprite without frames.");
+                currentAnimationName = null;
+
+                if (!result.TryAdd(name, new SpriteDefinition(
+                    name,
+                    metadata.ResourceId,
+                    imagePath,
+                    x,
+                    y,
+                    width,
+                    height,
+                    offsetX,
+                    offsetY,
+                    destinationWidth,
+                    destinationHeight,
+                    [])))
+                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains a duplicate Sprite name.");
             }
+            if (currentAnimationName is not null && result[currentAnimationName].AnimationFrames.Length == 0)
+                throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an animated Sprite without frames.");
         }
 
         return new ReadOnlyDictionary<string, SpriteDefinition>(result);
     }
+
+    private List<RuntimeFilePath> EnumerateResourceCsvFiles(RuntimeFilePath root, CancellationToken cancellationToken)
+    {
+        var result = new List<RuntimeFilePath>();
+        var pending = new Queue<RuntimeFilePath>();
+        pending.Enqueue(root);
+        while (pending.Count != 0)
+        {
+            RuntimeFilePath directory = pending.Dequeue();
+            foreach (RuntimeFileEntry entry in options.FileSystem.Enumerate(directory, cancellationToken))
+            {
+                if (entry.Kind == RuntimeFileEntryKind.Directory)
+                    pending.Enqueue(entry.Path);
+                else if (entry.Path.LogicalPath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+                    result.Add(entry.Path);
+            }
+        }
+        result.Sort((left, right) => StringComparer.Ordinal.Compare(left.LogicalPath, right.LogicalPath));
+        return result;
+    }
+
+    private static bool TryInt(string value, out int result) =>
+        int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
 
     private string ReadText(RuntimeFilePath path, Encoding encoding, CancellationToken cancellationToken)
     {
@@ -551,7 +659,19 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         Disposed
     }
 
-    private sealed record SpriteDefinition(string Name, RuntimeFilePath Path, int Width, int Height);
+    private sealed record SpriteDefinition(
+        string Name,
+        string AssetId,
+        RuntimeFilePath? Path,
+        int SourceX,
+        int SourceY,
+        int SourceWidth,
+        int SourceHeight,
+        int DestinationOffsetX,
+        int DestinationOffsetY,
+        int DestinationWidth,
+        int DestinationHeight,
+        RuntimeSpriteFrame[] AnimationFrames);
 
     private sealed class InitializedRuntime(UpstreamRuntimeSession session) : IDisposable
     {

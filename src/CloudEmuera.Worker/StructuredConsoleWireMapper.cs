@@ -285,8 +285,27 @@ public static class StructuredConsoleWireMapper
                     Frame = sprite.Frame,
                     ZIndex = sprite.ZIndex,
                     Opacity = sprite.Opacity,
-                    AltText = sprite.AltText ?? string.Empty
+                    AltText = sprite.AltText ?? string.Empty,
+                    HasHover = sprite.HoverAssetId is not null,
+                    HasMapping = sprite.MappingAssetId is not null
                 };
+                if (sprite.HoverAssetId is { } hoverAsset && sprite.HoverSourceRect is { } hoverRect)
+                {
+                    result.Sprite.HoverAssetId = hoverAsset.Value;
+                    result.Sprite.HoverSourceRect = ToProto(hoverRect);
+                }
+                if (sprite.MappingAssetId is { } mappingAsset && sprite.MappingSourceRect is { } mappingRect)
+                {
+                    result.Sprite.MappingAssetId = mappingAsset.Value;
+                    result.Sprite.MappingSourceRect = ToProto(mappingRect);
+                }
+                result.Sprite.AnimationFrames.AddRange(sprite.AnimationFrames.Select(frame => new W.SpriteAnimationFrame
+                {
+                    AssetId = frame.AssetId.Value,
+                    SourceRect = ToProto(frame.SourceRect),
+                    Offset = ToProto(frame.Offset),
+                    DurationMilliseconds = frame.DurationMilliseconds
+                }));
                 break;
             case R.ShapeNode shape:
                 result.Shape = new W.ShapeNode
@@ -346,7 +365,16 @@ public static class StructuredConsoleWireMapper
                 node.Sprite.Frame,
                 node.Sprite.ZIndex,
                 node.Sprite.Opacity,
-                string.IsNullOrEmpty(node.Sprite.AltText) ? null : node.Sprite.AltText),
+                string.IsNullOrEmpty(node.Sprite.AltText) ? null : node.Sprite.AltText,
+                node.Sprite.HasHover ? new R.ConsoleAssetId(node.Sprite.HoverAssetId) : null,
+                node.Sprite.HasHover ? FromProto(node.Sprite.HoverSourceRect) : null,
+                node.Sprite.HasMapping ? new R.ConsoleAssetId(node.Sprite.MappingAssetId) : null,
+                node.Sprite.HasMapping ? FromProto(node.Sprite.MappingSourceRect) : null,
+                node.Sprite.AnimationFrames.Select(frame => new R.SpriteAnimationFrame(
+                    new R.ConsoleAssetId(frame.AssetId),
+                    FromProto(frame.SourceRect),
+                    FromProto(frame.Offset),
+                    frame.DurationMilliseconds))),
             W.ConsoleNode.KindOneofCase.Shape => new R.ShapeNode(
                 FromProto(node.Shape.Shape),
                 FromProto(node.Shape.Bounds),
@@ -393,6 +421,13 @@ public static class StructuredConsoleWireMapper
                     Opacity = sprite.Opacity,
                     Frame = sprite.Frame
                 };
+                result.Sprite.AnimationFrames.AddRange(sprite.AnimationFrames.Select(frame => new W.SpriteAnimationFrame
+                {
+                    AssetId = frame.AssetId.Value,
+                    SourceRect = ToProto(frame.SourceRect),
+                    Offset = ToProto(frame.Offset),
+                    DurationMilliseconds = frame.DurationMilliseconds
+                }));
                 break;
             case R.ShapeDrawable shape:
                 result.Shape = new W.ShapeDrawable
@@ -421,6 +456,20 @@ public static class StructuredConsoleWireMapper
                     Opacity = island.Opacity
                 };
                 break;
+            case R.RasterDrawable raster:
+                result.Raster = new W.RasterDrawable
+                {
+                    DrawableId = raster.DrawableId,
+                    PngData = Google.Protobuf.ByteString.CopyFrom(raster.PngData.ToArray()),
+                    Bounds = ToProto(raster.Bounds),
+                    ZIndex = raster.ZIndex,
+                    Opacity = raster.Opacity,
+                    HasHover = raster.HoverPngData is not null,
+                    HitTestMap = raster.HitTestMap
+                };
+                if (raster.HoverPngData is { } hoverPngData)
+                    result.Raster.HoverPngData = Google.Protobuf.ByteString.CopyFrom(hoverPngData.ToArray());
+                break;
             default:
                 throw new InvalidDataException("The runtime drawable is outside the structured protocol.");
         }
@@ -440,7 +489,12 @@ public static class StructuredConsoleWireMapper
                 FromProto(drawable.Sprite.Bounds),
                 drawable.Sprite.ZIndex,
                 drawable.Sprite.Opacity,
-                drawable.Sprite.Frame),
+                drawable.Sprite.Frame,
+                drawable.Sprite.AnimationFrames.Select(frame => new R.SpriteAnimationFrame(
+                    new R.ConsoleAssetId(frame.AssetId),
+                    FromProto(frame.SourceRect),
+                    FromProto(frame.Offset),
+                    frame.DurationMilliseconds))),
             W.CanvasDrawable.KindOneofCase.Shape => new R.ShapeDrawable(
                 drawable.Shape.DrawableId,
                 FromProto(drawable.Shape.Shape),
@@ -456,6 +510,14 @@ public static class StructuredConsoleWireMapper
                 FromProto(drawable.HtmlIsland.Bounds),
                 drawable.HtmlIsland.ZIndex,
                 drawable.HtmlIsland.Opacity),
+            W.CanvasDrawable.KindOneofCase.Raster => new R.RasterDrawable(
+                drawable.Raster.DrawableId,
+                drawable.Raster.PngData.ToByteArray(),
+                FromProto(drawable.Raster.Bounds),
+                drawable.Raster.ZIndex,
+                drawable.Raster.Opacity,
+                drawable.Raster.HasHover ? drawable.Raster.HoverPngData.ToByteArray() : null,
+                drawable.Raster.HitTestMap),
             _ => throw new InvalidDataException("The structured drawable has no known payload.")
         };
     }

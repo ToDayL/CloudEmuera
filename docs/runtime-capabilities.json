@@ -81,10 +81,10 @@
       "category": "image",
       "classification": "Supported",
       "reasonCode": "MANIFEST_ASSET_SPRITE_GEOMETRY",
-      "adapterTypes": ["SpriteNode", "ImageNode", "RuntimeImageMetadataPort"],
-      "ipcTypes": ["SpriteNode", "ImageNode", "Rect"],
-      "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip"],
-      "testNames": ["HeadlessRuntimeFixtureTests.TranscriptProjectionDoesNotInventImageText", "StructuredConsoleWireMapperTests.SnapshotMapperPreservesScrollbackSceneMediaAndPrompt"],
+      "adapterTypes": ["SpriteNode", "SpriteAnimationFrame", "ImageNode", "RuntimeImageMetadataPort"],
+      "ipcTypes": ["SpriteNode", "SpriteAnimationFrame", "ImageNode", "Rect"],
+      "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip", "animated-sprite-csv"],
+      "testNames": ["HeadlessRuntimeFixtureTests.TranscriptProjectionDoesNotInventImageText", "HeadlessRuntimeFixtureTests.AnimatedSpriteCsvPublishesAllFramesWithTiming", "StructuredConsoleWireMapperTests.SnapshotMapperPreservesScrollbackSceneMediaAndPrompt"],
       "securityNotes": ["Only Session manifest asset IDs and validated source/destination rectangles cross the protocol."]
     },
     {
@@ -129,15 +129,15 @@
     {
       "capabilityId": "console.cbg-dynamic",
       "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
-      "upstreamEntrypoints": ["HeadlessEmueraConsole.CBG_SetGraphics", "HeadlessEmueraConsole.CBG_SetImage", "HeadlessEmueraConsole.CBG_SetButtonMap", "HeadlessEmueraConsole.CBG_SetButtonImage", "CBG_SETGRAPHICS", "CBG_SETIMAGE", "CBG_SETBUTTONMAP", "CBG_SETBUTTONIMAGE"],
+      "upstreamEntrypoints": ["HeadlessEmueraConsole.CBG_SetGraphics", "HeadlessEmueraConsole.CBG_SetImage", "HeadlessEmueraConsole.CBG_SetButtonMap", "HeadlessEmueraConsole.CBG_SetButtonImage", "GCREATE", "GCREATEFROMFILE", "GLOAD", "GSAVE", "GCLEAR", "GSETCOLOR", "GGETCOLOR", "GFILLRECTANGLE", "GDRAWSPRITE", "GDRAWG", "GDRAWGWITHMASK", "GDRAWTEXT", "CBGSETG", "CBGSETSPRITE", "CBGSETBMAPG", "CBGSETBUTTONSPRITE"],
       "category": "drawing",
-      "classification": "Blocked",
-      "reasonCode": "UNSUPPORTED_DYNAMIC_GRAPHICS",
-      "adapterTypes": ["EmueraRuntimeHost"],
-      "ipcTypes": ["RuntimeFailed", "WorkerStopped"],
-      "fixtureScenarios": ["blocked-dynamic-graphics"],
-      "testNames": ["HeadlessRuntimeFixtureTests.GraphicsFunctionFailsClosedBeforeAnyGdiObjectCanBeCreated"],
-      "securityNotes": ["Dynamic bitmap ownership is not silently discarded; execution fails closed until a bounded surface resolver is provided."]
+      "classification": "Supported",
+      "reasonCode": "BOUNDED_DYNAMIC_RASTER_SURFACE",
+      "adapterTypes": ["RasterDrawable", "SpriteDrawable", "HitRegion", "ConsoleStateStore"],
+      "ipcTypes": ["RasterDrawable", "SpriteDrawable", "HitRegion", "UpsertDrawable"],
+      "fixtureScenarios": ["dynamic-graphics-erb", "dynamic-graphics-raster"],
+      "testNames": ["HeadlessRuntimeFixtureTests.DynamicGraphicsRunsThroughPinnedInterpreterAndPublishesScene", "HeadlessRuntimeFixtureTests.DynamicGraphicsPublishesBoundedBrowserRasterDrawable", "HeadlessRuntimeFixtureTests.GraphicsSaveLoadRoundTripsAndCreateFromFileRejectsTraversal", "StructuredConsoleContractTests.RasterDrawableRejectsNonPngAndCombinedPayloadOverLimit", "StructuredConsoleWireMapperTests.SnapshotMapperPreservesScrollbackSceneMediaAndPrompt"],
+      "securityNotes": ["Dynamic surfaces are rasterized in the isolated Worker and cross the boundary only as size-limited PNG payloads.", "Surface dimensions, combined normal/hover bytes, scene count and IPC envelope size are bounded."]
     },
     {
       "capabilityId": "input.all-types",
@@ -233,7 +233,7 @@
     {
       "capabilityId": "host.external-capabilities",
       "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
-      "upstreamEntrypoints": ["CALLSHARP", "UPDATECHECK", "GETTEXTBOX", "GCREATED", "GCREATEFROMFILE", "GDISPOSE", "GDRAWSPRITE", "GDRAWG", "GDRAWGWITHMASK", "GDRAWTEXT", "GGETTEXTSIZE", "SPRITECREATE", "SPRITEANIMECREATE", "SPRITEDISPOSEALL"],
+      "upstreamEntrypoints": ["CALLSHARP", "UPDATECHECK", "GETTEXTBOX"],
       "category": "host",
       "classification": "Blocked",
       "reasonCode": "SECURITY_BOUNDARY",
@@ -241,7 +241,7 @@
       "ipcTypes": ["RuntimeFailed", "WorkerStopped"],
       "fixtureScenarios": ["blocked-host-capability"],
       "testNames": ["HeadlessRuntimeFixtureTests.UnsupportedInstructionFailsClosedDuringInitialization"],
-      "securityNotes": ["DLL/plugin execution, arbitrary network, desktop input and unbounded graphics are rejected before or during execution."]
+      "securityNotes": ["DLL/plugin execution, arbitrary network and unavailable desktop host input are rejected before or during execution."]
     },
     {
       "capabilityId": "lifecycle.runtime",

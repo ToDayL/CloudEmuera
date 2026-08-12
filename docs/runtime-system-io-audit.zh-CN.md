@@ -25,12 +25,12 @@ Session 管理方先通过 `SessionRootLayoutBuilder` 按发布 manifest 将完�
 | CSV/ERB 预载 | `Preload`、`EraStreamReader`、`EncodingHandler` | 只读取 SessionRoot 内的 `CSV`、`ERB`；源与目标不共享 inode |
 | Loader 枚举 | `Config.GetFiles`、`ErbLoader`、`ErhLoader`、`ConstantData` | 根固定为 SessionRoot；不存在 Game 库内容路径 |
 | 诊断源码行 | `Process` 的 `File.ReadLines` | 文件名来自已加载 label，根固定为 SessionRoot 内的 `ERB` 或 `CSV` |
-| 资源图片 | `AppContents.LoadContents` | headless 编译路径禁用；PNG/Sprite 由 `IRuntimeImagePort` 解析 metadata |
+| 资源图片 | `AppContents.LoadContents` | 只加载已复制到私有 SessionRoot 的资源；`IRuntimeImagePort` 先解析并限制 PNG metadata，结构化协议仅发布内容摘要 assetId 与裁剪参数 |
 | 音频 | `PLAYSOUND`/`PLAYBGM` 的宿主文件探测 | headless 编译路径禁用探测，统一调用 `IRuntimeAudioPort` |
 | data/ERD | `VariableEvaluator` 的固定文件名 | `Program.DatDir` 指向 SessionRoot/tmp；不成为第二套存档提交目录 |
 | 文本文件函数 | `SAVETEXT`、`LOADTEXT`、`ENUMFILES`、`EXISTFILE` | 相对路径仍受上游和 Runtime 路径边界约束；绝对路径不作为宿主入口 |
 | 原生存档 | `save*.sav`、`global.sav` 相关调用 | `UseSaveFolder:NO` 写 SessionRoot 根；`YES` 写 `SessionRoot/sav/`；不复制/提交 |
-| 动态 Graphics/CBG | `GCREATE*`、`GLOAD`、`GSAVE`、`GDRAW*`、`CBG*` 等 | 初始化 capability gate 明确返回 `UnsupportedCapability`，不会实例化 Bitmap/Graphics |
+| 动态 Graphics/CBG | `GCREATE*`、`GLOAD`、`GSAVE`、`GCLEAR`、`GSET*`、`GDRAW*`、`CBG*` 等 | ADR-0019 在 Worker 内以 libgdiplus 执行，并以尺寸/总内存/PNG payload/scene/envelope 上限约束；GLOAD/GSAVE 固定访问 SessionRoot 原生编号文件，GCREATEFROMFILE 只允许 SessionRoot/resources 内规范相对路径 |
 | 桌面/插件 | WinForms Console、Hotkey、Rikaichan、Clipboard、PluginManager、WMP、NAudio | 不进入 headless 编译项目，或由 inert stub/fail-closed 边界替代 |
 
 ## 自动化证明
@@ -39,8 +39,10 @@ Session 管理方先通过 `SessionRootLayoutBuilder` 按发布 manifest 将完�
   由 ERB 原生 writer 保存，再由新 Host 的 reader 加载并通过 EVENTLOAD 输出值。
 - `SessionRootLayoutBuilderTests`：完整 manifest 复制、未知目录保留、原子 staging、幂等
   保留修改/存档、配额和链接/硬链接/FIFO fail closed。
-- `GraphicsFunctionFailsClosedBeforeAnyGdiObjectCanBeCreated`：动态 Graphics 在初始化期
-  返回稳定 Unsupported 结果。
+- `DynamicGraphicsRunsThroughPinnedInterpreterAndPublishesScene`：真实 ERB 经固定解释器执行
+  `GCREATE → GCLEAR → CBGSETG` 并发布有界 PNG scene；动画 Sprite 同时覆盖 PRINT_IMG 与 CBG。
+- `RasterDrawableRejectsNonPngAndCombinedPayloadOverLimit`：伪 PNG 与 normal/hover 合计超限均在
+  RuntimeAdapter 边界确定性拒绝。
 - `UnsupportedIdentifierInPrintedTextIsNotMisclassified`：capability gate 不会把普通输出
   文本误判成函数调用。
 - `HeadlessAssemblyDoesNotReferenceDesktopFrameworks`：正式与上游 headless 程序集均不

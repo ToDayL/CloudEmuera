@@ -5387,7 +5387,9 @@ internal static partial class FunctionMethodCreator
 			if (!g.IsCreated)
 				return -1;
 			Point p = ReadPoint(Name, exm, arguments, 1);
-			if (p.X < 0 || p.X >= g.Width || p.X < 0 || p.Y >= g.Height)
+			// CloudEmuera modification (ADR-0019): validate Y's lower bound instead
+			// of checking X twice, so malformed ERB cannot escape as a GDI+ exception.
+			if (p.X < 0 || p.X >= g.Width || p.Y < 0 || p.Y >= g.Height)
 				return -1;
 			Color c = g.GGetColor(p.X, p.Y);
 			//Color.ToArgb()はInt32の負の値をとることがあり、Int64にうまく変換できない?（と思ったが気のせいだった
@@ -5413,7 +5415,9 @@ internal static partial class FunctionMethodCreator
 				return 0;
 			Color c = ReadColor(Name, exm, arguments, 1);
 			Point p = ReadPoint(Name, exm, arguments, 2);
-			if (p.X < 0 || p.X >= g.Width || p.X < 0 || p.Y >= g.Height)
+			// CloudEmuera modification (ADR-0019): validate Y's lower bound instead
+			// of checking X twice, so malformed ERB cannot escape as a GDI+ exception.
+			if (p.X < 0 || p.X >= g.Width || p.Y < 0 || p.Y >= g.Height)
 				return 0;
 			g.GSetColor(c, p.X, p.Y);
 			return 1;
@@ -5999,6 +6003,17 @@ internal static partial class FunctionMethodCreator
 			try
 			{
 				string filepath = filename;
+#if CLOUDEMUERA_HEADLESS
+				// CloudEmuera modification (ADR-0019): preserve the upstream relative
+				// lookup modes but never permit a Graphics load outside SessionRoot.
+				if (string.IsNullOrWhiteSpace(filepath) || Path.IsPathRooted(filepath))
+					return 0;
+				string allowedRoot = Path.TrimEndingDirectorySeparator(
+					Path.GetFullPath(isRelative ? Program.ExeDir : Program.ContentDir)) + Path.DirectorySeparatorChar;
+				filepath = Path.GetFullPath(Path.Combine(allowedRoot, filepath));
+				if (!filepath.StartsWith(allowedRoot, StringComparison.Ordinal))
+					return 0;
+#else
 				if (!Path.IsPathRooted(filepath))
 				{
 					if (isRelative)
@@ -6006,6 +6021,7 @@ internal static partial class FunctionMethodCreator
 					else
 						filepath = Program.ContentDir + filename;
 				}
+#endif
 				if (!File.Exists(filepath))
 					return 0;
 				#region EM_私家版_webp

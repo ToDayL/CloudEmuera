@@ -131,7 +131,11 @@ internal static class ConsoleSizeEstimator
     private static ConsoleNodeMetrics MeasureSprite(SpriteNode sprite) => new(
         NodeCount: 1,
         TextLength: sprite.AltText?.Length ?? 0,
-        EstimatedBytes: checked(112L + sprite.AssetId.Value.Length * 2L + (sprite.AltText?.Length ?? 0) * 2L));
+        EstimatedBytes: checked(112L + sprite.AssetId.Value.Length * 2L +
+            (sprite.HoverAssetId?.Value.Length ?? 0) * 2L +
+            (sprite.MappingAssetId?.Value.Length ?? 0) * 2L +
+            sprite.AnimationFrames.Sum(frame => 56L + frame.AssetId.Value.Length * 2L) +
+            (sprite.AltText?.Length ?? 0) * 2L));
 
     private static ConsoleNodeMetrics MeasureShape(ShapeNode shape) => new(
         NodeCount: 1,
@@ -153,9 +157,11 @@ internal static class ConsoleSizeEstimator
 
     private static long MeasureDrawable(CanvasDrawable drawable) => drawable switch
     {
-        SpriteDrawable sprite => checked(128L + sprite.DrawableId.Length * 2L + sprite.AssetId.Value.Length * 2L),
+        SpriteDrawable sprite => checked(128L + sprite.DrawableId.Length * 2L + sprite.AssetId.Value.Length * 2L
+            + sprite.AnimationFrames.Sum(frame => 64L + frame.AssetId.Value.Length * 2L)),
         ShapeDrawable shape => checked(112L + shape.DrawableId.Length * 2L + shape.Points.Count * 16L),
         HtmlIslandDrawable island => checked(112L + island.DrawableId.Length * 2L + MeasureHtmlNode(island.Root)),
+        RasterDrawable raster => checked(112L + raster.DrawableId.Length * 2L + raster.PngData.Count + (raster.HoverPngData?.Count ?? 0)),
         _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Unknown canvas drawable type.")
     };
 

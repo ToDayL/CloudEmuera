@@ -11,8 +11,31 @@ using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Config.JSON;
 using MinorShift.Emuera.Runtime.Utils;
+using MinorShift.Emuera.UI.Game.Image;
 
 namespace CloudEmuera.EmueraRuntime.UpstreamHeadless;
+
+public sealed record RuntimeSpriteDefinition(
+    string AssetId,
+    int SourceX,
+    int SourceY,
+    int SourceWidth,
+    int SourceHeight,
+    int DestinationOffsetX,
+    int DestinationOffsetY,
+    int DestinationWidth,
+    int DestinationHeight,
+    IReadOnlyList<RuntimeSpriteFrame> AnimationFrames = null);
+
+public sealed record RuntimeSpriteFrame(
+    string AssetId,
+    int SourceX,
+    int SourceY,
+    int SourceWidth,
+    int SourceHeight,
+    int OffsetX,
+    int OffsetY,
+    int DurationMilliseconds);
 
 public sealed class UpstreamRuntimeSession : IDisposable
 {
@@ -21,7 +44,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly IRuntimeClock clock;
     private readonly IRuntimeAudioPort audioPort;
     private readonly CancellationToken cancellationToken;
-    private readonly Func<string, (string AssetId, int Width, int Height)?> imageResolver;
+    private readonly Func<string, RuntimeSpriteDefinition> imageResolver;
     private readonly Action runtimeGateAcquired;
     private EmueraConsole console;
     private Process process;
@@ -33,7 +56,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         IRuntimeClock clock,
         IRuntimeAudioPort audioPort,
         CancellationToken cancellationToken,
-        Func<string, (string AssetId, int Width, int Height)?> imageResolver,
+        Func<string, RuntimeSpriteDefinition> imageResolver,
         Action runtimeGateAcquired = null)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
@@ -134,6 +157,10 @@ public sealed class UpstreamRuntimeSession : IDisposable
     {
         try
         {
+            // CloudEmuera ADR-0019: each headless session must release the
+            // upstream static Sprite/Graphics registry before the next fixture
+            // or Worker session can acquire the runtime gate.
+            AppContents.UnloadContents();
             MinorShift.Emuera.GlobalStatic.Reset();
             Preload.Clear();
         }

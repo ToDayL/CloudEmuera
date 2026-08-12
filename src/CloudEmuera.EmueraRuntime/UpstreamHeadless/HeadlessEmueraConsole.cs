@@ -4,9 +4,11 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using CloudEmuera.RuntimeAdapter;
+using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using MinorShift.Emuera.Forms;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Utils;
@@ -24,7 +26,7 @@ internal sealed class EmueraConsole
     private readonly IGameConsole adapter;
     private readonly IRuntimeClock clock;
     private CancellationToken cancellationToken;
-    private readonly Func<string, (string AssetId, int Width, int Height)?> imageResolver;
+    private readonly Func<string, RuntimeSpriteDefinition> imageResolver;
     private readonly int viewportWidth;
     private readonly int viewportHeight;
     private bool isRunning = true;
@@ -38,6 +40,7 @@ internal sealed class EmueraConsole
     private bool lastLineTemporary;
     private string? htmlIslandDrawableId;
     private int redrawIntervalMilliseconds;
+    private long canvasDrawableId;
     private readonly List<ConsoleNode> pendingLine = [];
     private StringStyle stringStyle;
     private readonly List<string> runtimeMessages = [];
@@ -50,7 +53,7 @@ internal sealed class EmueraConsole
         IGameConsole adapter,
         IRuntimeClock clock,
         CancellationToken cancellationToken,
-        Func<string, (string AssetId, int Width, int Height)?> imageResolver = null,
+        Func<string, RuntimeSpriteDefinition> imageResolver = null,
         int viewportWidth = 800,
         int viewportHeight = 600)
     {
@@ -127,10 +130,16 @@ internal sealed class EmueraConsole
         RecordWarning(FormatDiagnostic(value, position));
     public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) =>
         RecordMessage(FormatDiagnostic(value, position));
-    public void PrintTemporaryLine(string value) => EmitLine(value);
+    public void PrintTemporaryLine(string value) => EmitLine(value, temporary: true);
     public void PrintPlain(string value) => EmitText(value);
     public void PrintPlainWithSingleLineFix(string value) => EmitLine(value);
-    public void PrintC(string value, bool alignmentRight) => EmitText(value);
+    public void PrintC(string value, bool alignmentRight)
+    {
+        if (!outputEnabled || string.IsNullOrEmpty(value))
+            return;
+        pendingLine.Add(new TextNode(value, ToConsoleTextStyle()));
+        FlushPendingLine(force: true, alignment: alignmentRight ? ConsoleLineAlignment.Right : ConsoleLineAlignment.Left);
+    }
     public void PrintButton(string value, string input) => EmitButton(value, input);
     public void PrintButton(string value, long input) => EmitButton(value, input.ToString(CultureInfo.InvariantCulture));
     public void PrintButtonC(string value, string input, bool isRight) => EmitButton(value, input);
@@ -152,14 +161,22 @@ internal sealed class EmueraConsole
     public void ClearDisplay() => ClearText();
     public void deleteLine(int count)
     {
-        if (count <= 0 || lastLineId is null || adapter is not StructuredGameConsole)
+        if (count <= 0 || adapter is not StructuredGameConsole structured)
+            return;
+        string[] ids = structured.Snapshot.Scrollback
+            .TakeLast(Math.Min(count, structured.Snapshot.Scrollback.Count))
+            .Select(line => line.LineId)
+            .ToArray();
+        if (ids.Length == 0)
             return;
         try
         {
-            EmitStructured(ConsoleOperation.DeleteLines([lastLineId]));
-            deletedLines = checked(deletedLines + 1);
-            lastLineId = null;
-            lastLineTemporary = false;
+            EmitStructured(ConsoleOperation.DeleteLines(ids));
+            deletedLines = checked(deletedLines + ids.Length);
+            ConsoleLine? remaining = structured.Snapshot.Scrollback.LastOrDefault();
+            lastLineId = remaining?.LineId;
+            lastLineTemporary = remaining?.Temporary ?? false;
+            logicalLineCount = Math.Max(0, logicalLineCount - ids.Length);
         }
         catch (ConsoleContractException)
         {
@@ -179,16 +196,41 @@ internal sealed class EmueraConsole
 
     public void PrintImg(string name, string nameb, string namem, MixedNum height, MixedNum width, MixedNum ypos)
     {
-        (string AssetId, int Width, int Height)? resolved = imageResolver?.Invoke(name);
+        RuntimeSpriteDefinition resolved = imageResolver?.Invoke(name);
         if (resolved is null)
             throw new NotSupportedException($"Sprite '{name}' is unavailable in the headless runtime.");
-        int targetWidth = width is null ? resolved.Value.Width : MixedNum.ToPixel(width);
-        int targetHeight = height is null ? resolved.Value.Height : MixedNum.ToPixel(height);
-        int y = ypos is null ? 0 : MixedNum.ToPixel(ypos);
+        RuntimeSpriteDefinition hover = string.IsNullOrEmpty(nameb) ? null : imageResolver?.Invoke(nameb);
+        RuntimeSpriteDefinition mapping = string.IsNullOrEmpty(namem) ? null : imageResolver?.Invoke(namem);
+        int fontSize = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize);
+        int targetHeight = height is null || height.num == 0
+            ? fontSize
+            : height.isPx ? height.num : checked(fontSize * height.num / 100);
+        int targetWidth = width is null || width.num == 0
+            ? checked(resolved.DestinationWidth * targetHeight / resolved.DestinationHeight)
+            : width.isPx ? width.num : checked(fontSize * width.num / 100);
+        int y = ypos is null ? 0 : ypos.isPx ? ypos.num : checked(fontSize * ypos.num / 100);
+        if (targetWidth == 0 || targetHeight == 0)
+            throw new NotSupportedException("Sprite destination dimensions cannot be zero.");
+        int positiveWidth = Math.Abs(targetWidth);
+        int positiveHeight = Math.Abs(targetHeight);
+        int destinationX = targetWidth < 0 ? positiveWidth : 0;
+        int destinationY = y + (targetHeight < 0 ? positiveHeight : 0);
+        destinationX = checked(destinationX + resolved.DestinationOffsetX * positiveWidth / resolved.DestinationWidth);
+        destinationY = checked(destinationY + resolved.DestinationOffsetY * positiveHeight / resolved.DestinationHeight);
         AppendNode(new SpriteNode(
-            resolved.Value.AssetId,
-            new ConsoleRect(0, 0, resolved.Value.Width, resolved.Value.Height),
-            new ConsoleRect(0, y, targetWidth, targetHeight)));
+            new ConsoleAssetId(resolved.AssetId),
+            new ConsoleRect(resolved.SourceX, resolved.SourceY, resolved.SourceWidth, resolved.SourceHeight),
+            new ConsoleRect(destinationX, destinationY, positiveWidth, positiveHeight),
+            altText: name,
+            hoverAssetId: hover is null ? null : new ConsoleAssetId(hover.AssetId),
+            hoverSourceRect: hover is null ? null : new ConsoleRect(hover.SourceX, hover.SourceY, hover.SourceWidth, hover.SourceHeight),
+            mappingAssetId: mapping is null ? null : new ConsoleAssetId(mapping.AssetId),
+            mappingSourceRect: mapping is null ? null : new ConsoleRect(mapping.SourceX, mapping.SourceY, mapping.SourceWidth, mapping.SourceHeight),
+            animationFrames: (resolved.AnimationFrames ?? Array.Empty<RuntimeSpriteFrame>()).Select(frame => new SpriteAnimationFrame(
+                new ConsoleAssetId(frame.AssetId),
+                new ConsoleRect(frame.SourceX, frame.SourceY, frame.SourceWidth, frame.SourceHeight),
+                new ConsolePoint(frame.OffsetX, frame.OffsetY),
+                frame.DurationMilliseconds))));
     }
 
     public void WaitInput(InputRequest request)
@@ -383,14 +425,14 @@ internal sealed class EmueraConsole
     {
         if (args.Length < 1 || args[0] is not string name)
             throw new NotSupportedException("A background requires a manifest sprite name.");
-        (string AssetId, int Width, int Height)? resolved = imageResolver?.Invoke(name);
+        RuntimeSpriteDefinition resolved = imageResolver?.Invoke(name);
         if (resolved is null)
             throw new NotSupportedException($"Background '{name}' is unavailable in the headless runtime.");
         long depth = args.Length > 1 ? Convert.ToInt64(args[1], CultureInfo.InvariantCulture) : 0;
         float opacity = args.Length > 2 ? Convert.ToSingle(args[2], CultureInfo.InvariantCulture) : 1f;
         EmitStructured(ConsoleOperation.UpsertBackground(new BackgroundLayer(
             name,
-            new ConsoleAssetId(resolved.Value.AssetId),
+            new ConsoleAssetId(resolved.AssetId),
             opacity: opacity,
             depth: depth)));
     }
@@ -415,10 +457,71 @@ internal sealed class EmueraConsole
     }
     public void CBG_ClearButton() => EmitStructured(ConsoleOperation.ClearHitRegions());
     public void CBG_ClearBMap() => EmitStructured(ConsoleOperation.ClearHitRegions());
-    public bool CBG_SetGraphics(params object[] args) => throw new NotSupportedException("Dynamic graphics require a bounded asset resolver.");
-    public bool CBG_SetImage(params object[] args) => throw new NotSupportedException("Dynamic graphics require a bounded asset resolver.");
-    public bool CBG_SetButtonMap(params object[] args) => throw new NotSupportedException("Dynamic button maps require a bounded asset resolver.");
-    public bool CBG_SetButtonImage(params object[] args) => throw new NotSupportedException("Dynamic button images require a bounded asset resolver.");
+    public bool CBG_SetGraphics(GraphicsImage graphics, int x, int y, int zdepth)
+    {
+        if (graphics is null || !graphics.IsCreated || graphics.Width <= 0 || graphics.Height <= 0 || zdepth == 0)
+            return false;
+        EmitRasterDrawable(EncodePng(graphics.Bitmap), null, x, y, graphics.Width, graphics.Height, zdepth, hitTestMap: false);
+        return true;
+    }
+
+    public bool CBG_SetImage(ASprite image, int x, int y, int zdepth)
+    {
+        if (image is null || !image.IsCreated || zdepth == 0)
+            return false;
+        RuntimeSpriteDefinition resolved = imageResolver?.Invoke(image.Name);
+        string id = NextCanvasId("image");
+        if (resolved is not null)
+        {
+            EmitStructured(ConsoleOperation.UpsertDrawable(new SpriteDrawable(
+                id,
+                new ConsoleAssetId(resolved.AssetId),
+                new ConsoleRect(resolved.SourceX, resolved.SourceY, resolved.SourceWidth, resolved.SourceHeight),
+                new ConsoleRect(x + resolved.DestinationOffsetX, y + resolved.DestinationOffsetY,
+                    resolved.DestinationWidth, resolved.DestinationHeight),
+                zdepth,
+                animationFrames: (resolved.AnimationFrames ?? Array.Empty<RuntimeSpriteFrame>()).Select(frame =>
+                    new SpriteAnimationFrame(
+                        new ConsoleAssetId(frame.AssetId),
+                        new ConsoleRect(frame.SourceX, frame.SourceY, frame.SourceWidth, frame.SourceHeight),
+                        new ConsolePoint(frame.OffsetX, frame.OffsetY),
+                        frame.DurationMilliseconds)))));
+            return true;
+        }
+        EmitRasterDrawable(RenderSprite(image), null, x, y, image.DestBaseSize.Width, image.DestBaseSize.Height, zdepth, false, id);
+        return true;
+    }
+
+    public bool CBG_SetButtonMap(GraphicsImage graphics)
+    {
+        if (graphics is null || !graphics.IsCreated || graphics.Width <= 0 || graphics.Height <= 0)
+            return false;
+        EmitRasterDrawable(EncodePng(graphics.Bitmap), null, 0, 0, graphics.Width, graphics.Height, 0, hitTestMap: true, "cbg-hit-map");
+        return true;
+    }
+
+    public bool CBG_SetButtonImage(int buttonValue, ASprite normal, ASprite hover, int x, int y, int zdepth, string tooltip = null)
+    {
+        if (normal is null || !normal.IsCreated || zdepth == 0)
+            return false;
+        string id = NextCanvasId("button");
+        EmitRasterDrawable(
+            RenderSprite(normal),
+            hover is null || !hover.IsCreated ? null : RenderSprite(hover),
+            x,
+            y,
+            normal.DestBaseSize.Width,
+            normal.DestBaseSize.Height,
+            zdepth,
+            false,
+            id);
+        EmitStructured(ConsoleOperation.UpsertHitRegion(new HitRegion(
+            id,
+            new ConsoleRect(x, y, normal.DestBaseSize.Width, normal.DestBaseSize.Height),
+            buttonValue.ToString(CultureInfo.InvariantCulture),
+            tooltip: tooltip)));
+        return true;
+    }
     public void SetRedraw(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
     public void setRedrawTimer(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
     public void ReloadErbFinished() { }
@@ -466,12 +569,12 @@ internal sealed class EmueraConsole
             pendingLine.Add(node);
     }
 
-    private void FlushPendingLine(bool force = false, bool temporary = false)
+    private void FlushPendingLine(bool force = false, bool temporary = false, ConsoleLineAlignment? alignment = null)
     {
         if (!outputEnabled || (!force && pendingLine.Count == 0))
             return;
         string id = $"emuera-line-{checked(++lineId):x}";
-        EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(id, pendingLine, ToAlignment(), temporary)));
+        EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(id, pendingLine, alignment ?? ToAlignment(), temporary)));
         pendingLine.Clear();
         lastLineId = id;
         lastLineTemporary = temporary;
@@ -485,6 +588,48 @@ internal sealed class EmueraConsole
             structured.EmitTransaction(new ConsoleTransaction([operation]));
         else
             adapter.Emit(operation);
+    }
+
+    private void EmitRasterDrawable(
+        byte[] pngData,
+        byte[] hoverPngData,
+        int x,
+        int y,
+        int width,
+        int height,
+        int zdepth,
+        bool hitTestMap,
+        string drawableId = null)
+    {
+        EmitStructured(ConsoleOperation.UpsertDrawable(new RasterDrawable(
+            drawableId ?? NextCanvasId("graphics"),
+            pngData,
+            new ConsoleRect(x, y, width, height),
+            zdepth,
+            hitTestMap ? 0f : 1f,
+            hoverPngData,
+            hitTestMap)));
+    }
+
+    private string NextCanvasId(string kind) => $"cbg-{kind}-{checked(++canvasDrawableId):x}";
+
+    private static byte[] RenderSprite(ASprite sprite)
+    {
+        int width = sprite.DestBaseSize.Width;
+        int height = sprite.DestBaseSize.Height;
+        if (width <= 0 || height <= 0 || checked((long)width * height) > 16_777_216)
+            throw new NotSupportedException("Dynamic Sprite dimensions exceed the bounded raster surface.");
+        using var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (Graphics graphics = Graphics.FromImage(bitmap))
+            sprite.GraphicsDraw(graphics, new Rectangle(0, 0, width, height));
+        return EncodePng(bitmap);
+    }
+
+    private static byte[] EncodePng(Bitmap bitmap)
+    {
+        using var stream = new MemoryStream();
+        bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+        return stream.ToArray();
     }
 
     private void EmitTimeoutCountdown(TimeSpan timeout) =>

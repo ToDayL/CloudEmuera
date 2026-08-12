@@ -512,7 +512,7 @@ API 集成测试再次以 22/22 通过。API 重启/Worker 崩溃、root 与 `sa
 ### P1-07 — Emuera 运行时语义与完整结构化交互协议（DONE）
 
 需求映射：SESS-004、PLAY-001～004、PLAY-007～012、COMP-002～009、AC-005/008/009/011/012，
-ADR-0004、ADR-0018。已冻结浏览器可安全表达的完整 Emuera Console/Input/Media 能力矩阵、事件归约
+ADR-0004、ADR-0018、ADR-0019。已冻结浏览器可安全表达的完整 Emuera Console/Input/Media 能力矩阵、事件归约
 语义和明确禁止的桌面/外部能力；不得以无声 no-op、丢字段或普通文本降级冒充兼容。
 
 详细方案：[`tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md`](tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md)。
@@ -558,6 +558,19 @@ EM+EE fixture 对所有支持的输入、计时、显示、绘图和媒体语义
 均与原版语义一致；完整 Snapshot 经序列化、IPC 往返和归约后状态等价；危险 HTML、URL、路径、资源
 引用和超限绘图确定性拒绝。只有 `COMP-008` 明确禁止的 DLL、外部进程和不受限网络等能力可以标记为
 `Blocked`，且加载时必须向用户报告。
+
+2026-08-12 Graphics 兼容补充：依据 ADR-0019，开发/生产镜像安装 `libgdiplus`，固定
+`System.Drawing.Common 6.0.0` 并在 `net10.0` Worker 内启用经验证的 Unix compatibility switch；
+恢复私有 SessionRoot 中的上游 Sprite registry，支持真实 ERB 的 `GCREATE/GCLEAR/GSET*/GDRAW*/CBG*`
+执行。动态 surface 以带 PNG 签名校验的 `RasterDrawable` 发布，静态/动画 Sprite 在 PRINT_IMG 与 CBG
+均保留 source rect、offset、duration；单 surface 尺寸、Worker Graphics 总内存、normal/hover 合计
+payload、scene 数和 IPC envelope 均有硬上限。`GLOAD/GSAVE` 支持 SessionRoot 原生编号 PNG；
+`GCREATEFROMFILE` 仅允许规范化后仍位于 SessionRoot 或 `resources/` 的相对路径，拒绝绝对路径和穿越。
+验证结果：`./scripts/check.sh` 通过（Release 构建 0 警告/0 错误；RuntimeAdapter 150、IPC 14、
+RuntimeCompatibility 33、Worker 19、其他后端与 Web 测试全部通过）；Graphics 专项 6/6 通过，
+NuGet 漏洞扫描无已知漏洞。生产 `runtime` 镜像构建成功，镜像内 `libgdiplus 6.1` 及 Pango/Cairo、
+JPEG/TIFF/GIF/PNG/WebP、Fontconfig 等全部原生链接依赖可解析；能力矩阵 19 项/178 个唯一入口、
+第三方来源检查与 `git diff --check` 通过。
 
 ### P1-08 — 完整 Snapshot 重连与有界输出（TODO）
 
@@ -731,6 +744,7 @@ SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在�
 3. ~~按 ADR-0017 完成 P1-S01：收窄 Game、实例容量、Worker 控制流和基本诊断边界。~~ 已于
    2026-08-12 完成。
 4. ~~完成 P1-06 幂等 Session 创建、开启、关闭与恢复验收。~~ 已于 2026-08-12 完成。
-5. 按 P1-07 先完成 Emuera 运行时语义、能力矩阵和完整结构化交互协议，再进入 P1-08～P1-15。
+5. ~~按 P1-07 先完成 Emuera 运行时语义、能力矩阵和完整结构化交互协议，再进入 P1-08～P1-15。~~
+   已于 2026-08-12 完成，并按 ADR-0019 补齐 libgdiplus 动态 Graphics/CBG 支持。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

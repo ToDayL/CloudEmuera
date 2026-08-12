@@ -84,6 +84,8 @@ public sealed record ConsoleContractLimits
 
     public int MaxSpriteFrames { get; init; } = 4_096;
 
+    public int MaxInlineRasterBytes { get; init; } = 8 * 1_024 * 1_024;
+
     public void Validate()
     {
         ValidatePositive(MaxTextLength, nameof(MaxTextLength));
@@ -124,6 +126,7 @@ public sealed record ConsoleContractLimits
         ValidatePositive(MaxHtmlTagNameLength, nameof(MaxHtmlTagNameLength));
         ValidatePositive(MaxHtmlChildren, nameof(MaxHtmlChildren));
         ValidatePositive(MaxSpriteFrames, nameof(MaxSpriteFrames));
+        ValidatePositive(MaxInlineRasterBytes, nameof(MaxInlineRasterBytes));
     }
 
     private static void ValidatePositive(int value, string parameterName)
@@ -154,6 +157,7 @@ public enum ConsoleContractViolationReason
     InvalidNodeType,
     NodeTooDeep,
     InvalidImageDimension,
+    InvalidImagePayload,
     ImageTooLarge,
     PromptAlreadyActive,
     PromptIdMismatch,

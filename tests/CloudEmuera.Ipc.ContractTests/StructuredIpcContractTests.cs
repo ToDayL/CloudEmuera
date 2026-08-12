@@ -73,7 +73,13 @@ public sealed class StructuredIpcContractTests
                                 AssetId = "sprite-asset",
                                 SourceRect = new W.Rect { Width = 16, Height = 16 },
                                 Destination = new W.Rect { Width = 32, Height = 32 },
-                                Opacity = 1f
+                                Opacity = 1f,
+                                HasHover = true,
+                                HoverAssetId = "sprite-hover",
+                                HoverSourceRect = new W.Rect { X = 16, Width = 16, Height = 16 },
+                                HasMapping = true,
+                                MappingAssetId = "sprite-map",
+                                MappingSourceRect = new W.Rect { Width = 32, Height = 32 }
                             }
                         }
                     }
@@ -118,6 +124,52 @@ public sealed class StructuredIpcContractTests
             StructuredIpcProtocol.CapabilitySetDigest).IsValid);
         Assert.Equal(W.LineAlignment.Center, parsed.DisplayBatch.Transactions[0].Operations[0].AppendLine.Line.Alignment);
         Assert.Equal(W.MediaStartPolicy.OnUserGesture, parsed.DisplayBatch.Transactions[0].Operations[1].SetMediaChannel.Channel.StartPolicy);
+    }
+
+    [Fact]
+    public void RasterDrawableRequiresPngSignatureAtIpcBoundary()
+    {
+        var raster = new W.RasterDrawable
+        {
+            DrawableId = "raster-1",
+            PngData = ByteString.CopyFrom(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }),
+            Bounds = new W.Rect { Width = 1, Height = 1 },
+            Opacity = 1f
+        };
+        var envelope = new W.WorkerEnvelope
+        {
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+            MessageId = "raster-1",
+            SessionId = Binding.SessionId,
+            WorkerId = Binding.WorkerId,
+            WorkerEpoch = Binding.WorkerEpoch,
+            CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+            DisplayBatch = new W.DisplayBatch
+            {
+                Transactions =
+                {
+                    new W.ConsoleTransaction
+                    {
+                        Sequence = 1,
+                        Operations =
+                        {
+                            new W.ConsoleOperation
+                            {
+                                UpsertDrawable = new W.UpsertDrawable
+                                {
+                                    Drawable = new W.CanvasDrawable { Raster = raster }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Assert.True(StructuredIpcValidator.ValidateWorkerEnvelope(envelope, true, Binding).IsValid);
+
+        raster.PngData = ByteString.CopyFrom(new byte[8]);
+        Assert.Equal(IpcReasonCodes.InvalidEnvelope, StructuredIpcValidator.ValidateWorkerEnvelope(envelope, true, Binding).ReasonCode);
     }
 
     [Fact]

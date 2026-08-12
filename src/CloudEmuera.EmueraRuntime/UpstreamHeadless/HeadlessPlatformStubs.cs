@@ -2,6 +2,14 @@
 // replaced with inert declarations; supported behavior is routed through ports.
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+
+internal static class HeadlessDrawingBootstrap
+{
+    [ModuleInitializer]
+    internal static void EnablePinnedUpstreamDrawing() =>
+        AppContext.SetSwitch("System.Drawing.EnableUnixSupport", true);
+}
 
 namespace MinorShift.Emuera
 {

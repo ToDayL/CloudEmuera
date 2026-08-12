@@ -28,7 +28,7 @@ public sealed class StructuredRuntimeAudioPort : IRuntimeAudioPort
         if (fileSystem is not null && !fileSystem.FileExists(request.ResourcePath, cancellationToken))
             return RuntimeAudioPlaybackResult.Unsupported;
 
-        ConsoleAssetId assetId = ToAssetId(request.ResourcePath);
+        ConsoleAssetId assetId = ToAssetId(request.ResourcePath, cancellationToken);
         MediaChannelState? previous = console.Snapshot.MediaState.Channels
             .FirstOrDefault(channel => string.Equals(channel.Channel, request.Channel, StringComparison.Ordinal));
         long revision = previous is null ? 1 : checked(previous.Revision + 1);
@@ -55,7 +55,7 @@ public sealed class StructuredRuntimeAudioPort : IRuntimeAudioPort
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ConsoleAssetId assetId = ToAssetId(resourcePath);
+        ConsoleAssetId assetId = ToAssetId(resourcePath, cancellationToken);
         string[] channels = console.Snapshot.MediaState.Channels
             .Where(channel => channel.AssetId == assetId)
             .Select(channel => channel.Channel)
@@ -94,10 +94,15 @@ public sealed class StructuredRuntimeAudioPort : IRuntimeAudioPort
             console.EmitTransaction(new ConsoleTransaction([ConsoleOperation.StopAllMedia()]));
     }
 
-    private static ConsoleAssetId ToAssetId(RuntimeFilePath resourcePath)
+    private ConsoleAssetId ToAssetId(RuntimeFilePath resourcePath, CancellationToken cancellationToken)
     {
-        string digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourcePath.LogicalPath)))
-            .ToLowerInvariant()[..24];
-        return new ConsoleAssetId($"audio-{digest}");
+        if (fileSystem is null)
+        {
+            string logicalDigest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourcePath.LogicalPath))).ToLowerInvariant();
+            return new ConsoleAssetId($"logical-{logicalDigest}");
+        }
+        using Stream stream = fileSystem.OpenRead(resourcePath, cancellationToken);
+        string digest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        return new ConsoleAssetId($"sha256-{digest}");
     }
 }

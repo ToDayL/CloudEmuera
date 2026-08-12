@@ -80,7 +80,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | 数据库迁移 | 独立 `CloudEmuera.Migrator` 控制台程序 | 与应用同版本 | 容器初始化阶段执行并持有独占迁移锁；API 和 Worker 不在运行时自动迁移 |
 | 后台任务 | ASP.NET Core `BackgroundService` + SQLite 持久任务表 | .NET 10 | 上传验证、孤儿清理等任务需要重启可恢复；不引入外部消息队列 |
 | Runtime Host | C# Console Worker + 仓库内 Emuera.EM+EE 固定源码快照 | 清单锁定 commit 与 integration version | 保持原生解释器和存档格式；直接修改内置源码并通过适配层替换 WinForms/GDI+、路径、输入和显示 |
-| 图像与字体兼容层 | SkiaSharp + HarfBuzzSharp | 按 Runtime manifest 锁定 | 替代仅限 Windows 的 GDI+ 测量和解码路径，提供 Linux 上可重复的字体 shaping、测量与图片元数据处理 |
+| 图像与字体兼容层 | System.Drawing.Common 6.0.0 + libgdiplus（MVP） | NuGet lock + 镜像包锁定 | 依据 ADR-0019 复用固定上游的 GDI+ 像素语义；只存在于 Worker 内部，输出转换为平台无关结构，Skia/HarfBuzz 为长期替换方向 |
 | 游戏包格式 | MVP 仅接受 ZIP；使用 `System.IO.Compression` 安全逐项解包 | .NET 10 | 收窄攻击面且不增加原生解压依赖；7z/RAR 等格式需另行评审和协议声明 |
 | 文本编码 | `System.Text.Encoding` + `System.Text.Encoding.CodePages` 严格解码器 | .NET 10 | 明确支持 UTF-8 BOM/无 BOM 与 Shift-JIS，并禁用依赖系统 locale 的隐式回退 |
 | 容器进程管理 | 轻量 init/PID 1 | 随生产镜像锁定 | 只负责转发信号和回收僵尸进程；API 是唯一长驻服务，Session Worker 由 API Worker Manager 管理 |
@@ -183,7 +183,7 @@ Emuera 解释器；前端只依赖生成的公开契约。
 - [Node.js 发布策略](https://nodejs.org/en/about/previous-releases)：构建环境采用 Node.js 24 LTS，不采用 Current 分支。
 - [Playwright 浏览器矩阵](https://playwright.dev/docs/browsers)：可覆盖 Chromium、Firefox、WebKit 及移动设备配置。
 - [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/)：部署者可以在容器整体层设置 CPU、内存和 PID 上限。
-- [SkiaSharp](https://github.com/mono/SkiaSharp)：为 .NET 提供跨平台 Skia 2D、图片与字体处理能力。
+- [libgdiplus](https://www.mono-project.com/docs/gui/libgdiplus/)：P1 MVP 在 Linux Worker 内承接固定上游的 GDI+ 调用；具体约束见 ADR-0019。
 
 ## 3. 系统上下文与进程架构
 

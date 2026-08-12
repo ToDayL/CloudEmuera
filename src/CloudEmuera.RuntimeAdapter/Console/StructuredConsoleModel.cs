@@ -232,15 +232,20 @@ public sealed class SpriteDrawable : CanvasDrawable
         ConsoleRect bounds,
         int zIndex = 0,
         float opacity = 1f,
-        int frame = 0)
+        int frame = 0,
+        IEnumerable<SpriteAnimationFrame>? animationFrames = null)
         : base(drawableId, bounds, zIndex, opacity)
     {
         assetId.Validate(ConsoleContractLimits.Default);
         if (frame < 0 || frame > ConsoleContractLimits.Default.MaxSpriteFrames)
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidSpriteFrame, "Sprite frame is outside its limit.");
+        SpriteAnimationFrame[] frameCopy = (animationFrames ?? Array.Empty<SpriteAnimationFrame>()).ToArray();
+        if (frameCopy.Length > ConsoleContractLimits.Default.MaxSpriteFrames)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidSpriteFrame, "Sprite animation has too many frames.");
         AssetId = assetId;
         SourceRect = sourceRect;
         Frame = frame;
+        AnimationFrames = Array.AsReadOnly(frameCopy);
     }
 
     public ConsoleAssetId AssetId { get; }
@@ -248,6 +253,8 @@ public sealed class SpriteDrawable : CanvasDrawable
     public ConsoleRect SourceRect { get; }
 
     public int Frame { get; }
+
+    public IReadOnlyList<SpriteAnimationFrame> AnimationFrames { get; }
 }
 
 public sealed class ShapeDrawable : CanvasDrawable
@@ -296,6 +303,41 @@ public sealed class HtmlIslandDrawable : CanvasDrawable
     }
 
     public ConsoleHtmlNode Root { get; }
+}
+
+public sealed class RasterDrawable : CanvasDrawable
+{
+    private static ReadOnlySpan<byte> PngSignature => [137, 80, 78, 71, 13, 10, 26, 10];
+
+    public RasterDrawable(
+        string drawableId,
+        byte[] pngData,
+        ConsoleRect bounds,
+        int zIndex = 0,
+        float opacity = 1f,
+        byte[]? hoverPngData = null,
+        bool hitTestMap = false)
+        : base(drawableId, bounds, zIndex, opacity)
+    {
+        ArgumentNullException.ThrowIfNull(pngData);
+        if (pngData.Length < PngSignature.Length || pngData.Length > ConsoleContractLimits.Default.MaxInlineRasterBytes)
+            throw new ConsoleContractException(ConsoleContractViolationReason.ImageTooLarge, "Inline raster payload is empty or exceeds its limit.");
+        if (!pngData.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature))
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidImagePayload, "Inline raster payload is not a PNG image.");
+        if (hoverPngData is not null && hoverPngData.Length < PngSignature.Length)
+            throw new ConsoleContractException(ConsoleContractViolationReason.ImageTooLarge, "Inline hover raster payload is empty or exceeds its limit.");
+        if (hoverPngData is not null && !hoverPngData.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature))
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidImagePayload, "Inline hover raster payload is not a PNG image.");
+        if (checked(pngData.Length + (hoverPngData?.Length ?? 0)) > ConsoleContractLimits.Default.MaxInlineRasterBytes)
+            throw new ConsoleContractException(ConsoleContractViolationReason.ImageTooLarge, "Combined inline raster payload exceeds its limit.");
+        PngData = Array.AsReadOnly(pngData.ToArray());
+        HoverPngData = hoverPngData is null ? null : Array.AsReadOnly(hoverPngData.ToArray());
+        HitTestMap = hitTestMap;
+    }
+
+    public IReadOnlyList<byte> PngData { get; }
+    public IReadOnlyList<byte>? HoverPngData { get; }
+    public bool HitTestMap { get; }
 }
 
 public sealed class HitRegion

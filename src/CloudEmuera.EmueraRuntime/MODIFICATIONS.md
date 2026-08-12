@@ -23,19 +23,37 @@ requirements/ADR references, and verification commands.
   `UpstreamHeadless/HeadlessEmueraConsole.cs` now translates line layout,
   temporary/replaced lines, manifest-backed Sprite/background/Shape/HTML Island
   state, logical viewport metadata, all supported input kinds and monotonic
-  timeout results into RuntimeAdapter transactions. `HeadlessPlatformStubs.cs`
-  keeps desktop-only declarations isolated and routes audio through the
-  structured media port.
+  timeout results into RuntimeAdapter transactions. It also translates bounded
+  CBG Graphics/Sprite/button-map output into platform-neutral raster or Sprite
+  drawables. `HeadlessPlatformStubs.cs` keeps desktop-only declarations
+  isolated, enables the reviewed Unix System.Drawing switch and routes audio
+  through the structured media port.
+  `UpstreamHeadless/UpstreamRuntimeSession.cs` unloads the upstream static
+  Sprite/Graphics registry before releasing the process-wide runtime gate, so
+  reopened sessions cannot inherit image IDs or allocation reservations.
 - CloudEmuera contracts add bounded ConsoleSnapshot state, v3 protobuf
   transactions/snapshots, executable-free HTML AST nodes, prompt timing/source
-  payloads and media channel revisions. Unsupported dynamic graphics and
-  desktop/external capabilities fail closed with matrix reason codes.
-- Scope: P1-07, ADR-0018, PLAY-001/002/003/004/007/008/009 and COMP-002～009.
-  No vendored upstream file was modified for this slice; the upstream commit
-  and license tree remain byte-for-byte anchored.
+  payloads, animation frames, bounded PNG rasters and media channel revisions.
+  Desktop/external capabilities fail closed with matrix reason codes.
+- Modified upstream files under ADR-0019:
+  - `Upstream/Emuera/Runtime/Script/Process.cs` loads the resource registry in
+    headless mode after the private SessionRoot has been validated/materialized,
+    preserving native `GDRAWSPRITE`/`CBGSETSPRITE` lookup behavior.
+  - `Upstream/Emuera/UI/Game/Image/GraphicsImage.cs` accounts mutable headless
+    surfaces against a hard per-Worker 256 MiB aggregate allocation budget and
+    releases reservations on unload/dispose and failed allocation.
+  - `Upstream/Emuera/Runtime/Script/Statements/Function/Creator.Method.cs`
+    corrects the duplicated X lower-bound check in `GGETCOLOR/GSETCOLOR`, so a
+    negative Y returns native function failure instead of escaping as a GDI+
+    exception. Its headless `GCREATEFROMFILE` branch also resolves only relative
+    SessionRoot/resources paths and rejects rooted or traversing filenames;
+    native numbered `GLOAD/GSAVE` remain inside `Config.SavDir`.
+- Scope: P1-07, ADR-0018, ADR-0019,
+  PLAY-001/002/003/004/007/008/009 and COMP-002～009.
 - Verification: `scripts/verify-emuera-capabilities.sh`, structured
-  RuntimeAdapter/IPC/Worker mapper contract tests and the dev-Docker solution
-  build. Full repository verification is recorded in the P1-07 handoff.
+  RuntimeAdapter/IPC/Worker mapper contract tests, real ERB
+  `GCREATE → GCLEAR → CBGSETG`, animated Sprite/CBG fixtures and the dev-Docker
+  solution build. Full repository verification is recorded in the P1-07 handoff.
 
 ## 2026-08-05 — P0-04 headless integration
 
@@ -87,8 +105,10 @@ requirements/ADR references, and verification commands.
   successfully while the physical GameRoot remains empty.
 - The direct `System.IO` call-point audit and P0-05 deferral boundary are
   recorded in `docs/runtime-system-io-audit.zh-CN.md`. All `Program.*Dir`
-  values are now runtime-validated as children of one private view; dynamic
-  Graphics/CBG calls fail closed before GDI objects can be created.
+  values are now runtime-validated as children of one private view. The former
+  dynamic Graphics fail-closed boundary was superseded by the bounded
+  libgdiplus decision in ADR-0019; Graphics file paths are now constrained to
+  the private SessionRoot while numbered load/save retains native behavior.
 - Requirements/decisions: P0-04, ADR-0004, ADR-0005 and ADR-0006.
 - Verification: `./scripts/test-runtime-compat.sh --scenario input-roundtrip`
   passes 18 assertions per fixture; RuntimeBridge 16, RuntimeCompatibility 19,

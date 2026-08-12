@@ -98,10 +98,10 @@ internal sealed partial class Process(EmueraConsole view)
 
 			logWriter?.WriteLine($"Proc:Init:Image:Start {stopWatch.ElapsedMilliseconds}ms");
 			//リソースフォルダ読み込み
-			Exception err = null;
-#if !CLOUDEMUERA_HEADLESS
-			err = await Task.Run(() => AppContents.LoadContents(false));
-#endif
+			// CloudEmuera: ADR-0019 supplies the headless Linux Worker with the
+			// pinned libgdiplus compatibility layer. Load the upstream Sprite
+			// registry so CBGSETSPRITE/GDRAWSPRITE retain their native behavior.
+			Exception err = await Task.Run(() => AppContents.LoadContents(false));
 			if (err != null)
 			{
 				ParserMediator.FlushWarningList();

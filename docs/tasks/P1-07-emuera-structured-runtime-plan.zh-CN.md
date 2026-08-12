@@ -260,15 +260,17 @@ Unicode 歧义和 manifest 外资源。协议只携带 `assetId` 与已验证绘
 - `PrintImg` 必须保留 source rect、目标尺寸和 y-position，不再把 Sprite 压平成整图；
 - Sprite frame 解析以 runtime manifest 固定 metadata 为准；无效 frame 明确诊断；
 - Background、Shape、HTML Island、CBG bitmap/button map 转换为有限场景操作；
-- 动态 Graphics 不把任意原始像素无限推流。优先传确定的绘图命令；确需生成位图时，在 Worker 内以
-  有界 surface 生成内容寻址的临时 asset，限制数量/尺寸/总字节，并在 Snapshot 引用淘汰后回收；
+- 动态 Graphics 不把任意原始像素无限推流。manifest Sprite 继续传 assetId 与确定绘图参数；确需
+  冻结动态位图时，在 Worker 内以有界 surface 编码 PNG RasterDrawable，限制数量、尺寸、Graphics
+  总内存、normal/hover 合计字节及 IPC envelope，并随 Snapshot drawable 替换或清除；
 - redraw timer 只按脏 scene 和配置上限产生状态 revision，不把相同帧持续写入 scrollback。
 
 ### 7.3 字体与布局
 
 - 字体仅从 Session manifest 中授权资源或部署允许字体映射解析，不按任意宿主 font name 搜索；
-- 使用设计已确认的 SkiaSharp/HarfBuzzSharp（若实现切片确需新增包，更新 lockfile 与许可证）提供
-  Linux 可重复 shaping、测量、行高和裁剪；
+- 依据 ADR-0019，P1 MVP 固定 `System.Drawing.Common 6.0.0 + libgdiplus` 复用上游 Graphics 像素
+  语义；SkiaSharp/HarfBuzzSharp 保留为长期替换方向。兼容层不得泄漏到 RuntimeAdapter/IPC 公共 API，
+  并必须更新 lockfile、镜像、许可证与 Linux fixture；
 - adapter 输出逻辑布局参数和最终测量结果，P1-11 renderer 使用同一基线数据；
 - 缺失字体必须使用 manifest 声明的确定 fallback 并产生兼容诊断，不能依赖服务器 locale；
 - 覆盖 CJK、全角/半角、组合字符、emoji、粗斜体、固定行高、左右/居中对齐和按钮命中边界。

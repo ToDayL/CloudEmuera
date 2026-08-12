@@ -4,8 +4,8 @@
     "net10.0": {
       "Microsoft.Win32.SystemEvents": {
         "type": "Transitive",
-        "resolved": "10.0.0",
-        "contentHash": "bYdnhuD0XxcVTrxc8RyBjXo+AXYWJPnda3clhGz2Kakleyun1PyrzYV8RezT7ZYmR9OBSOgvpFQcvHo/K8Y90w=="
+        "resolved": "6.0.0",
+        "contentHash": "hqTM5628jSsQiv+HGpiq3WKBl2c8v1KZfby2J6Pr7pEPlK9waPdgEO6b8A/+/xn/yZ9ulv8HuqK71ONy2tg67A=="
       },
       "cloudemuera.emueraruntime": {
         "type": "Project",
@@ -19,7 +19,7 @@
         "dependencies": {
           "CloudEmuera.RuntimeAdapter": "[1.0.0, )",
           "Enums.NET": "[4.0.2, )",
-          "System.Drawing.Common": "[10.0.0, )"
+          "System.Drawing.Common": "[6.0.0, )"
         }
       },
       "cloudemuera.runtimeadapter": {
@@ -33,11 +33,11 @@
       },
       "System.Drawing.Common": {
         "type": "CentralTransitive",
-        "requested": "[10.0.0, )",
-        "resolved": "10.0.0",
-        "contentHash": "kohT9ZZlkB5R5ifihCBnPJLdIUQGiTj1ZI6z4LKatr+F4MmIJJu7qQpBkqt9280ivtnSvlTx9qZEY+CpJ0zMkA==",
+        "requested": "[6.0.0, )",
+        "resolved": "6.0.0",
+        "contentHash": "NfuoKUiP2nUWwKZN6twGqXioIe1zVD0RIj2t976A+czLHr2nY454RwwXs6JU9Htc6mwqL6Dn/nEL3dpVf2jOhg==",
         "dependencies": {
-          "Microsoft.Win32.SystemEvents": "10.0.0"
+          "Microsoft.Win32.SystemEvents": "6.0.0"
         }
       }
     }

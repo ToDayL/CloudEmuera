@@ -2,6 +2,9 @@ using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.UI.Game.Image;
+using System.Drawing;
+using static MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
 using Xunit;
 
 namespace CloudEmuera.RuntimeCompatibility.Tests;
@@ -9,6 +12,180 @@ namespace CloudEmuera.RuntimeCompatibility.Tests;
 [Trait("Category", "RuntimeCompatibility")]
 public sealed class HeadlessRuntimeFixtureTests
 {
+    [Fact]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public void DynamicGraphicsPublishesBoundedBrowserRasterDrawable()
+    {
+        var adapter = new StructuredGameConsole();
+        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        using var graphics = new GraphicsImage(7);
+        graphics.GCreate(16, 12, useGDI: false);
+        graphics.GClear(Color.FromArgb(unchecked((int)0xffff0000)));
+
+        Assert.True(headless.CBG_SetGraphics(graphics, 3, 4, 9));
+
+        RasterDrawable raster = Assert.IsType<RasterDrawable>(Assert.Single(adapter.Snapshot.CanvasScene.Drawables));
+        Assert.Equal(new ConsoleRect(3, 4, 16, 12), raster.Bounds);
+        Assert.Equal(9, raster.ZIndex);
+        Assert.Equal(new byte[] { 137, 80, 78, 71 }, raster.PngData.Take(4));
+        Assert.InRange(raster.PngData.Count, 1, ConsoleContractLimits.Default.MaxInlineRasterBytes);
+    }
+
+    [Fact]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public async Task DynamicGraphicsRunsThroughPinnedInterpreterAndPublishesScene()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML CREATED={GCREATE(0, 16, 12)}\n" +
+            "PRINTFORML CLEARED={GCLEAR(0, 4294901760)}\n" +
+            "PRINTFORML PIXELSET={GSETCOLOR(0, 4278255360, 1, 2)}\n" +
+            "PRINTFORML PIXEL={GGETCOLOR(0, 1, 2)}\n" +
+            "PRINTFORML PIXELOOB={GGETCOLOR(0, 1, -1)}\n" +
+            "PRINTFORML BRUSH={GSETBRUSH(0, 4278190335)}\n" +
+            "PRINTFORML FILLED={GFILLRECTANGLE(0, 4, 5, 3, 2)}\n" +
+            "PRINTFORML FILLPIXEL={GGETCOLOR(0, 4, 5)}\n" +
+            "PRINTFORML DRAWN={CBGSETG(0, 3, 4, 9)}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("CREATED=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("CLEARED=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("PIXELSET=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("PIXEL=4278255360", transcript, StringComparison.Ordinal);
+        Assert.Contains("PIXELOOB=-1", transcript, StringComparison.Ordinal);
+        Assert.Contains("BRUSH=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("FILLED=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("FILLPIXEL=4278190335", transcript, StringComparison.Ordinal);
+        Assert.Contains("DRAWN=1", transcript, StringComparison.Ordinal);
+        RasterDrawable raster = Assert.IsType<RasterDrawable>(Assert.Single(fixture.Console.Snapshot.CanvasScene.Drawables));
+        Assert.Equal(new ConsoleRect(3, 4, 16, 12), raster.Bounds);
+    }
+
+    [Fact]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public async Task AnimatedSpriteCsvPublishesAllFramesWithTiming()
+    {
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "v18-core", "resources", "cloudemuera-v18.png");
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINT_IMG \"WALK\"\nPRINTFORML CBG={CBGSETSPRITE(\"WALK\", 7, 8, 9)}\nPRINTL AFTER-ANIME\nQUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "frame.png"));
+                File.WriteAllText(
+                    Path.Combine(resources, "sprites.csv"),
+                    "WALK,ANIME,2,2\n" +
+                    "WALK,frame.png,0,0,2,2,0,0,50\n" +
+                    "WALK,frame.png,0,0,2,2,1,0,75\n");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        SpriteNode sprite = Assert.IsType<SpriteNode>(
+            fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes).Single(node => node is SpriteNode));
+        Assert.Collection(
+            sprite.AnimationFrames,
+            frame =>
+            {
+                Assert.Equal(50, frame.DurationMilliseconds);
+                Assert.Equal(new ConsolePoint(0, 0), frame.Offset);
+            },
+            frame =>
+            {
+                Assert.Equal(75, frame.DurationMilliseconds);
+                Assert.Equal(new ConsolePoint(1, 0), frame.Offset);
+            });
+        SpriteDrawable drawable = Assert.IsType<SpriteDrawable>(Assert.Single(fixture.Console.Snapshot.CanvasScene.Drawables));
+        Assert.Equal(new ConsoleRect(7, 8, 2, 2), drawable.Bounds);
+        Assert.Equal(9, drawable.ZIndex);
+        Assert.Equal([50, 75], drawable.AnimationFrames.Select(frame => frame.DurationMilliseconds));
+    }
+
+    [Fact]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public void HeadlessConsolePreservesTemporaryDeleteAlignmentAndSpriteInteractionMetadata()
+    {
+        var console = new StructuredGameConsole();
+        var sprites = new Dictionary<string, RuntimeSpriteDefinition>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["NORMAL"] = new("sha256-normal", 4, 5, 8, 10, 2, 3, 16, 20),
+            ["HOVER"] = new("sha256-hover", 1, 2, 8, 10, 0, 0, 16, 20),
+            ["MAP"] = new("sha256-map", 0, 0, 16, 20, 0, 0, 16, 20)
+        };
+        var headless = new EmueraConsole(
+            console,
+            console.Clock,
+            CancellationToken.None,
+            name => sprites.GetValueOrDefault(name));
+        headless.BeginExecutionOutput();
+
+        headless.PrintTemporaryLine("temporary");
+        headless.PrintC("right", alignmentRight: true);
+        headless.PrintImg(
+            "NORMAL",
+            "HOVER",
+            "MAP",
+            new MixedNum { num = 40, isPx = true },
+            null,
+            new MixedNum { num = 5, isPx = true });
+        headless.NewLine();
+
+        ConsoleLine temporary = console.Snapshot.Scrollback[0];
+        Assert.True(temporary.Temporary);
+        Assert.Equal(ConsoleLineAlignment.Right, console.Snapshot.Scrollback[1].Alignment);
+        SpriteNode sprite = Assert.IsType<SpriteNode>(Assert.Single(console.Snapshot.Scrollback[2].Nodes));
+        Assert.Equal(new ConsoleRect(4, 5, 8, 10), sprite.SourceRect);
+        Assert.Equal(new ConsoleRect(4, 11, 32, 40), sprite.Destination);
+        Assert.Equal("sha256-hover", sprite.HoverAssetId?.Value);
+        Assert.Equal("sha256-map", sprite.MappingAssetId?.Value);
+
+        headless.deleteLine(2);
+        Assert.Single(console.Snapshot.Scrollback);
+        Assert.Equal("temporary", Assert.IsType<TextNode>(Assert.Single(console.Snapshot.Scrollback[0].Nodes)).Text);
+    }
+
+    [Fact]
+    [Trait("Category", "TimedInput")]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public async Task TimedInputRunsThroughPinnedInterpreterAndPublishesTimeoutState()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "TINPUT 30, 7, 1, \"TIME-UP\"\n" +
+            "PRINTFORML RESULT={RESULT}\n" +
+            "PRINTFORML ISTIMEOUT={ISTIMEOUT}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Null(fixture.Console.CurrentPrompt);
+        Assert.True(fixture.Console.IsTimeOut);
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("TIME-UP", transcript, StringComparison.Ordinal);
+        Assert.Contains("RESULT=7", transcript, StringComparison.Ordinal);
+        Assert.Contains("ISTIMEOUT=1", transcript, StringComparison.Ordinal);
+        Assert.Single(
+            fixture.Console.StateStore.TransactionHistory.SelectMany(item => item.Transaction.Operations)
+                .OfType<ClosePromptOperation>(),
+            operation => operation.Reason == ConsolePromptCloseReason.TimedOut);
+    }
+
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     public void HeadlessSystemLinesAndWarningsAreNotBlockingScriptDiagnostics()
@@ -389,15 +566,43 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public async Task GraphicsFunctionFailsClosedBeforeAnyGdiObjectCanBeCreated()
+    public async Task GraphicsFunctionIsAcceptedByHeadlessCapabilityGate()
     {
         using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nRESULT = GCREATE(0, 2, 2)\nQUIT\n");
         await using EmueraRuntimeHost host = fixture.CreateHost();
 
         EmueraRuntimeResult result = await host.InitializeAsync();
 
-        Assert.Equal(EmueraRuntimeStatus.UnsupportedCapability, result.Status);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "unsupported_runtime_capability" && diagnostic.Message.Contains("GCREATE", StringComparison.Ordinal));
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "unsupported_runtime_capability");
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public async Task GraphicsSaveLoadRoundTripsAndCreateFromFileRejectsTraversal()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML CREATED={GCREATE(0, 2, 2)}\n" +
+            "PRINTFORML CLEARED={GCLEAR(0, 4294901760)}\n" +
+            "PRINTFORML SAVED={GSAVE(0, 7)}\n" +
+            "PRINTFORML LOADED={GLOAD(1, 7)}\n" +
+            "PRINTFORML PIXEL={GGETCOLOR(1, 0, 0)}\n" +
+            "PRINTFORML TRAVERSAL={GCREATEFROMFILE(2, \"../../outside.png\", 1)}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("SAVED=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("LOADED=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("PIXEL=4294901760", transcript, StringComparison.Ordinal);
+        Assert.Contains("TRAVERSAL=0", transcript, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(fixture.Paths.SessionRoot, "img0007.png")));
     }
 
     [Fact]
@@ -494,7 +699,8 @@ public sealed class HeadlessRuntimeFixtureTests
             string erb,
             RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root,
             string? configuration = null,
-            string? saveDeclarations = null)
+            string? saveDeclarations = null,
+            Action<string>? configureGame = null)
         {
             string root = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-bridge", Guid.NewGuid().ToString("N"));
             string game = Path.Combine(root, "game");
@@ -510,6 +716,8 @@ public sealed class HeadlessRuntimeFixtureTests
             {
                 File.WriteAllText(Path.Combine(game, "ERB", "SAVE.ERH"), saveDeclarations);
             }
+
+            configureGame?.Invoke(game);
 
             File.WriteAllText(Path.Combine(game, "emuera.config"), configuration ?? "Use sav folder:NO\n");
             SessionRootLayout layout = new SessionRootLayoutBuilder(

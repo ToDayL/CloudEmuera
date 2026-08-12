@@ -129,11 +129,11 @@ internal static class RuntimeScenarioRunner
             assertionEvidence.Add(new RuntimeScenarioAssertionEvidence("score=3", scorePassed, VerifiedByVisibleOutput: true));
             ConsoleFontStyle expectedStyle = fixtureId == "v18-core" ? ConsoleFontStyle.Bold : ConsoleFontStyle.Italic;
             Check(snapshot.VisibleNodes.OfType<TextNode>().Any(node => node.Style.Decorations.HasFlag(expectedStyle)), "Expected HTML style node was not emitted.", errors, ref assertions);
-            string sprite = fixtureId == "v18-core" ? "V18_SPRITE" : "EMEE_SPRITE";
             Check(
                 snapshot.VisibleNodes.Any(node =>
-                    node is ImageNode image && image.AssetId.Value == sprite ||
-                    node is SpriteNode spriteNode && spriteNode.AssetId.Value == sprite),
+                    node is SpriteNode spriteNode &&
+                    spriteNode.AssetId.Value.StartsWith("sha256-", StringComparison.Ordinal) &&
+                    spriteNode.SourceRect == new ConsoleRect(0, 0, 2, 2)),
                 "Expected structured sprite node was not emitted.",
                 errors,
                 ref assertions);

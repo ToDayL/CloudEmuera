@@ -18,6 +18,10 @@ RUN dotnet publish src/CloudEmuera.Api/CloudEmuera.Api.csproj --no-restore -c Re
 RUN dotnet publish src/CloudEmuera.Validator/CloudEmuera.Validator.csproj --no-restore -c Release -o /out/validator
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libgdiplus && \
+    ln -sf /usr/lib/libgdiplus.so /usr/lib/libgdiplus.dll.so && \
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://0.0.0.0:28647 \
     CloudEmuera__DataPath=/data

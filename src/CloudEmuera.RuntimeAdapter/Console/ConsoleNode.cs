@@ -375,8 +375,20 @@ internal static class ConsoleNodeValidation
                 break;
             case SpriteNode sprite:
                 sprite.AssetId.Validate(limits);
+                if (sprite.HoverAssetId is { } hover)
+                    hover.Validate(limits);
+                if (sprite.MappingAssetId is { } mapping)
+                    mapping.Validate(limits);
                 if (sprite.Frame < 0 || sprite.Frame > limits.MaxSpriteFrames)
                     throw new ConsoleContractException(ConsoleContractViolationReason.InvalidSpriteFrame, "Sprite frame is outside its limit.");
+                if (sprite.AnimationFrames.Count > limits.MaxSpriteFrames)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidSpriteFrame, "Sprite animation has too many frames.");
+                foreach (SpriteAnimationFrame animationFrame in sprite.AnimationFrames)
+                {
+                    animationFrame.AssetId.Validate(limits);
+                    if (animationFrame.DurationMilliseconds is < 1 or > 3_600_000)
+                        throw new ConsoleContractException(ConsoleContractViolationReason.InvalidSpriteFrame, "Sprite frame duration is outside its limit.");
+                }
                 break;
             case ShapeNode shape:
                 shape.Validate(limits);

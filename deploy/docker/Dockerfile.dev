@@ -1,5 +1,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS dotnet-dev
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libgdiplus && \
+    ln -sf /usr/lib/libgdiplus.so /usr/lib/libgdiplus.dll.so && \
+    rm -rf /var/lib/apt/lists/*
+
 ARG DEV_UID=1000
 ARG DEV_GID=1000
 

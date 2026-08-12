@@ -5,11 +5,17 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace MinorShift.Emuera.UI.Game.Image;
 
 internal sealed class GraphicsImage : AbstractImage
 {
+	// CloudEmuera ADR-0019: mutable Graphics surfaces share a hard per-Worker
+	// allocation budget; System.Drawing itself has no aggregate bound.
+	private const long MaxHeadlessGraphicsBytes = 256L * 1024 * 1024;
+	private static long headlessGraphicsBytes;
+	private long reservedBytes;
 	//public Bitmap Bitmap;
 	//public IntPtr GDIhDC { get; protected set; }
 	//protected Graphics g;
@@ -81,22 +87,48 @@ internal sealed class GraphicsImage : AbstractImage
 		if (useGDI)
 			throw new NotImplementedException();
 		GDispose();
-		RealBitmap = new Bitmap(x, y, PixelFormat.Format32bppArgb);
-		size = new Size(x, y);
-		g = Graphics.FromImage(RealBitmap);
-		drawImgList = [];
-		lock (AppContents.tempLoadedGraphicsImages)
-			AppContents.tempLoadedGraphicsImages.Add(this);
+		ReserveHeadlessBytes(x, y);
+		try
+		{
+			RealBitmap = new Bitmap(x, y, PixelFormat.Format32bppArgb);
+			size = new Size(x, y);
+			g = Graphics.FromImage(RealBitmap);
+			drawImgList = [];
+			lock (AppContents.tempLoadedGraphicsImages)
+				AppContents.tempLoadedGraphicsImages.Add(this);
+		}
+		catch
+		{
+			g?.Dispose();
+			RealBitmap?.Dispose();
+			g = null;
+			RealBitmap = null;
+			ReleaseHeadlessBytes();
+			throw;
+		}
 	}
 	internal void GCreateFromF(Bitmap bmp, bool useGDI)
 	{
 		if (useGDI)
 			throw new NotImplementedException();
 		GDispose();
-		RealBitmap = new Bitmap(bmp.Width, bmp.Height, PixelFormat.Format32bppArgb);
-		size = new Size(bmp.Width, bmp.Height);
-		g = Graphics.FromImage(RealBitmap);
-		g.DrawImage(bmp, 0, 0, bmp.Width, bmp.Height);
+		ReserveHeadlessBytes(bmp.Width, bmp.Height);
+		try
+		{
+			RealBitmap = new Bitmap(bmp.Width, bmp.Height, PixelFormat.Format32bppArgb);
+			size = new Size(bmp.Width, bmp.Height);
+			g = Graphics.FromImage(RealBitmap);
+			g.DrawImage(bmp, 0, 0, bmp.Width, bmp.Height);
+		}
+		catch
+		{
+			g?.Dispose();
+			RealBitmap?.Dispose();
+			g = null;
+			RealBitmap = null;
+			ReleaseHeadlessBytes();
+			throw;
+		}
 	}
 
 	/// <summary>
@@ -554,6 +586,7 @@ internal sealed class GraphicsImage : AbstractImage
 			RealBitmap.Dispose();
 		g = null;
 		RealBitmap = null;
+		ReleaseHeadlessBytes();
 	}
 
 	/// <summary>
@@ -564,7 +597,10 @@ internal sealed class GraphicsImage : AbstractImage
 		size = new Size(0, 0);
 		drawImgList = null;
 		if (RealBitmap == null)
+		{
+			ReleaseHeadlessBytes();
 			return;
+		}
 		if (g != null)
 			g.Dispose();
 		if (RealBitmap != null)
@@ -580,6 +616,7 @@ internal sealed class GraphicsImage : AbstractImage
 		brush = null;
 		pen = null;
 		font = null;
+		ReleaseHeadlessBytes();
 	}
 
 	public override void Dispose()
@@ -738,15 +775,51 @@ internal sealed class GraphicsImage : AbstractImage
 		if (drawImgList == null)
 			return;
 
-		RealBitmap = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppArgb);
-		g = Graphics.FromImage(RealBitmap);
+		ReserveHeadlessBytes(size.Width, size.Height);
+		try
+		{
+			RealBitmap = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppArgb);
+			g = Graphics.FromImage(RealBitmap);
 
-		foreach (Tuple<ASprite, Rectangle> tuple in drawImgList)
-			tuple.Item1.GraphicsDraw(g, tuple.Item2);
+			foreach (Tuple<ASprite, Rectangle> tuple in drawImgList)
+				tuple.Item1.GraphicsDraw(g, tuple.Item2);
 
-		lock (AppContents.tempLoadedGraphicsImages)
-			AppContents.tempLoadedGraphicsImages.Add(this);
+			lock (AppContents.tempLoadedGraphicsImages)
+				AppContents.tempLoadedGraphicsImages.Add(this);
+		}
+		catch
+		{
+			g?.Dispose();
+			RealBitmap?.Dispose();
+			g = null;
+			RealBitmap = null;
+			ReleaseHeadlessBytes();
+			throw;
+		}
 		return;
+	}
+
+	private void ReserveHeadlessBytes(int width, int height)
+	{
+#if CLOUDEMUERA_HEADLESS
+		long bytes = checked((long)width * height * 4);
+		long total = Interlocked.Add(ref headlessGraphicsBytes, bytes);
+		if (total > MaxHeadlessGraphicsBytes)
+		{
+			Interlocked.Add(ref headlessGraphicsBytes, -bytes);
+			throw new InvalidOperationException("CloudEmuera dynamic Graphics memory limit exceeded.");
+		}
+		reservedBytes = bytes;
+#endif
+	}
+
+	private void ReleaseHeadlessBytes()
+	{
+#if CLOUDEMUERA_HEADLESS
+		long bytes = Interlocked.Exchange(ref reservedBytes, 0);
+		if (bytes != 0)
+			Interlocked.Add(ref headlessGraphicsBytes, -bytes);
+#endif
 	}
 
 }

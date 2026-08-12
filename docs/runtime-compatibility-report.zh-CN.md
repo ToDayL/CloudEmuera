@@ -23,7 +23,7 @@ Runtime integration：`headless-p0.5.1`
 | `console.images-sprites` | Supported | manifest asset、source/destination rect、frame、z-index | 缺失或越界资源拒绝 |
 | `console.shapes` | Supported | 有界 shape primitive | 未知 primitive 或几何超限拒绝 |
 | `console.backgrounds` / `console.cbg-clears` | Supported | 可归约 background/scene clear 操作 | 未知 ID/范围拒绝 |
-| `console.cbg-dynamic` | Blocked | 无界动态 bitmap 不进入 wire model | `UNSUPPORTED_DYNAMIC_GRAPHICS` |
+| `console.cbg-dynamic` | Supported | libgdiplus 有界 surface 转为 PNG RasterDrawable；manifest Sprite 保留动画帧 | 尺寸、总内存、payload、scene 与 envelope 超限拒绝 |
 | `input.all-types` | Supported | 全部 prompt 类型、来源、payload 和约束 | stale/conflict/非法来源返回确定结果 |
 | `input.timing-timeout` | Supported | 单调 deadline、UTC 展示时间、TimeUpMes、ISTIMEOUT | 超时按封闭 action 原子结束 |
 | `window.metadata-readback` | Supported | title、逻辑 viewport 和显示行回读状态 | 非法 viewport 拒绝 |
@@ -31,10 +31,10 @@ Runtime integration：`headless-p0.5.1`
 | `resource.manifest-assets` | Supported | Session manifest logical assetId | 路径穿越、链接逃逸和外部资源拒绝 |
 | `host.diagnostics` | Compatible | 与玩家 scrollback 分离的 error/warning/debug 记录 | 不伪装成游戏输出 |
 | `host.desktop-shims` | Blocked | 编译所需的窗口、鼠标、热键、宿主日志和桌面 tooltip shim | `HOST_SHIM` |
-| `host.external-capabilities` | Blocked | 插件、CALLSHARP、外部网络/DLL/无界 graphics | `SECURITY_BOUNDARY` |
+| `host.external-capabilities` | Blocked | 插件、CALLSHARP、外部网络/DLL 和桌面输入 | `SECURITY_BOUNDARY` |
 | `lifecycle.runtime` | Supported | headless 初始化、取消、等待和有界退出 | runtime 失败带稳定诊断 |
 
-除表中明确批准的宿主/安全/dynamic-graphics 能力外，影响游戏可见 Console/Input/Media 状态的
+除表中明确批准的宿主/安全能力外，影响游戏可见 Console/Input/Media 状态的
 入口均标为 `Supported`。矩阵不使用 `Planned`，也不把普通文本或静默 no-op 当作支持。
 
 ## 运行时语义证据
@@ -48,6 +48,9 @@ Runtime integration：`headless-p0.5.1`
 - HTML 使用 executable-free AST；wire message 不含 raw HTML、CSS、URL、绝对路径或像素所有权。
 - `StructuredRuntimeAudioPort` 把音频资源映射到 manifest-style asset ID 并更新 channel revision；
   Worker 生产路径不再构造 `NoOpRuntimeAudioPort`。
+- 固定上游动态 Graphics 在 Linux Worker 内由 `System.Drawing.Common 6.0.0 + libgdiplus` 执行；
+  CBG 输出为带 PNG 签名校验和组合字节上限的 `RasterDrawable`，静态动画 Sprite 仍保留各帧 asset、
+  source rect、offset 与 duration。该实现不向 RuntimeAdapter/IPC 暴露 `System.Drawing` 类型。
 
 ## 自动化验证映射
 
@@ -56,8 +59,8 @@ Runtime integration：`headless-p0.5.1`
 | RuntimeAdapter | `StructuredConsoleContractTests`：事务原子性、整行裁剪、HTML allowlist、媒体 revision、OneInput、来源和单调 timeout |
 | IPC | `StructuredIpcContractTests`：v3 handshake digest、完整 transaction/snapshot round-trip、版本/摘要/未知结构拒绝 |
 | Worker mapper | `StructuredConsoleWireMapperTests`：scrollback、scene、media、window、prompt 双向保真 |
-| 真实解释器 | `HeadlessRuntimeFixtureTests`：v18-core、em-ee-core、输入、存档、取消、clock、诊断和 Blocked 入口 |
-| 静态能力门 | `verify-emuera-capabilities.sh`：19 个能力、177 个唯一入口、schema 字段、入口唯一映射、源码存在性、baseline/protocol/digest/manifest 一致性和生产 audio port |
+| 真实解释器 | `HeadlessRuntimeFixtureTests`：v18-core、em-ee-core、输入、存档、取消、clock、动态 Graphics/CBG、动画 Sprite、诊断和 Blocked 入口 |
+| 静态能力门 | `verify-emuera-capabilities.sh`：19 个能力、入口唯一映射、精确测试类/方法证据、源码存在性、baseline/protocol/digest/manifest 一致性和生产 audio port |
 
 dev Docker 中的真实生产链路已用 v3 UDS Worker 集成测试验证（19/19）；浏览器 DOM/Canvas/WebAudio 的实际绘制和视觉回归属于 P1-11/P1-15；本阶段只冻结并验证浏览器
 消费所需的结构化状态，不把浏览器渲染结果反向写入 Worker 语义。

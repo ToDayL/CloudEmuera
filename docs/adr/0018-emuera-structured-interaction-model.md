@@ -80,7 +80,8 @@ MVP 只批准三类 Blocked 能力：
 1. `HOST_SHIM`：WinForms 窗口、全局鼠标/热键、宿主日志文件、桌面 tooltip 等不属于浏览器状态的
    编译或宿主能力；
 2. `SECURITY_BOUNDARY`：CALLSHARP、插件、任意 DLL、外部进程、任意网络和不受限 graphics；
-3. `UNSUPPORTED_DYNAMIC_GRAPHICS`：尚未拥有有界 manifest/surface resolver 的动态 CBG bitmap。
+3. `UNSUPPORTED_DYNAMIC_GRAPHICS`：在 ADR-0019 接受有界 libgdiplus surface 之前使用的历史分类；
+   P1-07 当前矩阵不得再用它阻塞 MVP Graphics/CBG。
 
 Blocked 调用必须产生稳定兼容性诊断并停止相关运行路径。诊断、warning 和 debug 输出与玩家
 scrollback 分离；诊断不能伪装成玩家文本。
@@ -107,8 +108,8 @@ Session runtime manifest 同步声明。任何 protocol/version/digest/upstream 
 
 RuntimeAdapter 和 v3 wire model 变得更严格、更冗长，但 P1-08/P1-09/P1-11 可以直接消费稳定的
 Snapshot/transaction/prompt/media 语义，不需要重新猜测上游行边界。字体的逻辑 family 和布局参数
-已冻结，浏览器实际 shaping、DOM/Canvas/WebAudio 渲染留给后续任务。动态 graphics、桌面 shim 和
-外部能力不会被误报为兼容；代表这些能力的游戏会收到可定位的失败诊断。
+已冻结，浏览器实际 shaping、DOM/Canvas/WebAudio 渲染留给后续任务。动态 Graphics 依据 ADR-0019
+转换为有界 Raster/Scene 状态；桌面 shim 和外部能力不会被误报为兼容。
 
 ## 验证
 

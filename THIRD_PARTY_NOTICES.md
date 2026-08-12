@@ -19,3 +19,21 @@ CloudEmuera vendors and modifies this source directly. Modified files must be
 identified as changed and must retain the applicable upstream notices, as
 required by the zlib/libpng license. Import and modification records live in
 `src/CloudEmuera.EmueraRuntime/UPSTREAM.md` and `MODIFICATIONS.md`.
+
+## System.Drawing.Common
+
+- Package: `System.Drawing.Common` 6.0.0
+- Source: <https://github.com/dotnet/runtime>
+- License: MIT
+- License: <https://github.com/dotnet/runtime/blob/v6.0.0/LICENSE.TXT>
+
+This package is intentionally pinned for the Linux MVP compatibility layer described by ADR-0019. CloudEmuera does not claim that this configuration has modern .NET non-Windows product support.
+
+## libgdiplus
+
+- Source: <https://github.com/mono/libgdiplus>
+- Distribution: installed from the Debian base-image package repository
+- License: MIT/X11
+- License: <https://github.com/mono/libgdiplus/blob/main/LICENSE>
+
+`libgdiplus` is present only in the Worker/runtime container image and implements the native GDI+ compatibility calls used by the pinned Emuera source.

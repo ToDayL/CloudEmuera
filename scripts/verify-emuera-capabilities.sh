@@ -48,7 +48,7 @@ required = {
     "reasonCode", "adapterTypes", "ipcTypes", "fixtureScenarios", "testNames", "securityNotes",
 }
 allowed_classifications = {"Supported", "Compatible", "Experimental", "Blocked"}
-blocked_reasons = {"HOST_SHIM", "SECURITY_BOUNDARY", "UNSUPPORTED_DYNAMIC_GRAPHICS"}
+blocked_reasons = {"HOST_SHIM", "SECURITY_BOUNDARY"}
 seen_ids = set()
 seen_entrypoints = {}
 capabilities = matrix.get("capabilities")
@@ -98,10 +98,16 @@ headless_console = (root / "src/CloudEmuera.EmueraRuntime/UpstreamHeadless/Headl
 headless_platform = (root / "src/CloudEmuera.EmueraRuntime/UpstreamHeadless/HeadlessPlatformStubs.cs").read_text(encoding="utf-8")
 all_source = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in (root / "src").rglob("*.cs"))
 test_source = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in (root / "tests").rglob("*.cs"))
+test_classes = set(re.findall(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b", test_source))
+test_methods = set(re.findall(
+    r"\b(?:public|internal)\s+(?:static\s+)?(?:async\s+)?(?:void|Task(?:<[^>]+>)?)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    test_source,
+))
 
 for capability in capabilities:
     for test_name in capability["testNames"]:
-        if any(part not in test_source for part in test_name.split(".")):
+        parts = test_name.split(".")
+        if parts[0] not in test_classes or len(parts) > 1 and parts[-1] not in test_methods:
             fail(f"{capability['capabilityId']} cites missing test evidence {test_name}")
 
 def has_word(text, value):

@@ -9,6 +9,20 @@ namespace CloudEmuera.RuntimeAdapter.Tests.ConsoleContract;
 public sealed class StructuredConsoleContractTests
 {
     [Fact]
+    public void RasterDrawableRejectsNonPngAndCombinedPayloadOverLimit()
+    {
+        ConsoleContractException nonPng = Assert.Throws<ConsoleContractException>(() =>
+            new RasterDrawable("raster", new byte[8], new ConsoleRect(0, 0, 1, 1)));
+        Assert.Equal(ConsoleContractViolationReason.InvalidImagePayload, nonPng.Reason);
+
+        byte[] largePng = new byte[ConsoleContractLimits.Default.MaxInlineRasterBytes / 2 + 1];
+        new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }.CopyTo(largePng, 0);
+        ConsoleContractException oversized = Assert.Throws<ConsoleContractException>(() =>
+            new RasterDrawable("raster", largePng, new ConsoleRect(0, 0, 1, 1), hoverPngData: largePng));
+        Assert.Equal(ConsoleContractViolationReason.ImageTooLarge, oversized.Reason);
+    }
+
+    [Fact]
     public void RichTransactionIsAtomicAndPublishesOneSequence()
     {
         var store = new ConsoleStateStore();

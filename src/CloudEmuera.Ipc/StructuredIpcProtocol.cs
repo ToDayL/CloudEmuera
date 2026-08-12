@@ -104,7 +104,7 @@ public static class StructuredIpcHandshake
 
 public static class StructuredIpcLimits
 {
-    public const int MaxEnvelopeBytes = 512 * 1024;
+    public const int MaxEnvelopeBytes = 12 * 1024 * 1024;
     public const int MaxIdentifierLength = 128;
     public const int MaxStringLength = 32 * 1024;
     public const int MaxInputLength = 16_384;
@@ -117,6 +117,7 @@ public static class StructuredIpcLimits
     public const int MaxHtmlChildren = 256;
     public const int MaxGeometryPoints = 256;
     public const int MaxProtocolErrorMessageLength = 512;
+    public const int MaxInlineRasterBytes = 8 * 1024 * 1024;
 }
 
 public static class StructuredIpcValidator
@@ -377,7 +378,12 @@ public static class StructuredIpcValidator
                 (!node.Image.HasDestination || ValidateRect(node.Image.Destination)) && IsText(node.Image.AltText),
             ConsoleNode.KindOneofCase.Sprite => IsAsset(node.Sprite.AssetId) && ValidateRect(node.Sprite.SourceRect) &&
                 ValidateRect(node.Sprite.Destination) && node.Sprite.Frame >= 0 && node.Sprite.Opacity is >= 0 and <= 1 &&
-                IsText(node.Sprite.AltText),
+                IsText(node.Sprite.AltText) &&
+                (!node.Sprite.HasHover || IsAsset(node.Sprite.HoverAssetId) && ValidateRect(node.Sprite.HoverSourceRect)) &&
+                (!node.Sprite.HasMapping || IsAsset(node.Sprite.MappingAssetId) && ValidateRect(node.Sprite.MappingSourceRect)) &&
+                node.Sprite.AnimationFrames.Count <= 4_096 &&
+                node.Sprite.AnimationFrames.All(frame => IsAsset(frame.AssetId) && ValidateRect(frame.SourceRect) &&
+                    frame.Offset is not null && frame.DurationMilliseconds is >= 1 and <= 3_600_000),
             ConsoleNode.KindOneofCase.Shape => ValidateShape(node.Shape),
             ConsoleNode.KindOneofCase.HtmlIsland => ValidateHtmlIsland(node.HtmlIsland, depth),
             _ => false
@@ -411,12 +417,22 @@ public static class StructuredIpcValidator
     {
         CanvasDrawable.KindOneofCase.Sprite => IsIdentifier(drawable.Sprite.DrawableId) && IsAsset(drawable.Sprite.AssetId) &&
             ValidateRect(drawable.Sprite.SourceRect) && ValidateRect(drawable.Sprite.Bounds) && drawable.Sprite.Opacity is >= 0 and <= 1 &&
-            drawable.Sprite.Frame >= 0,
+            drawable.Sprite.Frame >= 0 && drawable.Sprite.AnimationFrames.Count <= 4_096 &&
+            drawable.Sprite.AnimationFrames.All(frame => IsAsset(frame.AssetId) && ValidateRect(frame.SourceRect) &&
+                frame.Offset is not null && ValidatePoint(frame.Offset) && frame.DurationMilliseconds is >= 1 and <= 3_600_000),
         CanvasDrawable.KindOneofCase.Shape => IsIdentifier(drawable.Shape.DrawableId) && ValidateShapeDrawable(drawable.Shape),
         CanvasDrawable.KindOneofCase.HtmlIsland => IsIdentifier(drawable.HtmlIsland.DrawableId) && ValidateRect(drawable.HtmlIsland.Bounds) &&
             drawable.HtmlIsland.Opacity is >= 0 and <= 1 && ValidateHtml(drawable.HtmlIsland.Root, 1),
+        CanvasDrawable.KindOneofCase.Raster => IsIdentifier(drawable.Raster.DrawableId) && ValidateRect(drawable.Raster.Bounds) &&
+            drawable.Raster.Opacity is >= 0 and <= 1 && IsPng(drawable.Raster.PngData) &&
+            drawable.Raster.PngData.Length <= StructuredIpcLimits.MaxInlineRasterBytes &&
+            (drawable.Raster.HasHover ? IsPng(drawable.Raster.HoverPngData) : drawable.Raster.HoverPngData.Length == 0) &&
+            drawable.Raster.PngData.Length + drawable.Raster.HoverPngData.Length <= StructuredIpcLimits.MaxInlineRasterBytes,
         _ => false
     };
+
+    private static bool IsPng(Google.Protobuf.ByteString data) =>
+        data.Length >= 8 && data.Span[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
 
     private static bool ValidateShapeDrawable(ShapeDrawable shape) =>
         shape.Shape != ShapeKind.Unspecified && ValidateRect(shape.Bounds) && shape.Opacity is >= 0 and <= 1 &&
