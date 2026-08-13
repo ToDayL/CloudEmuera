@@ -2,7 +2,7 @@ using System.Text.Json;
 using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Ipc.V3;
 using R = CloudEmuera.RuntimeAdapter;
-using RuntimeMapper = CloudEmuera.Worker.StructuredConsoleWireMapper;
+using RuntimeMapper = CloudEmuera.Realtime.StructuredConsoleWireMapper;
 
 namespace CloudEmuera.Api.Realtime;
 
@@ -37,9 +37,6 @@ public static class RealtimePayloadMapper
             transactions[^1].Sequence,
             transactions.Select(ToTransaction).ToArray());
     }
-
-    public static RealtimeResyncRequired ToResyncRequired(ulong workerEpoch, long observedSequence, string reason) =>
-        new(workerEpoch, observedSequence, reason);
 
     private static RealtimeConsoleState ToState(R.ConsoleSnapshot snapshot) => new(
         snapshot.Scrollback.Select(ToLine).ToArray(),
@@ -403,15 +400,6 @@ public sealed class RealtimePayloadSerializer
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(payload, RealtimeJsonContext.Default.RealtimeTransactionBatch);
         EnsureSize(bytes, options.SnapshotMaxBytes, "transaction batch");
         return new RealtimeEncodedPayload(RealtimePayloadKind.TransactionBatch, workerEpoch, payload.FirstSequence, payload.LastSequence, bytes);
-    }
-
-    public byte[] SerializeResyncRequired(ulong workerEpoch, long observedSequence, string reason)
-    {
-        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(
-            RealtimePayloadMapper.ToResyncRequired(workerEpoch, observedSequence, reason),
-            RealtimeJsonContext.Default.RealtimeResyncRequired);
-        EnsureSize(bytes, options.BatchTargetBytes, "resync marker");
-        return bytes;
     }
 
     private static void EnsureSize(byte[] bytes, long limit, string kind)

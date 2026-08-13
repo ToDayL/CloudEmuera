@@ -37,7 +37,8 @@ public sealed record RealtimeHubStatistics(
     long PublishedBatchCount,
     long IgnoredBatchCount,
     long ResyncCount,
-    long FaultCount);
+    long FaultCount,
+    long SnapshotEncodingCount);
 
 public enum RealtimeFrameKind
 {
@@ -81,13 +82,23 @@ public sealed class SessionOutputHub : IAsyncDisposable
     private readonly Dictionary<Guid, RealtimeSubscription> subscriptions = [];
     private R.ConsoleSnapshot? latestSnapshot;
     private RealtimeEncodedPayload? latestSnapshotPayload;
+    private SnapshotEncodingOperation? snapshotEncoding;
     private SessionOutputHubState state = SessionOutputHubState.AwaitingInitialSnapshot;
     private string? terminalReason;
     private long publishedBatchCount;
     private long ignoredBatchCount;
     private long resyncCount;
     private long faultCount;
+    private long snapshotEncodingCount;
     private int disposed;
+
+    private sealed class SnapshotEncodingOperation(R.ConsoleSnapshot snapshot)
+    {
+        public R.ConsoleSnapshot Snapshot { get; } = snapshot;
+
+        public TaskCompletionSource<RealtimeEncodedPayload> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 
     public SessionOutputHub(
         string sessionId,
@@ -169,10 +180,20 @@ public sealed class SessionOutputHub : IAsyncDisposable
                     publishedBatchCount,
                     ignoredBatchCount,
                     resyncCount,
-                    faultCount);
+                    faultCount,
+                    Volatile.Read(ref snapshotEncodingCount));
             }
         }
     }
+
+    /// <summary>
+    /// Raised once when a reader-driven fault (for example a snapshot that
+    /// cannot be encoded within its byte budget) transitions the hub into
+    /// <see cref="SessionOutputHubState.Faulted"/>. Publish-driven faults are
+    /// not raised here; the Worker Manager handles those on the receive path.
+    /// The callback runs outside the hub lock and must not block.
+    /// </summary>
+    internal event Action<string>? FaultReported;
 
     public RealtimeSubscription Subscribe()
     {
@@ -300,6 +321,9 @@ public sealed class SessionOutputHub : IAsyncDisposable
                 }
 
                 latestSnapshot = candidate;
+                // Invalidate the cache while publishing the new mirror. Do
+                // not clear it again after AddTransactions: a reader may
+                // legitimately finish lazy encoding while that work runs.
                 latestSnapshotPayload = null;
                 state = SessionOutputHubState.Live;
                 publishedBatchCount++;
@@ -308,8 +332,6 @@ public sealed class SessionOutputHub : IAsyncDisposable
             if (incomingSnapshot is not null)
                 ResetBatcherBaseline(candidate.SnapshotSequence);
 
-            RealtimeEncodedPayload currentSnapshotPayload = serializer.SerializeSnapshot(WorkerEpoch, candidate);
-            RealtimeEncodedPayload? replacementPayload = incomingSnapshot is not null ? currentSnapshotPayload : null;
             IReadOnlyList<RealtimeEncodedPayload> transactionPayloads = incomingSnapshot is null
                 ? AddTransactions(transactions)
                 : Array.Empty<RealtimeEncodedPayload>();
@@ -318,10 +340,9 @@ public sealed class SessionOutputHub : IAsyncDisposable
             {
                 if (state is SessionOutputHubState.Faulted or SessionOutputHubState.Disposed)
                     return Rejected(terminalReason ?? "hub-not-live");
-                latestSnapshotPayload = currentSnapshotPayload;
                 foreach (RealtimeSubscription subscription in subscriptions.Values.ToArray())
                 {
-                    if (replacementPayload is not null)
+                    if (incomingSnapshot is not null)
                         subscription.RequestResyncLocked("snapshot-replaced");
                 }
                 EnqueueTransactionPayloadsLocked(transactionPayloads);
@@ -367,8 +388,7 @@ public sealed class SessionOutputHub : IAsyncDisposable
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidDataException or OverflowException)
         {
-            lock (sync)
-                FaultLocked("display-encoding-failed", exception);
+            FaultAndReport("display-encoding-failed", exception);
         }
         finally
         {
@@ -555,8 +575,7 @@ public sealed class SessionOutputHub : IAsyncDisposable
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidDataException or OverflowException)
         {
-            lock (sync)
-                FaultLocked("display-encoding-failed", exception);
+            FaultAndReport("display-encoding-failed", exception);
         }
         finally
         {
@@ -580,6 +599,20 @@ public sealed class SessionOutputHub : IAsyncDisposable
             return FaultLocked(reason, exception);
     }
 
+    private void FaultAndReport(string reason, Exception? exception = null)
+    {
+        bool transitioned;
+        lock (sync)
+        {
+            transitioned = state is not (SessionOutputHubState.Faulted or SessionOutputHubState.Disposed);
+            if (transitioned)
+                _ = FaultLocked(reason, exception);
+        }
+
+        if (transitioned)
+            FaultReported?.Invoke(reason);
+    }
+
     private RealtimePublishResult FaultLocked(string reason, Exception? exception = null)
     {
         if (state is SessionOutputHubState.Faulted or SessionOutputHubState.Disposed)
@@ -595,14 +628,87 @@ public sealed class SessionOutputHub : IAsyncDisposable
         return new RealtimePublishResult(RealtimePublishDisposition.Faulted, state, latestSnapshot?.SnapshotSequence ?? 0, reason);
     }
 
+    /// <summary>
+    /// Faults the hub from a subscription reader path (for example a snapshot
+    /// whose JSON encoding exceeds the configured budget). Publish paths must
+    /// use <see cref="FaultLocked"/> directly so the Worker Manager cancels
+    /// the Worker on its receive loop; this entry additionally reports the
+    /// fault so the owning session can cancel the Worker from the reader
+    /// thread. Encoding failures are protocol/config errors and must fail
+    /// closed rather than degrade the snapshot.
+    /// </summary>
+    internal void ReportReaderFault(string reason)
+    {
+        FaultAndReport(reason);
+    }
+
     internal sealed record RealtimeSnapshotRead(
         R.ConsoleSnapshot? Snapshot,
         RealtimeEncodedPayload? Payload,
         SessionOutputHubState State,
         long Sequence);
 
-    internal RealtimeEncodedPayload CreateSnapshotPayload(R.ConsoleSnapshot snapshot) =>
-        serializer.SerializeSnapshot(WorkerEpoch, snapshot);
+    /// <summary>
+    /// Returns the cached encoded snapshot when one matches the current
+    /// mirror, otherwise encodes <paramref name="snapshot"/> lazily and caches
+    /// it only if the mirror has not moved. A newer cached payload may be
+    /// returned when the supplied snapshot is already stale; callers must
+    /// re-check the hub sequence after obtaining the payload.
+    /// </summary>
+    internal async ValueTask<RealtimeEncodedPayload?> GetOrCreateSnapshotPayloadAsync(R.ConsoleSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        SnapshotEncodingOperation operation;
+        bool ownsEncoding;
+        lock (sync)
+        {
+            if (latestSnapshotPayload is { } cached)
+                return cached;
+            if (latestSnapshot is null)
+                return null;
+
+            R.ConsoleSnapshot currentSnapshot = latestSnapshot;
+            if (snapshotEncoding is { } existing && ReferenceEquals(existing.Snapshot, currentSnapshot))
+            {
+                operation = existing;
+                ownsEncoding = false;
+            }
+            else
+            {
+                operation = new SnapshotEncodingOperation(currentSnapshot);
+                snapshotEncoding = operation;
+                ownsEncoding = true;
+            }
+        }
+
+        if (ownsEncoding)
+        {
+            try
+            {
+                RealtimeEncodedPayload payload = serializer.SerializeSnapshot(WorkerEpoch, operation.Snapshot);
+                Interlocked.Increment(ref snapshotEncodingCount);
+                lock (sync)
+                {
+                    if (ReferenceEquals(latestSnapshot, operation.Snapshot))
+                        latestSnapshotPayload = payload;
+                    if (ReferenceEquals(snapshotEncoding, operation))
+                        snapshotEncoding = null;
+                }
+                operation.Completion.TrySetResult(payload);
+            }
+            catch (Exception exception)
+            {
+                lock (sync)
+                {
+                    if (ReferenceEquals(snapshotEncoding, operation))
+                        snapshotEncoding = null;
+                }
+                operation.Completion.TrySetException(exception);
+            }
+        }
+
+        return await operation.Completion.Task.ConfigureAwait(false);
+    }
 
     internal DateTimeOffset UtcNow => timeProvider.GetUtcNow();
 
@@ -615,18 +721,21 @@ public sealed class RealtimeSubscription : IAsyncDisposable
 {
     private readonly SessionOutputHub hub;
     private readonly BoundedRealtimeQueue queue;
+    private readonly RealtimeResyncFailureTracker resyncFailures;
     private readonly object sync = new();
     private RealtimeEncodedPayload? initialSnapshot;
     private long expectedSequence;
     private bool closed;
     private string? closeReason;
-    private DateTimeOffset firstResyncAt;
-    private int resyncAttempts;
 
     internal RealtimeSubscription(SessionOutputHub hub, BoundedRealtimeQueue queue)
     {
         this.hub = hub;
         this.queue = queue;
+        resyncFailures = new RealtimeResyncFailureTracker(
+            hub.UtcNow,
+            hub.SnapshotResyncWindow,
+            hub.MaxSnapshotResyncAttempts);
         Id = Guid.CreateVersion7();
     }
 
@@ -745,16 +854,31 @@ public sealed class RealtimeSubscription : IAsyncDisposable
             return null;
         }
 
-        RealtimeEncodedPayload payload;
+        RealtimeEncodedPayload? payload;
         try
         {
-            payload = read.Payload ?? hub.CreateSnapshotPayload(read.Snapshot);
+            payload = await hub.GetOrCreateSnapshotPayloadAsync(read.Snapshot).ConfigureAwait(false);
+        }
+        catch (RealtimePayloadSizeException)
+        {
+            // A snapshot that cannot be encoded within its byte budget is a
+            // protocol/config error, not a slow consumer. Fail the hub closed
+            // so the Worker Manager can retire the Worker and reconcile the
+            // Session instead of leaving an unreadable mirror behind.
+            hub.ReportReaderFault("snapshot-encoding-too-large");
+            return null;
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidDataException or OverflowException)
         {
             if (!RegisterResyncFailure())
                 throw new RealtimeSlowConsumerException("The subscription could not receive a bounded snapshot.");
             queue.RequestResync("snapshot-encoding-failed");
+            return null;
+        }
+        if (payload is null)
+        {
+            // The mirror was released by disposal; the completed queue will
+            // surface the terminal frame on the next loop iteration.
             return null;
         }
 
@@ -770,44 +894,32 @@ public sealed class RealtimeSubscription : IAsyncDisposable
 
         if (after.Sequence != payload.LastSequence)
         {
-            if (!RegisterResyncFailure())
-                throw new RealtimeSlowConsumerException("The subscription could not catch up to a moving snapshot.");
+            // A snapshot that raced the mirror is not a slow-consumer failure:
+            // the client did receive a complete, valid replacement and simply
+            // needs a newer baseline. Re-requesting a resync is bounded and
+            // converges once the mirror settles; it must not disconnect a
+            // fast client on a busy hub.
             queue.RequestResync("snapshot-raced");
         }
         else
         {
-            lock (sync)
-                ResetResyncFailures();
+            resyncFailures.Reset();
         }
         return result;
     }
 
     private bool RegisterResyncFailure()
     {
+        if (resyncFailures.RegisterFailure(hub.UtcNow))
+            return true;
+
         lock (sync)
         {
-            DateTimeOffset now = hub.UtcNow;
-            if (firstResyncAt == default || now - firstResyncAt > hub.SnapshotResyncWindow)
-            {
-                firstResyncAt = now;
-                resyncAttempts = 0;
-            }
-            resyncAttempts++;
-            if (resyncAttempts >= hub.MaxSnapshotResyncAttempts)
-            {
-                closed = true;
-                closeReason = "slow-consumer";
-                queue.Complete(discardPending: true);
-                return false;
-            }
-            return true;
+            closed = true;
+            closeReason = "slow-consumer";
+            queue.Complete(discardPending: true);
+            return false;
         }
-    }
-
-    private void ResetResyncFailures()
-    {
-        firstResyncAt = default;
-        resyncAttempts = 0;
     }
 
     public async ValueTask DisposeAsync()
@@ -825,3 +937,42 @@ public sealed class RealtimeSubscription : IAsyncDisposable
 }
 
 public sealed class RealtimeSlowConsumerException(string message) : InvalidOperationException(message);
+
+/// <summary>
+/// Tracks consecutive snapshot replacement failures within a rolling window.
+/// Only genuine failures to obtain or encode a replacement count; a snapshot
+/// that raced the mirror is not a failure and never reaches this tracker.
+/// </summary>
+internal sealed class RealtimeResyncFailureTracker
+{
+    private readonly TimeSpan window;
+    private readonly int maxAttempts;
+    private DateTimeOffset firstFailureAt;
+    private int failures;
+
+    internal RealtimeResyncFailureTracker(
+        DateTimeOffset initialNow,
+        TimeSpan window,
+        int maxAttempts)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxAttempts, 0);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(window, TimeSpan.Zero);
+        this.window = window;
+        this.maxAttempts = maxAttempts;
+        firstFailureAt = initialNow;
+    }
+
+    internal bool RegisterFailure(DateTimeOffset now)
+    {
+        if (firstFailureAt == default || now - firstFailureAt > window)
+        {
+            firstFailureAt = now;
+            failures = 0;
+        }
+
+        failures++;
+        return failures < maxAttempts;
+    }
+
+    internal void Reset() => failures = 0;
+}

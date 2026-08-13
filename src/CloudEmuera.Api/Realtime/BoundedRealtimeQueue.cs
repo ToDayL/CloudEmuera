@@ -179,19 +179,18 @@ public sealed class BoundedRealtimeQueue
             if (completed)
             {
                 if (discardPending)
-                {
                     ClearPayloadsLocked();
-                    needsResync = false;
-                    SignalLocked();
-                }
+                needsResync = false;
+                SignalLocked();
                 return;
             }
             completed = true;
             if (discardPending)
-            {
                 ClearPayloadsLocked();
-                needsResync = false;
-            }
+            // Terminal completion supersedes any pending resync marker: a
+            // completed queue must drain its payloads and then report
+            // Completed, never a resync that can no longer be satisfied.
+            needsResync = false;
             SignalLocked();
         }
     }

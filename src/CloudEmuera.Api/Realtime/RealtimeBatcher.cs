@@ -10,6 +10,16 @@ namespace CloudEmuera.Api.Realtime;
 /// </summary>
 public sealed class RealtimeBatcher
 {
+    /// <summary>
+    /// Upper bound for the shared JSON batch wrapper
+    /// (workerEpoch/firstSequence/lastSequence/transactions array plus
+    /// separators). Each transaction is measured once as a single-transaction
+    /// batch, so the cumulative estimate is an upper bound of the final batch
+    /// size and the flush decision never needs to re-serialize the whole
+    /// pending list on every add.
+    /// </summary>
+    private const int BatchWrapperOverheadBytes = 256;
+
     private readonly RealtimeOutputOptions options;
     private readonly RealtimePayloadSerializer serializer;
     private readonly TimeProvider timeProvider;
@@ -18,6 +28,7 @@ public sealed class RealtimeBatcher
     private long lastSequence;
     private bool hasLastSequence;
     private long startedTimestamp;
+    private long pendingEstimatedBytes;
 
     public RealtimeBatcher(
         RealtimeOutputOptions? options = null,
@@ -62,40 +73,43 @@ public sealed class RealtimeBatcher
             throw new RealtimeSequenceException("Realtime batch transactions must be continuous.");
 
         bool wasEmpty = pending.Count == 0;
+
+        // Measure the candidate exactly once as a single-transaction batch and
+        // use the cumulative estimate for the byte budget so adding a batch
+        // stays linear in the transaction count.
+        RealtimeEncodedPayload single = serializer.SerializeTransactionBatch(workerEpoch, [transaction]);
+        if (!wasEmpty &&
+            pendingEstimatedBytes + single.ByteLength >= options.BatchTargetBytes)
+        {
+            flushed.AddRange(Flush());
+            wasEmpty = true;
+        }
+
         pending.Add(transaction);
         epoch = workerEpoch;
         lastSequence = transaction.Sequence;
         hasLastSequence = true;
         if (wasEmpty)
-            startedTimestamp = timeProvider.GetTimestamp();
-
-        RealtimeEncodedPayload candidate = serializer.SerializeTransactionBatch(epoch, pending);
-        if (candidate.ByteLength > options.BatchTargetBytes)
         {
-            if (pending.Count > 1)
-            {
-                SequencedConsoleTransaction last = pending[^1];
-                pending.RemoveAt(pending.Count - 1);
-                flushed.AddRange(Flush());
-                pending.Add(last);
-                epoch = workerEpoch;
-                lastSequence = last.Sequence;
-                hasLastSequence = true;
-                startedTimestamp = timeProvider.GetTimestamp();
-                if (serializer.SerializeTransactionBatch(epoch, [last]).ByteLength > options.BatchTargetBytes)
-                    flushed.AddRange(Flush());
-            }
-            else
-            {
-                // A transaction is atomic. It may exceed the batching target,
-                // but it must be emitted immediately when it still fits the
-                // protocol hard limit.
-                flushed.AddRange(Flush());
-            }
+            startedTimestamp = timeProvider.GetTimestamp();
+            pendingEstimatedBytes = single.ByteLength + BatchWrapperOverheadBytes;
+        }
+        else
+        {
+            pendingEstimatedBytes += single.ByteLength;
         }
 
-        if (pending.Count >= options.BatchMaxTransactions)
+        if (single.ByteLength > options.BatchTargetBytes)
+        {
+            // A transaction is atomic. It may exceed the batching target, but
+            // it must be emitted immediately when it still fits the protocol
+            // hard limit.
             flushed.AddRange(Flush());
+        }
+        else if (pending.Count >= options.BatchMaxTransactions)
+        {
+            flushed.AddRange(Flush());
+        }
 
         return flushed;
     }
@@ -114,6 +128,7 @@ public sealed class RealtimeBatcher
 
         RealtimeEncodedPayload result = serializer.SerializeTransactionBatch(epoch, pending);
         pending.Clear();
+        pendingEstimatedBytes = 0;
         startedTimestamp = 0;
         return [result];
     }
@@ -142,6 +157,7 @@ public sealed class RealtimeBatcher
         epoch = 0;
         lastSequence = 0;
         hasLastSequence = false;
+        pendingEstimatedBytes = 0;
         startedTimestamp = 0;
     }
 }

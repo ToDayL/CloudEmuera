@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V3;
+using CloudEmuera.Realtime;
 using CloudEmuera.RuntimeAdapter;
 using R = CloudEmuera.RuntimeAdapter;
 using Microsoft.Extensions.Logging;

@@ -173,6 +173,9 @@ RealtimeTransactionBatch(workerEpoch, firstSequence, lastSequence, transactions[
 RealtimeResyncRequired(workerEpoch, observedSequence, reason)
 ```
 
+P1-08 帧流以带 reason 的完整替换 Snapshot 表达重同步；`RealtimeResyncRequired` DTO 保留给 P1-09 的
+WebSocket v1 envelope，不在 P1-08 运行期产生独立 payload。
+
 要求：
 
 - JSON 使用 camelCase、显式 enum 字符串和 UTF-8；不启用多态类型名；
@@ -180,7 +183,10 @@ RealtimeResyncRequired(workerEpoch, observedSequence, reason)
 - raster 用 base64 PNG；资产继续只用 manifest `assetId`，不出现路径、URL、raw HTML 或宿主字体；
 - `deadlineUnixMilliseconds` 原样复制，序列化时可附新的 `serverNowUnixMilliseconds` 展示基准，但不得
   修改 deadline 或让 Worker 重建 prompt；
-- Snapshot 编码后检查 12 MiB，transaction batch 检查 256 KiB 目标和 12 MiB 单消息硬上限；
+- Snapshot 编码后检查 12 MiB，transaction batch 检查 256 KiB 目标和 12 MiB 单消息硬上限。快照编码
+  按需惰性执行：批次发布只失效编码缓存，首个订阅或 resync 需要时编码并缓存，
+  `RealtimeHubStatistics.SnapshotEncodingCount` 提供观测；无订阅者的 Session 持续输出不付出全量
+  JSON 编码成本；
 - serializer 使用 source-generated context。golden JSON 与 TypeScript schema 生成输入放在
   `CloudEmuera.Contracts`，避免 API 手写第二套字段。
 
@@ -189,11 +195,10 @@ RealtimeResyncRequired(workerEpoch, observedSequence, reason)
 `RealtimeBatcher` 接受已归约、连续的 transaction 引用，遇到以下条件 flush：16 ms、64 条、
 256 KiB，或 Snapshot/epoch/resync/完成边界。使用可注入 `TimeProvider`，测试不等待真实时钟。
 
-字节阈值以最终 UTF-8 payload 实测；估算只用于预分组。若加入一条后超过目标：
-
-- 已有批次先 flush；
-- 该 transaction 独立编码；
-- 超过 12 MiB 则 Hub fault，不拆分一个原子 transaction。
+字节阈值以最终 UTF-8 payload 实测为准；预分组使用单 transaction 精确序列化尺寸累加一个固定包装
+开销上界（256 B），累计上界达到目标即先 flush 已有批次再开始新批次，因此任何 flush 出的普通批次
+实际尺寸不超过目标，入列复杂度保持线性。单条 transaction 超过目标时独立编码发送；超过 12 MiB 则
+Hub fault，不拆分一个原子 transaction。
 
 同一编码批次由多个连接共享只读 byte buffer；引用释放后可回收。不得为每个订阅者重复序列化。
 
@@ -239,8 +244,9 @@ reader 取得 resync 状态后：
 5. 每次出队 batch 检查 `firstSequence == expected + 1`，不满足时丢弃并 resync；
 6. Snapshot 永远完整替换，不能 merge 到旧 epoch 或旧 scene。
 
-测试在步骤 1～4 每个切点注入 transaction、Snapshot 和 epoch 替换。即使竞态窗口中只有一条输出且
-此后静默，步骤 3 也必须发现 sequence 已前进，不能等下一条消息才暴露缺口。
+当前实现把订阅注册与快照读取放在同一 Hub 锁内，常见路径不存在窗口；第二次比较保留为注册拆分到
+传输层时的防御性契约。即使竞态窗口中只有一条输出且此后静默，步骤 3 也必须发现 sequence 已前进，
+不能等下一条消息才暴露缺口。
 
 ## 12. 与 Worker Manager 生命周期集成
 
@@ -297,6 +303,12 @@ queueBytes、resyncReason 和 closeReason。不得记录文本节点、按钮值
 - soft/hard count 与 byte overflow、marker 唤醒、共享 buffer 生命周期；
 - 一个永久慢 reader、一个快速 reader与持续 publisher 并发，快 reader 连续且 publisher 不等待；
 - 三次 Snapshot 替换失败产生 `slow-consumer`，Session/其他 reader 不受影响；
+- 惰性编码：无订阅者发布不编码、首个订阅编码一次、缓存复用、镜像变化后重新编码
+  （`SnapshotEncodingCount`）；
+- 读取路径编码超限 fail-closed：Hub 进入 Faulted、订阅者收到 Completed、`FaultReported` 上报；
+- `snapshot-raced` 不关闭订阅者；golden JSON 冻结完整 Snapshot 与 transaction batch；
+- 首个消息为 delta 直接 Faulted；旧 Hub 完成订阅后新 Hub 独立要求自己的首快照；
+- 12 MiB 上限与序列化超限抛错；
 - Hub dispose、epoch replacement、runtime completion 与 enqueue/read 竞争无泄漏或死锁。
 
 ### 14.4 真实 Worker/API
@@ -411,3 +423,15 @@ dispose 完成订阅；控制面 wait probe 不再保存 DisplayBatch，并增�
 生命周期 gate；Reducer 对注入的 transaction/node limits 做 fail-closed 校验。开发 Docker 验证结果：
 RuntimeAdapter `Snapshot|ConsoleContract` 54 项、`CloudEmuera.Realtime.Tests` 11 项、Worker
 快照/背压过滤 2 项、完整 Worker 集成 19 项通过；Release solution build 通过。
+
+2026-08-13 评审修订：快照 JSON 改为惰性编码并按需缓存（`SnapshotEncodingCount`）；batcher 字节预算
+改为单事务精确尺寸 + 固定开销上界，消除 O(n²)；`snapshot-raced` 不再计 slow-consumer 失败，读取路径
+编码超限 fail-closed 并回收 Worker；`Complete` 后终态优先于残留 resync 标记；控制面丢弃超预算事件
+记录计数；mapper 物理移入 `CloudEmuera.Realtime`；新增 golden JSON、惰性编码、编码超限、首消息
+delta、快慢 reader 隔离、epoch 完成与 tracker 测试，并补 reducer 随机化属性测试。修订后
+`CloudEmuera.Realtime.Tests` 23 项、RuntimeAdapter `Snapshot|ConsoleContract` 55 项、完整 Worker
+集成 19 项、Release solution build 通过。
+
+2026-08-14 评审修复：同一 Snapshot 的并发惰性编码使用 single-flight，镜像发布只在状态替换处失效
+缓存；timer/终态 flush 的编码故障通过 `FaultReported` 上报并回收 Worker；pending event 因消息数或
+字节预算淘汰时累计丢弃计数。新增并发编码回归测试，`CloudEmuera.Realtime.Tests` 24 项通过。

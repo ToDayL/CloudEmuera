@@ -1,8 +1,11 @@
+using System.IO;
+using System.Linq;
 using System.Text;
 using CloudEmuera.Api.Realtime;
+using RuntimeColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
 using W = CloudEmuera.Ipc.V3;
 using CloudEmuera.RuntimeAdapter;
-using CloudEmuera.Worker;
+using CloudEmuera.Realtime;
 using Xunit;
 
 namespace CloudEmuera.Realtime.Tests;
@@ -186,7 +189,7 @@ public sealed class RealtimeOutputTests
     [Fact]
     public void BatcherFlushesWhenItsWindowExpiresAndEmitsAnAtomicLargeTransaction()
     {
-        var clock = new ManualTimeProvider();
+        var clock = new TestTimeProvider();
         var options = RealtimeOutputOptions.Default with
         {
             BatchMaxDelay = TimeSpan.FromMilliseconds(16),
@@ -219,22 +222,323 @@ public sealed class RealtimeOutputTests
         Assert.Equal(RealtimeQueueReadKind.ResyncRequired, (await queue.ReadAsync()).Kind);
     }
 
-    private sealed class ManualTimeProvider : TimeProvider
+    [Fact]
+    public async Task SnapshotPayloadIsEncodedLazilyAndReusedUntilTheMirrorMoves()
     {
-        private long timestamp;
-        private DateTimeOffset utcNow = DateTimeOffset.UnixEpoch;
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 21);
+        hub.PublishDisplayBatch(SnapshotBatch(ConsoleSnapshot.Empty, Transaction(1, "one")));
+        hub.PublishDisplayBatch(DeltaBatch(Transaction(2, "two")));
+        Assert.Equal(0, hub.Statistics.SnapshotEncodingCount);
 
-        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        await using RealtimeSubscription first = hub.Subscribe();
+        RealtimeFrame snapshot = await first.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.Snapshot, snapshot.Kind);
+        Assert.Equal(1, hub.Statistics.SnapshotEncodingCount);
 
-        public override long GetTimestamp() => timestamp;
+        await using RealtimeSubscription second = hub.Subscribe();
+        RealtimeFrame cached = await second.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.Snapshot, cached.Kind);
+        Assert.Equal(1, hub.Statistics.SnapshotEncodingCount);
 
-        public override DateTimeOffset GetUtcNow() => utcNow;
+        hub.PublishDisplayBatch(DeltaBatch(Transaction(3, "three")));
+        await using RealtimeSubscription third = hub.Subscribe();
+        RealtimeFrame refreshed = await third.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.Snapshot, refreshed.Kind);
+        Assert.Equal(2, hub.Statistics.SnapshotEncodingCount);
+    }
 
-        public void Advance(TimeSpan duration)
+    [Fact]
+    public async Task ConcurrentSnapshotReadersShareOneInFlightEncoding()
+    {
+        var snapshot = new ConsoleSnapshot(
+            1,
+            Enumerable.Range(0, 512)
+                .Select(index => new ConsoleLine($"line-{index}", [new TextNode(new string('x', 400))])));
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 211);
+        hub.PublishDisplayBatch(SnapshotBatch(snapshot));
+
+        SessionOutputHub.RealtimeSnapshotRead read = hub.GetLatestSnapshot();
+        Assert.NotNull(read.Snapshot);
+        Task<RealtimeEncodedPayload?>[] encodings = Enumerable.Range(0, 8)
+            .Select(_ => Task.Run(async () => await hub.GetOrCreateSnapshotPayloadAsync(read.Snapshot!)))
+            .ToArray();
+
+        RealtimeEncodedPayload?[] payloads = await Task.WhenAll(encodings);
+
+        Assert.Equal(1, hub.Statistics.SnapshotEncodingCount);
+        Assert.All(payloads, payload => Assert.NotNull(payload));
+        Assert.All(payloads, payload => Assert.Equal(1, payload!.LastSequence));
+    }
+
+    [Fact]
+    public async Task UnencodableSnapshotFaultsTheHubAndCompletesSubscribers()
+    {
+        var options = RealtimeOutputOptions.Default with
         {
-            timestamp += duration.Ticks;
-            utcNow = utcNow.Add(duration);
+            SnapshotMaxBytes = 16 * 1024,
+            BatchTargetBytes = 4 * 1024,
+            ConnectionQueueSoftBytes = 4 * 1024,
+            ConnectionQueueHardBytes = 8 * 1024
+        };
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 22, options);
+        string? reportedReason = null;
+        hub.FaultReported += reason => reportedReason = reason;
+
+        hub.PublishDisplayBatch(SnapshotBatch(ConsoleSnapshot.Empty, Transaction(1, new string('x', 200))));
+        for (int sequence = 2; sequence <= 100; sequence++)
+        {
+            RealtimePublishResult result = hub.PublishDisplayBatch(DeltaBatch(Transaction(sequence, new string('x', 200))));
+            Assert.Equal(RealtimePublishDisposition.Applied, result.Disposition);
         }
+        Assert.Equal(SessionOutputHubState.Live, hub.State);
+
+        await using RealtimeSubscription subscription = hub.Subscribe();
+        RealtimeFrame frame = await subscription.ReadAsync();
+
+        Assert.Equal(RealtimeFrameKind.Completed, frame.Kind);
+        Assert.Equal("snapshot-encoding-too-large", frame.Reason);
+        Assert.Equal(SessionOutputHubState.Faulted, hub.State);
+        Assert.Equal("snapshot-encoding-too-large", reportedReason);
+    }
+
+    [Fact]
+    public async Task FirstBatchWithoutASnapshotFaultsTheHub()
+    {
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 24);
+
+        RealtimePublishResult result = hub.PublishDisplayBatch(DeltaBatch(Transaction(1, "no-snapshot")));
+
+        Assert.Equal(RealtimePublishDisposition.Faulted, result.Disposition);
+        Assert.Equal("initial-snapshot-required", result.ReasonCode);
+        Assert.Equal(SessionOutputHubState.Faulted, hub.State);
+        Assert.Equal(0, hub.SnapshotSequence);
+    }
+
+    [Fact]
+    public async Task CompletingTheHubFinishesSubscriptionsAndANewHubRequiresItsOwnSnapshot()
+    {
+        await using var oldHub = new SessionOutputHub("session-1", "worker-1", 25);
+        await using RealtimeSubscription subscription = oldHub.Subscribe();
+        oldHub.PublishDisplayBatch(SnapshotBatch(ConsoleSnapshot.Empty, Transaction(1, "one")));
+        Assert.Equal(RealtimeFrameKind.Snapshot, (await subscription.ReadAsync()).Kind);
+
+        oldHub.Complete("epoch-replaced");
+        RealtimeFrame terminal = await subscription.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.Completed, terminal.Kind);
+        Assert.Equal("epoch-replaced", terminal.Reason);
+        Assert.Throws<InvalidOperationException>(() => oldHub.Subscribe());
+
+        await using var newHub = new SessionOutputHub("session-1", "worker-2", 26);
+        Assert.Equal(SessionOutputHubState.AwaitingInitialSnapshot, newHub.State);
+        Assert.Equal(
+            RealtimePublishDisposition.Faulted,
+            newHub.PublishDisplayBatch(DeltaBatch(Transaction(5, "five"))).Disposition);
+    }
+
+    [Fact]
+    public async Task SlowReaderOverflowIsBoundedAndDoesNotBlockAFastReader()
+    {
+        var options = RealtimeOutputOptions.Default with
+        {
+            BatchMaxDelay = TimeSpan.FromMilliseconds(1),
+            BatchMaxTransactions = 1,
+            SnapshotMaxBytes = 64 * 1024,
+            BatchTargetBytes = 16 * 1024,
+            ConnectionQueueSoftBytes = 16 * 1024,
+            ConnectionQueueHardBytes = 32 * 1024
+        };
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 23, options);
+        await using RealtimeSubscription fast = hub.Subscribe();
+        await using RealtimeSubscription slow = hub.Subscribe();
+
+        hub.PublishDisplayBatch(SnapshotBatch(ConsoleSnapshot.Empty, Transaction(1, "one")));
+        Assert.Equal(RealtimeFrameKind.Snapshot, (await fast.ReadAsync()).Kind);
+        Assert.Equal(RealtimeFrameKind.Snapshot, (await slow.ReadAsync()).Kind);
+
+        const int publishCount = 200;
+        Task publishing = Task.Run(async () =>
+        {
+            for (int sequence = 2; sequence <= publishCount + 1; sequence++)
+            {
+                RealtimePublishResult result = hub.PublishDisplayBatch(DeltaBatch(Transaction(sequence, $"line-{sequence}")));
+                Assert.Equal(RealtimePublishDisposition.Applied, result.Disposition);
+                await Task.Yield();
+            }
+        });
+
+        long expected = 2;
+        int received = 0;
+        while (received < publishCount)
+        {
+            RealtimeFrame frame = await fast.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.Equal(RealtimeFrameKind.TransactionBatch, frame.Kind);
+            Assert.Equal(expected, frame.FirstSequence);
+            expected = frame.LastSequence + 1;
+            received += (int)(frame.LastSequence - frame.FirstSequence + 1);
+        }
+        await publishing;
+
+        Assert.Equal(SessionOutputHubState.Live, hub.State);
+        RealtimeQueueStatistics slowStatistics = slow.QueueStatistics;
+        Assert.Equal(0, slowStatistics.QueuedMessages);
+        Assert.Equal(0, slowStatistics.QueuedBytes);
+        Assert.True(slowStatistics.NeedsResync);
+
+        RealtimeFrame slowResync = await slow.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.Snapshot, slowResync.Kind);
+        Assert.True(slowResync.ReplacesState);
+        Assert.Equal(publishCount + 1, slowResync.LastSequence);
+    }
+
+    [Fact]
+    public void SnapshotSerializationFailsClosedAboveTheTwelveMiBProtocolLimit()
+    {
+        var serializer = new RealtimePayloadSerializer();
+        var snapshot = new ConsoleSnapshot(
+            1,
+            Enumerable.Range(0, 4096).Select(index => new ConsoleLine($"line-{index}", [new TextNode(new string('<', 600))])));
+
+        Assert.Throws<RealtimePayloadSizeException>(() => serializer.SerializeSnapshot(1, snapshot));
+    }
+
+    [Fact]
+    public void GoldenJsonFreezesTheCompleteSnapshotContract()
+    {
+        byte[] payload = new RealtimePayloadSerializer().SerializeSnapshot(42, BuildGoldenSnapshot()).Bytes.ToArray();
+        string actual = Encoding.UTF8.GetString(payload);
+
+        string golden = File.ReadAllText(Path.Combine(TestFixturePath, "snapshot.complete.json"));
+        Assert.Equal(golden, actual);
+    }
+
+    [Fact]
+    public void GoldenJsonFreezesTheTransactionBatchContract()
+    {
+        byte[] payload = new RealtimePayloadSerializer()
+            .SerializeTransactionBatch(42, [Transaction(7, "seven"), Transaction(8, "eight")])
+            .Bytes.ToArray();
+        string actual = Encoding.UTF8.GetString(payload);
+
+        string golden = File.ReadAllText(Path.Combine(TestFixturePath, "transaction-batch.complete.json"));
+        Assert.Equal(golden, actual);
+    }
+
+    private static string TestFixturePath
+    {
+        get
+        {
+            string baseDirectory = AppContext.BaseDirectory;
+            return Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "GoldenJson"));
+        }
+    }
+
+    private static ConsoleSnapshot BuildGoldenSnapshot()
+    {
+        var style = new ConsoleTextStyle(
+            foreground: new RuntimeColor(255, 255, 255),
+            background: new RuntimeColor(0, 0, 0),
+            decorations: ConsoleFontStyle.Bold | ConsoleFontStyle.Italic,
+            fontFamily: "game-serif",
+            fontSize: 18,
+            lineHeight: 22);
+
+        var htmlIsland = new HtmlIslandNode(
+            new ConsoleHtmlElementNode(
+                "span",
+                [
+                    new ConsoleHtmlTextNode("safe"),
+                    ConsoleHtmlBreakNode.Instance,
+                    new ConsoleHtmlElementNode("b", [new ConsoleHtmlTextNode("bold")], style, assetId: "assets-font")
+                ],
+                style,
+                assetId: "assets-icon",
+                altText: "icon"),
+            new ConsoleRect(10, 20, 120, 40));
+
+        var line1 = new ConsoleLine(
+            "line-1",
+            [
+                new TextNode("hello", style),
+                new ButtonNode([new TextNode("go")], "go:1", "continue", enabled: true, generation: 3),
+                new ImageNode(new ConsoleAssetId("assets-logo"), new ConsoleRect(0, 0, 16, 16), new ConsoleRect(8, 8, 32, 32), altText: "logo", zIndex: 1),
+                htmlIsland,
+                new SpriteNode(
+                    new ConsoleAssetId("assets-hero"),
+                    new ConsoleRect(0, 0, 32, 48),
+                    new ConsoleRect(100, 100, 64, 96),
+                    frame: 2,
+                    zIndex: 3,
+                    opacity: 0.75f,
+                    altText: "hero",
+                    hoverAssetId: new ConsoleAssetId("assets-hero-hover"),
+                    hoverSourceRect: new ConsoleRect(32, 0, 32, 48),
+                    animationFrames: [new SpriteAnimationFrame(new ConsoleAssetId("assets-hero"), new ConsoleRect(0, 0, 32, 48), new ConsolePoint(0, 0), 120)])
+            ],
+            ConsoleLineAlignment.Center,
+            temporary: true);
+
+        var line2 = new ConsoleLine(
+            "line-2",
+            [
+                new TextNode("world"),
+                new ShapeNode(
+                    ConsoleShapeKind.Polygon,
+                    new ConsoleRect(0, 0, 40, 40),
+                    new RuntimeColor(255, 0, 0),
+                    new RuntimeColor(0, 255, 0),
+                    2,
+                    [new ConsolePoint(0, 0), new ConsolePoint(10, 0), new ConsolePoint(10, 10)])
+            ]);
+
+        byte[] png = [137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3];
+
+        return new ConsoleSnapshot(
+            42,
+            [line1, line2],
+            backgroundLayers: [new BackgroundLayer("bg-1", new ConsoleAssetId("assets-sky"), ConsoleBackgroundMode.Cover, 0.5f, 10)],
+            canvasScene: new CanvasScene(
+                [
+                    new SpriteDrawable(
+                        "d-sprite",
+                        new ConsoleAssetId("assets-hero"),
+                        new ConsoleRect(0, 0, 32, 48),
+                        new ConsoleRect(100, 100, 64, 96),
+                        1,
+                        0.8f,
+                        1,
+                        [new SpriteAnimationFrame(new ConsoleAssetId("assets-hero"), new ConsoleRect(0, 0, 32, 48), new ConsolePoint(0, 0), 100)]),
+                    new ShapeDrawable("d-shape", ConsoleShapeKind.Rectangle, new ConsoleRect(0, 0, 50, 50), new RuntimeColor(10, 20, 30), new RuntimeColor(40, 50, 60), 2, 0.9f),
+                    new RasterDrawable("d-raster", png, new ConsoleRect(200, 200, 80, 80), 3, 1f, hitTestMap: true)
+                ],
+                [new HitRegion("r-1", new ConsoleRect(100, 100, 64, 96), "tap:hero", true, "hero region")]),
+            mediaState: new MediaState([
+                new MediaChannelState("bgm", new ConsoleAssetId("assets-track"), ConsoleMediaPlaybackState.Requested, true, 0.4f, 7, ConsoleMediaStartPolicy.OnUserGesture)
+            ]),
+            currentPrompt: new ConsolePrompt(
+                "prompt-7",
+                ConsoleInputType.Text,
+                promptText: "name?",
+                defaultValue: "Erina",
+                constraints: new TextInputConstraints(maxLength: 12, allowControlCharacters: false),
+                timeout: TimeSpan.FromSeconds(30),
+                timeoutBehavior: ConsolePromptTimeoutBehavior.ReturnDefaultValue,
+                oneInput: true,
+                systemInput: false,
+                stopMessageSkip: true,
+                displayTime: true,
+                timeoutMessage: "timeout",
+                timeoutAction: ConsolePromptTimeoutAction.ReturnDefaultValue,
+                allowedSources: ConsoleInputSource.Keyboard | ConsoleInputSource.Pointer,
+                openedAtUnixMilliseconds: 1000,
+                deadlineUnixMilliseconds: 31000),
+            windowMetadata: new WindowMetadata(
+                "CloudEmuera",
+                800,
+                600,
+                new RuntimeColor(255, 255, 255),
+                new RuntimeColor(0, 0, 0),
+                new ConsoleFontSpec("game-serif", 18, 22)),
+            truncation: new ConsoleTruncationMetadata(true, 5, 2, 120));
     }
 
     private static SequencedConsoleTransaction Transaction(long sequence, string text) =>

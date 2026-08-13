@@ -43,6 +43,13 @@ public sealed record WorkerManagerOptions
 
     public RealtimeOutputOptions RealtimeOutput { get; init; } = RealtimeOutputOptions.Default;
 
+    // The API hub reducer options must stay identical to the Worker console
+    // options, otherwise a legally produced Worker batch could be rejected by
+    // the API mirror. Both sides currently use RuntimeAdapter's
+    // ConsoleHistoryOptions.Default and there is deliberately no one-sided
+    // configuration entry yet; introduce one only when the Worker bootstrap
+    // can carry the same value.
+
     // This is only a bounded lifecycle/event probe for control-plane waits;
     // DisplayBatch payloads are deliberately never retained here. Realtime
     // output is owned by SessionOutputHub.

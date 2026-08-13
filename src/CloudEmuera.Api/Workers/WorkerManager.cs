@@ -498,6 +498,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = false });
     private readonly List<WorkerEnvelope> pendingEvents = [];
     private long pendingEventBytes;
+    private long droppedPendingEventCount;
     private readonly StringBuilder processDiagnostics = new();
     private readonly List<string> sensitiveLogValues = [];
     private TaskCompletionSource<bool> eventSignal = NewEventSignal();
@@ -535,6 +536,14 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             request.Binding.WorkerEpoch,
             options.RealtimeOutput,
             minimumInitialSequence: request.InitialOutputSequence);
+        OutputHub.FaultReported += reason =>
+        {
+            // Reader-driven faults (for example an unencodable snapshot) are
+            // not visible on the Worker receive path. Retire the Worker so the
+            // Session is reconciled instead of leaving an unreadable mirror.
+            RecordProtocolError(string.IsNullOrWhiteSpace(reason) ? IpcReasonCodes.OutputResumeGap : reason);
+            connection?.Cancel();
+        };
     }
 
     public WorkerBinding Binding => request.Binding;
@@ -550,6 +559,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     public string ProcessDiagnostics { get { lock (sync) return processDiagnostics.ToString(); } }
     public SessionOutputHub OutputHub { get; }
     public long LastOutputSequence { get { lock (sync) return lastDisplaySequence; } }
+    public long DroppedPendingEventCount => Interlocked.Read(ref droppedPendingEventCount);
     public DateTimeOffset LastHeartbeatAt => new(Interlocked.Read(ref lastHeartbeatUtcTicks), TimeSpan.Zero);
     internal bool RuntimePersistenceReady => Volatile.Read(ref runtimePersistenceReady) != 0;
 
@@ -874,10 +884,15 @@ public sealed class ApiWorkerSession : IAsyncDisposable
                         WorkerEnvelope removed = pendingEvents[0];
                         pendingEvents.RemoveAt(0);
                         pendingEventBytes -= removed.CalculateSize();
+                        Interlocked.Increment(ref droppedPendingEventCount);
                     }
 
                     pendingEvents.Add(copy);
                     pendingEventBytes += copyBytes;
+                }
+                else
+                {
+                    Interlocked.Increment(ref droppedPendingEventCount);
                 }
             }
             eventSignal.TrySetResult(true);

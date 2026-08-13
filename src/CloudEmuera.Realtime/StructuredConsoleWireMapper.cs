@@ -3,7 +3,7 @@ using CloudEmuera.Ipc.V3;
 using R = CloudEmuera.RuntimeAdapter;
 using W = CloudEmuera.Ipc.V3;
 
-namespace CloudEmuera.Worker;
+namespace CloudEmuera.Realtime;
 
 /// <summary>
 /// Lossless mapper for the P1-07 structured protocol. The mapper lives in the

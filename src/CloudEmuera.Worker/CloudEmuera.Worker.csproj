@@ -11,7 +11,4 @@
     <ProjectReference Include="../CloudEmuera.Realtime/CloudEmuera.Realtime.csproj" />
     <ProjectReference Include="../CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <Compile Remove="StructuredConsoleWireMapper.cs" />
-  </ItemGroup>
 </Project>

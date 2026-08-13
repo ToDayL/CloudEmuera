@@ -75,23 +75,30 @@ epoch、Snapshot 或 resync 边界。
 或 2 MiB。达到软上限即停止追加普通增量并标记 `resync-required`；达到硬上限清空待发增量，只保留
 该状态标记。标记不依赖在已满 Channel 中再插入一条消息，因此不会丢失唤醒。
 
-Snapshot 不复制进每个连接队列；发送循环从 Hub 读取共享的不可变最新 Snapshot 并编码/发送。完整
-JSON Snapshot 默认最大 12 MiB，与 Worker v3 envelope 上限对齐；超限是协议/配置错误，不通过裁剪
-scene、prompt 或 media 静默降级。所有阈值由部署级 `RealtimeOutputOptions` 配置，配置必须为正且满足
-软上限小于硬上限、批次上限小于等于队列/快照上限。
+Snapshot 不复制进每个连接队列；发送循环从 Hub 读取共享的不可变最新 Snapshot，按需编码并缓存。批次
+发布本身不重新编码快照：镜像每次变化时只失效编码缓存，编码发生在首个订阅或 resync 需要快照时，
+结果由所有并发订阅者共享，直到下一次镜像变化。这样无浏览器连接的 Session 持续输出时不会为无人读取
+的 JSON 付出全量编码成本。完整 JSON Snapshot 默认最大 12 MiB，与 Worker v3 envelope 上限对齐；超限
+是协议/配置错误，不通过裁剪 scene、prompt 或 media 静默降级。编码失败（含首次按需编码时超限）由
+Hub fail closed，并通过故障报告让 Worker Manager 回收 Worker、把 Session 对账为 `CRASHED`，而不是把
+不可读镜像留在 API 内。所有阈值由部署级 `RealtimeOutputOptions` 配置，配置必须为正且满足软上限小于
+硬上限、批次上限小于等于队列/快照上限。
 
 ### 5. 慢连接失败不改变 Session
 
-同一连接在 30 秒窗口内连续三次未能完成 Snapshot 替换时，Hub 向上层报告
-`slow-consumer`。P1-09 的 WebSocket endpoint 用策略错误关闭该连接；不关闭 Worker、不改变 Session
-状态，也不影响其他连接。连接数和背压状态仅在 API 内存维护。
+同一连接在 30 秒窗口内连续三次无法取得或编码 Snapshot 替换时，Hub 向上层报告 `slow-consumer`。
+P1-09 的 WebSocket endpoint 用策略错误关闭该连接；不关闭 Worker、不改变 Session 状态，也不影响其他
+连接。快照在两次读取之间被更新的输出超越（`snapshot-raced`）不计入失败：客户端确实收到了完整有效的
+替换，只需在镜像稳定后取得更新的基线，持续重同步是有界的，不能把繁忙 Hub 上正常的快连接误判为慢
+消费者。连接数和背压状态仅在 API 内存维护。
 
 ### 6. 浏览器协议边界
 
 P1-08 在 `CloudEmuera.Contracts` 定义完整 Snapshot、transaction batch 和 `resync-required` 的
 transport-neutral DTO、显式 JSON 字段名及 source-generated serializer context，并用 golden JSON
-冻结所有 P1-07 节点。P1-09 再加入 WebSocket v1 envelope、鉴权握手、ping/pong 和输入回执；不得在
-P1-09 重新定义显示状态或背压算法。
+冻结所有 P1-07 节点。P1-08 的帧流以带 reason 的完整替换 Snapshot 表达重同步，`RealtimeResyncRequired`
+DTO 保留给 P1-09 的 WebSocket v1 envelope 使用，运行时不产生独立 resync payload。P1-09 再加入
+WebSocket v1 envelope、鉴权握手、ping/pong 和输入回执；不得在 P1-09 重新定义显示状态或背压算法。
 
 ## 备选方案
 
@@ -135,5 +142,18 @@ Snapshot；API `SessionOutputHub` 只保留当前不可变 Snapshot、共享 JSO
 消息数和字节预算限制；Hub 发布、持续 batch、终态 drain 和 dispose 共用生命周期边界。Worker/API
 终态和 dispose 会完成订阅并释放快照缓存。WebSocket 外层协议和输入转发仍留给 P1-09。
 
+2026-08-13 评审修订：快照 JSON 改为按需惰性编码（批次发布只失效缓存，首个订阅/resync 时编码并缓存，
+`SnapshotEncodingCount` 提供观测）；batcher 字节预算改为单事务精确序列化累加 + 固定包装开销上界，
+消除每次入列全量重编码的 O(n²)；`snapshot-raced` 不再计入 slow-consumer 失败，只有无法取得/编码
+快照才计数；读取路径编码超限通过 `FaultReported` 通知 Worker Manager 回收 Worker；`Complete` 后
+终态优先于残留 resync 标记；控制面丢弃超预算事件时记录计数；`StructuredConsoleWireMapper` 物理移入
+`CloudEmuera.Realtime`。修订后验证：`CloudEmuera.Realtime.Tests` 23 项、RuntimeAdapter
+`Snapshot|ConsoleContract` 55 项（含 reducer 随机化属性测试）、完整 Worker 集成 19 项、Release
+solution build 0 警告 0 错误。
+
 2026-08-13 在开发 Docker 中验证：`CloudEmuera.Realtime.Tests` 11 项、RuntimeAdapter
 `Snapshot|ConsoleContract` 54 项、Worker 快照/背压过滤 2 项、完整 Worker 集成 19 项通过；解决方案 Release 构建通过。
+
+2026-08-14 评审修复：同一 Snapshot 的并发惰性编码使用 single-flight，镜像发布只在状态替换处失效缓存；
+timer/终态 flush 的编码故障也通过 `FaultReported` 回收 Worker；控制面 pending event 因数量或字节预算
+淘汰时累计丢弃计数。新增并发编码回归测试，`CloudEmuera.Realtime.Tests` 24 项通过。

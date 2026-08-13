@@ -860,6 +860,8 @@ Worker 只维护一份最新完整状态，不保留可按客户端游标补发�
 - 每个被接受的显示操作或原子批次分配一个严格递增的 `sequence`；
 - Snapshot 表示应用完 `snapshotSequence` 后的完整有界显示树和当前 prompt；
 - 实时发送队列仅保存尚未发送的有界批次；溢出时以较新的 Snapshot 替代，不维护历史增量窗口；
+- 快照 JSON 按需惰性编码：批次发布只失效编码缓存，首个订阅或 resync 需要时编码并缓存；无浏览器
+  连接的 Session 持续输出不产生全量编码成本；
 - sequence 使用 64 位整数，数据库仅保存观测值，不参与热路径分配；
 - Worker 重启必须使用新 epoch；客户端以最新完整 `(epoch, snapshotSequence)` Snapshot 替换本地显示状态。
 

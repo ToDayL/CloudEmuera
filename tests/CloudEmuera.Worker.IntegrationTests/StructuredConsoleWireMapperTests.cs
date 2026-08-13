@@ -1,5 +1,6 @@
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Worker;
+using CloudEmuera.Realtime;
 using RuntimeColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
 using Xunit;
 

@@ -142,4 +142,121 @@ public sealed class ConsoleSnapshotReducerTests
 
         Assert.Contains(result.Scrollback, line => line.LineId == "legacy-user-line");
     }
+
+    [Fact]
+    public void RandomizedReductionMatchesTheAuthoritativeStore()
+    {
+        var random = new Random(20260813);
+        var store = new ConsoleStateStore();
+        var transactions = new List<SequencedConsoleTransaction>();
+        var lineIds = new List<string>();
+
+        for (int index = 0; index < 250; index++)
+        {
+            var operations = new List<ConsoleOperation>();
+            int operationCount = random.Next(1, 4);
+            for (int offset = 0; offset < operationCount; offset++)
+            {
+                switch (random.Next(5))
+                {
+                    case 0:
+                    {
+                        string lineId = $"line-{index}-{offset}";
+                        operations.Add(ConsoleOperation.AppendLine(
+                            new ConsoleLine(lineId, [new TextNode(RandomText(random, 1, 40))])));
+                        lineIds.Add(lineId);
+                        break;
+                    }
+                    case 1:
+                        operations.Add(ConsoleOperation.SetWindow(
+                            new WindowMetadata($"title-{index}", random.Next(1, 1920), random.Next(1, 1080))));
+                        break;
+                    case 2:
+                        operations.Add(ConsoleOperation.UpsertBackground(
+                            new BackgroundLayer(
+                                $"bg-{index % 8}",
+                                new ConsoleAssetId($"asset-{index}-{offset}"),
+                                (ConsoleBackgroundMode)random.Next(0, 5),
+                                1f,
+                                index)));
+                        break;
+                    case 3 when lineIds.Count != 0:
+                    {
+                        string target = lineIds[random.Next(lineIds.Count)];
+                        operations.Add(ConsoleOperation.ReplaceLine(
+                            new ConsoleLine(target, [new TextNode(RandomText(random, 1, 20))])));
+                        break;
+                    }
+                    default:
+                        operations.Add(ConsoleOperation.UpsertDrawable(
+                            new ShapeDrawable(
+                                $"d-{index}-{offset}",
+                                ConsoleShapeKind.Rectangle,
+                                new ConsoleRect(0, 0, 10, 10),
+                                new ConsoleColor(1, 2, 3),
+                                zIndex: index)));
+                        break;
+                }
+            }
+
+            transactions.Add(store.ApplyTransaction(new ConsoleTransaction(operations)));
+        }
+
+        ConsoleSnapshot reduced = ConsoleSnapshotReducer.ApplyBatch(
+            ConsoleSnapshot.Empty,
+            transactions,
+            ConsoleHistoryOptions.Default);
+        ConsoleSnapshot authoritative = store.StructuredSnapshot;
+
+        Assert.Equal(authoritative.SnapshotSequence, reduced.SnapshotSequence);
+        Assert.Equal(ProjectLines(authoritative), ProjectLines(reduced));
+        Assert.Equal(ProjectBackgrounds(authoritative), ProjectBackgrounds(reduced));
+        Assert.Equal(ProjectDrawables(authoritative), ProjectDrawables(reduced));
+        Assert.Equal(authoritative.WindowMetadata.Title, reduced.WindowMetadata.Title);
+        Assert.Equal(authoritative.WindowMetadata.ViewportWidth, reduced.WindowMetadata.ViewportWidth);
+        Assert.Equal(authoritative.WindowMetadata.ViewportHeight, reduced.WindowMetadata.ViewportHeight);
+        Assert.Equal(authoritative.Truncation, reduced.Truncation);
+    }
+
+    private static string RandomText(Random random, int minimumLength, int maximumLength)
+    {
+        int length = random.Next(minimumLength, maximumLength + 1);
+        var builder = new System.Text.StringBuilder(length);
+        for (int index = 0; index < length; index++)
+            builder.Append((char)('a' + random.Next(26)));
+        return builder.ToString();
+    }
+
+    private static object[] ProjectLines(ConsoleSnapshot snapshot) =>
+        snapshot.Scrollback
+            .Select(line => new
+            {
+                line.LineId,
+                line.Alignment,
+                line.Temporary,
+                Text = string.Concat(line.Nodes.OfType<TextNode>().Select(node => node.Text))
+            })
+            .ToArray();
+
+    private static object[] ProjectBackgrounds(ConsoleSnapshot snapshot) =>
+        snapshot.BackgroundLayers
+            .Select(layer => new
+            {
+                layer.LayerId,
+                Asset = layer.AssetId.Value,
+                layer.Mode,
+                layer.Opacity,
+                layer.Depth
+            })
+            .ToArray();
+
+    private static object[] ProjectDrawables(ConsoleSnapshot snapshot) =>
+        snapshot.CanvasScene.Drawables
+            .Select(drawable => new
+            {
+                drawable.DrawableId,
+                drawable.ZIndex,
+                drawable.Bounds
+            })
+            .ToArray();
 }
