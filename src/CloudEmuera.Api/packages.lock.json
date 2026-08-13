@@ -169,6 +169,13 @@
           "Grpc.Net.Client": "[2.83.0, )"
         }
       },
+      "cloudemuera.realtime": {
+        "type": "Project",
+        "dependencies": {
+          "CloudEmuera.Ipc": "[1.0.0, )",
+          "CloudEmuera.RuntimeAdapter": "[1.0.0, )"
+        }
+      },
       "cloudemuera.runtimeadapter": {
         "type": "Project"
       },

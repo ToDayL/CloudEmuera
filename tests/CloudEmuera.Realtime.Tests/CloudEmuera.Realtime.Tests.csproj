@@ -4,11 +4,11 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/CloudEmuera.Api/CloudEmuera.Api.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.Contracts/CloudEmuera.Contracts.csproj" />
     <ProjectReference Include="../../src/CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
     <ProjectReference Include="../../src/CloudEmuera.Realtime/CloudEmuera.Realtime.csproj" />
     <ProjectReference Include="../../src/CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
-    <ProjectReference Include="../../src/CloudEmuera.Api/CloudEmuera.Api.csproj" />
-    <ProjectReference Include="../../src/CloudEmuera.Worker/CloudEmuera.Worker.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

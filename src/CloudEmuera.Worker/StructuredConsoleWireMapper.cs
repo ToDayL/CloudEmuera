@@ -6,9 +6,9 @@ using W = CloudEmuera.Ipc.V3;
 namespace CloudEmuera.Worker;
 
 /// <summary>
-/// Lossless mapper for the P1-07 structured protocol.  The mapper is kept at
-/// the Worker boundary so RuntimeAdapter remains independent from protobuf;
-/// every conversion is between closed, already validated models.
+/// Lossless mapper for the P1-07 structured protocol. The mapper lives in the
+/// host-neutral Realtime assembly so API and Worker share one conversion path
+/// while RuntimeAdapter remains independent from protobuf.
 /// </summary>
 public static class StructuredConsoleWireMapper
 {

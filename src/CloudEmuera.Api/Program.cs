@@ -23,6 +23,7 @@ using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Domain.Sessions;
+using CloudEmuera.Api.Realtime;
 using CloudEmuera.Api.Workers;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -39,7 +40,25 @@ var builder = WebApplication.CreateBuilder(args);
 string dataRoot = builder.Configuration["CloudEmuera:DataPath"] ?? Path.Combine(AppContext.BaseDirectory, "data");
 string workerAssemblyPath = builder.Configuration["CloudEmuera:WorkerAssemblyPath"]
     ?? ValidatorAssemblyResolver.ResolveSiblingAssembly(builder.Environment.ContentRootPath, "CloudEmuera.Worker", "CloudEmuera.Worker.dll");
-var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath);
+RealtimeOutputOptions realtimeOutputOptions = new()
+{
+    SnapshotMaxBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:SnapshotMaxBytes") ?? RealtimeOutputOptions.DefaultSnapshotMaxBytes,
+    BatchTargetBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:BatchTargetBytes") ?? RealtimeOutputOptions.DefaultBatchTargetBytes,
+    BatchMaxTransactions = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:BatchMaxTransactions") ?? RealtimeOutputOptions.DefaultBatchMaxTransactions,
+    BatchMaxDelay = TimeSpan.FromMilliseconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:BatchMaxDelayMilliseconds") ?? 16),
+    ConnectionQueueSoftBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:QueueSoftBytes") ?? RealtimeOutputOptions.DefaultQueueSoftBytes,
+    ConnectionQueueHardBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:QueueHardBytes") ?? RealtimeOutputOptions.DefaultQueueHardBytes,
+    ConnectionQueueSoftMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:QueueSoftMessages") ?? RealtimeOutputOptions.DefaultQueueSoftMessages,
+    ConnectionQueueHardMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:QueueHardMessages") ?? RealtimeOutputOptions.DefaultQueueHardMessages,
+    MaxSnapshotResyncAttempts = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxSnapshotResyncAttempts") ?? 3,
+    SnapshotResyncWindow = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:SnapshotResyncWindowSeconds") ?? 30),
+};
+var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath)
+{
+    RealtimeOutput = realtimeOutputOptions,
+    PendingEventMaxMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Worker:PendingEventMaxMessages") ?? 256,
+    PendingEventMaxBytes = builder.Configuration.GetValue<int?>("CloudEmuera:Worker:PendingEventMaxBytes") ?? 1 * 1024 * 1024,
+};
 workerOptions.Validate();
 var workerSocketLifecycle = new WorkerSocketLifecycle(workerOptions);
 workerSocketLifecycle.Prepare();

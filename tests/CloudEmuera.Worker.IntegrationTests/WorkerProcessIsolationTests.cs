@@ -1,11 +1,12 @@
 using System.Diagnostics;
 using System.Text;
+using CloudEmuera.Api.Realtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V3;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;
-using ProtoConsoleOperation = CloudEmuera.Ipc.V3.ConsoleOperation;
+using RuntimeConsoleSnapshot = CloudEmuera.RuntimeAdapter.ConsoleSnapshot;
 using Xunit;
 
 namespace CloudEmuera.Worker.IntegrationTests;
@@ -16,6 +17,7 @@ public sealed class WorkerProcessIsolationTests
     [Theory]
     [InlineData("v18-core", "v18-compatible", RuntimeSaveLayout.Root, "7")]
     [InlineData("em-ee-core", "em-ee-current", RuntimeSaveLayout.SavDirectory, "4")]
+    [Trait("Category", "Snapshot")]
     public async Task RealWorkerCompletesInputRoundtripThroughUds(
         string fixtureId,
         string profile,
@@ -39,6 +41,7 @@ public sealed class WorkerProcessIsolationTests
                 profile,
                 saveLayout,
                 fixture.Manifest.ManifestDigest));
+        await using RealtimeSubscription output = session.OutputHub.Subscribe();
 
         Assert.NotEqual(Environment.ProcessId, session.ProcessId);
         await session.SendStartRuntimeAsync(TimeSpan.FromSeconds(15));
@@ -55,11 +58,9 @@ public sealed class WorkerProcessIsolationTests
         Assert.Equal(RuntimeBaseline.UpstreamCommit, ready.Ready.UpstreamCommit);
         Assert.Equal(fixture.Manifest.ManifestDigest, ready.Ready.SessionRootManifestDigest);
 
-        WorkerEnvelope promptBatch = await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                ContainsOpenPrompt(value.DisplayBatch),
-            TimeSpan.FromSeconds(15));
-        string promptId = GetPromptId(promptBatch.DisplayBatch);
+        RealtimeFrame firstDisplay = await output.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(RealtimeFrameKind.Snapshot, firstDisplay.Kind);
+        string promptId = await WaitForPromptIdAsync(session);
 
         await session.SendInputAsync(promptId, $"client_{fixtureId}", input);
         WorkerEnvelope accepted = await session.WaitForAsync(
@@ -88,7 +89,7 @@ public sealed class WorkerProcessIsolationTests
 
         Assert.Equal(
             Normalize(File.ReadAllText(Path.Combine(fixture.FixtureRoot, "expected-transcript.txt"))),
-            ProjectTranscript(session.DisplayBatches));
+            ProjectTranscript(session.OutputHub.CurrentSnapshot!));
         Assert.True(Directory.Exists(fixture.SessionRoot));
         Assert.True(File.Exists(Path.Combine(fixture.SessionRoot, SessionRootLayoutBuilder.BindingMetadataFileName)));
         Assert.Equal(fixture.PublishedDigest, fixture.ComputePublishedDigest());
@@ -119,10 +120,7 @@ public sealed class WorkerProcessIsolationTests
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
             TimeSpan.FromSeconds(15));
-        await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                ContainsOpenPrompt(value.DisplayBatch),
-            TimeSpan.FromSeconds(15));
+        await WaitForPromptIdAsync(session);
 
         await session.StopAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
@@ -149,10 +147,7 @@ public sealed class WorkerProcessIsolationTests
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
             TimeSpan.FromSeconds(15));
-        await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                ContainsOpenPrompt(value.DisplayBatch),
-            TimeSpan.FromSeconds(15));
+        await WaitForPromptIdAsync(session);
         await session.DisconnectCurrentConnectionForTestAsync();
         Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(15)));
         Assert.True(session.HasExited);
@@ -175,11 +170,7 @@ public sealed class WorkerProcessIsolationTests
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
             TimeSpan.FromSeconds(15));
-        WorkerEnvelope promptBatch = await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                ContainsOpenPrompt(value.DisplayBatch),
-            TimeSpan.FromSeconds(15));
-        string promptId = GetPromptId(promptBatch.DisplayBatch);
+        string promptId = await WaitForPromptIdAsync(session);
 
         // P1-05 has no public API business IPC. This independent
         // probe process exercises the WorkerControl endpoint and exits after
@@ -262,11 +253,7 @@ public sealed class WorkerProcessIsolationTests
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
             TimeSpan.FromSeconds(15));
-        WorkerEnvelope promptBatch = await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                ContainsOpenPrompt(value.DisplayBatch),
-            TimeSpan.FromSeconds(15));
-        string promptId = GetPromptId(promptBatch.DisplayBatch);
+        string promptId = await WaitForPromptIdAsync(session);
         await session.SendRawAsync(new WorkerCommandEnvelope
         {
             ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
@@ -329,11 +316,7 @@ public sealed class WorkerProcessIsolationTests
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
             TimeSpan.FromSeconds(15));
-        WorkerEnvelope promptBatch = await session.WaitForAsync(
-            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                ContainsOpenPrompt(value.DisplayBatch),
-            TimeSpan.FromSeconds(15));
-        string promptId = GetPromptId(promptBatch.DisplayBatch);
+        string promptId = await WaitForPromptIdAsync(session);
 
         await session.SendInputAsync(promptId, "client_logging", secretInput);
         await session.WaitForAsync(
@@ -375,20 +358,14 @@ public sealed class WorkerProcessIsolationTests
             await Task.WhenAll(
                 first.WaitForAsync(value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready, TimeSpan.FromSeconds(15)),
                 second.WaitForAsync(value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready, TimeSpan.FromSeconds(15)));
-            WorkerEnvelope firstPrompt = await first.WaitForAsync(
-                value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                    ContainsOpenPrompt(value.DisplayBatch),
-                TimeSpan.FromSeconds(15));
-            WorkerEnvelope secondPrompt = await second.WaitForAsync(
-                value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch &&
-                    ContainsOpenPrompt(value.DisplayBatch),
-                TimeSpan.FromSeconds(15));
+            string firstPrompt = await WaitForPromptIdAsync(first);
+            string secondPrompt = await WaitForPromptIdAsync(second);
             await Task.WhenAll(
                 CompleteSessionAsync(first, firstPrompt, "one"),
                 CompleteSessionAsync(second, secondPrompt, "two"));
 
-            Assert.All(first.DisplayBatches, batch => Assert.True(BatchLastSequence(batch) > 0));
-            Assert.All(second.DisplayBatches, batch => Assert.True(BatchLastSequence(batch) > 0));
+            Assert.True(first.OutputHub.CurrentSnapshot?.SnapshotSequence > 0);
+            Assert.True(second.OutputHub.CurrentSnapshot?.SnapshotSequence > 0);
             Assert.Equal(firstFixture.PublishedDigest, firstFixture.ComputePublishedDigest());
             Assert.Equal(secondFixture.PublishedDigest, secondFixture.ComputePublishedDigest());
         }
@@ -400,10 +377,9 @@ public sealed class WorkerProcessIsolationTests
 
     private static async Task CompleteSessionAsync(
         ApiWorkerSession session,
-        WorkerEnvelope promptBatch,
+        string promptId,
         string value)
     {
-        string promptId = GetPromptId(promptBatch.DisplayBatch);
         await session.SendInputAsync(promptId, $"client_{value}", value == "one" ? "1" : "2");
         await session.WaitForAsync(
             eventValue => eventValue.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
@@ -425,61 +401,27 @@ public sealed class WorkerProcessIsolationTests
         Assert.True(predicate(session.ProcessDiagnostics), session.ProcessDiagnostics);
     }
 
-    private static bool ContainsOpenPrompt(DisplayBatch batch) =>
-        batch.IsSnapshot && batch.Snapshot is { HasCurrentPrompt: true } ||
-        batch.Transactions.Any(transaction => transaction.Operations.Any(operation =>
-            operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt));
-
-    private static string GetPromptId(DisplayBatch batch)
+    private static async Task<string> WaitForPromptIdAsync(ApiWorkerSession session)
     {
-        if (batch.IsSnapshot && batch.Snapshot is { HasCurrentPrompt: true } snapshot)
-            return snapshot.CurrentPrompt.PromptId;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            string? promptId = session.OutputHub.CurrentSnapshot?.CurrentPrompt?.PromptId;
+            if (!string.IsNullOrWhiteSpace(promptId))
+                return promptId;
+            await Task.Delay(20);
+        }
 
-        return batch.Transactions
-            .SelectMany(transaction => transaction.Operations)
-            .Where(operation => operation.PayloadCase == ProtoConsoleOperation.PayloadOneofCase.OpenPrompt)
-            .Select(operation => operation.OpenPrompt.Prompt.PromptId)
-            .Single();
+        throw new TimeoutException("The Worker did not publish an active prompt to the realtime snapshot.");
     }
 
-    private static long BatchLastSequence(DisplayBatch batch) =>
-        batch.Transactions.Count == 0
-            ? batch.Snapshot?.SnapshotSequence ?? 0
-            : batch.Transactions[batch.Transactions.Count - 1].Sequence;
-
-    private static string ProjectTranscript(IEnumerable<DisplayBatch> batches)
+    private static string ProjectTranscript(RuntimeConsoleSnapshot snapshot)
     {
-        var nodes = new List<CloudEmuera.RuntimeAdapter.ConsoleNode>();
-        foreach (DisplayBatch batch in batches.OrderBy(BatchLastSequence))
-        {
-            if (batch.IsSnapshot)
-            {
-                nodes.Clear();
-                if (batch.Snapshot is not null)
-                    nodes.AddRange(batch.Snapshot.Scrollback
-                        .SelectMany(line => line.Nodes)
-                        .Select(StructuredConsoleWireMapper.FromProto));
-            }
-
-            foreach (ProtoConsoleOperation operation in batch.Transactions.SelectMany(transaction => transaction.Operations))
-            {
-                CloudEmuera.RuntimeAdapter.ConsoleOperation runtimeOperation = StructuredConsoleWireMapper.FromProto(operation);
-                switch (runtimeOperation)
-                {
-                    case AppendNodesOperation append:
-                        nodes.AddRange(append.Nodes);
-                        break;
-                    case AppendLineOperation appendLine:
-                        nodes.AddRange(appendLine.Line.Nodes);
-                        nodes.Add(CloudEmuera.RuntimeAdapter.LineBreakNode.Instance);
-                        break;
-                    case ClearConsoleOperation:
-                    case ClearScrollbackOperation:
-                        nodes.Clear();
-                        break;
-                }
-            }
-        }
+        var nodes = snapshot.Scrollback
+            .SelectMany(line => line.Nodes.Concat([CloudEmuera.RuntimeAdapter.LineBreakNode.Instance]))
+            .ToList();
+        if (nodes.Count > 0)
+            nodes.RemoveAt(nodes.Count - 1);
 
         var result = new StringBuilder();
         foreach (CloudEmuera.RuntimeAdapter.ConsoleNode node in nodes)

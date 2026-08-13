@@ -4,6 +4,7 @@
     <ProjectReference Include="../CloudEmuera.Contracts/CloudEmuera.Contracts.csproj" />
     <ProjectReference Include="../CloudEmuera.Infrastructure/CloudEmuera.Infrastructure.csproj" />
     <ProjectReference Include="../CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
+    <ProjectReference Include="../CloudEmuera.Realtime/CloudEmuera.Realtime.csproj" />
     <ProjectReference Include="../CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
     <ProjectReference Include="../CloudEmuera.Validator/CloudEmuera.Validator.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

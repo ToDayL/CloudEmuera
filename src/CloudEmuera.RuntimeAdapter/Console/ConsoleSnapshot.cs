@@ -46,6 +46,7 @@ public sealed class ConsoleSnapshot
         ArgumentOutOfRangeException.ThrowIfNegative(droppedNodeCount);
 
         SnapshotSequence = snapshotSequence;
+        UsesLegacyNodeModel = true;
         VisibleNodes = Array.AsReadOnly(copy);
         VisibleLines = BuildLines(copy);
         Scrollback = BuildLegacyScrollback(copy);
@@ -88,6 +89,7 @@ public sealed class ConsoleSnapshot
             throw new ArgumentOutOfRangeException(nameof(truncation));
 
         SnapshotSequence = snapshotSequence;
+        UsesLegacyNodeModel = false;
         Scrollback = Array.AsReadOnly(lines);
         BackgroundLayers = Array.AsReadOnly((backgroundLayers ?? Array.Empty<BackgroundLayer>()).ToArray());
         CanvasScene = canvasScene ?? new CanvasScene();
@@ -108,6 +110,8 @@ public sealed class ConsoleSnapshot
     public static ConsoleSnapshot Empty { get; } = new(0, Array.Empty<ConsoleNode>());
 
     public long SnapshotSequence { get; }
+
+    internal bool UsesLegacyNodeModel { get; }
 
     public long Sequence => SnapshotSequence;
 
@@ -138,6 +142,13 @@ public sealed class ConsoleSnapshot
     public long VisibleTextLength { get; }
 
     public long EstimatedBytes { get; }
+
+    /// <summary>
+    /// Validates this immutable snapshot against the supplied deployment
+    /// limits. Wire readers must call this overload instead of relying only on
+    /// the default constructor limits.
+    /// </summary>
+    public void Validate(ConsoleHistoryOptions options) => ConsoleSnapshotValidation.Validate(this, options);
 
     internal static ConsoleSnapshot Create(
         long sequence,

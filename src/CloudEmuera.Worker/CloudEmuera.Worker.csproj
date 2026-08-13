@@ -8,6 +8,10 @@
   <ItemGroup>
     <ProjectReference Include="../CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
     <ProjectReference Include="../CloudEmuera.EmueraRuntime/CloudEmuera.EmueraRuntime.csproj" />
+    <ProjectReference Include="../CloudEmuera.Realtime/CloudEmuera.Realtime.csproj" />
     <ProjectReference Include="../CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="StructuredConsoleWireMapper.cs" />
   </ItemGroup>
 </Project>

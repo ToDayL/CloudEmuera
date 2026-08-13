@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Channels;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
+using CloudEmuera.Api.Realtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V3;
 using CloudEmuera.Infrastructure.Persistence;
@@ -186,7 +187,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
 
     public void BeginDraining() => Interlocked.Exchange(ref draining, 1);
 
-    internal void RemoveWorker(ApiWorkerSession worker)
+    internal void RemoveWorker(ApiWorkerSession worker, string reason = "worker-removed")
     {
         ArgumentNullException.ThrowIfNull(worker);
         lock (sync)
@@ -194,6 +195,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             if (sessions.TryGetValue(worker.Binding.WorkerId, out ApiWorkerSession? current) && ReferenceEquals(current, worker))
                 sessions.Remove(worker.Binding.WorkerId);
         }
+        worker.OutputHub.Complete(reason);
     }
 
     public async Task<IWorkerProcessHandle> StartAsync(
@@ -353,8 +355,18 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             connection.Cancel();
             return;
         }
-        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch && !connection.Session.AcceptDisplayBatch(message.DisplayBatch))
-            return;
+        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch)
+        {
+            RealtimePublishResult outputResult = connection.Session.AcceptDisplayBatch(message.DisplayBatch);
+            if (outputResult.Disposition == RealtimePublishDisposition.Faulted)
+            {
+                connection.Session.RecordProtocolError(outputResult.ReasonCode ?? IpcReasonCodes.OutputResumeGap);
+                connection.Cancel();
+                return;
+            }
+            if (!outputResult.Accepted)
+                return;
+        }
         if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.Heartbeat && runtimeStore is not null)
         {
             try
@@ -389,6 +401,24 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         }
         if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.Heartbeat)
             connection.Session.MarkHeartbeatReceived(timeProvider.GetUtcNow());
+        switch (message.PayloadCase)
+        {
+            case WorkerEnvelope.PayloadOneofCase.RuntimeCompleted:
+                connection.Session.OutputHub.Complete("runtime-completed");
+                break;
+            case WorkerEnvelope.PayloadOneofCase.RuntimeFailed:
+                connection.Session.OutputHub.Complete(
+                    string.IsNullOrWhiteSpace(message.RuntimeFailed.StableCode)
+                        ? "runtime-failed"
+                        : message.RuntimeFailed.StableCode);
+                break;
+            case WorkerEnvelope.PayloadOneofCase.WorkerStopped:
+                connection.Session.OutputHub.Complete(
+                    string.IsNullOrWhiteSpace(message.WorkerStopped.ReasonCode)
+                        ? "worker-stopped"
+                        : message.WorkerStopped.ReasonCode);
+                break;
+        }
         await connection.Session.PublishAsync(message).ConfigureAwait(false);
     }
 
@@ -467,7 +497,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     private readonly Channel<WorkerCommandEnvelope> commands = Channel.CreateBounded<WorkerCommandEnvelope>(
         new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = false });
     private readonly List<WorkerEnvelope> pendingEvents = [];
-    private readonly List<DisplayBatch> displayBatches = [];
+    private long pendingEventBytes;
     private readonly StringBuilder processDiagnostics = new();
     private readonly List<string> sensitiveLogValues = [];
     private TaskCompletionSource<bool> eventSignal = NewEventSignal();
@@ -499,6 +529,12 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         sensitiveLogValues.Add(request.SessionRoot);
         sensitiveLogValues.Add(Path.GetFullPath(options.ControlSocketPath));
         lastDisplaySequence = request.InitialOutputSequence;
+        OutputHub = new SessionOutputHub(
+            request.Binding.SessionId,
+            request.Binding.WorkerId,
+            request.Binding.WorkerEpoch,
+            options.RealtimeOutput,
+            minimumInitialSequence: request.InitialOutputSequence);
     }
 
     public WorkerBinding Binding => request.Binding;
@@ -512,7 +548,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     public int? ExitCode => process is { HasExited: true } value ? value.ExitCode : null;
     public int ConnectionCount { get { lock (sync) return connectionCount; } }
     public string ProcessDiagnostics { get { lock (sync) return processDiagnostics.ToString(); } }
-    public IReadOnlyList<DisplayBatch> DisplayBatches { get { lock (sync) return displayBatches.Select(item => item.Clone()).ToArray(); } }
+    public SessionOutputHub OutputHub { get; }
     public long LastOutputSequence { get { lock (sync) return lastDisplaySequence; } }
     public DateTimeOffset LastHeartbeatAt => new(Interlocked.Read(ref lastHeartbeatUtcTicks), TimeSpan.Zero);
     internal bool RuntimePersistenceReady => Volatile.Read(ref runtimePersistenceReady) != 0;
@@ -778,37 +814,24 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         }
     }
 
-    internal bool AcceptDisplayBatch(DisplayBatch batch)
+    internal RealtimePublishResult AcceptDisplayBatch(DisplayBatch batch)
     {
+        ArgumentNullException.ThrowIfNull(batch);
+        RealtimePublishResult result = OutputHub.PublishDisplayBatch(batch);
+        if (!result.Accepted)
+            return result;
+
         lock (sync)
         {
-            long snapshotSequence = batch.IsSnapshot && batch.Snapshot is not null
-                ? batch.Snapshot.SnapshotSequence
-                : 0;
-            long firstTransactionSequence = batch.Transactions.Count == 0 ? 0 : batch.Transactions[0].Sequence;
-            long lastSequence = batch.Transactions.Count == 0
-                ? snapshotSequence
-                : batch.Transactions[^1].Sequence;
-            if (lastSequence <= lastDisplaySequence)
-                return false;
-            if (batch.IsSnapshot)
-            {
-                if (batch.Snapshot is null ||
-                    batch.Transactions.Count != 0 && firstTransactionSequence != snapshotSequence + 1)
-                    return false;
-            }
-            else if (batch.Transactions.Count == 0 || firstTransactionSequence != lastDisplaySequence + 1)
-            {
-                RecordProtocolError(IpcReasonCodes.OutputResumeGap);
-                return false;
-            }
-            lastDisplaySequence = lastSequence;
-            displayBatches.Add(batch.Clone());
-            return true;
+            lastDisplaySequence = Math.Max(lastDisplaySequence, result.SnapshotSequence);
         }
+        return result;
     }
 
-    internal void RecordProtocolError(string reasonCode) =>
+    internal void RecordProtocolError(string reasonCode)
+    {
+        if (OutputHub.State is not SessionOutputHubState.Faulted and not SessionOutputHubState.Disposed)
+            OutputHub.Complete(reasonCode);
         _ = PublishAsync(new WorkerEnvelope
         {
             ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
@@ -827,6 +850,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
                 LastOutputSequence = lastDisplaySequence,
             },
         });
+    }
 
     internal Task PublishAsync(WorkerEnvelope value)
     {
@@ -834,9 +858,28 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         {
             if (Volatile.Read(ref disposed) != 0)
                 return Task.CompletedTask;
-            pendingEvents.Add(value.Clone());
-            if (pendingEvents.Count > 4096)
-                pendingEvents.RemoveRange(0, pendingEvents.Count - 4096);
+
+            // DisplayBatch is consumed by SessionOutputHub and must never be
+            // duplicated into the control-plane wait probe. All other events
+            // are retained only while they fit both explicit budgets.
+            if (value.PayloadCase != WorkerEnvelope.PayloadOneofCase.DisplayBatch)
+            {
+                WorkerEnvelope copy = value.Clone();
+                int copyBytes = copy.CalculateSize();
+                if (copyBytes <= options.PendingEventMaxBytes)
+                {
+                    while (pendingEvents.Count >= options.PendingEventMaxMessages ||
+                           pendingEventBytes > options.PendingEventMaxBytes - copyBytes)
+                    {
+                        WorkerEnvelope removed = pendingEvents[0];
+                        pendingEvents.RemoveAt(0);
+                        pendingEventBytes -= removed.CalculateSize();
+                    }
+
+                    pendingEvents.Add(copy);
+                    pendingEventBytes += copyBytes;
+                }
+            }
             eventSignal.TrySetResult(true);
             if (value.PayloadCase == WorkerEnvelope.PayloadOneofCase.WorkerStopped)
                 stopped.TrySetResult(value);
@@ -915,6 +958,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0)
             return;
+        OutputHub.Complete("worker-disposed");
         lock (sync)
         {
             connection?.Cancel();
@@ -925,6 +969,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         bool exited = await TerminateProcessAsync(options.WorkerShutdownTimeout, CancellationToken.None).ConfigureAwait(false);
         if (!exited)
             LogLifecycle("worker_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
+        await OutputHub.DisposeAsync().ConfigureAwait(false);
         WorkerBootstrapFile.DeleteIfOwned(bootstrapPath);
         LogLifecycle("worker_session_disposed");
     }
@@ -1334,7 +1379,7 @@ internal sealed class WorkerManagerHostedService(
                     worker.LastOutputSequence,
                     timeProvider.GetUtcNow(),
                     CancellationToken.None).ConfigureAwait(false);
-                manager.RemoveWorker(worker);
+                manager.RemoveWorker(worker, "heartbeat-timeout");
                 return;
             }
 
@@ -1348,7 +1393,7 @@ internal sealed class WorkerManagerHostedService(
                 worker.LastOutputSequence,
                 timeProvider.GetUtcNow(),
                 CancellationToken.None).ConfigureAwait(false);
-            manager.RemoveWorker(worker);
+            manager.RemoveWorker(worker, graceful ? "runtime-completed" : "worker-exited");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

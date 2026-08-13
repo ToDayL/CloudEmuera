@@ -1,4 +1,5 @@
 using CloudEmuera.Ipc;
+using CloudEmuera.Api.Realtime;
 
 namespace CloudEmuera.Api.Workers;
 
@@ -40,6 +41,15 @@ public sealed record WorkerManagerOptions
 
     public Func<WorkerBootstrapDocument, WorkerBootstrapDocument>? BootstrapTransformForTest { get; init; }
 
+    public RealtimeOutputOptions RealtimeOutput { get; init; } = RealtimeOutputOptions.Default;
+
+    // This is only a bounded lifecycle/event probe for control-plane waits;
+    // DisplayBatch payloads are deliberately never retained here. Realtime
+    // output is owned by SessionOutputHub.
+    public int PendingEventMaxMessages { get; init; } = 256;
+
+    public int PendingEventMaxBytes { get; init; } = 1 * 1024 * 1024;
+
     public void Validate()
     {
         IpcValidator.ValidateAbsolutePath(DataRoot, nameof(DataRoot));
@@ -48,9 +58,14 @@ public sealed record WorkerManagerOptions
         IpcValidator.ValidateAbsolutePath(ControlSocketPath, nameof(ControlSocketPath));
         IpcValidator.ValidateAbsolutePath(WorkerAssemblyPath, nameof(WorkerAssemblyPath));
         IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
+        RealtimeOutput.Validate();
         if (ControlSocketPath.Length > 107 || RegistrationTimeout <= TimeSpan.Zero || RuntimeReadyTimeout <= TimeSpan.Zero ||
             WorkerShutdownTimeout <= TimeSpan.Zero || HeartbeatInterval <= TimeSpan.Zero || LeaseDuration <= HeartbeatInterval)
             throw new ArgumentException("Worker Manager options are outside their supported bounds.");
+
+        if (PendingEventMaxMessages <= 0 || PendingEventMaxMessages > 4096 ||
+            PendingEventMaxBytes <= 0 || PendingEventMaxBytes > CloudEmuera.Ipc.StructuredIpcLimits.MaxEnvelopeBytes)
+            throw new ArgumentException("Pending Worker event history is outside its supported bounds.");
 
         if (!SamePath(RuntimeDirectory, Path.Combine(DataRoot, "runtime", ControlPlaneInstanceId)) ||
             !SamePath(BootstrapDirectory, Path.Combine(RuntimeDirectory, "bootstrap")) ||

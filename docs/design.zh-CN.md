@@ -155,6 +155,7 @@ src/
 ├── CloudEmuera.Api/               # ASP.NET Core HTTP/WS、Worker IPC、静态 SPA
 ├── CloudEmuera.Contracts/         # HTTP/WS schema 与共享常量
 ├── CloudEmuera.Ipc/               # .proto 与 gRPC 生成代码
+├── CloudEmuera.Realtime/           # API/Worker 共用的闭合结构化输出映射
 ├── CloudEmuera.Worker/            # 单 Session Runtime Host
 ├── CloudEmuera.RuntimeAdapter/    # 平台无关的 Console/Input/File/Clock/Media 契约
 ├── CloudEmuera.EmueraRuntime/     # 内置 Emuera 源码、headless host 与接线
@@ -168,7 +169,8 @@ tests/
 └── e2e/
 ```
 
-依赖方向必须保持：`Domain ← Application ← adapters`，以及 `RuntimeAdapter ← EmueraRuntime ← Worker`。
+依赖方向必须保持：`Domain ← Application ← adapters`，以及 `RuntimeAdapter ← EmueraRuntime ← Worker`；
+`Realtime` 只依赖 `Ipc` 与 `RuntimeAdapter`，供 API/Worker 共用边界映射，不反向依赖宿主。
 `Application` 只定义 Worker 生命周期端口和事务用例；进程/UDS 实现位于外部适配层。
 `RuntimeAdapter` 不引用真实解释器、Worker 或 Web/API；`Worker` 不引用 EF Core；API 不加载
 Emuera 解释器；前端只依赖生成的公开契约。
@@ -849,6 +851,12 @@ Session 创建时保存的 Game runtime manifest 解析出的 `assetId`，不能
 
 ### 8.2 序号与快照
 
+P1-08 的 API mirror、订阅竞态、逐连接双预算队列与降级细节见
+[`tasks/P1-08-complete-snapshot-reconnect-bounded-output-plan.zh-CN.md`](tasks/P1-08-complete-snapshot-reconnect-bounded-output-plan.zh-CN.md)，
+待评审决策见 [`ADR-0020`](adr/0020-api-snapshot-mirror-and-bounded-realtime-output.md)。API 对每个活动
+Worker 只维护一份最新完整状态，不保留可按客户端游标补发的生产历史；控制面 wait probe 不复制
+`DisplayBatch`，其余事件也受消息数和字节预算限制。
+
 - 每个被接受的显示操作或原子批次分配一个严格递增的 `sequence`；
 - Snapshot 表示应用完 `snapshotSequence` 后的完整有界显示树和当前 prompt；
 - 实时发送队列仅保存尚未发送的有界批次；溢出时以较新的 Snapshot 替代，不维护历史增量窗口；
@@ -860,10 +868,11 @@ Session 创建时保存的 Game runtime manifest 解析出的 `assetId`，不能
 Realtime Gateway 对一个 Session 执行以下恢复：
 
 1. 验证 WebSocket 身份和 Session 权限；
-2. 请求当前 Worker 冻结或原子读取 `Snapshot(N)`，其中包含当前 prompt；
-3. Gateway 发送 Snapshot，客户端以其完整替换本地显示树；
-4. Gateway 从序号大于 `N` 的下一批实时事件开始转发；
-5. 若读取与转发衔接期间检测到序号缺口或连接队列溢出，放弃该轮结果并重新取得较新的 Snapshot。
+2. 从 API 为当前 Worker epoch 维护的不可变镜像读取 `Snapshot(N)`，其中包含当前 prompt；
+3. 注册有界连接队列并再次比较当前 epoch/sequence；若已经前进则直接标记需要重新同步；
+4. Gateway 发送 Snapshot，客户端以其完整替换本地显示树；
+5. Gateway 从序号大于 `N` 的下一批实时事件开始转发；
+6. 若读取与转发衔接期间检测到序号缺口或连接队列溢出，放弃待发增量并读取较新的完整 Snapshot。
 
 MVP 不接受 `lastSequence` 作为历史补发承诺，也不维护 ack 驱动的重放日志。恢复正确性只要求客户端
 最终取得一个内部一致的完整 Snapshot，并且在发现缺口时确定性地重新同步。
@@ -1313,6 +1322,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 12. 待编号：字体文件保留、服务和授权策略；
 13. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
 14. `ADR-0018`：Emuera 完整结构化交互状态、能力矩阵、计时语义和 IPC major 升级（P1-07 首个切片）。
+15. `ADR-0020`：API 快照镜像、订阅竞态和逐连接有界输出（P1-08，已接受）。
 
 ## 20. 设计完成定义
 

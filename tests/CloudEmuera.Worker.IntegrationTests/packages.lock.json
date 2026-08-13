@@ -393,6 +393,7 @@
           "CloudEmuera.Contracts": "[1.0.0, )",
           "CloudEmuera.Infrastructure": "[1.0.0, )",
           "CloudEmuera.Ipc": "[1.0.0, )",
+          "CloudEmuera.Realtime": "[1.0.0, )",
           "CloudEmuera.RuntimeAdapter": "[1.0.0, )",
           "Grpc.AspNetCore": "[2.83.0, )",
           "Microsoft.AspNetCore.OpenApi": "[10.0.10, )"
@@ -444,6 +445,13 @@
           "Grpc.Net.Client": "[2.83.0, )"
         }
       },
+      "cloudemuera.realtime": {
+        "type": "Project",
+        "dependencies": {
+          "CloudEmuera.Ipc": "[1.0.0, )",
+          "CloudEmuera.RuntimeAdapter": "[1.0.0, )"
+        }
+      },
       "cloudemuera.runtimeadapter": {
         "type": "Project"
       },
@@ -452,6 +460,7 @@
         "dependencies": {
           "CloudEmuera.EmueraRuntime": "[1.0.0, )",
           "CloudEmuera.Ipc": "[1.0.0, )",
+          "CloudEmuera.Realtime": "[1.0.0, )",
           "CloudEmuera.RuntimeAdapter": "[1.0.0, )"
         }
       },

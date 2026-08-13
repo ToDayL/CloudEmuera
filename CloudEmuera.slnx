@@ -9,6 +9,7 @@
     <Project Path="src/CloudEmuera.Infrastructure/CloudEmuera.Infrastructure.csproj" />
     <Project Path="src/CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
     <Project Path="src/CloudEmuera.Migrator/CloudEmuera.Migrator.csproj" />
+    <Project Path="src/CloudEmuera.Realtime/CloudEmuera.Realtime.csproj" />
     <Project Path="src/CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
     <Project Path="src/CloudEmuera.Validator/CloudEmuera.Validator.csproj" />
     <Project Path="src/CloudEmuera.Worker/CloudEmuera.Worker.csproj" />
@@ -23,5 +24,6 @@
     <Project Path="tests/CloudEmuera.Application.Tests/CloudEmuera.Application.Tests.csproj" />
     <Project Path="tests/CloudEmuera.Api.IntegrationTests/CloudEmuera.Api.IntegrationTests.csproj" />
     <Project Path="tests/CloudEmuera.GamePackages.Tests/CloudEmuera.GamePackages.Tests.csproj" />
+    <Project Path="tests/CloudEmuera.Realtime.Tests/CloudEmuera.Realtime.Tests.csproj" />
   </Folder>
 </Solution>

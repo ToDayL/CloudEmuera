@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../CloudEmuera.Ipc/CloudEmuera.Ipc.csproj" />
+    <ProjectReference Include="../CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../CloudEmuera.Worker/StructuredConsoleWireMapper.cs" Link="StructuredConsoleWireMapper.cs" />
+  </ItemGroup>
+</Project>

@@ -5,6 +5,7 @@ using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V3;
 using CloudEmuera.RuntimeAdapter;
+using R = CloudEmuera.RuntimeAdapter;
 using Microsoft.Extensions.Logging;
 
 namespace CloudEmuera.Worker;
@@ -38,6 +39,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     private Task? outputTask;
     private Task? heartbeatTask;
     private long lastSentSequence;
+    private bool forceSnapshot = true;
     private bool stoppedMessageSent;
 
     public WorkerRuntimeController(
@@ -551,7 +553,19 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task<bool> SendPendingOutputAsync(StructuredGameConsole gameConsole, CancellationToken cancellationToken)
     {
-        StructuredConsoleResumeResult result = gameConsole.StateStore.ReadStructuredSince(Interlocked.Read(ref lastSentSequence));
+        StructuredConsoleResumeResult result;
+        if (forceSnapshot)
+        {
+            R.ConsoleSnapshot snapshot = gameConsole.StateStore.StructuredSnapshot;
+            result = new StructuredConsoleSnapshotWithDeltasResult(
+                snapshot,
+                Array.Empty<SequencedConsoleTransaction>(),
+                snapshot.SnapshotSequence);
+        }
+        else
+        {
+            result = gameConsole.StateStore.ReadStructuredSince(Interlocked.Read(ref lastSentSequence));
+        }
         if (result is StructuredConsoleUpToDateResult)
             return true;
 
@@ -568,6 +582,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 await SendDisplayAsync(snapshotBatch, cancellationToken).ConfigureAwait(false);
                 Interlocked.Exchange(ref lastSentSequence, snapshotResult.Snapshot.SnapshotSequence);
                 connection.SetLastOutputSequence(snapshotResult.Snapshot.SnapshotSequence);
+                forceSnapshot = false;
             }
             else
             {
@@ -586,6 +601,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                     connection.SetLastOutputSequence(batch[^1].Sequence);
                     firstBatch = false;
                 }
+                forceSnapshot = false;
             }
             return true;
         }
@@ -603,7 +619,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     }
 
     private Task SendDisplayAsync(DisplayBatch batch, CancellationToken cancellationToken) =>
-        connection.SendDisplayAsync(new WorkerEnvelope
+        SendDisplayEnvelopeAsync(new WorkerEnvelope
         {
             ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = IpcProtocol.NewMessageId("display"),
@@ -614,6 +630,13 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             CapabilitySetDigest = bootstrap.CapabilitySetDigest,
             DisplayBatch = batch
         }, cancellationToken);
+
+    private Task SendDisplayEnvelopeAsync(WorkerEnvelope envelope, CancellationToken cancellationToken)
+    {
+        if (envelope.CalculateSize() > StructuredIpcLimits.MaxEnvelopeBytes)
+            throw new InvalidDataException("The Worker display envelope exceeds the IPC size limit.");
+        return connection.SendDisplayAsync(envelope, cancellationToken);
+    }
 
     private async Task HeartbeatAsync(CancellationToken cancellationToken)
     {

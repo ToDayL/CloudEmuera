@@ -572,9 +572,12 @@ NuGet 漏洞扫描无已知漏洞。生产 `runtime` 镜像构建成功，镜像
 JPEG/TIFF/GIF/PNG/WebP、Fontconfig 等全部原生链接依赖可解析；能力矩阵 19 项/178 个唯一入口、
 第三方来源检查与 `git diff --check` 通过。
 
-### P1-08 — 完整 Snapshot 重连与有界输出（TODO）
+### P1-08 — 完整 Snapshot 重连与有界输出（DONE）
 
 需求映射：SESS-004、PLAY-002、PLAY-004～006、PLAY-010/012、AC-002/012、ADR-0017。
+
+详细方案：[`tasks/P1-08-complete-snapshot-reconnect-bounded-output-plan.zh-CN.md`](tasks/P1-08-complete-snapshot-reconnect-bounded-output-plan.zh-CN.md)，
+已接受决策见 [`ADR-0020`](adr/0020-api-snapshot-mirror-and-bounded-realtime-output.md)。
 
 交付物：序列化 P1-07 的完整 Console/Prompt/绘图/媒体 Snapshot 并实施大小上限；实时批次队列；
 重连总是取得完整 Snapshot；批处理、背压、序号缺口检测和快照重新同步。不实现历史增量环形缓冲、
@@ -583,12 +586,24 @@ ack 补发或 snapshot/subscribe 无丢失屏障。
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Snapshot|Category=Backpressure'
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Realtime.Tests --no-restore --configuration Release \
+  --filter 'Category=Snapshot|Category=Backpressure'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
+  --filter 'Category=Snapshot|Category=ConsoleContract'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
+  --filter 'Category=Snapshot|Category=Backpressure'
 ```
 
 通过条件：重连用完整 Snapshot 替换文本、当前 prompt、背景/绘图层和媒体状态；计时 prompt 保留
 原 deadline 而不因快照或重连重新计时；快照生成期间持续输出时要么连续应用后续批次，要么检测
 缺口并重新同步；慢客户端不会导致无界内存；队列溢出确定性降级到新快照。
+
+完成记录（2026-08-13）：上述三组测试分别通过 11、54、2 项；完整 Worker 集成测试 19 项和
+`dotnet build CloudEmuera.slnx --no-restore --configuration Release` 通过。
 
 ### P1-09 — WebSocket 快照恢复与有界输入去重（TODO）
 

@@ -48,6 +48,37 @@ public sealed class ConsoleStateStore
     {
     }
 
+    internal ConsoleStateStore(ConsoleSnapshot baseline, ConsoleHistoryOptions options)
+        : this(options)
+    {
+        ArgumentNullException.ThrowIfNull(baseline);
+        ConsoleSnapshotValidation.Validate(baseline, options);
+
+        currentSequence = baseline.SnapshotSequence;
+        baselineSnapshot = baseline;
+        sequenceInitialized = true;
+        structuredMode = true;
+        // The legacy node-based snapshot constructor represents an empty
+        // console with one synthetic `legacy-0` line. It is not a real
+        // structured line and must not become visible when a snapshot is
+        // replayed through the structured reducer.
+        bool syntheticEmptyLine = baseline.UsesLegacyNodeModel &&
+            baseline.VisibleNodes.Count == 0 &&
+            baseline.Scrollback.Count == 1 &&
+            baseline.Scrollback[0].Nodes.Count == 0;
+        structuredScrollback = syntheticEmptyLine ? [] : baseline.Scrollback.ToList();
+        backgroundLayers = baseline.BackgroundLayers.ToDictionary(item => item.LayerId, StringComparer.Ordinal);
+        drawables = baseline.CanvasScene.Drawables.ToDictionary(item => item.DrawableId, StringComparer.Ordinal);
+        hitRegions = baseline.CanvasScene.HitRegions.ToDictionary(item => item.RegionId, StringComparer.Ordinal);
+        mediaChannels = baseline.MediaState.Channels.ToDictionary(item => item.Channel, StringComparer.Ordinal);
+        windowMetadata = baseline.WindowMetadata;
+        currentPrompt = baseline.CurrentPrompt;
+        wasTruncated = baseline.Truncation.WasTruncated;
+        droppedNodeCount = baseline.Truncation.DroppedNodeCount;
+        droppedLineCount = baseline.Truncation.DroppedLineCount;
+        droppedTextLength = baseline.Truncation.DroppedTextLength;
+    }
+
     public ConsoleHistoryOptions Options => options;
 
     public long CurrentSequence
@@ -188,71 +219,97 @@ public sealed class ConsoleStateStore
 
         lock (sync)
         {
-            EnsureStructuredState();
-            var candidate = new StructuredCandidate(
-                structuredScrollback.ToList(),
-                new Dictionary<string, BackgroundLayer>(backgroundLayers, StringComparer.Ordinal),
-                new Dictionary<string, CanvasDrawable>(drawables, StringComparer.Ordinal),
-                new Dictionary<string, HitRegion>(hitRegions, StringComparer.Ordinal),
-                new Dictionary<string, MediaChannelState>(mediaChannels, StringComparer.Ordinal),
-                windowMetadata,
-                currentPrompt,
-                droppedLineCount,
-                droppedNodeCount,
-                droppedTextLength);
-            candidate.WasTruncated = wasTruncated;
-
-            foreach (ConsoleOperation operation in transaction.Operations)
-                ApplyStructuredOperation(candidate, operation);
-
-            FitStructuredCandidate(candidate);
             long operationSequence = NextSequence();
-            ConsoleSnapshot snapshot = CreateStructuredSnapshot(
-                operationSequence,
-                candidate.Scrollback,
-                candidate.BackgroundLayers,
-                candidate.Drawables,
-                candidate.HitRegions,
-                candidate.MediaChannels,
-                candidate.WindowMetadata,
-                candidate.CurrentPrompt,
-                candidate.WasTruncated,
-                candidate.DroppedNodeCount,
-                candidate.DroppedLineCount,
-                candidate.DroppedTextLength);
-            if (snapshot.EstimatedBytes > options.MaxEstimatedBytes)
+            return ApplyStructuredTransaction(transaction, operationSequence, publishHistory: true);
+        }
+    }
+
+    internal ConsoleSnapshot ApplyExternalTransaction(SequencedConsoleTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+
+        lock (sync)
+        {
+            if (transaction.Sequence != NextSequence())
             {
                 throw new ConsoleContractException(
-                    ConsoleContractViolationReason.NodeExceedsHistoryBudget,
-                    "The structured console snapshot exceeds its configured budget.");
+                    ConsoleContractViolationReason.InvalidCursor,
+                    "The external console transaction sequence is not the next sequence.",
+                    nameof(transaction));
             }
 
-            structuredScrollback = candidate.Scrollback;
-            backgroundLayers = candidate.BackgroundLayers;
-            drawables = candidate.Drawables;
-            hitRegions = candidate.HitRegions;
-            mediaChannels = candidate.MediaChannels;
-            windowMetadata = candidate.WindowMetadata;
-            currentPrompt = candidate.CurrentPrompt;
-            visibleNodes.Clear();
-            visibleNodes.AddRange(FlattenStructuredLines(structuredScrollback));
-            wasTruncated = candidate.WasTruncated;
-            droppedNodeCount = candidate.DroppedNodeCount;
-            droppedLineCount = candidate.DroppedLineCount;
-            droppedTextLength = candidate.DroppedTextLength;
-            currentSequence = operationSequence;
-            structuredMode = true;
+            _ = ApplyStructuredTransaction(transaction.Transaction, transaction.Sequence, publishHistory: false);
+            return CreateStructuredSnapshot(currentSequence);
+        }
+    }
 
-            var sequenced = new SequencedConsoleTransaction(operationSequence, transaction);
+    private SequencedConsoleTransaction ApplyStructuredTransaction(
+        ConsoleTransaction transaction,
+        long operationSequence,
+        bool publishHistory)
+    {
+        ValidateTransactionLimits(transaction);
+        EnsureStructuredState();
+        var candidate = new StructuredCandidate(
+            structuredScrollback.ToList(),
+            new Dictionary<string, BackgroundLayer>(backgroundLayers, StringComparer.Ordinal),
+            new Dictionary<string, CanvasDrawable>(drawables, StringComparer.Ordinal),
+            new Dictionary<string, HitRegion>(hitRegions, StringComparer.Ordinal),
+            new Dictionary<string, MediaChannelState>(mediaChannels, StringComparer.Ordinal),
+            windowMetadata,
+            currentPrompt,
+            droppedLineCount,
+            droppedNodeCount,
+            droppedTextLength);
+        candidate.WasTruncated = wasTruncated;
+
+        foreach (ConsoleOperation operation in transaction.Operations)
+            ApplyStructuredOperation(candidate, operation);
+
+        FitStructuredCandidate(candidate);
+        ConsoleSnapshot snapshot = CreateStructuredSnapshot(
+            operationSequence,
+            candidate.Scrollback,
+            candidate.BackgroundLayers,
+            candidate.Drawables,
+            candidate.HitRegions,
+            candidate.MediaChannels,
+            candidate.WindowMetadata,
+            candidate.CurrentPrompt,
+            candidate.WasTruncated,
+            candidate.DroppedNodeCount,
+            candidate.DroppedLineCount,
+            candidate.DroppedTextLength);
+        ConsoleSnapshotValidation.Validate(snapshot, options);
+
+        structuredScrollback = candidate.Scrollback;
+        backgroundLayers = candidate.BackgroundLayers;
+        drawables = candidate.Drawables;
+        hitRegions = candidate.HitRegions;
+        mediaChannels = candidate.MediaChannels;
+        windowMetadata = candidate.WindowMetadata;
+        currentPrompt = candidate.CurrentPrompt;
+        visibleNodes.Clear();
+        visibleNodes.AddRange(FlattenStructuredLines(structuredScrollback));
+        wasTruncated = candidate.WasTruncated;
+        droppedNodeCount = candidate.DroppedNodeCount;
+        droppedLineCount = candidate.DroppedLineCount;
+        droppedTextLength = candidate.DroppedTextLength;
+        currentSequence = operationSequence;
+        structuredMode = true;
+
+        var sequenced = new SequencedConsoleTransaction(operationSequence, transaction);
+        if (publishHistory)
+        {
             transactionHistory.Add(sequenced);
             if (transactionHistory.Count > options.MaxDeltaCount)
             {
                 baselineSnapshot = snapshot;
                 transactionHistory.Clear();
             }
-
-            return sequenced;
         }
+
+        return sequenced;
     }
 
     public SequencedConsoleTransaction ApplyStructured(ConsoleTransaction transaction) => ApplyTransaction(transaction);
@@ -290,6 +347,7 @@ public sealed class ConsoleStateStore
         switch (operation)
         {
             case AppendNodesOperation append:
+                ConsoleNodeValidation.ValidateBatch(append.Nodes, limits);
                 AppendNodes(candidate.Scrollback, append.Nodes);
                 break;
             case ClearConsoleOperation:
@@ -310,17 +368,20 @@ public sealed class ConsoleStateStore
                 candidate.CurrentPrompt = null;
                 break;
             case AppendLineOperation appendLine:
+                ValidateLineLimits(appendLine.Line);
                 if (candidate.Scrollback.Any(line => line.LineId == appendLine.Line.LineId))
                     throw new ConsoleContractException(ConsoleContractViolationReason.DuplicateIdentifier, "The line id is already present.");
                 candidate.Scrollback.Add(appendLine.Line);
                 break;
             case AppendInlineOperation inline:
+                ConsoleNodeValidation.ValidateBatch(inline.Nodes, limits);
                 ConsoleLine inlineLine = FindLine(candidate.Scrollback, inline.LineId);
                 if (inline.Nodes.Any(node => node is LineBreakNode))
                     throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Inline output cannot contain a line break.");
                 candidate.Scrollback[candidate.Scrollback.IndexOf(inlineLine)] = inlineLine.WithNodes(inlineLine.Nodes.Concat(inline.Nodes));
                 break;
             case ReplaceLineOperation replace:
+                ValidateLineLimits(replace.Line);
                 int replaceIndex = candidate.Scrollback.FindIndex(line => line.LineId == replace.Line.LineId);
                 if (replaceIndex < 0)
                     throw new ConsoleContractException(ConsoleContractViolationReason.InvalidIdentifier, "The line id does not exist.");
@@ -411,6 +472,45 @@ public sealed class ConsoleStateStore
             throw new ConsoleContractException(ConsoleContractViolationReason.SceneTooLarge, "The structured scene or media state exceeds its limit.");
     }
 
+    private void ValidateTransactionLimits(ConsoleTransaction transaction)
+    {
+        if (transaction.Operations.Count > limits.MaxTransactionOperations)
+            throw new ConsoleContractException(
+                ConsoleContractViolationReason.BatchTooLarge,
+                "The console transaction exceeds its configured operation limit.");
+
+        foreach (ConsoleOperation operation in transaction.Operations)
+        {
+            switch (operation)
+            {
+                case AppendNodesOperation append:
+                    ConsoleNodeValidation.ValidateBatch(append.Nodes, limits);
+                    break;
+                case AppendInlineOperation inline:
+                    ConsoleNodeValidation.ValidateBatch(inline.Nodes, limits);
+                    break;
+                case DeleteLinesOperation delete when delete.LineIds.Count > limits.MaxTransactionOperations:
+                    throw new ConsoleContractException(
+                        ConsoleContractViolationReason.BatchTooLarge,
+                        "The delete operation exceeds its configured identifier limit.");
+                case AppendLineOperation appendLine:
+                    ValidateLineLimits(appendLine.Line);
+                    break;
+                case ReplaceLineOperation replace:
+                    ValidateLineLimits(replace.Line);
+                    break;
+            }
+        }
+    }
+
+    private void ValidateLineLimits(ConsoleLine line)
+    {
+        ConsoleContractValidation.ValidateIdentifier(line.LineId, nameof(line.LineId), limits.MaxLineIdLength);
+        if (line.Nodes.Count > limits.MaxNodesPerLine)
+            throw new ConsoleContractException(ConsoleContractViolationReason.LineTooLarge, "The console line exceeds its configured node limit.");
+        ConsoleNodeValidation.ValidateBatchIfNotEmpty(line.Nodes, limits);
+    }
+
     private void FitStructuredCandidate(StructuredCandidate candidate)
     {
         ConsoleNode[] flattened = FlattenStructuredLines(candidate.Scrollback);
@@ -443,12 +543,12 @@ public sealed class ConsoleStateStore
     private void AppendNodes(List<ConsoleLine> lines, IReadOnlyList<ConsoleNode> nodes)
     {
         if (lines.Count == 0)
-            lines.Add(new ConsoleLine(NextGeneratedLineId(), Array.Empty<ConsoleNode>()));
+            lines.Add(new ConsoleLine(NextGeneratedLineId(lines), Array.Empty<ConsoleNode>()));
         foreach (ConsoleNode node in nodes)
         {
             if (node is LineBreakNode)
             {
-                lines.Add(new ConsoleLine(NextGeneratedLineId(), Array.Empty<ConsoleNode>()));
+                lines.Add(new ConsoleLine(NextGeneratedLineId(lines), Array.Empty<ConsoleNode>()));
                 continue;
             }
 
@@ -459,7 +559,17 @@ public sealed class ConsoleStateStore
         }
     }
 
-    private string NextGeneratedLineId() => $"line-{checked(++generatedLineId):x}";
+    private string NextGeneratedLineId(IEnumerable<ConsoleLine>? existingLines = null)
+    {
+        string candidate;
+        do
+        {
+            candidate = $"line-{checked(++generatedLineId):x}";
+        }
+        while (existingLines is not null && existingLines.Any(line => string.Equals(line.LineId, candidate, StringComparison.Ordinal)));
+
+        return candidate;
+    }
 
     public SequencedConsoleEvent Apply(ConsoleOperation operation)
     {
@@ -780,7 +890,7 @@ public sealed class ConsoleStateStore
         {
             if (node is LineBreakNode)
             {
-                lines.Add(new ConsoleLine(NextGeneratedLineId(), current));
+                lines.Add(new ConsoleLine(NextGeneratedLineId(lines), current));
                 current = [];
             }
             else
@@ -790,7 +900,7 @@ public sealed class ConsoleStateStore
         }
 
         if (current.Count != 0)
-            lines.Add(new ConsoleLine(NextGeneratedLineId(), current));
+            lines.Add(new ConsoleLine(NextGeneratedLineId(lines), current));
         return lines;
     }
 
