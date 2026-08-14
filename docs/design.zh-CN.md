@@ -871,7 +871,8 @@ Realtime Gateway 对一个 Session 执行以下恢复：
 
 1. 验证 WebSocket 身份和 Session 权限；
 2. 从 API 为当前 Worker epoch 维护的不可变镜像读取 `Snapshot(N)`，其中包含当前 prompt；
-3. 注册有界连接队列并再次比较当前 epoch/sequence；若已经前进则直接标记需要重新同步；
+3. 若 Hub 尚未取得首个 Snapshot，返回 `SNAPSHOT_NOT_READY`，客户端带抖动退避后重新 resume；否则注册
+   有界连接队列并再次比较当前 epoch/sequence；若已经前进则直接标记需要重新同步；
 4. Gateway 发送 Snapshot，客户端以其完整替换本地显示树；
 5. Gateway 从序号大于 `N` 的下一批实时事件开始转发；
 6. 若读取与转发衔接期间检测到序号缺口或连接队列溢出，放弃待发增量并读取较新的完整 Snapshot。
@@ -932,6 +933,18 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 ```
 
 未知必需消息类型返回协议错误；未知可选字段忽略。握手时双方交换支持的协议版本和显示能力。服务端不得因为客户端声明不支持某能力就把不安全原始内容透传给客户端。
+
+客户端 `messageId` 在一个连接内使用最近 4096 个 ID 的有界重复检测窗口；窗口淘汰后的旧 ID 不提供永久重放
+保护，客户端仍必须在整个连接生命周期内不复用已发送 ID。
+
+P1-09 已按 [`ADR-0021`](adr/0021-freeze-realtime-websocket-v1.md) 冻结正式边界：入口为
+`GET /api/v1/realtime`，协商 `cloudemuera.realtime.v1`，每次 `session.resume` 都重新捕获当前
+`(workerEpoch, snapshotSequence)` 并先发送完整 `session.snapshot`；不接受 `lastSequence` 历史补发，
+`resync.required` 与替换 Snapshot 由单 writer 作为一个 work group 发送。`session.input` 必须带
+`workerEpoch + promptId + clientMessageId`，浏览器不得发送 `SYSTEM`，API 通过共享
+`ISessionCommandGate` 和持久 binding 校验后使用 IPC correlation 等待 Worker 回执；prompt、格式、去重和
+timeout 仍由 Worker 决定。连接、订阅、接收消息、控制队列、pending input 和最终 envelope 都受数量/字节
+双上限，连接断开不改变 Session 或 Worker 生命周期。
 
 ## 9. HTTP API 设计
 
@@ -1325,6 +1338,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 13. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
 14. `ADR-0018`：Emuera 完整结构化交互状态、能力矩阵、计时语义和 IPC major 升级（P1-07 首个切片）。
 15. `ADR-0020`：API 快照镜像、订阅竞态和逐连接有界输出（P1-08，已接受）。
+16. `ADR-0021`：Realtime WebSocket v1、快照恢复与输入回执边界（P1-09，已接受）。
 
 ## 20. 设计完成定义
 

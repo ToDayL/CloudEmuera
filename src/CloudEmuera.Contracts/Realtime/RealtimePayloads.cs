@@ -1,5 +1,3 @@
-using System.Text.Json.Serialization;
-
 namespace CloudEmuera.Contracts.Realtime;
 
 public sealed record RealtimeSnapshot(
@@ -209,13 +207,3 @@ public sealed record RealtimeOperation(
     string? RegionId = null,
     RealtimeMediaChannel? MediaChannel = null,
     string? Channel = null);
-
-[JsonSourceGenerationOptions(
-    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    GenerationMode = JsonSourceGenerationMode.Serialization)]
-[JsonSerializable(typeof(RealtimeSnapshot))]
-[JsonSerializable(typeof(RealtimeTransactionBatch))]
-[JsonSerializable(typeof(RealtimeResyncRequired))]
-[JsonSerializable(typeof(RealtimeTransaction))]
-public partial class RealtimeJsonContext : JsonSerializerContext;

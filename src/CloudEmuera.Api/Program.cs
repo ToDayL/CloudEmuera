@@ -11,6 +11,7 @@ using CloudEmuera.Contracts;
 using CloudEmuera.Contracts.Identity;
 using CloudEmuera.Contracts.Games;
 using CloudEmuera.Contracts.Sessions;
+using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Infrastructure.Games;
 using CloudEmuera.Infrastructure.Identity;
@@ -53,11 +54,33 @@ RealtimeOutputOptions realtimeOutputOptions = new()
     MaxSnapshotResyncAttempts = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxSnapshotResyncAttempts") ?? 3,
     SnapshotResyncWindow = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:SnapshotResyncWindowSeconds") ?? 30),
 };
+RealtimeGatewayOptions realtimeGatewayOptions = new()
+{
+    ClientHelloTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ClientHelloTimeoutSeconds") ?? 5),
+    ClientMessageMaxBytes = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ClientMessageMaxBytes") ?? RealtimeProtocol.DefaultClientMessageMaxBytes,
+    ClientJsonMaxDepth = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ClientJsonMaxDepth") ?? RealtimeProtocol.DefaultClientJsonMaxDepth,
+    MaxConnections = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxConnections") ?? 256,
+    MaxConnectionsPerSession = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxConnectionsPerSession") ?? 16,
+    MaxSubscriptionsPerConnection = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxSubscriptionsPerConnection") ?? 4,
+    MaxPendingInputsPerConnection = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxPendingInputsPerConnection") ?? 32,
+    MaxPendingInputsPerWorker = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxPendingInputsPerWorker") ?? 128,
+    ControlQueueMaxBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:ControlQueueMaxBytes") ?? 256 * 1024,
+    ControlQueueMaxMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ControlQueueMaxMessages") ?? 64,
+    EnvelopeMaxBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:EnvelopeMaxBytes") ?? 2 * 1024,
+    InputResultTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:InputResultTimeoutSeconds") ?? 10),
+    WebSocketSendTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:WebSocketSendTimeoutSeconds") ?? 10),
+    HeartbeatInterval = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:HeartbeatIntervalSeconds") ?? 20),
+    HeartbeatTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:HeartbeatTimeoutSeconds") ?? 10),
+    IdentityRevalidationInterval = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:IdentityRevalidationIntervalSeconds") ?? 60),
+    ConnectionShutdownTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ConnectionShutdownTimeoutSeconds") ?? 5),
+};
+realtimeGatewayOptions.Validate(realtimeOutputOptions);
 var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath)
 {
     RealtimeOutput = realtimeOutputOptions,
     PendingEventMaxMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Worker:PendingEventMaxMessages") ?? 256,
     PendingEventMaxBytes = builder.Configuration.GetValue<int?>("CloudEmuera:Worker:PendingEventMaxBytes") ?? 1 * 1024 * 1024,
+    PendingInputMaxMessages = realtimeGatewayOptions.MaxPendingInputsPerWorker,
 };
 workerOptions.Validate();
 var workerSocketLifecycle = new WorkerSocketLifecycle(workerOptions);
@@ -77,6 +100,12 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 {
     serverOptions.AddServerHeader = false;
     serverOptions.ListenUnixSocket(workerOptions.ControlSocketPath, listenOptions => listenOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http2);
+    // The Unix socket is reserved for API/Worker gRPC. Keep the configured
+    // HTTP listener for browser HTTP and WebSocket traffic as well. Since an
+    // explicit Kestrel endpoint suppresses ASPNETCORE_URLS, resolve its port
+    // first instead of silently forcing the development default.
+    int httpPort = KestrelHttpPortResolver.Resolve(builder.Configuration);
+    serverOptions.ListenAnyIP(httpPort, listenOptions => listenOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http1AndHttp2);
 });
 builder.Services.AddGrpc(grpcOptions =>
 {
@@ -100,6 +129,10 @@ builder.Services.AddScoped<CloudEmueraDbContext>(serviceProvider =>
 });
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(workerOptions);
+builder.Services.AddSingleton(realtimeGatewayOptions);
+builder.Services.AddSingleton<RealtimeEnvelopeCodec>();
+builder.Services.AddSingleton<RealtimeConnectionRegistry>();
+builder.Services.AddSingleton<RealtimeAuthorizationGate>();
 builder.Services.AddSingleton(workerSocketLifecycle);
 builder.Services.AddSingleton(new ApiControlPlaneIdentity(workerOptions.ControlPlaneInstanceId));
 builder.Services.AddSingleton<ISessionRuntimeStore, SqliteSessionRuntimeStore>();
@@ -115,7 +148,11 @@ builder.Services.AddSingleton<ISessionWorkerControl>(serviceProvider => serviceP
 builder.Services.AddSingleton<SessionRuntimeCoordinator>();
 builder.Services.AddSingleton<ICurrentWorkerRouter>(serviceProvider => serviceProvider.GetRequiredService<WorkerManager>());
 builder.Services.AddSingleton<IWorkerOpenOptionsFactory, ApiWorkerOpenOptionsFactory>();
-builder.Services.AddSingleton<ISessionLifecycleExecutor, SessionLifecycleExecutor>();
+builder.Services.AddSingleton<SessionLifecycleExecutor>();
+builder.Services.AddSingleton<ISessionLifecycleExecutor>(serviceProvider => serviceProvider.GetRequiredService<SessionLifecycleExecutor>());
+builder.Services.AddSingleton<ISessionCommandGate>(serviceProvider => serviceProvider.GetRequiredService<SessionLifecycleExecutor>());
+builder.Services.AddSingleton<IRealtimeSessionRegistry>(serviceProvider => serviceProvider.GetRequiredService<WorkerManager>());
+builder.Services.AddSingleton<RealtimeEndpoint>();
 builder.Services.AddSingleton<ISessionRootMutationLeaseStore, SqliteSessionRootMutationLeaseStore>();
 builder.Services.AddSingleton<SqliteIdempotencyStore>();
 builder.Services.AddSingleton<ISessionApplicationService, SqliteSessionApplicationService>();
@@ -238,6 +275,10 @@ if (!development)
     app.UseHttpsRedirection();
 }
 app.UseMiddleware<SecurityHeadersMiddleware>();
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30),
+});
 app.Use((context, next) =>
 {
     DataProtectionKeyRing.HardenExistingKeyFiles(dataRoot);
@@ -250,13 +291,29 @@ app.Use(async (context, next) =>
 });
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.Equals("/api/v1/realtime", StringComparison.Ordinal))
+        context.Response.Headers.CacheControl = "no-store";
+    await next(context).ConfigureAwait(false);
+});
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapGrpcService<WorkerControlGrpcService>();
 
-app.MapGet("/api/v1/version", () => Results.Ok(new BuildInfo("CloudEmuera", typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0-dev", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription, 1, 1, 1)));
+app.MapGet("/api/v1/realtime", (HttpContext context, RealtimeEndpoint endpoint) => endpoint.HandleAsync(context))
+    .RequireAuthorization();
+
+app.MapGet("/api/v1/version", () => Results.Ok(new BuildInfo(
+    "CloudEmuera",
+    typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0-dev",
+    System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+    1,
+    RealtimeProtocol.Version,
+    3,
+    RealtimeProtocol.PayloadSchemaVersion)));
 app.MapHealthChecks("/health/live", new() { Predicate = _ => false });
 app.MapOpenApi();
 app.MapHealthChecks("/health/ready", new() { Predicate = check => check.Tags.Contains("ready"), ResponseWriter = async (context, report) =>

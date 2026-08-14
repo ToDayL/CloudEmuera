@@ -1,17 +1,22 @@
 using System.IO.Compression;
 using System.Net;
+using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Net.Http.Json;
+using CloudEmuera.Api.Workers;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Application.GamePackages;
 using CloudEmuera.Contracts.Games;
 using CloudEmuera.Contracts.Identity;
+using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Contracts.Sessions;
 using CloudEmuera.Infrastructure.Persistence;
+using CloudEmuera.Ipc;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace CloudEmuera.Api.IntegrationTests;
@@ -23,6 +28,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 {
     private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid().ToString("N")[..16]}");
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly int[] SupportedRealtimeProtocolVersions = [1];
     private IdentityFactory? _factory;
 
     [Fact]
@@ -167,6 +173,8 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal("RUNNING", opened.State);
         Assert.Equal(1, opened.WorkerEpoch);
 
+        await ExerciseRealtimeWebSocketAsync(created.Id, opened.WorkerEpoch);
+
         (HttpResponseMessage closedResponse, SessionResponse closed) = await WaitForLifecycleAsync(client, created.Id, "close", "session-create");
         Assert.Equal("CLOSED", closed.State);
 
@@ -198,6 +206,24 @@ public sealed class GameLibraryApiContractTests : IDisposable
         HttpResponseMessage secondCreateResponse = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
             new CreateSessionRequest(current.Id, "HTTP Session 2"), csrf, idempotencyKey: "session-create-2");
         Assert.Equal(HttpStatusCode.Created, secondCreateResponse.StatusCode);
+        SessionResponse secondCreated = await secondCreateResponse.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Second session create response was missing.");
+
+        (HttpResponseMessage secondOpenedResponse, SessionResponse secondOpened) = await WaitForLifecycleAsync(client, secondCreated.Id, "open", "session-open-2");
+        Assert.Equal(HttpStatusCode.OK, secondOpenedResponse.StatusCode);
+        Assert.Equal("RUNNING", secondOpened.State);
+        await ExerciseRealtimeWebSocketAsync(secondCreated.Id, secondOpened.WorkerEpoch, completeInput: false);
+
+        ApiWorkerSession secondWorker = _factory.Services.GetRequiredService<WorkerManager>().Workers.Single(worker => worker.Binding.SessionId == secondCreated.Id);
+        await secondWorker.DisconnectCurrentConnectionForTestAsync();
+        SessionResponse crashed = await WaitForSessionStateAsync(client, secondCreated.Id, "CRASHED");
+        Assert.Equal("CRASHED", crashed.State);
+
+        (HttpResponseMessage crashReopenResponse, SessionResponse crashReopened) = await WaitForLifecycleAsync(client, secondCreated.Id, "open", "session-reopen-after-crash");
+        Assert.Equal(HttpStatusCode.OK, crashReopenResponse.StatusCode);
+        Assert.Equal("RUNNING", crashReopened.State);
+        Assert.Equal(secondOpened.WorkerEpoch + 1, crashReopened.WorkerEpoch);
+        await ExerciseRealtimeWebSocketAsync(secondCreated.Id, crashReopened.WorkerEpoch, completeInput: false);
+        (_, _) = await WaitForLifecycleAsync(client, secondCreated.Id, "close", "session-close-after-crash");
 
         HttpResponseMessage firstPageResponse = await client.GetAsync("/api/v1/sessions?limit=1");
         string firstPageBody = await firstPageResponse.Content.ReadAsStringAsync();
@@ -211,6 +237,8 @@ public sealed class GameLibraryApiContractTests : IDisposable
         SessionListResponse secondPage = await secondPageResponse.Content.ReadFromJsonAsync<SessionListResponse>() ?? throw new Xunit.Sdk.XunitException("Session cursor page was missing.");
         Assert.Single(secondPage.Items);
         Assert.NotEqual(firstPage.Items[0].Id, secondPage.Items[0].Id);
+
+        await ExerciseRealtimeDrainingCloseAsync();
 
         async Task<(HttpResponseMessage Response, SessionResponse Value)> WaitForLifecycleAsync(
             HttpClient httpClient,
@@ -585,6 +613,271 @@ public sealed class GameLibraryApiContractTests : IDisposable
         return await client.SendAsync(request);
     }
 
+    private async Task ExerciseRealtimeWebSocketAsync(string sessionId, long expectedEpoch, bool completeInput = true)
+    {
+        var cookies = new CookieContainer();
+        using var handler = new HttpClientHandler
+        {
+            CookieContainer = cookies,
+            UseCookies = true,
+            AllowAutoRedirect = false,
+        };
+        using HttpClient authClient = new(handler) { BaseAddress = _factory!.KestrelBaseAddress };
+
+        using HttpResponseMessage csrfResponse = await authClient.GetAsync("/api/v1/auth/csrf");
+        CsrfResponse csrf = await csrfResponse.Content.ReadFromJsonAsync<CsrfResponse>() ?? throw new Xunit.Sdk.XunitException("Realtime CSRF response was missing.");
+        using HttpRequestMessage login = new(HttpMethod.Post, "/api/v1/auth/login")
+        {
+            Content = JsonContent.Create(new LoginRequest("admin@example.test", "administrator-password", false))
+        };
+        login.Headers.Add("X-CSRF-TOKEN", csrf.Token);
+        using HttpResponseMessage loginResponse = await authClient.SendAsync(login);
+        Assert.True(loginResponse.IsSuccessStatusCode, await loginResponse.Content.ReadAsStringAsync());
+
+        Uri wsUri = new UriBuilder(_factory.KestrelBaseAddress)
+        {
+            Scheme = "ws",
+            Path = "/api/v1/realtime",
+            Query = string.Empty,
+        }.Uri;
+        using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        async Task<ClientWebSocket> ConnectRealtimeAsync(string connectionLabel)
+        {
+            var socket = new ClientWebSocket();
+            socket.Options.AddSubProtocol(RealtimeProtocol.Subprotocol);
+            socket.Options.SetRequestHeader("Origin", "http://localhost:5173");
+            socket.Options.SetRequestHeader("Cookie", cookies.GetCookieHeader(_factory.KestrelBaseAddress));
+            try
+            {
+                await socket.ConnectAsync(wsUri, connectTimeout.Token);
+                await SendRealtimeAsync(socket, new
+                {
+                    protocolVersion = 1,
+                    type = "client.hello",
+                    messageId = $"msg_realtime_{connectionLabel}_hello",
+                    payload = new
+                    {
+                        supportedProtocolVersions = SupportedRealtimeProtocolVersions,
+                        capabilityDigest = StructuredIpcProtocol.CapabilitySetDigest,
+                        supportedCapabilities = Array.Empty<string>(),
+                    },
+                }, connectTimeout.Token);
+                using JsonDocument serverHello = await ReceiveRealtimeAsync(socket, connectTimeout.Token);
+                Assert.Equal("server.hello", serverHello.RootElement.GetProperty("type").GetString());
+                return socket;
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
+        }
+
+        async Task<(string PromptId, ulong WorkerEpoch)> ResumeAndReadPromptAsync(
+            ClientWebSocket socket,
+            string connectionLabel)
+        {
+            string? promptId = null;
+            ulong workerEpoch = checked((ulong)expectedEpoch);
+            bool resumeAccepted = false;
+            for (int attempt = 0; attempt < 20 && promptId is null; attempt++)
+            {
+                await SendRealtimeAsync(socket, new
+                {
+                    protocolVersion = 1,
+                    type = "session.resume",
+                    messageId = $"msg_realtime_{connectionLabel}_resume_{attempt}",
+                    sessionId,
+                    payload = new { capabilityDigest = StructuredIpcProtocol.CapabilitySetDigest },
+                }, connectTimeout.Token);
+
+                for (int message = 0; message < 8 && promptId is null; message++)
+                {
+                    using JsonDocument document = await ReceiveRealtimeAsync(socket, connectTimeout.Token);
+                    string type = document.RootElement.GetProperty("type").GetString()!;
+                    if (type == "session.resume.result")
+                    {
+                        string status = document.RootElement.GetProperty("payload").GetProperty("status").GetString()!;
+                        if (status == "SNAPSHOT_NOT_READY")
+                            break;
+                        Assert.Equal("ACCEPTED", status);
+                        resumeAccepted = true;
+                        if (document.RootElement.GetProperty("payload").TryGetProperty("workerEpoch", out JsonElement epoch))
+                            workerEpoch = epoch.GetUInt64();
+                    }
+                    else if (type == "session.snapshot")
+                    {
+                        JsonElement currentPrompt = document.RootElement.GetProperty("payload")
+                            .GetProperty("consoleState")
+                            .GetProperty("currentPrompt");
+                        promptId = currentPrompt.GetProperty("promptId").GetString();
+                    }
+                }
+
+                if (promptId is null)
+                    await Task.Delay(100, connectTimeout.Token);
+            }
+
+            Assert.True(resumeAccepted);
+            Assert.False(string.IsNullOrWhiteSpace(promptId));
+            Assert.Equal((ulong)expectedEpoch, workerEpoch);
+            return (promptId!, workerEpoch);
+        }
+
+        using (ClientWebSocket firstSocket = await ConnectRealtimeAsync("first"))
+        {
+            (string firstPromptId, ulong firstEpoch) = await ResumeAndReadPromptAsync(firstSocket, "first");
+            Assert.False(string.IsNullOrWhiteSpace(firstPromptId));
+            Assert.Equal((ulong)expectedEpoch, firstEpoch);
+            await firstSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "simulate_disconnect", CancellationToken.None);
+        }
+
+        using ClientWebSocket socket = await ConnectRealtimeAsync("reconnect");
+        (string promptId, ulong workerEpoch) = await ResumeAndReadPromptAsync(socket, "reconnect");
+
+        if (!completeInput)
+        {
+            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "snapshot_verified", CancellationToken.None);
+            return;
+        }
+
+        await SendRealtimeAsync(socket, new
+        {
+            protocolVersion = 1,
+            type = "session.input",
+            messageId = "msg_realtime_reconnect_input",
+            sessionId,
+            workerEpoch,
+            payload = new
+            {
+                promptId,
+                clientMessageId = "client_realtime_input",
+                source = "KEYBOARD",
+                value = "7",
+                key = new { keyCode = 55, control = false, alt = false, shift = false },
+            },
+        }, connectTimeout.Token);
+
+        bool accepted = false;
+        bool outputObserved = false;
+        for (int message = 0; message < 16 && (!accepted || !outputObserved); message++)
+        {
+            using JsonDocument document = await ReceiveRealtimeAsync(socket, connectTimeout.Token);
+            string type = document.RootElement.GetProperty("type").GetString()!;
+            if (type == "session.input.result")
+                accepted = document.RootElement.GetProperty("payload").GetProperty("status").GetString() == "ACCEPTED";
+            else if (type is "display.batch" or "session.stream.ended")
+                outputObserved = true;
+        }
+
+        Assert.True(accepted);
+        Assert.True(outputObserved);
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "test_complete", CancellationToken.None);
+    }
+
+    private async Task ExerciseRealtimeDrainingCloseAsync()
+    {
+        var cookies = new CookieContainer();
+        using var handler = new HttpClientHandler
+        {
+            CookieContainer = cookies,
+            UseCookies = true,
+            AllowAutoRedirect = false,
+        };
+        using HttpClient authClient = new(handler) { BaseAddress = _factory!.KestrelBaseAddress };
+        using HttpResponseMessage csrfResponse = await authClient.GetAsync("/api/v1/auth/csrf");
+        CsrfResponse csrf = await csrfResponse.Content.ReadFromJsonAsync<CsrfResponse>() ?? throw new Xunit.Sdk.XunitException("Draining CSRF response was missing.");
+        using HttpRequestMessage login = new(HttpMethod.Post, "/api/v1/auth/login")
+        {
+            Content = JsonContent.Create(new LoginRequest("admin@example.test", "administrator-password", false))
+        };
+        login.Headers.Add("X-CSRF-TOKEN", csrf.Token);
+        using HttpResponseMessage loginResponse = await authClient.SendAsync(login);
+        Assert.True(loginResponse.IsSuccessStatusCode, await loginResponse.Content.ReadAsStringAsync());
+
+        Uri wsUri = new UriBuilder(_factory.KestrelBaseAddress)
+        {
+            Scheme = "ws",
+            Path = "/api/v1/realtime",
+            Query = string.Empty,
+        }.Uri;
+        using var socket = new ClientWebSocket();
+        socket.Options.AddSubProtocol(RealtimeProtocol.Subprotocol);
+        socket.Options.SetRequestHeader("Origin", "http://localhost:5173");
+        socket.Options.SetRequestHeader("Cookie", cookies.GetCookieHeader(_factory.KestrelBaseAddress));
+        using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await socket.ConnectAsync(wsUri, connectTimeout.Token);
+        await SendRealtimeAsync(socket, new
+        {
+            protocolVersion = 1,
+            type = "client.hello",
+            messageId = "msg_realtime_draining_hello",
+            payload = new
+            {
+                supportedProtocolVersions = SupportedRealtimeProtocolVersions,
+                capabilityDigest = StructuredIpcProtocol.CapabilitySetDigest,
+                supportedCapabilities = Array.Empty<string>(),
+            },
+        }, connectTimeout.Token);
+        using JsonDocument serverHello = await ReceiveRealtimeAsync(socket, connectTimeout.Token);
+        Assert.Equal("server.hello", serverHello.RootElement.GetProperty("type").GetString());
+        Assert.Equal(1000, serverHello.RootElement.GetProperty("payload").GetProperty("heartbeatIntervalMilliseconds").GetInt32());
+        Assert.Equal(1000, serverHello.RootElement.GetProperty("payload").GetProperty("heartbeatTimeoutMilliseconds").GetInt32());
+
+        _factory.Services.GetRequiredService<WorkerManager>().BeginDraining();
+        using var closeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        byte[] buffer = new byte[4096];
+        while (true)
+        {
+            WebSocketReceiveResult result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), closeTimeout.Token);
+            if (result.MessageType != WebSocketMessageType.Close)
+                continue;
+            Assert.Equal((WebSocketCloseStatus)1012, result.CloseStatus);
+            Assert.Equal("api_draining", result.CloseStatusDescription);
+            break;
+        }
+    }
+
+    private static async Task<SessionResponse> WaitForSessionStateAsync(
+        HttpClient client,
+        string sessionId,
+        string expectedState)
+    {
+        List<string> attempts = [];
+        for (int attempt = 0; attempt < 60; attempt++)
+        {
+            using HttpResponseMessage response = await client.GetAsync($"/api/v1/sessions/{sessionId}");
+            SessionResponse value = await response.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Session state response was missing.");
+            attempts.Add($"{value.State}:epoch={value.WorkerEpoch}");
+            if (string.Equals(value.State, expectedState, StringComparison.Ordinal))
+                return value;
+            await Task.Delay(250);
+        }
+
+        throw new Xunit.Sdk.XunitException($"Session {sessionId} did not reach {expectedState}: {string.Join(',', attempts)}");
+    }
+
+    private static async Task SendRealtimeAsync(ClientWebSocket socket, object message, CancellationToken cancellationToken)
+    {
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(message);
+        await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, cancellationToken);
+    }
+
+    private static async Task<JsonDocument> ReceiveRealtimeAsync(ClientWebSocket socket, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        byte[] chunk = new byte[64 * 1024];
+        while (true)
+        {
+            WebSocketReceiveResult result = await socket.ReceiveAsync(new ArraySegment<byte>(chunk), cancellationToken);
+            if (result.MessageType == WebSocketMessageType.Close)
+                throw new Xunit.Sdk.XunitException($"The realtime socket closed before the expected message: status={result.CloseStatus}, description={result.CloseStatusDescription}.");
+            buffer.Write(chunk, 0, result.Count);
+            if (result.EndOfMessage)
+                return JsonDocument.Parse(buffer.ToArray());
+        }
+    }
+
     private sealed class IdentityFactory(string dataRoot, bool useKestrel = false) : WebApplicationFactory<Program>
     {
         private readonly int _kestrelPort = GetFreeTcpPort();
@@ -592,7 +885,13 @@ public sealed class GameLibraryApiContractTests : IDisposable
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
-            builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["CloudEmuera:DataPath"] = dataRoot }));
+            builder.UseSetting("CloudEmuera:Realtime:HeartbeatIntervalSeconds", "1");
+            builder.UseSetting("CloudEmuera:Realtime:HeartbeatTimeoutSeconds", "1");
+            builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CloudEmuera:DataPath"] = dataRoot,
+                ["CloudEmuera:PublicOrigin"] = "http://localhost:5173",
+            }));
         }
 
         public void StartKestrel()

@@ -159,7 +159,7 @@ public sealed class SessionLifecycleExecutor(
     SessionRuntimeCoordinator coordinator,
     ICurrentWorkerRouter workerRouter,
     IWorkerOpenOptionsFactory optionsFactory)
-    : ISessionLifecycleExecutor
+    : ISessionLifecycleExecutor, ISessionCommandGate
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SessionGate> gates = new(StringComparer.Ordinal);
 
@@ -211,6 +211,15 @@ public sealed class SessionLifecycleExecutor(
         {
             ReleaseGate(sessionId, gate);
         }
+    }
+
+    public async Task<SessionCommandLease> EnterAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        SessionGate gate = await AcquireGateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return new SessionCommandLease(() => ReleaseGate(sessionId, gate));
     }
 
     private async Task<SessionGate> AcquireGateAsync(string sessionId, CancellationToken cancellationToken)

@@ -356,6 +356,24 @@ public sealed class RealtimeOutputTests
         Assert.Equal(RealtimeFrameKind.Snapshot, (await slow.ReadAsync()).Kind);
 
         const int publishCount = 200;
+        var fastReaderReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task fastReader = Task.Run(async () =>
+        {
+            long expected = 2;
+            int received = 0;
+            while (received < publishCount)
+            {
+                ValueTask<RealtimeFrame> pending = fast.ReadAsync();
+                fastReaderReady.TrySetResult();
+                RealtimeFrame frame = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+                Assert.Equal(RealtimeFrameKind.TransactionBatch, frame.Kind);
+                Assert.Equal(expected, frame.FirstSequence);
+                expected = frame.LastSequence + 1;
+                received += (int)(frame.LastSequence - frame.FirstSequence + 1);
+            }
+        });
+        await fastReaderReady.Task.WaitAsync(TimeSpan.FromSeconds(15));
+
         Task publishing = Task.Run(async () =>
         {
             for (int sequence = 2; sequence <= publishCount + 1; sequence++)
@@ -366,17 +384,7 @@ public sealed class RealtimeOutputTests
             }
         });
 
-        long expected = 2;
-        int received = 0;
-        while (received < publishCount)
-        {
-            RealtimeFrame frame = await fast.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(15));
-            Assert.Equal(RealtimeFrameKind.TransactionBatch, frame.Kind);
-            Assert.Equal(expected, frame.FirstSequence);
-            expected = frame.LastSequence + 1;
-            received += (int)(frame.LastSequence - frame.FirstSequence + 1);
-        }
-        await publishing;
+        await Task.WhenAll(publishing, fastReader);
 
         Assert.Equal(SessionOutputHubState.Live, hub.State);
         RealtimeQueueStatistics slowStatistics = slow.QueueStatistics;

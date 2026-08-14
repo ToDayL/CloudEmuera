@@ -18,6 +18,9 @@ public sealed class WorkerProcessIsolationTests
     [InlineData("v18-core", "v18-compatible", RuntimeSaveLayout.Root, "7")]
     [InlineData("em-ee-core", "em-ee-current", RuntimeSaveLayout.SavDirectory, "4")]
     [Trait("Category", "Snapshot")]
+    [Trait("Category", "Realtime")]
+    [Trait("Category", "Input")]
+    [Trait("Category", "InputDeduplication")]
     public async Task RealWorkerCompletesInputRoundtripThroughUds(
         string fixtureId,
         string profile,
@@ -96,6 +99,8 @@ public sealed class WorkerProcessIsolationTests
     }
 
     [Fact]
+    [Trait("Category", "Realtime")]
+    [Trait("Category", "Input")]
     public async Task StartIsIdempotentAndStopCancelsWaitingInput()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
@@ -128,6 +133,8 @@ public sealed class WorkerProcessIsolationTests
     }
 
     [Fact]
+    [Trait("Category", "Realtime")]
+    [Trait("Category", "WorkerDisconnect")]
     public async Task ClosingWorkerControlStreamStopsRuntimeWithinBound()
     {
         await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);

@@ -131,7 +131,7 @@ public sealed class ApiControlPlaneIdentity
     public long ProcessStartTicks { get; }
 }
 
-public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICurrentWorkerRouter
+public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICurrentWorkerRouter, IRealtimeSessionRegistry
 {
     private readonly WorkerManagerOptions options;
     private readonly ILoggerFactory loggerFactory;
@@ -175,6 +175,102 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 : new CurrentWorkerRoute(worker.RuntimeBinding, new ApiWorkerProcessHandle(worker)));
         }
     }
+
+    public Task<RealtimeSubscriptionRoute?> TrySubscribeAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (sync)
+        {
+            if (IsDraining)
+                return Task.FromResult<RealtimeSubscriptionRoute?>(null);
+            ApiWorkerSession? worker = sessions.Values.SingleOrDefault(item =>
+                string.Equals(item.Binding.SessionId, sessionId, StringComparison.Ordinal));
+            if (worker is null || worker.OutputHub.State is SessionOutputHubState.Faulted or SessionOutputHubState.Disposed)
+                return Task.FromResult<RealtimeSubscriptionRoute?>(null);
+            try
+            {
+                RealtimeSubscription subscription = worker.OutputHub.Subscribe();
+                return Task.FromResult<RealtimeSubscriptionRoute?>(new RealtimeSubscriptionRoute(
+                    sessionId,
+                    worker.Binding.WorkerId,
+                    worker.Binding.WorkerEpoch,
+                    StructuredIpcProtocol.CapabilitySetDigest,
+                    subscription,
+                    worker.OutputHub.CurrentSnapshot is not null));
+            }
+            catch (InvalidOperationException)
+            {
+                return Task.FromResult<RealtimeSubscriptionRoute?>(null);
+            }
+        }
+    }
+
+    public async Task<SessionInputResult> DispatchInputAsync(
+        SessionInputCommand command,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        RealtimeInputDispatch dispatch = await BeginInputAsync(command, timeout, cancellationToken).ConfigureAwait(false);
+        return await dispatch.Completion.ConfigureAwait(false);
+    }
+
+    public async Task<RealtimeInputDispatch> BeginInputAsync(
+        SessionInputCommand command,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        if (command.WorkerEpoch == 0 || string.IsNullOrWhiteSpace(command.SessionId))
+            return CompletedDispatch(RealtimeSessionResults.Error(command, SessionInputResultCodes.InvalidCommand));
+        if (IsDraining)
+            return CompletedDispatch(RealtimeSessionResults.Error(command, SessionInputResultCodes.SessionNotAcceptingInput));
+
+        ApiWorkerSession? worker;
+        lock (sync)
+        {
+            worker = sessions.Values.SingleOrDefault(item =>
+                string.Equals(item.Binding.SessionId, command.SessionId, StringComparison.Ordinal));
+        }
+        if (worker is null)
+            return CompletedDispatch(RealtimeSessionResults.Error(command, SessionInputResultCodes.SessionNotRunning));
+        if (command.WorkerEpoch > long.MaxValue || worker.Binding.WorkerEpoch != command.WorkerEpoch)
+            return CompletedDispatch(RealtimeSessionResults.Error(command, SessionInputResultCodes.StaleEpoch));
+
+        if (runtimeStore is ICurrentSessionRuntimeLeaseReader leaseReader)
+        {
+            try
+            {
+                SessionRuntimeLease? lease = await leaseReader.GetCurrentLeaseAsync(command.SessionId, cancellationToken).ConfigureAwait(false);
+                if (lease is null)
+                    return CompletedDispatch(RealtimeSessionResults.Error(command, SessionInputResultCodes.SessionNotAcceptingInput));
+                if (lease.Binding.WorkerEpoch != (long)command.WorkerEpoch)
+                    return CompletedDispatch(RealtimeSessionResults.Error(command, SessionInputResultCodes.StaleEpoch));
+                if (!string.Equals(lease.Binding.WorkerId, worker.Binding.WorkerId, StringComparison.Ordinal) ||
+                    !string.Equals(lease.Binding.ControlPlaneInstanceId, ControlPlaneInstanceId, StringComparison.Ordinal) ||
+                    lease.Binding.StateVersion != worker.RuntimeBinding.StateVersion ||
+                    lease.State != Domain.Sessions.SessionState.Running)
+                    return CompletedDispatch(RealtimeSessionResults.Error(command, SessionInputResultCodes.SessionNotAcceptingInput));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException or Microsoft.EntityFrameworkCore.DbUpdateException)
+            {
+                worker.LogLifecycle("realtime_input_persistence_failed", "database_unavailable", LogLevel.Error);
+                return CompletedDispatch(RealtimeSessionResults.WorkerUnavailable(command));
+            }
+        }
+
+        Task<SessionInputResult> receipt = await worker.QueueInputAsync(command, timeout, cancellationToken).ConfigureAwait(false);
+        return new RealtimeInputDispatch(receipt);
+    }
+
+    private static RealtimeInputDispatch CompletedDispatch(SessionInputResult result) =>
+        new(Task.FromResult(result));
 
     public IReadOnlyCollection<ApiWorkerSession> Workers
     {
@@ -367,6 +463,16 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             if (!outputResult.Accepted)
                 return;
         }
+        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult)
+        {
+            // Input receipts have their own bounded correlation map.  They
+            // must never depend on the lossy lifecycle/event probe.  A valid
+            // receipt is still copied into the bounded probe for existing
+            // diagnostics/tests; the waiter was already completed above.
+            if (connection.Session.TryCompleteInput(message))
+                await connection.Session.PublishAsync(message).ConfigureAwait(false);
+            return;
+        }
         if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.Heartbeat && runtimeStore is not null)
         {
             try
@@ -404,6 +510,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         switch (message.PayloadCase)
         {
             case WorkerEnvelope.PayloadOneofCase.RuntimeCompleted:
+                connection.Session.MarkGracefulTerminationObserved();
                 connection.Session.OutputHub.Complete("runtime-completed");
                 break;
             case WorkerEnvelope.PayloadOneofCase.RuntimeFailed:
@@ -411,6 +518,13 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                     string.IsNullOrWhiteSpace(message.RuntimeFailed.StableCode)
                         ? "runtime-failed"
                         : message.RuntimeFailed.StableCode);
+                break;
+            case WorkerEnvelope.PayloadOneofCase.WorkerStopped when message.WorkerStopped.Graceful:
+                connection.Session.MarkGracefulTerminationObserved();
+                connection.Session.OutputHub.Complete(
+                    string.IsNullOrWhiteSpace(message.WorkerStopped.ReasonCode)
+                        ? "worker-stopped"
+                        : message.WorkerStopped.ReasonCode);
                 break;
             case WorkerEnvelope.PayloadOneofCase.WorkerStopped:
                 connection.Session.OutputHub.Complete(
@@ -497,7 +611,10 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     private readonly Channel<WorkerCommandEnvelope> commands = Channel.CreateBounded<WorkerCommandEnvelope>(
         new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = false });
     private readonly List<WorkerEnvelope> pendingEvents = [];
+    private readonly Dictionary<string, PendingInput> pendingInputs = new(StringComparer.Ordinal);
     private long pendingEventBytes;
+    private long pendingInputBytes;
+    private long unknownInputResultCount;
     private long droppedPendingEventCount;
     private readonly StringBuilder processDiagnostics = new();
     private readonly List<string> sensitiveLogValues = [];
@@ -516,6 +633,17 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     private int connectionCount;
     private int disposed;
     private int runtimePersistenceReady;
+    private int gracefulTerminationObserved;
+
+    private sealed class PendingInput(
+        SessionInputCommand command,
+        long estimatedBytes,
+        TaskCompletionSource<SessionInputResult> completion)
+    {
+        public SessionInputCommand Command { get; } = command;
+        public long EstimatedBytes { get; } = estimatedBytes;
+        public TaskCompletionSource<SessionInputResult> Completion { get; } = completion;
+    }
 
     internal ApiWorkerSession(
         WorkerLaunchRequest request,
@@ -562,6 +690,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     public long DroppedPendingEventCount => Interlocked.Read(ref droppedPendingEventCount);
     public DateTimeOffset LastHeartbeatAt => new(Interlocked.Read(ref lastHeartbeatUtcTicks), TimeSpan.Zero);
     internal bool RuntimePersistenceReady => Volatile.Read(ref runtimePersistenceReady) != 0;
+    internal bool GracefulTerminationObserved => Volatile.Read(ref gracefulTerminationObserved) != 0;
 
     public Task<int> WaitForExitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) => processExit.Task.WaitAsync(timeout, cancellationToken);
 
@@ -613,26 +742,211 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         }), cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task SendInputAsync(string promptId, string clientMessageId, string value, CancellationToken cancellationToken = default)
+    public async Task<SessionInputResult> SubmitInputAsync(
+        SessionInputCommand command,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        Task<SessionInputResult> receipt = await QueueInputAsync(command, timeout, cancellationToken).ConfigureAwait(false);
+        return await receipt.ConfigureAwait(false);
+    }
+
+    public async Task<Task<SessionInputResult>> QueueInputAsync(
+        SessionInputCommand command,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        string messageId = IpcProtocol.NewMessageId("input");
+        long estimatedBytes = EstimateInputBytes(command);
+        var completion = new TaskCompletionSource<SessionInputResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = new PendingInput(command, estimatedBytes, completion);
+        lock (sync)
+        {
+            if (Volatile.Read(ref disposed) != 0 || commands.Reader.Completion.IsCompleted)
+                return Task.FromResult(RealtimeSessionResults.WorkerUnavailable(command));
+            if (pendingInputs.Count >= options.PendingInputMaxMessages ||
+                pendingInputBytes > options.PendingInputMaxBytes - estimatedBytes)
+                return Task.FromResult(RealtimeSessionResults.Error(command, SessionInputResultCodes.InputBackpressure));
+            pendingInputs.Add(messageId, pending);
+            pendingInputBytes += estimatedBytes;
+        }
+
+        using var writeDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        writeDeadline.CancelAfter(timeout);
+        try
+        {
+            SubmitInput input = new()
+            {
+                PromptId = command.PromptId,
+                ClientMessageId = command.ClientMessageId,
+                Value = command.Value,
+                Source = (InputSource)(int)command.Source,
+                DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.Add(timeout).ToUnixTimeMilliseconds(),
+            };
+            if (command.PointerData is { } pointer)
+                input.Pointer = new PointerPayload
+                {
+                    Position = new Point { X = pointer.X, Y = pointer.Y },
+                    Button = pointer.Button,
+                    Pressed = pointer.Pressed,
+                };
+            if (command.Key is { } key)
+                input.Key = new KeyPayload
+                {
+                    KeyCode = key.KeyCode,
+                    Control = key.Control,
+                    Alt = key.Alt,
+                    Shift = key.Shift,
+                };
+
+            await commands.Writer.WriteAsync(CreateEnvelope(messageId, input), writeDeadline.Token).ConfigureAwait(false);
+            return AwaitInputReceiptAsync(messageId, pending, completion, timeout, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            RemovePendingInput(messageId, pending);
+            throw;
+        }
+        catch (OperationCanceledException) when (writeDeadline.IsCancellationRequested)
+        {
+            RemovePendingInput(messageId, pending);
+            return Task.FromResult(RealtimeSessionResults.WorkerUnavailable(command));
+        }
+        catch (ChannelClosedException)
+        {
+            RemovePendingInput(messageId, pending);
+            return Task.FromResult(RealtimeSessionResults.WorkerUnavailable(command));
+        }
+        catch
+        {
+            RemovePendingInput(messageId, pending);
+            throw;
+        }
+    }
+
+    private async Task<SessionInputResult> AwaitInputReceiptAsync(
+        string messageId,
+        PendingInput pending,
+        TaskCompletionSource<SessionInputResult> completion,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        try
+        {
+            return await completion.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            return RealtimeSessionResults.WorkerUnavailable(pending.Command);
+        }
+        finally
+        {
+            RemovePendingInput(messageId, pending);
+        }
+    }
+
+    /// <summary>
+    /// Completes only a waiter whose binding, correlation and input identity
+    /// all match. Unknown or malformed receipts are deliberately not placed in
+    /// the lossy lifecycle event probe.
+    /// </summary>
+    internal bool TryCompleteInput(WorkerEnvelope message)
+    {
+        if (message.PayloadCase != WorkerEnvelope.PayloadOneofCase.InputResult || string.IsNullOrWhiteSpace(message.CorrelationId))
+            return false;
+        PendingInput? pending = null;
+        SessionInputResult? result = null;
+        lock (sync)
+        {
+            if (!pendingInputs.TryGetValue(message.CorrelationId, out pending) ||
+                !string.Equals(message.SessionId, Binding.SessionId, StringComparison.Ordinal) ||
+                !string.Equals(message.WorkerId, Binding.WorkerId, StringComparison.Ordinal) ||
+                message.WorkerEpoch != Binding.WorkerEpoch ||
+                !string.Equals(message.InputResult.PromptId, pending.Command.PromptId, StringComparison.Ordinal) ||
+                !string.Equals(message.InputResult.ClientMessageId, pending.Command.ClientMessageId, StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref unknownInputResultCount);
+                return false;
+            }
+
+            result = new SessionInputResult(
+                message.InputResult.PromptId,
+                message.InputResult.ClientMessageId,
+                MapInputResultStatus(message.InputResult.Kind),
+                NormalizeReasonCode(message.InputResult.ReasonCode, message.InputResult.Kind),
+                message.InputResult.HasNormalizedValue ? message.InputResult.NormalizedValue : null);
+            pendingInputs.Remove(message.CorrelationId);
+            pendingInputBytes -= pending.EstimatedBytes;
+        }
+        pending.Completion.TrySetResult(result);
+        return true;
+    }
+
+    public long UnknownInputResultCount => Interlocked.Read(ref unknownInputResultCount);
+
+    /// <summary>Compatibility helper retained for the existing Worker smoke tests.</summary>
+    public async Task SendInputAsync(
+        string promptId,
+        string clientMessageId,
+        string value,
+        CancellationToken cancellationToken = default)
+    {
+        SessionInputResult result = await SubmitInputAsync(
+            new SessionInputCommand(
+                Binding.SessionId,
+                Binding.WorkerEpoch,
+                promptId,
+                clientMessageId,
+                value,
+                SessionInputSource.Keyboard),
+            TimeSpan.FromSeconds(10),
+            cancellationToken).ConfigureAwait(false);
+        if (result.Status is SessionInputResultCodes.WorkerUnavailable or SessionInputResultCodes.InputBackpressure)
+            throw new IOException($"Worker input was not accepted: {result.ReasonCode}");
+    }
+
+    private void RemovePendingInput(string messageId, PendingInput pending)
     {
         lock (sync)
         {
-            if (!string.IsNullOrEmpty(value) && !sensitiveLogValues.Contains(value, StringComparer.Ordinal))
-            {
-                if (sensitiveLogValues.Count >= 128)
-                    sensitiveLogValues.RemoveAt(2);
-                sensitiveLogValues.Add(value);
-            }
+            if (pendingInputs.Remove(messageId, out PendingInput? current) && ReferenceEquals(current, pending))
+                pendingInputBytes -= pending.EstimatedBytes;
         }
-        await commands.Writer.WriteAsync(CreateEnvelope(IpcProtocol.NewMessageId("input"), new SubmitInput
-        {
-            PromptId = promptId,
-            ClientMessageId = clientMessageId,
-            Value = value,
-            Source = InputSource.Keyboard,
-            DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.AddSeconds(10).ToUnixTimeMilliseconds(),
-        }), cancellationToken).ConfigureAwait(false);
     }
+
+    private static long EstimateInputBytes(SessionInputCommand command)
+    {
+        long value = checked(128L + (long)command.SessionId.Length * 2 + command.PromptId.Length * 2 +
+            command.ClientMessageId.Length * 2 + command.Value.Length * 2);
+        if (command.PointerData is not null) value += 32;
+        if (command.Key is not null) value += 32;
+        return value;
+    }
+
+    private static string MapInputResultStatus(InputResultKind kind) => kind switch
+    {
+        InputResultKind.Accepted => SessionInputResultCodes.Accepted,
+        InputResultKind.Duplicate => SessionInputResultCodes.Duplicate,
+        InputResultKind.Conflict => SessionInputResultCodes.Conflict,
+        InputResultKind.StalePrompt => SessionInputResultCodes.StalePrompt,
+        InputResultKind.NoActivePrompt => SessionInputResultCodes.NoActivePrompt,
+        InputResultKind.InvalidFormat => SessionInputResultCodes.InvalidFormat,
+        InputResultKind.InvalidCommand => SessionInputResultCodes.InvalidCommand,
+        InputResultKind.Cancelled => SessionInputResultCodes.Cancelled,
+        InputResultKind.TimedOut => SessionInputResultCodes.TimedOut,
+        _ => SessionInputResultCodes.InvalidCommand,
+    };
+
+    private static string NormalizeReasonCode(string value, InputResultKind kind) =>
+        string.IsNullOrWhiteSpace(value) ? MapInputResultStatus(kind) : value;
 
     public Task SendRawAsync(WorkerCommandEnvelope envelope, CancellationToken cancellationToken = default) =>
         commands.Writer.WriteAsync(envelope, cancellationToken).AsTask();
@@ -650,8 +964,21 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             ReasonCode = reasonCode,
             DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.Add(timeout).ToUnixTimeMilliseconds(),
         }), stopCancellation.Token).ConfigureAwait(false);
-        await stopped.Task.WaitAsync(timeout, stopCancellation.Token).ConfigureAwait(false);
-        await processExit.Task.WaitAsync(timeout, stopCancellation.Token).ConfigureAwait(false);
+        // WorkerStopped is the preferred acknowledgement, but a graceful
+        // Worker can close the UDS immediately after writing that final
+        // envelope. Treat a confirmed process exit as the terminal fallback
+        // so shutdown is not lost in that stream-close race.
+        Task firstTerminal = await Task.WhenAny(stopped.Task, processExit.Task)
+            .WaitAsync(timeout, stopCancellation.Token)
+            .ConfigureAwait(false);
+        if (firstTerminal == processExit.Task)
+        {
+            int exitCode = await processExit.Task.ConfigureAwait(false);
+            if (exitCode != 0)
+                throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerExitUnconfirmed, "The Worker exited without a graceful stop acknowledgement.");
+        }
+        else
+            await processExit.Task.WaitAsync(timeout, stopCancellation.Token).ConfigureAwait(false);
     }
 
     public Task DisconnectCurrentConnectionForTestAsync()
@@ -751,6 +1078,8 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         ReadyConfirmed = true;
         MarkHeartbeatReceived(DateTimeOffset.UtcNow);
     }
+
+    internal void MarkGracefulTerminationObserved() => Interlocked.Exchange(ref gracefulTerminationObserved, 1);
 
     internal void MarkHeartbeatReceived(DateTimeOffset observedAt) =>
         Interlocked.Exchange(ref lastHeartbeatUtcTicks, observedAt.UtcTicks);
@@ -976,6 +1305,10 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         OutputHub.Complete("worker-disposed");
         lock (sync)
         {
+            foreach (PendingInput pending in pendingInputs.Values)
+                pending.Completion.TrySetResult(RealtimeSessionResults.WorkerUnavailable(pending.Command));
+            pendingInputs.Clear();
+            pendingInputBytes = 0;
             connection?.Cancel();
             connection = null;
             eventSignal.TrySetResult(true);
@@ -1400,7 +1733,12 @@ internal sealed class WorkerManagerHostedService(
 
             int exitCode = await exitTask.ConfigureAwait(false);
 
-            bool graceful = worker.ReadyConfirmed && exitCode == 0;
+            // A zero exit code is not sufficient: when the UDS control stream
+            // disappears the Worker deliberately shuts itself down with the
+            // same process code, but the durable Session must be fenced as
+            // CRASHED until the user explicitly reopens it. Only a terminal
+            // Worker envelope observed by this API proves graceful completion.
+            bool graceful = worker.ReadyConfirmed && exitCode == 0 && worker.GracefulTerminationObserved;
             await runtimeStore.CompleteAsync(
                 worker.RuntimeBinding,
                 graceful ? SessionRuntimeTerminalState.Closed : SessionRuntimeTerminalState.Crashed,

@@ -1,2 +1,5 @@
-<Project Sdk="Microsoft.NET.Sdk" />
-
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <None Update="Realtime/realtime-v1.schema.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloudemuera.invalid/schema/realtime-v1.schema.json",
+  "title": "CloudEmuera realtime WebSocket v1 envelope",
+  "type": "object",
+  "required": ["protocolVersion", "type", "messageId", "payload"],
+  "properties": {
+    "protocolVersion": { "const": 1 },
+    "type": {
+      "enum": [
+        "client.hello", "server.hello", "connection.ping", "connection.pong",
+        "session.resume", "session.resume.result", "session.unsubscribe",
+        "session.snapshot", "display.batch", "resync.required",
+        "session.stream.ended", "session.input", "session.input.result", "protocol.error"
+      ]
+    },
+    "messageId": { "$ref": "#/$defs/identifier" },
+    "correlationId": { "$ref": "#/$defs/identifier" },
+    "sessionId": { "$ref": "#/$defs/identifier" },
+    "workerEpoch": { "type": "integer", "minimum": 1 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "client.hello" } } },
+      "then": { "properties": { "sessionId": false, "workerEpoch": false, "sequence": false, "payload": { "$ref": "#/$defs/clientHello" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "connection.pong" } } },
+      "then": { "properties": { "sessionId": false, "workerEpoch": false, "sequence": false, "payload": { "$ref": "#/$defs/pong" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "session.resume" } } },
+      "then": { "required": ["sessionId"], "properties": { "payload": { "$ref": "#/$defs/resume" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "session.unsubscribe" } } },
+      "then": { "required": ["sessionId"], "properties": { "payload": { "type": "object" } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "session.input" } } },
+      "then": { "required": ["sessionId", "workerEpoch"], "properties": { "payload": { "$ref": "#/$defs/input" } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["session.snapshot", "display.batch", "resync.required", "session.stream.ended", "session.input.result"] } } },
+      "then": { "required": ["sessionId", "workerEpoch"] }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:_-]{1,256}$"
+    },
+    "clientHello": {
+      "type": "object",
+      "required": ["supportedProtocolVersions", "capabilityDigest", "supportedCapabilities"],
+      "properties": {
+        "supportedProtocolVersions": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "type": "integer", "minimum": 1, "maximum": 32 } },
+        "capabilityDigest": { "$ref": "#/$defs/digest" },
+        "supportedCapabilities": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 128 } }
+      },
+      "additionalProperties": true
+    },
+    "pong": {
+      "type": "object",
+      "required": ["nonce"],
+      "properties": { "nonce": { "$ref": "#/$defs/identifier" } },
+      "additionalProperties": true
+    },
+    "resume": {
+      "type": "object",
+      "required": ["capabilityDigest"],
+      "properties": { "capabilityDigest": { "$ref": "#/$defs/digest" }, "lastEpoch": { "type": "integer", "minimum": 1 } },
+      "additionalProperties": true
+    },
+    "input": {
+      "type": "object",
+      "required": ["promptId", "clientMessageId", "source", "value"],
+      "properties": {
+        "promptId": { "$ref": "#/$defs/identifier" },
+        "clientMessageId": { "$ref": "#/$defs/identifier" },
+        "source": { "enum": ["KEYBOARD", "BUTTON", "POINTER"] },
+        "value": { "type": "string", "maxLength": 16384 },
+        "pointer": { "type": ["object", "null"], "required": ["x", "y", "button", "pressed"], "properties": { "x": { "type": "integer" }, "y": { "type": "integer" }, "button": { "type": "integer", "minimum": 0, "maximum": 16 }, "pressed": { "type": "boolean" } }, "additionalProperties": true },
+        "key": { "type": ["object", "null"], "required": ["keyCode", "control", "alt", "shift"], "properties": { "keyCode": { "type": "integer", "minimum": 0, "maximum": 255 }, "control": { "type": "boolean" }, "alt": { "type": "boolean" }, "shift": { "type": "boolean" } }, "additionalProperties": true }
+      },
+      "allOf": [
+        { "if": { "properties": { "source": { "const": "POINTER" } } }, "then": { "required": ["pointer"], "properties": { "pointer": { "type": "object" }, "key": false } } },
+        { "if": { "properties": { "source": { "const": "KEYBOARD" } } }, "then": { "required": ["key"], "properties": { "pointer": false, "key": { "type": "object" } } } },
+        { "if": { "properties": { "source": { "const": "BUTTON" } } }, "then": { "properties": { "pointer": false, "key": false } } }
+      ],
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

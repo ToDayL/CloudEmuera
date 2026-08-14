@@ -8,7 +8,7 @@ export default defineConfig({
     port: 5173,
     allowedHosts: ["web"],
     proxy: {
-      "/api": "http://api:28647",
+      "/api": { target: "http://api:28647", ws: true },
       "/health": "http://api:28647",
     },
   },

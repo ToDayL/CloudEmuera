@@ -40,6 +40,7 @@ public sealed class InputCoordinatorTests
     }
 
     [Fact]
+    [Trait("Category", "InputDeduplication")]
     public async Task OnlyFirstConcurrentValidMessageCanWin()
     {
         var coordinator = new InputCoordinator();

@@ -605,9 +605,11 @@ docker compose -f compose.dev.yaml run --rm api \
 完成记录（2026-08-13）：上述三组测试分别通过 11、54、2 项；完整 Worker 集成测试 19 项和
 `dotnet build CloudEmuera.slnx --no-restore --configuration Release` 通过。
 
-### P1-09 — WebSocket 快照恢复与有界输入去重（TODO）
+### P1-09 — WebSocket 快照恢复与有界输入去重（DONE）
 
 需求映射：AUTH-005、SESS-004、PLAY-006～008、PLAY-011、AC-002/005。
+
+详细方案：[`tasks/P1-09-websocket-reconnect-input-deduplication-plan.zh-CN.md`](tasks/P1-09-websocket-reconnect-input-deduplication-plan.zh-CN.md)。
 
 交付物：版本化 WebSocket envelope、鉴权握手、完整快照恢复、当前 Worker 内有界
 `promptId/clientMessageId` 去重和多客户端首个有效输入规则。不实现 ack 历史补发、持久输入去重或
@@ -616,13 +618,27 @@ docker compose -f compose.dev.yaml run --rm api \
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Realtime.Tests --filter 'Category=Reconnect|Category=InputDeduplication'
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Realtime.Tests --no-restore --configuration Release \
+  --filter 'Category=Reconnect|Category=InputDeduplication|Category=WebSocketProtocol|Category=Authorization|Category=Backpressure'
 ```
 
 通过条件：浏览器断开后取得一致完整 Snapshot 与当前 prompt；断线期间计时输入继续推进，重连只显示
 剩余时间，输入与 timeout 竞争只有一个权威结果；当前 Worker 内重复消息只执行一次并返回同一结果；
 两个客户端并发回答只有一个 ACCEPTED；Worker IPC 断开后有界退出且 Session 进入 CRASHED；越权
 恢复失败。API 重启不恢复旧 Worker 实时连接。
+
+实施记录（2026-08-14）：修复 `SessionLifecycleExecutor` 具体类型单例注册，确保
+`ISessionLifecycleExecutor` 与 `ISessionCommandGate` 共享同一把 Session command gate；完成 ADR-0021、Realtime
+v1 envelope/schema/golden、原生 WebSocket endpoint、live authorization、Snapshot/resync writer、connection
+admission、应用 heartbeat、Worker correlation pending map、`SNAPSHOT_NOT_READY` 和共享 Session command gate。
+`CloudEmuera.Realtime.Tests` 41 项、`CloudEmuera.Api.IntegrationTests` Realtime/Authorization/SessionLifecycle
+过滤集 9 项、`CloudEmuera.Worker.IntegrationTests` Realtime/Input/WorkerDisconnect 过滤集 4 项通过；真实
+Kestrel + Cookie + UDS Worker 集成测试覆盖 open → resume → Snapshot → prompt → input → output、浏览器断线
+重连 Snapshot、控制流断开后有界退出并将 Session 对账为 `CRASHED`、reopen epoch 增长，以及 draining 的
+`1012 api_draining` close。API 重启不恢复旧实时连接和完整 renderer 仍按 P1-S01、P1-11、P1-15 的后续验收
+范围执行。
 
 ### P1-10 — Session 原生存档文件 API（TODO）
 

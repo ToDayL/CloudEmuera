@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Domain.Sessions;
@@ -19,7 +20,7 @@ namespace CloudEmuera.Infrastructure.Sessions;
 public sealed class SqliteSessionRuntimeStore(
     SqliteDatabaseOptions databaseOptions,
     TimeProvider timeProvider,
-    InstanceCapacityOptions? capacityOptions = null) : ISessionRuntimeStore
+    InstanceCapacityOptions? capacityOptions = null) : ISessionRuntimeStore, ICurrentSessionRuntimeLeaseReader
 {
     public async Task<SessionRuntimeAcquireResult> TryAcquireOpenLeaseAsync(
         SessionRuntimeOpenOptions options,
@@ -396,6 +397,43 @@ public sealed class SqliteSessionRuntimeStore(
                 session.State))
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task<SessionRuntimeLease?> GetCurrentLeaseAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+            throw new ArgumentException("A Session ID is required.", nameof(sessionId));
+        await using SqliteConnection connection = OpenConnection(SqliteConnectionAccess.ReadOnly);
+        await using CloudEmueraDbContext db = CreateContext(connection);
+        WorkerLeaseRow? lease = await db.WorkerLeases.AsNoTracking()
+            .SingleOrDefaultAsync(row => row.SessionId == sessionId, cancellationToken)
+            .ConfigureAwait(false);
+        SessionRow? session = await db.Sessions.AsNoTracking()
+            .SingleOrDefaultAsync(row => row.Id == sessionId, cancellationToken)
+            .ConfigureAwait(false);
+        if (lease is null || session is null || lease.Status != WorkerLeaseStatus.Active || session.State != SessionState.Running)
+            return null;
+
+        SessionRuntimeBinding binding = new(
+            session.Id,
+            lease.WorkerId,
+            lease.Epoch,
+            session.StateVersion,
+            lease.ControlPlaneInstanceId,
+            session.SessionRootPath,
+            ResolveCompatibilityProfile(session.RuntimeManifestJson),
+            ResolveSaveLayout(session.RuntimeManifestJson),
+            ResolveManifestDigest(session.RuntimeManifestJson),
+            session.RuntimeVersion,
+            session.LastOutputSequence,
+            session.RuntimeManifestJson,
+            session.OwnerUserId,
+            session.GameId,
+            session.SourceContentRevision,
+            session.SourceContentDigest);
+        return new SessionRuntimeLease(binding, session.OwnerUserId, session.State, lease.AcquiredAt, lease.ExpiresAt);
     }
 
     public async Task<bool> ReconcileAsync(

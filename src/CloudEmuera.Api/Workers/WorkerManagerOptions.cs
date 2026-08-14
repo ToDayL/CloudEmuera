@@ -57,6 +57,11 @@ public sealed record WorkerManagerOptions
 
     public int PendingEventMaxBytes { get; init; } = 1 * 1024 * 1024;
 
+    /// <summary>Dedicated correlated input receipt budget; input results do not use the event probe.</summary>
+    public int PendingInputMaxMessages { get; init; } = 128;
+
+    public long PendingInputMaxBytes { get; init; } = 2 * 1024 * 1024;
+
     public void Validate()
     {
         IpcValidator.ValidateAbsolutePath(DataRoot, nameof(DataRoot));
@@ -73,6 +78,10 @@ public sealed record WorkerManagerOptions
         if (PendingEventMaxMessages <= 0 || PendingEventMaxMessages > 4096 ||
             PendingEventMaxBytes <= 0 || PendingEventMaxBytes > CloudEmuera.Ipc.StructuredIpcLimits.MaxEnvelopeBytes)
             throw new ArgumentException("Pending Worker event history is outside its supported bounds.");
+
+        if (PendingInputMaxMessages <= 0 || PendingInputMaxMessages > 2048 ||
+            PendingInputMaxBytes <= 0 || PendingInputMaxBytes > 16 * 1024 * 1024)
+            throw new ArgumentException("Pending Worker input limits are outside their supported bounds.");
 
         if (!SamePath(RuntimeDirectory, Path.Combine(DataRoot, "runtime", ControlPlaneInstanceId)) ||
             !SamePath(BootstrapDirectory, Path.Combine(RuntimeDirectory, "bootstrap")) ||

@@ -361,6 +361,12 @@ SessionRoot，不重新复制 Game current content，也不恢复崩溃前的解
 Worker/API 必须返回当前 epoch 下序号为 `N` 的完整 ConsoleSnapshot，并把它作为新的显示基线，再
 推送序号大于 `N` 的实时批次。MVP 不按 `lastSequence` 或 ack 补发断线期间的历史增量。
 
+P1-09 将该请求封装在 `GET /api/v1/realtime` 的原生 WebSocket v1 envelope 中，协商子协议
+`cloudemuera.realtime.v1`。每次 `session.resume` 都重新检查登录态、Session 授权和当前 Worker binding，
+并以 `session.snapshot` 作为该连接该 epoch 的首个显示帧；Hub 尚未取得首个 Snapshot 时返回
+`SNAPSHOT_NOT_READY`，客户端退避后重试；连接、订阅和 Snapshot 不写入 SQLite。协议接收
+缓冲、控制队列、pending input、订阅数和最终 UTF-8 消息均有消息数/字节数硬上限，溢出只影响当前连接。
+
 ### 10.3 输入请求
 
 ```json
@@ -375,6 +381,12 @@ Worker/API 必须返回当前 epoch 下序号为 `N` 的完整 ConsoleSnapshot�
 ```
 
 服务器必须对输入返回接受、重复、过期提示、无控制权或非法格式中的一种确定结果。
+
+正式 v1 输入 envelope 必须同时携带 `workerEpoch`、`promptId`、`clientMessageId`、`source` 和 `value`；
+浏览器只能使用 `KEYBOARD`、`BUTTON`、`POINTER`，不得发送 Runtime 内部的 `SYSTEM`。同一 Worker 内
+相同 `clientMessageId` 和 payload 重试返回 `DUPLICATE` 及原规范化值，异值复用返回 `CONFLICT`；API
+不复制或持久化去重结果，Worker 仍是 prompt、格式、timeout 和首个有效输入的最终裁决者。输入与 close
+共享 Session command gate，`BeginStopping` 先线性化后不得把新输入写入 Worker。
 
 ## 11. 数据与存储设计
 
