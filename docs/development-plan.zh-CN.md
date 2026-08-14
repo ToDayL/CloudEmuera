@@ -642,7 +642,10 @@ Kestrel + Cookie + UDS Worker 集成测试覆盖 open → resume → Snapshot �
 
 ### P1-10 — Session 原生存档文件 API（TODO）
 
-需求映射：SAVE-001～009、SAVE-015、AC-004/007/013/014。
+需求映射：AUTH-001～003、SAVE-001～010、SAVE-013～015、OPS-002/004/005、SEC-005/008/009、
+AC-004/007/013/014。
+
+详细方案：[`tasks/P1-10-session-native-save-file-api-plan.zh-CN.md`](tasks/P1-10-session-native-save-file-api-plan.zh-CN.md)。
 
 交付物：按 Session 列出和下载原生存档；在 Session 无活动 Worker 时上传、替换、重命名和删除；
 路径/大小/基本格式校验；用户和 Session 授权。文件直接位于 SessionRoot，不建立 SaveArtifact 表、
@@ -651,7 +654,10 @@ generation、Session 间直接传输 API、签名 URL 或内容级 Game 摘要�
 验证：
 
 ```bash
-dotnet test tests/CloudEmuera.Saves.IntegrationTests
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Saves.IntegrationTests --no-restore \
+  --configuration Release
 ```
 
 通过条件：跨用户和跨 Session 访问失败；上传校验大小、路径和基本原生约束；活动 Worker 存在时

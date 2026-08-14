@@ -599,7 +599,7 @@ expires_at INTEGER NOT NULL
 ```
 
 停止态 mutation lease 与 `worker_leases` 在同一 `BEGIN IMMEDIATE` 互斥裁决；P1-06 只交付端口，
-存档 HTTP 用例留给 P1-09。创建 operation 和生命周期幂等命令由 API 启动/周期恢复器处理，不能只
+存档 HTTP 用例留给 P1-10。创建 operation 和生命周期幂等命令由 API 启动/周期恢复器处理，不能只
 依赖 API 进程内任务。
 
 #### audit_events
@@ -1033,6 +1033,10 @@ sessionId, workerId?, workerEpoch, type, payload
 控制消息和显示数据使用独立逻辑通道或优先级队列，心跳、停止和 fencing 不能被大量显示事件饿死。每条消息有最大尺寸；大型静态资源不经过实时通道。存档由授权文件 API 在 Session 停止时直接流式访问。
 
 ## 11. 存档设计
+
+P1-10 的 HTTP 契约、逻辑路径允许列表、基本格式嗅探、停止态 mutation lease、持久 operation、
+dirfd/fsync 文件算法、崩溃恢复矩阵和验收切片见
+[`tasks/P1-10-session-native-save-file-api-plan.zh-CN.md`](tasks/P1-10-session-native-save-file-api-plan.zh-CN.md)。
 
 ### 11.1 原生语义与物理隔离
 
