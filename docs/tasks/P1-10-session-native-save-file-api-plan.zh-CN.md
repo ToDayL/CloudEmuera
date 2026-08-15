@@ -1,17 +1,18 @@
 # P1-10：Session 原生存档文件 API 详细开发方案
 
-状态：待实施
+状态：实现完成；最终验收待 P1-15
 
 设计日期：2026-08-14
 
 对应开发步骤：`P1-10 — Session 原生存档文件 API`
 
-关联需求：AUTH-001～003、SAVE-001～010、SAVE-013～015、OPS-002/004/005、SEC-005/008/009、
+关联需求：AUTH-001～003、SAVE-001～010、SAVE-013～016、OPS-002/004/005、SEC-005/008/009、
 NFR-004/006/011/013、AC-004、AC-007、AC-013、AC-014
 
 关联决策：[`ADR-0007`](../adr/0007-session-root-native-save-ownership.md)、
 [`ADR-0016`](../adr/0016-reopenable-session-root-lifecycle.md)、
-[`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md)
+[`ADR-0017`](../adr/0017-trusted-self-hosted-mvp-simplification.md)、
+[`ADR-0022`](../adr/0022-session-save-file-cap.md)
 
 前置任务：P0-05、P1-01～P1-06、P1-S01
 
@@ -328,6 +329,9 @@ payload_path TEXT NULL
 payload_size INTEGER NULL
 payload_digest TEXT NULL
 expected_source_identity_json TEXT NULL
+expected_target_captured INTEGER NOT NULL
+expected_target_exists INTEGER NOT NULL
+expected_target_identity_json TEXT NULL
 result_json TEXT NOT NULL
 error_code TEXT NULL
 created_at INTEGER NOT NULL
@@ -338,8 +342,11 @@ state_version INTEGER NOT NULL
 
 - ID/path/status/digest/JSON/time/state version 全部有 CHECK；
 - 增加 `(status, updated_at, id)` 和 `(session_id, status)` recovery 索引；
-- operation ID 写入对应 mutation lease；原始幂等键不入表、不入日志；
-- terminal operation 至少保留幂等窗口；清理 DB/staging 时不得删除已发布存档；
+- operation ID 写入对应 mutation lease；原始幂等键不入表、不入日志；operation/hash 和幂等记录均按
+  `SessionId + scope + key` 隔离；
+- IMPORT 进入 `STAGED` 前必须持久化目标发布前的 presence/identity，恢复发布前再次核对；
+- terminal operation 至少保留幂等窗口；窗口到期且 staging 清理、lease 释放均确认后由 recovery reaper 删除
+  终态 operation/存档 API 幂等记录；清理 DB/staging 时不得删除已发布存档；
 - 该表不是当前 save 索引。list 每次读取文件系统，不新增 SaveArtifact/content 表。
 
 ### 8.2 mutation lease 加固
@@ -374,14 +381,14 @@ state_version INTEGER NOT NULL
 ### 9.1 upload/replace
 
 1. 认证、owner-first Session 查询、逻辑 path 和 Content-Length 预检；
-2. prepare 幂等记录和 `PREPARED` operation，建立受保护 staging；
-3. 流式写 payload，同时计算 SHA-256、实际大小并检查 DataRoot 最低剩余空间；
-4. 对 payload fd 执行基本格式检查，fsync，CAS `PREPARED → STAGED`；
-5. 获取/续租 `SAVE_IMPORT` lease；重新授权并核对静止状态、无 Worker、退出屏障、root 和 layout；
-6. 目标父目录逐段 no-follow 打开，记录旧目标是否存在及 identity；
+2. prepare 幂等记录和 `PREPARED` operation；
+3. 获取 `SAVE_IMPORT` lease，启动续租；重新授权并核对静止状态、无 Worker、退出屏障、root 和 layout，随后记录旧目标是否存在及 identity；
+4. 在 lease 覆盖下建立受保护 staging，流式写 payload，同时计算 SHA-256、实际大小并检查 DataRoot 最低剩余空间；
+5. 对 payload fd 执行基本格式检查，fsync，CAS `PREPARED → STAGED`；
+6. 再次核对目标 identity 和 lease，逐段 no-follow 打开目标父目录；
 7. 从 staging dirfd 到 target parent 原子 rename，允许 PUT replace，fsync target 和 parent；
 8. CAS `STAGED → PUBLISHED`，同一 DB 事务写审计、幂等成功和 `COMMITTED`；
-9. 释放 lease并安全清理 staging。HTTP 断开只停止等待，不取消步骤 5 之后的收敛。
+9. 停止续租、释放 lease并安全清理 staging。HTTP 断开只停止等待，不取消步骤 3 之后的收敛。
 
 ### 9.2 rename/delete
 
@@ -401,17 +408,26 @@ delete：先验证确认、幂等和 owner；prepare operation并获取 `SAVE_DE
 | 类型/DB 状态 | 文件事实 | 动作 |
 | --- | --- | --- |
 | IMPORT PREPARED | 无完整 payload | 核验 marker 后清理，稳定失败 |
-| IMPORT STAGED | payload 完整、target 未匹配 digest | 重新取得写权后继续发布 |
+| IMPORT STAGED | payload 完整、target 未匹配 digest 且仍匹配发布前 identity | 重新取得写权后继续发布 |
 | IMPORT STAGED/PUBLISHED | payload 消失、target digest/size 匹配 | 认定已发布，补提交成功 |
 | RENAME PREPARED | source identity 仍在、target 不存在 | 重新取得写权后继续 rename |
 | RENAME PREPARED/PUBLISHED | source 不在、target identity 匹配 | 认定已执行，补提交成功 |
 | DELETE PREPARED/PUBLISHED | source identity 已不在 | 认定已删除，补审计/提交 |
 | 任意 | source/target/marker/root identity 冲突 | fail closed、保留现场、阻止 open/新修改 |
 | 任意 | 旧 Worker 写权限无法证明释放 | 保留 mutation lease，返回 recovery required |
+| 任意 | 当前 operation 仍持有有效 mutation lease | 跳过本轮，等待 owner 续租停止后再恢复 |
 | COMMITTED/FAILED | 遗留 staging 可证明归属 | 安全清理；不得触碰 published save |
 
 恢复成功/失败和审计在同一 DB 事务中收敛，避免重复审计。恢复不得调用完整 Emuera reader 判断哪个
 文件“更正确”，也不得为了回滚替换而创建隐藏的第二份权威存档。
+
+若发现没有对应 `save_file_operations` 的遗留 mutation lease（包括历史 `mut_*` lease），恢复器必须
+fail closed：不按过期时间自动删除，也不开放该 Session 的 open/存档写。修复属于离线维护流程，顺序为：
+先停止 API 和所有 Worker、备份 SQLite 与对应 SessionRoot；再核对 Worker 已退出、SessionRoot
+protected marker/layout 与租约的 Session/owner/purpose；`sfop_*` 必须先恢复或保留其 operation/staging
+现场，不能直接删 lease；只有确认是没有文件操作事实的历史 `mut_*` 租约后，才能在停机维护事务中删除
+该单行租约并记录维护审计。当前 P1-10 不提供在线强制释放入口；在 P1-14 提供正式维护命令前，
+无法完成上述证明时应保留现场并返回 `SAVE_OPERATION_RECOVERY_REQUIRED`。
 
 ## 10. 授权、安全与审计
 
@@ -446,7 +462,9 @@ src/CloudEmuera.Infrastructure/Saves/
 ├── LinuxSessionSaveRootAccessor.cs
 ├── EmueraSaveFileFormatValidator.cs
 └── SaveFileOperationRecovery.cs
-tests/CloudEmuera.Saves.IntegrationTests/
+tests/CloudEmuera.RuntimeAdapter.Tests/Paths/EmueraSavePathPolicyTests.cs
+tests/CloudEmuera.Infrastructure.Tests/Saves/EmueraSaveFileFormatValidatorTests.cs
+tests/CloudEmuera.Api.IntegrationTests/SessionSaveApiContractTests.cs
 ```
 
 - Contracts 只有 HTTP DTO，不引用 EF、Runtime path 或文件句柄；
@@ -495,9 +513,16 @@ tests/CloudEmuera.Saves.IntegrationTests/
 
 ```bash
 ./scripts/dev-up.sh
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
-  dotnet test tests/CloudEmuera.Saves.IntegrationTests --no-restore \
-  --configuration Release'
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
+  --filter 'Category=SavePathSecurity'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore --configuration Release \
+  --filter 'Category=SaveFormat|Category=SaveOperation|Category=Migration'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
+  --filter 'Category=SessionSaves'
 ./scripts/check.sh
 ./scripts/verify-dev-user.sh
 ./scripts/verify-third-party.sh
@@ -516,12 +541,12 @@ git diff --check
 4. **upload/replace 与恢复**：实现 raw streaming、staging、digest/size/space/format、lease 续租、原子
    replace、fsync、启动/周期 recovery 和 crash matrix。
 5. **rename/delete**：实现 no-replace rename、checked unlink、删除确认、审计、幂等和 recovery。
-6. **真实 Runtime 与文档收尾**：运行双布局、双用户、open/mutation、crash/reopen；同步 OpenAPI、配置、
-   requirements/design/development plan，执行完整质量门。
+6. **文档收尾与验收交接**：同步 OpenAPI、配置、requirements/design/development plan；把双布局真实
+   Runtime、双用户隔离、open/mutation 竞争和 crash/reopen 矩阵交给 P1-15 的统一验收。
 
 ## 14. 完成定义
 
-P1-10 只有在以下条件全部满足后才能标记 DONE：
+P1-10 的实现交付需要满足以下代码、协议和安全条件：
 
 1. 五类 API 具有契约、认证、授权、CSRF/确认、流式行为和稳定错误；
 2. 路径策略与 Runtime 共用，布局只由 Session 固定配置决定；
@@ -530,13 +555,33 @@ P1-10 只有在以下条件全部满足后才能标记 DONE：
 5. 过期 lease 不被普通请求盲目回收，所有 crash window 由持久 operation 安全收敛；
 6. 文件操作使用 protected dirfd/no-follow/identity/fsync，路径、链接和 TOCTOU 测试通过；
 7. 删除要求显式确认并审计；幂等回放不重复文件副作用或审计；
-8. 两种真实布局可保存、关闭、下载、删除/上传、同 Session 重开并由 Emuera 加载；
-9. 两个用户和同一用户两个 Session 的普通/Global/辅助文件互不访问或覆盖；
-10. schema/契约中不存在 SaveArtifact、generation、跨 Session copy 或内容级兼容证明；
-11. 正常、边界、失败、并发、故障注入和恶意文件系统测试全部自动化；
-12. `./scripts/check.sh`、dev user、third-party 和 `git diff --check` 通过，文档/配置同步。
+8. schema/契约中不存在 SaveArtifact、generation、跨 Session copy 或内容级兼容证明；
+9. 正常、边界、失败、并发和恶意文件系统测试覆盖已实现的 API/存储边界；
+10. `./scripts/check.sh`、dev user、third-party 和 `git diff --check` 通过，文档/配置同步。
 
-## 15. 后续任务交接
+以下最终验收项统一移交 P1-15：
+
+- 两种真实布局的保存→关闭→下载→删除/上传→同 Session 重开→Emuera 加载；
+- 两个用户和同一用户两个 Session 的普通/Global/辅助文件隔离；
+- 完整故障注入矩阵（含真实 SQLite 屏障、发布窗口和恢复重开）及跨环境质量门。
+
+因此本方案的“实现完成”不等同于产品最终 DONE；P1-15 通过上述验收后再更新开发计划状态。
+
+## 15. 实施记录（2026-08-14）
+
+- 冻结 `MaxSaveFileBytes=64 MiB`，新增 ADR-0022、容量配置、迁移和 operation 表；过期 mutation lease
+  不再由普通请求删除，Session open 也把遗留 lease 视为恢复屏障。
+- 抽取 Runtime/API 共用的 `EmueraSavePathPolicy`，实现根目录与 `sav/` 布局的逻辑路径 allowlist、NFC
+  规范化、大小写碰撞检查和物理 `sav/` 前缀隔离。
+- 实现 Linux protected dirfd accessor、`renameat2(RENAME_NOREPLACE)`、checked unlink、identity/mode/
+  hardlink 校验、staging marker、fsync、流式下载/上传和有界 native binary/text/PNG sniffing。
+- 接入 list/download/PUT/PATCH/DELETE HTTP 端点、owner-first 授权、CSRF、幂等回放、删除确认、安全下载
+  header、审计和周期 recovery hosted service。
+- `dev-up.sh` 已成功应用 `20260814120000_AddSessionSaveFileOperations`；路径安全、格式/约束/迁移、
+  operation recovery 和 ROOT/sav 两种布局的 Session saves HTTP 定向测试均通过。完整质量门结果以最终
+  交付记录为准。
+
+## 16. 后续任务交接
 
 - P1-11 使用 TanStack Query 管理 saves list；修改成功后失效 list，不把文件内容放入 realtime store；
 - P1-11 UI 展示活动 Session 修改拒绝、CRASHED 风险、格式错误和显式删除确认；

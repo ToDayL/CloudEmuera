@@ -640,9 +640,9 @@ Kestrel + Cookie + UDS Worker 集成测试覆盖 open → resume → Snapshot �
 `1012 api_draining` close。API 重启不恢复旧实时连接和完整 renderer 仍按 P1-S01、P1-11、P1-15 的后续验收
 范围执行。
 
-### P1-10 — Session 原生存档文件 API（TODO）
+### P1-10 — Session 原生存档文件 API（实现完成；最终验收待 P1-15）
 
-需求映射：AUTH-001～003、SAVE-001～010、SAVE-013～015、OPS-002/004/005、SEC-005/008/009、
+需求映射：AUTH-001～003、SAVE-001～010、SAVE-013～016、OPS-002/004/005、SEC-005/008/009、
 AC-004/007/013/014。
 
 详细方案：[`tasks/P1-10-session-native-save-file-api-plan.zh-CN.md`](tasks/P1-10-session-native-save-file-api-plan.zh-CN.md)。
@@ -656,12 +656,27 @@ generation、Session 间直接传输 API、签名 URL 或内容级 Game 摘要�
 ```bash
 source scripts/lib/dev-env.sh
 docker compose -f compose.dev.yaml run --rm api \
-  dotnet test tests/CloudEmuera.Saves.IntegrationTests --no-restore \
-  --configuration Release
+  dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
+  --filter 'Category=SavePathSecurity'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore --configuration Release \
+  --filter 'Category=SaveFormat|Category=SaveOperation|Category=Migration'
+docker compose -f compose.dev.yaml run --rm api \
+  dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
+  --filter 'Category=SessionSaves'
 ```
 
 通过条件：跨用户和跨 Session 访问失败；上传校验大小、路径和基本原生约束；活动 Worker 存在时
 所有修改操作被拒绝；操作与 Worker 启动竞争时只有一方成功；API 不解析或改写 Emuera 原生内容。
+
+说明：P1-10 的 API、持久 operation、protected dirfd 文件边界和恢复实现已完成；真实 Emuera 双布局
+重开、跨用户/跨 Session 隔离和完整故障注入验收与 P1-15 的统一质量门合并执行。在 P1-15 验收通过前，
+不把本步骤标记为最终 DONE。
+
+实施记录（2026-08-14）：完成五类 Session saves HTTP API、共用逻辑路径策略、Linux protected dirfd
+文件访问、流式 staging/原子发布、原生格式有界校验、`save_file_operations` migration、mutation lease
+恢复屏障、幂等/审计/删除确认和周期恢复器。新增路径安全、格式/数据库约束和 HTTP 端到端测试；开发容器
+已成功应用 `20260814120000_AddSessionSaveFileOperations`。
 
 ### P1-11 — 浏览器 Session 控制台和存档界面（TODO）
 

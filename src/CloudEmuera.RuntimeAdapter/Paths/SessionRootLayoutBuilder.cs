@@ -325,7 +325,9 @@ public sealed class SessionRootLayoutBuilder
             EnsureDirectory(Path.Combine(staging, "tmp"), "tmp");
             if (paths.SaveLayout == RuntimeSaveLayout.SavDirectory)
             {
-                EnsureDirectory(Path.Combine(staging, "sav"), "sav");
+                string savRoot = Path.Combine(staging, "sav");
+                EnsureDirectory(savRoot, "sav");
+                SetPrivateDirectoryMode(savRoot);
             }
 
             var stagingPaths = new RuntimePaths(
@@ -894,6 +896,16 @@ public sealed class SessionRootLayoutBuilder
                 path,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite |
                 UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        }
+    }
+
+    private static void SetPrivateDirectoryMode(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(
+                path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
     }
 

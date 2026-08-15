@@ -31,6 +31,7 @@ services:
       CloudEmuera__Capacity__MaxGamePackageBytes: "${CLOUDEMUERA_CAPACITY_MAX_GAME_PACKAGE_BYTES-}"
       CloudEmuera__Capacity__MaxSessionRootBytes: "${CLOUDEMUERA_CAPACITY_MAX_SESSION_ROOT_BYTES-}"
       CloudEmuera__Capacity__MaxStagingReservedBytes: "${CLOUDEMUERA_CAPACITY_MAX_STAGING_RESERVED_BYTES-}"
+      CloudEmuera__Capacity__MaxSaveFileBytes: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_FILE_BYTES-}"
       CloudEmuera__Capacity__MinDataRootFreeBytes: "${CLOUDEMUERA_CAPACITY_MIN_DATA_ROOT_FREE_BYTES-}"
       CLOUDEMUERA_DEV_CONTAINER: "1"
       CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME-}"

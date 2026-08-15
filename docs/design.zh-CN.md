@@ -1070,10 +1070,25 @@ CloudEmuera 不包装每次原生保存，不改变上游 `FileMode`、flush、�
 管理操作只处理允许列表内的 `save*.sav`、`global.sav` 以及当前布局允许的 `sav/` 条目：
 
 - 下载：每次验证 Session 所有权，使用安全下载名并流式读取当前文件；
-- 上传/替换：先写入当前 SessionRoot 外的隔离暂存文件，验证大小、目标名和基本原生格式；确认 Session 仍无 Worker后，再移动到目标路径；不尝试证明其与 Game 摘要语义兼容，也不形成历史 generation；
+- 上传/替换：先取得并持续续租停止态 mutation lease，再写入当前 SessionRoot 外的隔离暂存文件；验证大小、目标名和基本原生格式，记录发布前目标 identity，发布前再次核对后才移动到目标路径；不尝试证明其与 Game 摘要语义兼容，也不形成历史 generation；
 - 重命名/删除：要求显式确认、再次检查无活动 Worker，并写审计日志；
 - 自动保存：完全由游戏和 Emuera 控制；CloudEmuera 不另建自动存档调度器；
 - 备份：面向整个挂载数据目录或 SessionRoot，由运维备份策略负责。
+
+P1-10 已将上述操作接入 `/api/v1/sessions/{id}/saves`。公开路径只使用逻辑 save root，相对于
+`emuera.config` 决定的布局，不接受物理 `sav/` 前缀。写操作以 `save_file_operations` 持久记录
+`PREPARED/STAGED/PUBLISHED/COMMITTED/FAILED`，使用 `metadata/save-operations/{operationId}` marker、
+停止态 mutation lease（覆盖暂存、校验和发布并持续续租）和按 Session 隔离的幂等回放；普通请求不会
+回收过期 lease，恢复器只能在核对 marker、目标发布前 identity 和文件事实后清理或收敛操作；终态记录
+至少保留幂等窗口，过期后由 recovery reaper 在确认 staging/lease 已清理后回收。启动恢复完成前，写存档
+API 和 readiness 均保持关闭。该 operation 表只记录 API 管理命令，不记录 Emuera
+直接产生的每次原生保存。
+
+若发现没有对应 operation 的遗留 mutation lease（包括历史 `mut_*`），恢复器会 fail closed，不按
+`expires_at` 静默删除。离线修复必须先停 API/Worker、备份 SQLite 与对应 SessionRoot，核对旧 Worker
+已退出并证明没有未完成文件事实；`sfop_*` 保留 operation/staging 现场交由恢复矩阵处理，只有确认是
+无文件事实的历史 `mut_*` 才能在停机维护事务中删除并记录审计。P1-10 不提供在线强制释放入口，
+无法证明时保持 `SAVE_OPERATION_RECOVERY_REQUIRED`。
 
 ## 12. 安全设计
 
@@ -1117,6 +1132,11 @@ Worker 从内核视角可能读取 DataRoot 内其他资源；实例不得面向
 ### 12.4 路径安全
 
 所有用户路径先按 `/` 解析为逻辑相对路径，拒绝空字节、绝对路径、盘符、父级段和平台保留名。最终访问使用基于目录句柄的逐段打开，并禁止跟随符号链接；只做字符串前缀比较不构成安全校验。SessionRoot 复制过程没有链接例外，遇到任何链接或特殊文件都失败。文件名同时执行 Unicode 规范化和大小写碰撞检查。
+
+Session 原生存档 API 复用 `EmueraSavePathPolicy`：根目录布局只允许 `global.sav`/`saveN.sav`，
+`sav/` 布局允许安全目录段以及原生 save/global/辅助文件名；API 不把物理 `sav/` 目录暴露为前缀。
+Linux 实现使用 protected dirfd、`O_NOFOLLOW`、固定 inode/owner/mode、`renameat2(RENAME_NOREPLACE)`、
+checked `unlinkat` 和文件/目录 `fsync`，不把用户路径拼接为授权依据。
 
 ### 12.5 密钥与隐私
 
@@ -1233,9 +1253,10 @@ pending clientMessageId → result
   只读验证 migration history、foreign-key check 和 quick check。退出码 `0/10/11/12/13/14/15`
   分别表示成功、配置非法、锁竞争、数据库高于当前 binary、备份失败、migration 失败和完整性
   检查失败。业务 API 和 Worker 不调用 `Database.Migrate()`。
-- `CloudEmuera:Capacity:*` 实例级容量：活动 Worker、游戏包/SessionRoot/暂存字节和 DataRoot 最低
+- `CloudEmuera:Capacity:*` 实例级容量：活动 Worker、游戏包/SessionRoot/暂存字节、单个存档文件和 DataRoot 最低
   剩余空间；历史 `CloudEmuera:MinDataRootFreeBytes` 仅兼容读取一个周期并输出弃用 warning，
-  新部署使用带 `Capacity` 前缀的键；
+  新部署使用带 `Capacity` 前缀的键；`CloudEmuera:Capacity:MaxSaveFileBytes` 默认 64 MiB，且不得超过
+  `MaxSessionRootBytes`；
 - 上传/解压/文件数量/编码限制；
 - 实例级最大活动 Worker 数、上传/展开/文件数量、存档文件和 DataRoot 最低剩余空间上限；
 - Snapshot、IPC 和 WebSocket 队列上限；容器整体 CPU/内存/PID 限制属于部署选项；

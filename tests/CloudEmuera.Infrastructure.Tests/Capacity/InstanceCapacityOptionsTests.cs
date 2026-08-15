@@ -29,6 +29,8 @@ public sealed class InstanceCapacityOptionsTests
             new() { MaxGamePackageBytes = 0 },
             new() { MaxSessionRootBytes = 0 },
             new() { MaxStagingReservedBytes = 0 },
+            new() { MaxSaveFileBytes = 0 },
+            new() { MaxSaveFileBytes = InstanceCapacityOptions.DefaultMaxSessionRootBytes + 1 },
             new() { MinDataRootFreeBytes = -1 },
         ];
 

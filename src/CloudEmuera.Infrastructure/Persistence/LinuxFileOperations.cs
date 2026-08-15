@@ -27,6 +27,7 @@ internal static class LinuxFileOperations
     private const int ErrnoLoop = 40;
     private const int ErrnoNotDirectory = 20;
     private const int ErrnoIsDirectory = 21;
+    private const int ErrnoNoSys = 38;
     private const int RegularFileType = 0x8000;
     private const int DirectoryFileType = 0x4000;
     private const uint StatxType = 0x00000001;
@@ -383,6 +384,19 @@ internal static class LinuxFileOperations
             throw CreateError("renameat across directories", Marshal.GetLastPInvokeError());
     }
 
+    public static void RenameBetweenDirectoriesNoReplace(SafeFileHandle sourceDirectory, string sourceName, SafeFileHandle destinationDirectory, string destinationName)
+    {
+        ValidateLeafName(sourceName);
+        ValidateLeafName(destinationName);
+        if (NativeMethods.RenameAtNoReplace(sourceDirectory, sourceName, destinationDirectory, destinationName) != 0)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            if (error == ErrnoNoSys)
+                throw new PlatformNotSupportedException("Linux renameat2(RENAME_NOREPLACE) is required for save rename.");
+            throw CreateError("renameat2 no-replace", error);
+        }
+    }
+
     public static void Sync(SafeFileHandle handle)
     {
         if (NativeMethods.Fsync(handle) != 0) throw CreateError("fsync", Marshal.GetLastPInvokeError());
@@ -537,7 +551,10 @@ internal static class LinuxFileOperations
                 stat.Inode,
                 stat.Mode,
                 stat.LinkCount,
-                stat.UserId);
+                stat.UserId,
+                checked((long)stat.Size),
+                stat.ModifyTime.Seconds,
+                stat.ModifyTime.Nanoseconds);
         }
         finally
         {
@@ -586,6 +603,31 @@ internal static class LinuxFileOperations
         }
     }
 
+    public static bool UnlinkRegularFileAt(SafeFileHandle directory, string name, FileIdentity? expectedIdentity = null)
+    {
+        ValidateLeafName(name);
+        SafeFileHandle entry;
+        try
+        {
+            entry = OpenPathAt(directory, name);
+        }
+        catch (LinuxFileOperationException exception) when (exception.Error == ErrnoNoEntry)
+        {
+            return false;
+        }
+
+        using (entry)
+        {
+            FileIdentity identity = ReadIdentity(entry);
+            if (!identity.IsRegularFile || identity.LinkCount != 1 || identity.UserId != CurrentUserId)
+                throw new IOException("Refusing to remove a non-private regular save file.");
+            if (expectedIdentity is FileIdentity expected && !identity.SameObject(expected))
+                throw new IOException("The save file changed before deletion.");
+            UnlinkAtChecked(directory, name, isDirectory: false);
+            return true;
+        }
+    }
+
     private static SafeFileHandle CreateHandle(int descriptor, string operation)
     {
         if (descriptor >= 0)
@@ -618,14 +660,26 @@ internal static class LinuxFileOperations
 
     public static uint CurrentUserId => NativeMethods.GetUserId();
 
-    internal readonly record struct FileIdentity(uint DeviceMajor, uint DeviceMinor, ulong Inode, ushort Mode, uint LinkCount, uint UserId)
+    internal readonly record struct FileIdentity(
+        uint DeviceMajor,
+        uint DeviceMinor,
+        ulong Inode,
+        ushort Mode,
+        uint LinkCount,
+        uint UserId,
+        long Size,
+        long ModifyTimeSeconds,
+        uint ModifyTimeNanoseconds)
     {
         public bool IsRegularFile => (Mode & 0xF000) == RegularFileType;
 
         public bool IsDirectory => (Mode & 0xF000) == DirectoryFileType;
+
+        public bool SameObject(FileIdentity other) =>
+            DeviceMajor == other.DeviceMajor && DeviceMinor == other.DeviceMinor && Inode == other.Inode;
     }
 
-    private sealed class LinuxFileOperationException(string operation, int error)
+    internal sealed class LinuxFileOperationException(string operation, int error)
         : IOException($"{operation} failed with errno {error}.")
     {
         public int Error { get; } = error;
@@ -715,6 +769,11 @@ internal static class LinuxFileOperations
         [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux renameat publishes a bundle below an already-open staging directory.")]
         [SuppressMessage("Interoperability", "CA2101", Justification = "Validated leaf names are explicitly marshaled as UTF-8.")]
         public static extern int RenameAt(SafeFileHandle oldDirectory, [MarshalAs(UnmanagedType.LPUTF8Str)] string oldPath, SafeFileHandle newDirectory, [MarshalAs(UnmanagedType.LPUTF8Str)] string newPath);
+
+        [DllImport("libc", EntryPoint = "renameat2", SetLastError = true)]
+        [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux renameat2 provides atomic no-replace semantics for native save rename.")]
+        [SuppressMessage("Interoperability", "CA2101", Justification = "Validated leaf names are explicitly marshaled as UTF-8.")]
+        public static extern int RenameAtNoReplace(SafeFileHandle oldDirectory, [MarshalAs(UnmanagedType.LPUTF8Str)] string oldPath, SafeFileHandle newDirectory, [MarshalAs(UnmanagedType.LPUTF8Str)] string newPath, uint flags = 1);
 
         [DllImport("libc", EntryPoint = "getuid")]
         [SuppressMessage("Interoperability", "SYSLIB1054", Justification = "Linux getuid has no parameters or marshaling concerns.")]

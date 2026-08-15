@@ -15,6 +15,7 @@ public enum SessionRootMutationAcquireFailure
     SessionNotQuiescent,
     WorkerLeaseActive,
     MutationLeaseActive,
+    RecoveryRequired,
     InvalidRequest,
 }
 
@@ -55,5 +56,16 @@ public interface ISessionRootMutationLeaseStore
 
     Task<bool> ReleaseAsync(
         SessionRootMutationLease lease,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Releases only an expired lease owned by the specified durable
+    /// operation. Ordinary request paths must use <see cref="ReleaseAsync"/>;
+    /// this method is reserved for crash recovery after the operation facts
+    /// have been checked.
+    /// </summary>
+    Task<bool> ReleaseExpiredAsync(
+        string sessionId,
+        string operationId,
         CancellationToken cancellationToken = default);
 }

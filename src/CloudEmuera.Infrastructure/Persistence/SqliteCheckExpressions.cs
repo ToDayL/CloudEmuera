@@ -25,4 +25,10 @@ internal static class SqliteCheckExpressions
 
     public static string ValidJson(string column) =>
         $"length({column}) BETWEEN 2 AND 1048576 AND json_valid({column}) = 1 AND {column} <> ''";
+
+    public static string Sha256DigestColumn(string column, bool nullable = false)
+    {
+        string expression = $"length({column}) = 71 AND substr({column}, 1, 7) = 'sha256:' AND lower({column}) = {column} AND substr({column}, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr({column}, 8)) = 64";
+        return nullable ? $"{column} IS NULL OR ({expression})" : expression;
+    }
 }

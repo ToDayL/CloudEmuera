@@ -463,7 +463,13 @@ public sealed class SessionOutputHub : IAsyncDisposable
         finally
         {
             batchTimer.Dispose();
-            publishGate.Dispose();
+            // Do not dispose the gate here. A timer callback can have passed
+            // Wait() and still be between its body and finally/Release().
+            // Disposing SemaphoreSlim at that boundary makes the callback's
+            // Release() throw ObjectDisposedException and turns an otherwise
+            // harmless shutdown race into an unhandled timer failure. The
+            // gate is managed state with no external handle; it is reclaimed
+            // together with the hub after all callbacks have stopped.
         }
     }
 

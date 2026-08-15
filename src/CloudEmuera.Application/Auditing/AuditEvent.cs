@@ -29,4 +29,8 @@ public static class AuditActions
     public const string SessionCloseRequested = "SESSION_CLOSE_REQUESTED";
     public const string SessionClosed = "SESSION_CLOSED";
     public const string SessionCloseFailed = "SESSION_CLOSE_FAILED";
+    public const string SessionSaveImported = "SESSION_SAVE_IMPORTED";
+    public const string SessionSaveRenamed = "SESSION_SAVE_RENAMED";
+    public const string SessionSaveDeleted = "SESSION_SAVE_DELETED";
+    public const string SessionSaveRecoveryFailed = "SESSION_SAVE_RECOVERY_FAILED";
 }

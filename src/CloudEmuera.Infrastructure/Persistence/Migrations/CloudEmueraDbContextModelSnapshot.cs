@@ -1194,6 +1194,176 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.SaveFileOperationRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActorUserId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("completed_at");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("error_code");
+
+                    b.Property<string>("ExpectedSourceIdentityJson")
+                        .HasMaxLength(1048576)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expected_source_identity_json");
+
+                    b.Property<bool>("ExpectedTargetCaptured")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("expected_target_captured");
+
+                    b.Property<bool>("ExpectedTargetExists")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("expected_target_exists");
+
+                    b.Property<string>("ExpectedTargetIdentityJson")
+                        .HasMaxLength(1048576)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expected_target_identity_json");
+
+                    b.Property<string>("IdempotencyKeyHash")
+                        .IsRequired()
+                        .HasMaxLength(71)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_key_hash");
+
+                    b.Property<string>("IdempotencyScope")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("idempotency_scope");
+
+                    b.Property<string>("PayloadDigest")
+                        .HasMaxLength(71)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("payload_digest");
+
+                    b.Property<string>("PayloadPath")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("payload_path");
+
+                    b.Property<long?>("PayloadSize")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("payload_size");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasMaxLength(1048576)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("result_json");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_id");
+
+                    b.Property<string>("SourcePath")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_path");
+
+                    b.Property<int>("StateVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0)
+                        .HasColumnName("state_version");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TargetPath")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_path");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("type");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_save_file_operations");
+
+                    b.HasIndex("SessionId", "Status")
+                        .HasDatabaseName("ix_save_file_operations_session_status");
+
+                    b.HasIndex("ActorUserId", "IdempotencyScope", "IdempotencyKeyHash")
+                        .IsUnique()
+                        .HasDatabaseName("ux_save_file_operations_idempotency");
+
+                    b.HasIndex("Status", "UpdatedAt", "Id")
+                        .HasDatabaseName("ix_save_file_operations_status_updated");
+
+                    b.ToTable("save_file_operations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_save_file_operations_actor_id", "substr(actor_user_id, 1, 4) = 'usr_' AND length(actor_user_id) BETWEEN 5 AND 64 AND instr(actor_user_id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_save_file_operations_completion", "(status IN ('COMMITTED', 'FAILED') AND completed_at IS NOT NULL) OR (status NOT IN ('COMMITTED', 'FAILED') AND completed_at IS NULL)");
+
+                            t.HasCheckConstraint("ck_save_file_operations_digest", "payload_digest IS NULL OR (length(payload_digest) = 71 AND substr(payload_digest, 1, 7) = 'sha256:' AND lower(payload_digest) = payload_digest AND substr(payload_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(payload_digest, 8)) = 64)");
+
+                            t.HasCheckConstraint("ck_save_file_operations_error", "error_code IS NULL OR (length(error_code) BETWEEN 1 AND 128 AND instr(error_code, char(0)) = 0)");
+
+                            t.HasCheckConstraint("ck_save_file_operations_expected_identity", "expected_source_identity_json IS NULL OR (length(expected_source_identity_json) BETWEEN 2 AND 1048576 AND json_valid(expected_source_identity_json) = 1)");
+
+                            t.HasCheckConstraint("ck_save_file_operations_id", "substr(id, 1, 5) = 'sfop_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_save_file_operations_key_hash", "length(idempotency_key_hash) = 71 AND substr(idempotency_key_hash, 1, 7) = 'sha256:' AND lower(idempotency_key_hash) = idempotency_key_hash AND substr(idempotency_key_hash, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(idempotency_key_hash, 8)) = 64");
+
+                            t.HasCheckConstraint("ck_save_file_operations_payload", "payload_size IS NULL OR payload_size >= 0");
+
+                            t.HasCheckConstraint("ck_save_file_operations_payload_path", "payload_path IS NULL OR (length(payload_path) BETWEEN 1 AND 512 AND substr(payload_path, 1, 1) <> '/' AND instr(payload_path, char(92)) = 0 AND instr(payload_path, char(0)) = 0 AND instr(payload_path, '//') = 0)");
+
+                            t.HasCheckConstraint("ck_save_file_operations_result", "length(result_json) BETWEEN 2 AND 1048576 AND json_valid(result_json) = 1 AND result_json <> ''");
+
+                            t.HasCheckConstraint("ck_save_file_operations_scope", "idempotency_scope IN ('SAVE_IMPORT', 'SAVE_RENAME', 'SAVE_DELETE')");
+
+                            t.HasCheckConstraint("ck_save_file_operations_session_id", "substr(session_id, 1, 5) = 'sess_' AND length(session_id) BETWEEN 5 AND 64 AND instr(session_id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_save_file_operations_source_path", "source_path IS NULL OR (length(source_path) BETWEEN 1 AND 512 AND substr(source_path, 1, 1) <> '/' AND instr(source_path, char(92)) = 0 AND instr(source_path, char(0)) = 0 AND instr(source_path, '//') = 0)");
+
+                            t.HasCheckConstraint("ck_save_file_operations_state", "state_version >= 0");
+
+                            t.HasCheckConstraint("ck_save_file_operations_status", "status IN ('PREPARED', 'STAGED', 'PUBLISHED', 'COMMITTED', 'FAILED')");
+
+                            t.HasCheckConstraint("ck_save_file_operations_target_path", "length(target_path) BETWEEN 1 AND 512 AND substr(target_path, 1, 1) <> '/' AND instr(target_path, char(92)) = 0 AND instr(target_path, char(0)) = 0 AND instr(target_path, '//') = 0 AND instr('/' || target_path || '/', '/./') = 0 AND instr('/' || target_path || '/', '/../') = 0");
+
+                            t.HasCheckConstraint("ck_save_file_operations_time", "created_at >= 0 AND updated_at >= created_at AND (completed_at IS NULL OR completed_at >= updated_at)");
+
+                            t.HasCheckConstraint("ck_save_file_operations_type", "type IN ('IMPORT', 'RENAME', 'DELETE')");
+                        });
+                });
+
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.SessionCreationOperationRow", b =>
                 {
                     b.Property<string>("Id")
@@ -1349,7 +1519,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_session_root_mutation_leases_actor_id", "substr(actor_user_id, 1, 4) = 'usr_' AND length(actor_user_id) BETWEEN 5 AND 64 AND instr(actor_user_id, char(0)) = 0");
 
-                            t.HasCheckConstraint("ck_session_root_mutation_leases_operation_id", "substr(operation_id, 1, 4) = 'mut_' AND length(operation_id) BETWEEN 5 AND 64 AND instr(operation_id, char(0)) = 0");
+                            t.HasCheckConstraint("ck_session_root_mutation_leases_operation_id", "(substr(operation_id, 1, 4) = 'mut_' OR substr(operation_id, 1, 5) = 'sfop_') AND length(operation_id) BETWEEN 5 AND 64 AND instr(operation_id, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_session_root_mutation_leases_purpose", "purpose IN ('SAVE_IMPORT', 'SAVE_RENAME', 'SAVE_DELETE', 'SAVE_COPY')");
 
@@ -1766,6 +1936,27 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasForeignKey("InitialAdminUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_instance_state_initial_admin");
+                });
+
+            modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.SaveFileOperationRow", b =>
+                {
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.CloudEmueraUser", "ActorUser")
+                        .WithMany()
+                        .HasForeignKey("ActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_save_file_operations_actor_user");
+
+                    b.HasOne("CloudEmuera.Infrastructure.Persistence.SessionRow", "Session")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_save_file_operations_session");
+
+                    b.Navigation("ActorUser");
+
+                    b.Navigation("Session");
                 });
 
             modelBuilder.Entity("CloudEmuera.Infrastructure.Persistence.SessionCreationOperationRow", b =>

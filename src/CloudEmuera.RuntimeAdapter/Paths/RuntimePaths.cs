@@ -223,24 +223,37 @@ public sealed class RuntimePaths
     public string ResolveSavePath(RuntimeRelativePath logicalPath)
     {
         string[] segments = logicalPath.Segments.ToArray();
-        if (segments.Length == 0 || (SaveLayout == RuntimeSaveLayout.Root && segments.Length != 1))
+        if (segments.Length == 0)
         {
             throw SavePathError(logicalPath);
+        }
+
+        if (SaveLayout == RuntimeSaveLayout.Root)
+        {
+            if (segments.Length != 1)
+            {
+                throw SavePathError(logicalPath);
+            }
+        }
+        else
+        {
+            ValidateSaveDirectorySegments(segments[..^1], logicalPath);
         }
 
         if (!IsAllowedSaveFileName(segments[^1]))
         {
             throw new RuntimeFileAccessException(
                 RuntimePathReasonCodes.UnsupportedRuntimeFile,
-                "The save file name is not part of the fixed runtime save contract.",
+                "A save file name is outside the fixed runtime contract.",
                 logicalPath.Value,
                 RuntimeFileArea.Save);
         }
 
-        if (SaveLayout == RuntimeSaveLayout.SavDirectory)
-        {
-            ValidateSaveDirectorySegments(segments[..^1], logicalPath);
-        }
+        _ = EmueraSavePathPolicy.Parse(
+            SaveLayout,
+            logicalPath.Value,
+            allowPhysicalSavPrefix: true,
+            allowAuxiliaryInRoot: true);
 
         return ResolveSaveEntryCandidate(
             logicalPath,
@@ -343,49 +356,10 @@ public sealed class RuntimePaths
     }
 
     internal static bool IsAllowedSaveFileName(string filename)
-    {
-        if (filename.Equals("global.sav", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return IsNumberedFile(filename, "save", ".sav") ||
-            IsNumberedFile(filename, "txt", ".txt") ||
-            IsNumberedFile(filename, "img", ".png");
-    }
+        => EmueraSavePathPolicy.IsAllowedSaveFileName(filename);
 
     internal static bool IsAllowedSaveDirectorySegment(string segment) =>
-        !IsAllowedSaveFileName(segment) &&
-        segment.Length is > 0 and <= 64 &&
-        segment.All(static character =>
-            character is >= 'a' and <= 'z' or
-            >= 'A' and <= 'Z' or
-            >= '0' and <= '9' or '-' or '_');
-
-    private static bool IsNumberedFile(string value, string prefix, string suffix)
-    {
-        if (!value.StartsWith(prefix, StringComparison.Ordinal) ||
-            !value.EndsWith(suffix, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        int digitsLength = value.Length - prefix.Length - suffix.Length;
-        if (digitsLength is < 1 or > 10)
-        {
-            return false;
-        }
-
-        for (int index = prefix.Length; index < prefix.Length + digitsLength; index++)
-        {
-            if (value[index] is < '0' or > '9')
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+        EmueraSavePathPolicy.IsAllowedSaveDirectorySegment(segment);
 
     private RuntimeFileAccessException SavePathError(RuntimeRelativePath logicalPath) =>
         new(

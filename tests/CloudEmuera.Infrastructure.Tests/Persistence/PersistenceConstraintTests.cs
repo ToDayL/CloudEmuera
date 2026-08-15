@@ -192,6 +192,53 @@ public sealed class PersistenceConstraintTests
     }
 
     [Fact]
+    [Trait("Category", "SaveOperation")]
+    public async Task SaveOperation_IsIdempotentAndRejectsInvalidStateValues()
+    {
+        using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync();
+        await using DbContextScope scope = database.OpenContext();
+        string digest = "sha256:" + new string('b', 64);
+        SaveFileOperationRow operation = new()
+        {
+            Id = "sfop_fixture",
+            SessionId = "sess_fixture",
+            ActorUserId = "usr_fixture",
+            IdempotencyScope = "SAVE_IMPORT",
+            IdempotencyKeyHash = digest,
+            Type = SaveFileOperationType.Import,
+            Status = SaveFileOperationStatus.Prepared,
+            TargetPath = "global.sav",
+            ResultJson = "{}",
+            CreatedAt = PersistenceFixtures.CreatedAt,
+            UpdatedAt = PersistenceFixtures.CreatedAt,
+        };
+        scope.Context.SaveFileOperations.Add(operation);
+        await scope.Context.SaveChangesAsync();
+
+        scope.Context.ChangeTracker.Clear();
+        scope.Context.SaveFileOperations.Add(new SaveFileOperationRow
+        {
+            Id = "sfop_duplicate",
+            SessionId = operation.SessionId,
+            ActorUserId = operation.ActorUserId,
+            IdempotencyScope = operation.IdempotencyScope,
+            IdempotencyKeyHash = operation.IdempotencyKeyHash,
+            Type = operation.Type,
+            Status = operation.Status,
+            TargetPath = operation.TargetPath,
+            ResultJson = operation.ResultJson,
+            CreatedAt = operation.CreatedAt,
+            UpdatedAt = operation.UpdatedAt,
+        });
+        await Assert.ThrowsAsync<DbUpdateException>(() => scope.Context.SaveChangesAsync());
+
+        await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection,
+            "UPDATE save_file_operations SET status = 'UNKNOWN' WHERE id = 'sfop_fixture';"));
+        await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection,
+            "UPDATE save_file_operations SET idempotency_key_hash = 'sha256:bad' WHERE id = 'sfop_fixture';"));
+    }
+
+    [Fact]
     [Trait("Category", "PersistenceConstraint")]
     public async Task AuditEvents_AreAppendOnlyAtDatabaseBoundary()
     {

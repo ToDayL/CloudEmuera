@@ -16,6 +16,26 @@ namespace CloudEmuera.Realtime.Tests;
 public sealed class RealtimeOutputTests
 {
     [Fact]
+    public async Task DisposingWhileTheBatchTimerIsDueDoesNotRaceThePublishGate()
+    {
+        var options = RealtimeOutputOptions.Default with
+        {
+            BatchMaxDelay = TimeSpan.FromMilliseconds(1),
+            BatchMaxTransactions = 64,
+        };
+
+        for (int attempt = 0; attempt < 32; attempt++)
+        {
+            var hub = new SessionOutputHub("session-1", $"worker-{attempt}", (ulong)(attempt + 1), options);
+            hub.PublishDisplayBatch(SnapshotBatch(ConsoleSnapshot.Empty, Transaction(1, "initial")));
+            hub.PublishDisplayBatch(DeltaBatch(Transaction(2, "pending")));
+            await Task.WhenAll(
+                Task.Run(() => hub.PublishDisplayBatch(DeltaBatch(Transaction(3, "race")))),
+                hub.DisposeAsync().AsTask());
+        }
+    }
+
+    [Fact]
     public async Task SubscriptionReceivesACompleteSnapshotAndThenContinuousTransactions()
     {
         await using var hub = new SessionOutputHub("session-1", "worker-1", 7);

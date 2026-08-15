@@ -10,7 +10,7 @@ internal sealed class SessionRootMutationLeaseConfiguration : IEntityTypeConfigu
         builder.ToTable(SqliteStorageConventions.SessionRootMutationLeasesTable, table =>
         {
             table.HasCheckConstraint("ck_session_root_mutation_leases_session_id", SqliteCheckExpressions.IdentifierPrefix("session_id", "sess_"));
-            table.HasCheckConstraint("ck_session_root_mutation_leases_operation_id", SqliteCheckExpressions.IdentifierPrefix("operation_id", "mut_"));
+            table.HasCheckConstraint("ck_session_root_mutation_leases_operation_id", "(substr(operation_id, 1, 4) = 'mut_' OR substr(operation_id, 1, 5) = 'sfop_') AND length(operation_id) BETWEEN 5 AND 64 AND instr(operation_id, char(0)) = 0");
             table.HasCheckConstraint("ck_session_root_mutation_leases_actor_id", SqliteCheckExpressions.IdentifierPrefix("actor_user_id", "usr_"));
             table.HasCheckConstraint("ck_session_root_mutation_leases_purpose", "purpose IN ('SAVE_IMPORT', 'SAVE_RENAME', 'SAVE_DELETE', 'SAVE_COPY')");
             table.HasCheckConstraint("ck_session_root_mutation_leases_time", "acquired_at >= 0 AND expires_at > acquired_at");

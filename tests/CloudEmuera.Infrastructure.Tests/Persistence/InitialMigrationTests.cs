@@ -37,6 +37,7 @@ public sealed class InitialMigrationTests
                 "idempotency_records",
                 "instance_state",
                 "quota_profiles",
+                "save_file_operations",
                 "schema_migrations",
                 "session_creation_operations",
                 "session_root_mutation_leases",
@@ -50,9 +51,9 @@ public sealed class InitialMigrationTests
         Assert.Contains("ux_games_current_content_path", indexes);
         Assert.Contains("ux_worker_leases_worker_id", indexes);
         Assert.DoesNotContain(tables, name => name.StartsWith("AspNet", StringComparison.Ordinal));
-        Assert.DoesNotContain(tables, name => name.Contains("save", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("game_versions", tables);
         Assert.DoesNotContain(tables, name => name == "__EFMigrationsHistory");
-        Assert.Equal(13, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(15, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -76,7 +77,7 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(13, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(15, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -101,7 +102,7 @@ public sealed class InitialMigrationTests
         Assert.Null(user.PasswordChangedAt);
         Assert.False(user.MustChangePassword);
         Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
-        Assert.Equal(13, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(15, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -239,7 +240,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(14, await CountHistoryRowsAsync(database));
+        Assert.Equal(16, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>

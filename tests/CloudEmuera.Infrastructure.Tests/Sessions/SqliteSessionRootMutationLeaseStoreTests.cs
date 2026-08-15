@@ -81,7 +81,7 @@ public sealed class SqliteSessionRootMutationLeaseStoreTests
     }
 
     [Fact]
-    public async Task ExpiredMutationLeaseIsReclaimedWithoutBlockingAnewOperation()
+    public async Task ExpiredMutationLeaseRequiresRecoveryAndIsNotReclaimedByAnOrdinaryCaller()
     {
         using TemporarySqliteDatabase database = new();
         Assert.True((await database.MigrateAsync()).Succeeded);
@@ -108,10 +108,10 @@ public sealed class SqliteSessionRootMutationLeaseStoreTests
             SessionRootMutationPurpose.SaveRename,
             TimeSpan.FromMinutes(5));
 
-        Assert.True(acquired.Succeeded, acquired.Failure.ToString());
+        Assert.Equal(SessionRootMutationAcquireFailure.RecoveryRequired, acquired.Failure);
         await using DbContextScope verify = database.OpenContext();
         SessionRootMutationLeaseRow row = await verify.Context.SessionRootMutationLeases.SingleAsync();
-        Assert.Equal("mut_reclaimed", row.OperationId);
+        Assert.Equal("mut_expired", row.OperationId);
     }
 
     private static async Task SeedClosedSessionAsync(TemporarySqliteDatabase database)

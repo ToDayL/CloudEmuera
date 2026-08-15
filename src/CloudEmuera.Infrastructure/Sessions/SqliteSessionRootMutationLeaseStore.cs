@@ -8,10 +8,8 @@ namespace CloudEmuera.Infrastructure.Sessions;
 
 /// <summary>
 /// SQLite implementation of the stopped-state SessionRoot write boundary.
-/// An expired row is no longer a valid fencing fact.  It is removed only while
-/// the same immediate transaction that installs the replacement lease is held;
-/// Renew/Release also match the complete owner tuple so an old operation cannot
-/// renew or release a later operation's lease.
+/// Expired rows are retained until operation recovery has inspected their
+/// staging marker and file identities. Ordinary callers never reclaim them.
 /// </summary>
 public sealed class SqliteSessionRootMutationLeaseStore(
     SqliteDatabaseOptions databaseOptions,
@@ -26,7 +24,7 @@ public sealed class SqliteSessionRootMutationLeaseStore(
         CancellationToken cancellationToken = default)
     {
         if (!IsIdentifier(sessionId, "sess_") || !IsIdentifier(actorUserId, "usr_") ||
-            !IsIdentifier(operationId, "mut_") || !Enum.IsDefined(purpose) ||
+            !IsOperationIdentifier(operationId) || !Enum.IsDefined(purpose) ||
             duration <= TimeSpan.Zero || duration > TimeSpan.FromMinutes(30))
             return new(SessionRootMutationAcquireFailure.InvalidRequest);
 
@@ -43,12 +41,13 @@ public sealed class SqliteSessionRootMutationLeaseStore(
         if (await db.WorkerLeases.AnyAsync(row => row.SessionId == sessionId, cancellationToken).ConfigureAwait(false))
             return new(SessionRootMutationAcquireFailure.WorkerLeaseActive);
         DateTimeOffset now = timeProvider.GetUtcNow();
-        await db.SessionRootMutationLeases
-            .Where(row => row.SessionId == sessionId && row.ExpiresAt <= now)
-            .ExecuteDeleteAsync(cancellationToken)
+        SessionRootMutationLeaseRow? existingLease = await db.SessionRootMutationLeases.AsNoTracking()
+            .SingleOrDefaultAsync(row => row.SessionId == sessionId, cancellationToken)
             .ConfigureAwait(false);
-        if (await db.SessionRootMutationLeases.AnyAsync(row => row.SessionId == sessionId && row.ExpiresAt > now, cancellationToken).ConfigureAwait(false))
-            return new(SessionRootMutationAcquireFailure.MutationLeaseActive);
+        if (existingLease is not null)
+            return new(existingLease.ExpiresAt <= now
+                ? SessionRootMutationAcquireFailure.RecoveryRequired
+                : SessionRootMutationAcquireFailure.MutationLeaseActive);
 
         DateTimeOffset acquiredAt = timeProvider.GetUtcNow();
         var rowToInsert = new SessionRootMutationLeaseRow
@@ -93,7 +92,11 @@ public sealed class SqliteSessionRootMutationLeaseStore(
         await using CloudEmueraDbContext db = CreateContext(connection);
         int changed = await db.SessionRootMutationLeases
             .Where(row => row.SessionId == lease.SessionId && row.OperationId == lease.OperationId &&
-                row.ActorUserId == lease.ActorUserId && row.ExpiresAt > now)
+                row.ActorUserId == lease.ActorUserId && row.Purpose == ToPurposeCode(lease.Purpose) &&
+                row.ExpiresAt > now &&
+                db.SaveFileOperations.Any(operation => operation.Id == row.OperationId &&
+                    operation.Status != SaveFileOperationStatus.Committed &&
+                    operation.Status != SaveFileOperationStatus.Failed))
             .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.ExpiresAt, expiresAt), cancellationToken)
             .ConfigureAwait(false);
         return changed == 1;
@@ -107,7 +110,25 @@ public sealed class SqliteSessionRootMutationLeaseStore(
         await using SqliteConnection connection = OpenConnection();
         await using CloudEmueraDbContext db = CreateContext(connection);
         int changed = await db.SessionRootMutationLeases
-            .Where(row => row.SessionId == lease.SessionId && row.OperationId == lease.OperationId && row.ActorUserId == lease.ActorUserId)
+            .Where(row => row.SessionId == lease.SessionId && row.OperationId == lease.OperationId &&
+                row.ActorUserId == lease.ActorUserId && row.Purpose == ToPurposeCode(lease.Purpose))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return changed == 1;
+    }
+
+    public async Task<bool> ReleaseExpiredAsync(
+        string sessionId,
+        string operationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsIdentifier(sessionId, "sess_") || !IsOperationIdentifier(operationId))
+            return false;
+        DateTimeOffset now = timeProvider.GetUtcNow();
+        await using SqliteConnection connection = OpenConnection();
+        await using CloudEmueraDbContext db = CreateContext(connection);
+        int changed = await db.SessionRootMutationLeases
+            .Where(row => row.SessionId == sessionId && row.OperationId == operationId && row.ExpiresAt <= now)
             .ExecuteDeleteAsync(cancellationToken)
             .ConfigureAwait(false);
         return changed == 1;
@@ -124,6 +145,9 @@ public sealed class SqliteSessionRootMutationLeaseStore(
     private static bool IsIdentifier(string value, string prefix) =>
         value.Length is >= 5 and <= 64 && value.StartsWith(prefix, StringComparison.Ordinal) &&
         value.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-');
+
+    private static bool IsOperationIdentifier(string value) =>
+        IsIdentifier(value, "mut_") || IsIdentifier(value, "sfop_");
 
     private static string ToPurposeCode(SessionRootMutationPurpose purpose) => purpose switch
     {

@@ -12,7 +12,9 @@ using CloudEmuera.Contracts.Identity;
 using CloudEmuera.Contracts.Games;
 using CloudEmuera.Contracts.Sessions;
 using CloudEmuera.Contracts.Realtime;
+using CloudEmuera.Contracts.Saves;
 using CloudEmuera.Application.Games;
+using CloudEmuera.Application.Saves;
 using CloudEmuera.Infrastructure.Games;
 using CloudEmuera.Infrastructure.Identity;
 using CloudEmuera.Infrastructure.Authorization;
@@ -21,6 +23,7 @@ using CloudEmuera.Application.GamePackages;
 using CloudEmuera.Infrastructure.GamePackages;
 using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Infrastructure.Sessions;
+using CloudEmuera.Infrastructure.Saves;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Domain.Sessions;
@@ -91,6 +94,7 @@ InstanceCapacityOptions capacityOptions = new()
     MaxGamePackageBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxGamePackageBytes") ?? InstanceCapacityOptions.DefaultMaxGamePackageBytes,
     MaxSessionRootBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxSessionRootBytes") ?? InstanceCapacityOptions.DefaultMaxSessionRootBytes,
     MaxStagingReservedBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxStagingReservedBytes") ?? InstanceCapacityOptions.DefaultMaxStagingReservedBytes,
+    MaxSaveFileBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxSaveFileBytes") ?? InstanceCapacityOptions.DefaultMaxSaveFileBytes,
     MinDataRootFreeBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MinDataRootFreeBytes")
         ?? builder.Configuration.GetValue<long?>("CloudEmuera:MinDataRootFreeBytes")
         ?? InstanceCapacityOptions.DefaultMinDataRootFreeBytes,
@@ -160,7 +164,9 @@ builder.Services.AddSingleton<ISessionOperationRecovery>(serviceProvider =>
     (ISessionOperationRecovery)serviceProvider.GetRequiredService<ISessionApplicationService>());
 builder.Services.AddSingleton<SessionOperationRecoveryReadiness>();
 builder.Services.AddSingleton<SessionCommandReadiness>();
+builder.Services.AddSingleton<SaveOperationRecoveryReadiness>();
 builder.Services.AddHostedService<SessionOperationRecoveryHostedService>();
+builder.Services.AddHostedService<SaveFileOperationRecoveryHostedService>();
 builder.Services.AddSingleton(new GamePackageStorageOptions
 {
     DataRoot = dataRoot,
@@ -187,6 +193,11 @@ builder.Services.AddHostedService<GamePackageIngestionReaperService>();
 builder.Services.AddHostedService<GameContentOperationReaperService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IAuditContext, HttpAuditContext>();
+builder.Services.AddScoped<ISessionSaveRootAccessor, LinuxSessionSaveRootAccessor>();
+builder.Services.AddScoped<ISaveFileOperationStore, SqliteSaveFileOperationStore>();
+builder.Services.AddSingleton<ISaveFileFormatValidator, EmueraSaveFileFormatValidator>();
+builder.Services.AddScoped<ISessionSaveApplicationService, SessionSaveApplicationService>();
+builder.Services.AddScoped<ISaveFileOperationRecovery, SaveFileOperationRecovery>();
 builder.Services.AddScoped<IPasswordHasher<CloudEmueraUser>, PasswordHasher<CloudEmueraUser>>();
 builder.Services.AddScoped<CloudEmueraUserStore>();
 builder.Services.AddScoped<IUserStore<CloudEmueraUser>>(serviceProvider => serviceProvider.GetRequiredService<CloudEmueraUserStore>());
@@ -264,7 +275,8 @@ builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks()
     .AddCheck<BootstrapHealthCheck>("identity_bootstrap", tags: ["ready"])
     .AddCheck<WorkerRuntimeHealthCheck>("worker_runtime", tags: ["ready"])
-    .AddCheck<SessionOperationRecoveryHealthCheck>("session_operation_recovery", tags: ["ready"]);
+    .AddCheck<SessionOperationRecoveryHealthCheck>("session_operation_recovery", tags: ["ready"])
+    .AddCheck<SaveOperationRecoveryHealthCheck>("save_operation_recovery", tags: ["ready"]);
 
 var app = builder.Build();
 if (builder.Configuration.GetValue<long?>("CloudEmuera:MinDataRootFreeBytes") is not null)
@@ -673,6 +685,119 @@ sessions.MapPost("/{sessionId}:close", async (string sessionId, HttpContext cont
   .Produces<ApiError>(StatusCodes.Status429TooManyRequests)
   .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
 
+sessions.MapGet("/{sessionId}/saves", async (string sessionId, HttpContext context, ISessionSaveApplicationService service) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    try
+    {
+        SessionSaveList list = await service.ListAsync(actor, sessionId, context.RequestAborted).ConfigureAwait(false);
+        return Results.Ok(ApiIdentity.ToResponse(list));
+    }
+    catch (SessionSaveException exception)
+    {
+        return ApiIdentity.SaveError(exception);
+    }
+}).RequireRateLimiting("session-read")
+  .Produces<SaveListResponse>(StatusCodes.Status200OK)
+  .Produces<ApiError>(StatusCodes.Status401Unauthorized)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
+sessions.MapGet("/{sessionId}/saves/{**path}", async (string sessionId, string path, HttpContext context, ISessionSaveApplicationService service) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    try
+    {
+        SessionSaveDownload download = await service.OpenReadAsync(actor, sessionId, path, context.RequestAborted).ConfigureAwait(false);
+        return ApiIdentity.SetSaveDownloadHeaders(context, download);
+    }
+    catch (SessionSaveException exception)
+    {
+        return ApiIdentity.SaveError(exception);
+    }
+}).RequireRateLimiting("session-read")
+  .Produces(StatusCodes.Status200OK, contentType: "application/octet-stream")
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
+sessions.MapPut("/{sessionId}/saves/{**path}", async (string sessionId, string path, HttpContext context, IAntiforgery antiforgery, ISessionSaveApplicationService service, SaveOperationRecoveryReadiness readiness) =>
+{
+    context.Features.Get<IHttpMaxRequestBodySizeFeature>()?.MaxRequestBodySize = null;
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    if (!readiness.IsReady) return ApiIdentity.Error(SaveErrorCodes.RecoveryRequired, "存档操作恢复尚未完成。", StatusCodes.Status503ServiceUnavailable);
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
+    if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error(SaveErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
+    try
+    {
+        SessionSaveMutationResult result = await service.ImportAsync(new SaveImportCommand(actor, sessionId, path, context.Request.Body, context.Request.ContentLength, key), context.RequestAborted).ConfigureAwait(false);
+        return ApiIdentity.SaveMutation(context, sessionId, result);
+    }
+    catch (SessionSaveException exception)
+    {
+        return ApiIdentity.SaveError(exception);
+    }
+}).RequireRateLimiting("session-write")
+  .Accepts<Stream>("application/octet-stream")
+  .Produces<SaveItemResponse>(StatusCodes.Status201Created)
+  .Produces(StatusCodes.Status204NoContent)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status409Conflict)
+  .Produces<ApiError>(StatusCodes.Status413PayloadTooLarge)
+  .Produces<ApiError>(StatusCodes.Status415UnsupportedMediaType)
+  .Produces<ApiError>(StatusCodes.Status428PreconditionRequired)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
+sessions.MapPatch("/{sessionId}/saves/{**path}", async (string sessionId, string path, HttpContext context, JsonElement body, IAntiforgery antiforgery, ISessionSaveApplicationService service, SaveOperationRecoveryReadiness readiness) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    if (!readiness.IsReady) return ApiIdentity.Error(SaveErrorCodes.RecoveryRequired, "存档操作恢复尚未完成。", StatusCodes.Status503ServiceUnavailable);
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
+    if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error(SaveErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
+    if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("targetPath", out JsonElement targetProperty) || targetProperty.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(targetProperty.GetString()))
+        return ApiIdentity.Error(SaveErrorCodes.PathInvalid, "存档路径无效。", 400);
+    try
+    {
+        SessionSaveMutationResult result = await service.RenameAsync(new SaveRenameCommand(actor, sessionId, path, targetProperty.GetString()!, key), context.RequestAborted).ConfigureAwait(false);
+        return ApiIdentity.SaveMutation(context, sessionId, result);
+    }
+    catch (SessionSaveException exception)
+    {
+        return ApiIdentity.SaveError(exception);
+    }
+}).RequireRateLimiting("session-write")
+  .Accepts<RenameSaveRequest>("application/json")
+  .Produces(StatusCodes.Status204NoContent)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status409Conflict)
+  .Produces<ApiError>(StatusCodes.Status428PreconditionRequired)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
+sessions.MapDelete("/{sessionId}/saves/{**path}", async (string sessionId, string path, HttpContext context, IAntiforgery antiforgery, ISessionSaveApplicationService service, SaveOperationRecoveryReadiness readiness) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    if (!readiness.IsReady) return ApiIdentity.Error(SaveErrorCodes.RecoveryRequired, "存档操作恢复尚未完成。", StatusCodes.Status503ServiceUnavailable);
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
+    if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error(SaveErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
+    bool confirmed = string.Equals(context.Request.Headers["X-Confirm-Delete"].ToString(), "true", StringComparison.Ordinal);
+    try
+    {
+        SessionSaveMutationResult result = await service.DeleteAsync(new SaveDeleteCommand(actor, sessionId, path, key, confirmed), context.RequestAborted).ConfigureAwait(false);
+        return ApiIdentity.SaveMutation(context, sessionId, result);
+    }
+    catch (SessionSaveException exception)
+    {
+        return ApiIdentity.SaveError(exception);
+    }
+}).RequireRateLimiting("session-write")
+  .Produces(StatusCodes.Status204NoContent)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status409Conflict)
+  .Produces<ApiError>(StatusCodes.Status428PreconditionRequired)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
 app.MapFallback("/api/{**path}", () => ApiIdentity.Error("NOT_FOUND", "资源不存在。", StatusCodes.Status404NotFound));
 app.MapFallbackToFile("index.html");
 app.Run();
@@ -908,4 +1033,63 @@ internal static class ApiIdentity
         context.Response.Headers.ETag = QuoteETag(download.ETag);
         return Results.Stream(download.Content, "application/octet-stream", download.FileName, enableRangeProcessing: false);
     }
+
+    public static SaveListResponse ToResponse(SessionSaveList value) => new(
+        value.SchemaVersion,
+        value.Layout switch
+        {
+            SessionSaveLayout.Root => "ROOT",
+            SessionSaveLayout.SavDirectory => "SAV_DIRECTORY",
+            _ => throw new ArgumentOutOfRangeException(nameof(value)),
+        },
+        value.Items.Select(item => new SaveItemResponse(
+            item.Path,
+            item.Kind.ToString().ToUpperInvariant(),
+            item.SizeBytes,
+            item.ModifiedAt)).ToArray());
+
+    public static IResult SaveError(SessionSaveException exception) =>
+        Error(exception.Code, SaveErrorMessage(exception.Code), exception.StatusCode);
+
+    public static IResult SaveMutation(HttpContext context, string sessionId, SessionSaveMutationResult result)
+    {
+        if (result.StatusCode == StatusCodes.Status204NoContent)
+            return Results.NoContent();
+        if (result.Item is not SessionSaveItem item)
+            return Results.StatusCode(result.StatusCode);
+        string locationPath = string.Join('/', item.Path.Split('/', StringSplitOptions.None).Select(Uri.EscapeDataString));
+        return Results.Created($"/api/v1/sessions/{Uri.EscapeDataString(sessionId)}/saves/{locationPath}", new SaveItemResponse(
+            item.Path,
+            item.Kind.ToString().ToUpperInvariant(),
+            item.SizeBytes,
+            item.ModifiedAt));
+    }
+
+    public static IResult SetSaveDownloadHeaders(HttpContext context, SessionSaveDownload download)
+    {
+        string fileName = download.Path.Split('/', StringSplitOptions.None)[^1];
+        if (fileName.Any(char.IsControl) || fileName.Contains('\r') || fileName.Contains('\n'))
+            fileName = "download.bin";
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        context.Response.Headers.CacheControl = "private, no-store";
+        return Results.Stream(download.Content, "application/octet-stream", fileName, enableRangeProcessing: false);
+    }
+
+    private static string SaveErrorMessage(string code) => code switch
+    {
+        SaveErrorCodes.PathInvalid => "存档路径无效。",
+        SaveErrorCodes.NotFound or SaveErrorCodes.SessionNotFound => "资源不存在。",
+        SaveErrorCodes.SessionNotQuiescent => "Session 必须处于静止状态。",
+        SaveErrorCodes.SessionHasActiveWorker => "Session 仍有活动 Worker。",
+        SaveErrorCodes.MutationInProgress => "Session 的另一个存档操作正在执行。",
+        SaveErrorCodes.IdempotencyKeyRequired => "需要 Idempotency-Key。",
+        SaveErrorCodes.IdempotencyKeyReused => "Idempotency-Key 已用于其他存档请求。",
+        SaveErrorCodes.FileTooLarge => "存档文件超过大小上限。",
+        SaveErrorCodes.FormatInvalid => "存档文件格式无效。",
+        SaveErrorCodes.DeleteConfirmationRequired => "删除存档需要显式确认。",
+        SaveErrorCodes.TargetExists => "重命名目标已存在。",
+        SaveErrorCodes.DataRootSpaceLow => "数据目录可用空间不足。",
+        SaveErrorCodes.RecoveryRequired => "存档操作等待恢复。",
+        _ => "存档服务暂时不可用。",
+    };
 }

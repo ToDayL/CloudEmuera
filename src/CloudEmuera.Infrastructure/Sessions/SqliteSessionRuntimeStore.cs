@@ -63,14 +63,9 @@ public sealed class SqliteSessionRuntimeStore(
         if (await db.WorkerLeases.AnyAsync(row => row.SessionId == session.Id, cancellationToken).ConfigureAwait(false))
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.WorkerAlreadyLeased);
         DateTimeOffset now = options.Now == default ? timeProvider.GetUtcNow() : options.Now;
-        // A mutation lease is a time-bounded fencing fact.  Reclaim only the
-        // exact expired row while holding the same immediate transaction used
-        // for open, so a live unexpired writer can never be stolen.
-        await db.SessionRootMutationLeases
-            .Where(row => row.SessionId == session.Id && row.ExpiresAt <= now)
-            .ExecuteDeleteAsync(cancellationToken)
-            .ConfigureAwait(false);
-        if (await db.SessionRootMutationLeases.AnyAsync(row => row.SessionId == session.Id && row.ExpiresAt > now, cancellationToken).ConfigureAwait(false))
+        // An expired mutation row remains a recovery barrier. Only the save
+        // operation recovery path may inspect its marker and release it.
+        if (await db.SessionRootMutationLeases.AnyAsync(row => row.SessionId == session.Id, cancellationToken).ConfigureAwait(false))
             return new SessionRuntimeAcquireResult(SessionRuntimeAcquireFailure.MutationLeaseActive);
 
         InstanceCapacityOptions capacity = capacityOptions ?? InstanceCapacityOptions.Default;

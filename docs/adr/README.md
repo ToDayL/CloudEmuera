@@ -24,3 +24,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0019：MVP 使用受限 libgdiplus 兼容 Emuera 动态 Graphics](0019-libgdiplus-mvp-graphics-compatibility.md)
 - [ADR-0020：API 快照镜像与有界实时输出](0020-api-snapshot-mirror-and-bounded-realtime-output.md)
 - [ADR-0021：冻结 Realtime WebSocket v1 与输入回执边界](0021-freeze-realtime-websocket-v1.md)
+- [ADR-0022：Session 原生存档单文件大小上限](0022-session-save-file-cap.md)

@@ -12,12 +12,14 @@ public sealed record InstanceCapacityOptions
     public const long DefaultMaxSessionRootBytes = 4L * 1024 * 1024 * 1024;
     public const long DefaultMaxStagingReservedBytes = 12L * 1024 * 1024 * 1024;
     public const long DefaultMinDataRootFreeBytes = 1L * 1024 * 1024 * 1024;
+    public const long DefaultMaxSaveFileBytes = 64L * 1024 * 1024;
 
     public int MaxActiveWorkers { get; init; } = DefaultMaxActiveWorkers;
     public long MaxGamePackageBytes { get; init; } = DefaultMaxGamePackageBytes;
     public long MaxSessionRootBytes { get; init; } = DefaultMaxSessionRootBytes;
     public long MaxStagingReservedBytes { get; init; } = DefaultMaxStagingReservedBytes;
     public long MinDataRootFreeBytes { get; init; } = DefaultMinDataRootFreeBytes;
+    public long MaxSaveFileBytes { get; init; } = DefaultMaxSaveFileBytes;
 
     public static InstanceCapacityOptions Default => new();
 
@@ -27,6 +29,8 @@ public sealed record InstanceCapacityOptions
             || MaxGamePackageBytes <= 0
             || MaxSessionRootBytes <= 0
             || MaxStagingReservedBytes <= 0
+            || MaxSaveFileBytes <= 0
+            || MaxSaveFileBytes > MaxSessionRootBytes
             || MinDataRootFreeBytes < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(InstanceCapacityOptions), "Instance capacity options are inconsistent.");
