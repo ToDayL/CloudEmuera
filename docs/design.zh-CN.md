@@ -849,6 +849,21 @@ Clear(scope)
 所有颜色、尺寸、枚举、文本长度、资源 ID 和层级深度在 Worker 与浏览器两端校验。资源只使用由
 Session 创建时保存的 Game runtime manifest 解析出的 `assetId`，不能使用游戏提供的任意 URL。
 
+P1-11 将这条边界落为两个只读 HTTP 端点：
+
+- `GET /api/v1/sessions/{id}/presentation-manifest` 只返回浏览器可安全表达的图片、音频、字体摘要和
+  固定逻辑字体 fallback，不返回原始 manifest、逻辑路径或 SessionRoot；
+- `GET /api/v1/sessions/{id}/assets/{assetId}` 只凭 Session-scoped 摘要读取冻结普通文件，先 owner-first
+  授权，再执行 protected dirfd/no-follow、打开后 digest/长度和 MIME signature 交集校验；支持私有
+  ETag/immutable cache、单 Range 和 `nosniff`，多 Range/无效 Range fail closed。
+
+资产接口允许活动 Worker 只读读取；Worker 替换同路径不能改变已经打开的文件身份。旧 Session 的 v1
+清单仅按现有 digest 推导 asset ID，清单损坏、摘要不匹配、链接/特殊文件或 MIME 不在 allowlist 时不
+猜测路径、不重建目录，直接返回兼容错误。Production CSP 固定为同源 script/style/connect、`img-src
+'self' blob:`、`media-src 'self'`、`font-src 'self'`，禁止 `unsafe-eval`、object/frame/base 和外部
+form；动态 Raster 的 Blob URL 只由校验后的 PNG 创建并在 drawable 生命周期结束时 revoke。具体冻结见
+[`ADR-0023`](adr/0023-session-presentation-assets-and-csp.md)。
+
 ### 8.2 序号与快照
 
 P1-08 的 API mirror、订阅竞态、逐连接双预算队列与降级细节见
@@ -977,6 +992,8 @@ timeout 仍由 Worker 决定。连接、订阅、接收消息、控制队列、p
 | `GET /sessions/{id}` | Session 详情 | 所有者/管理员 |
 | `POST /sessions/{id}:open` | 启动或重新启动 Worker | 幂等、`CLOSED/CRASHED`、检查实例级 Worker 上限、递增 epoch |
 | `POST /sessions/{id}:close` | 优雅关闭 Worker | 幂等，不删除 SessionRoot |
+| `GET /sessions/{id}/presentation-manifest` | 读取 Session 浏览器资源清单 | 所有者，opaque asset ID、只读 |
+| `GET /sessions/{id}/assets/{assetId}` | 流式读取图片/音频/字体 | 所有者，MIME/摘要/Range/ETag 校验 |
 | `GET /sessions/{id}/saves` | 列出存档 | 所有者 |
 | `PUT /sessions/{id}/saves/{path}` | 导入/替换原生存档 | Session 停止、严格路径校验 |
 | `GET /sessions/{id}/saves/{path}` | 下载原生存档 | 所有者、流式响应 |

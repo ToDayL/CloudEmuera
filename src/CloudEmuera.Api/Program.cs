@@ -15,6 +15,7 @@ using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Contracts.Saves;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Application.Saves;
+using CloudEmuera.Application.Assets;
 using CloudEmuera.Infrastructure.Games;
 using CloudEmuera.Infrastructure.Identity;
 using CloudEmuera.Infrastructure.Authorization;
@@ -24,6 +25,7 @@ using CloudEmuera.Infrastructure.GamePackages;
 using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Infrastructure.Saves;
+using CloudEmuera.Infrastructure.Assets;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Domain.Sessions;
@@ -197,6 +199,7 @@ builder.Services.AddScoped<ISessionSaveRootAccessor, LinuxSessionSaveRootAccesso
 builder.Services.AddScoped<ISaveFileOperationStore, SqliteSaveFileOperationStore>();
 builder.Services.AddSingleton<ISaveFileFormatValidator, EmueraSaveFileFormatValidator>();
 builder.Services.AddScoped<ISessionSaveApplicationService, SessionSaveApplicationService>();
+builder.Services.AddScoped<ISessionAssetService, SessionAssetService>();
 builder.Services.AddScoped<ISaveFileOperationRecovery, SaveFileOperationRecovery>();
 builder.Services.AddScoped<IPasswordHasher<CloudEmueraUser>, PasswordHasher<CloudEmueraUser>>();
 builder.Services.AddScoped<CloudEmueraUserStore>();
@@ -657,6 +660,70 @@ sessions.MapGet("/{sessionId}", async (string sessionId, HttpContext context, IS
   .Produces<ApiError>(StatusCodes.Status404NotFound)
   .Produces<ApiError>(StatusCodes.Status429TooManyRequests);
 
+sessions.MapGet("/{sessionId}/presentation-manifest", async (string sessionId, HttpContext context, ISessionAssetService service) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    try
+    {
+        SessionPresentationManifest manifest = await service.GetManifestAsync(actor, sessionId, context.RequestAborted).ConfigureAwait(false);
+        context.Response.Headers.CacheControl = "private, max-age=60";
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return Results.Ok(manifest);
+    }
+    catch (SessionAssetException exception)
+    {
+        return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
+    }
+}).RequireRateLimiting("session-read")
+  .Produces<SessionPresentationManifest>(StatusCodes.Status200OK)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
+sessions.MapGet("/{sessionId}/assets/{assetId}", async (string sessionId, string assetId, HttpContext context, ISessionAssetService service) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    try
+    {
+        SessionAssetRead asset = await service.OpenReadAsync(actor, sessionId, assetId, context.RequestAborted).ConfigureAwait(false);
+        context.Response.Headers.ETag = ApiIdentity.QuoteETag(asset.ContentDigest);
+        context.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        context.Response.Headers.AcceptRanges = "bytes";
+        string ifNoneMatch = context.Request.Headers.IfNoneMatch.ToString();
+        if (ifNoneMatch.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(value => string.Equals(value.Trim(), ApiIdentity.QuoteETag(asset.ContentDigest), StringComparison.Ordinal)))
+        {
+            await asset.Content.DisposeAsync().ConfigureAwait(false);
+            return Results.StatusCode(StatusCodes.Status304NotModified);
+        }
+
+        if (!ApiIdentity.TrySingleRange(context.Request.Headers.Range.ToString(), asset.ByteLength, out long start, out long length))
+        {
+            await asset.Content.DisposeAsync().ConfigureAwait(false);
+            context.Response.Headers.ContentRange = $"bytes */{asset.ByteLength}";
+            return Results.StatusCode(StatusCodes.Status416RangeNotSatisfiable);
+        }
+        if (start > 0 || length != asset.ByteLength)
+        {
+            asset.Content.Seek(start, SeekOrigin.Begin);
+            context.Response.StatusCode = StatusCodes.Status206PartialContent;
+            context.Response.Headers.ContentRange = $"bytes {start}-{start + length - 1}/{asset.ByteLength}";
+            context.Response.ContentLength = length;
+            return Results.Stream(new CloudEmuera.Api.BoundedReadStream(asset.Content, length), asset.MediaType, enableRangeProcessing: false);
+        }
+        context.Response.ContentLength = asset.ByteLength;
+        return Results.Stream(asset.Content, asset.MediaType, enableRangeProcessing: false);
+    }
+    catch (SessionAssetException exception)
+    {
+        return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
+    }
+}).RequireRateLimiting("session-read")
+  .Produces(StatusCodes.Status200OK, contentType: "application/octet-stream")
+  .Produces(StatusCodes.Status206PartialContent, contentType: "application/octet-stream")
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status416RangeNotSatisfiable)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
 sessions.MapPost("/{sessionId}:open", async (string sessionId, HttpContext context, JsonElement body, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, IAntiforgery antiforgery, ISessionApplicationService service, SessionCommandReadiness readiness) =>
 {
     return await ApiIdentity.ExecuteSessionLifecycleAsync(context, sessionId, body, idempotencyKey, antiforgery, readiness, service.OpenAsync).ConfigureAwait(false);
@@ -1073,6 +1140,32 @@ internal static class ApiIdentity
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         context.Response.Headers.CacheControl = "private, no-store";
         return Results.Stream(download.Content, "application/octet-stream", fileName, enableRangeProcessing: false);
+    }
+
+    public static bool TrySingleRange(string header, long totalLength, out long start, out long length)
+    {
+        start = 0;
+        length = totalLength;
+        if (string.IsNullOrWhiteSpace(header)) return totalLength >= 0;
+        if (!header.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase) || header[6..].Contains(',')) return false;
+        string value = header[6..].Trim();
+        int dash = value.IndexOf('-');
+        if (dash < 0 || totalLength <= 0) return false;
+        string first = value[..dash].Trim();
+        string last = value[(dash + 1)..].Trim();
+        if (first.Length == 0)
+        {
+            if (!long.TryParse(last, out long suffix) || suffix <= 0) return false;
+            length = Math.Min(suffix, totalLength);
+            start = totalLength - length;
+            return true;
+        }
+        if (!long.TryParse(first, out start) || start < 0 || start >= totalLength) return false;
+        long end = totalLength - 1;
+        if (last.Length > 0 && (!long.TryParse(last, out end) || end < start)) return false;
+        end = Math.Min(end, totalLength - 1);
+        length = end - start + 1;
+        return length > 0;
     }
 
     private static string SaveErrorMessage(string code) => code switch

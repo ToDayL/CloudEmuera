@@ -7,4 +7,4 @@ public sealed record BuildInfo(
     int HttpProtocolVersion,
     int RealtimeProtocolVersion,
     int IpcProtocolVersion,
-    string RealtimePayloadSchemaVersion = "p1-09");
+    string RealtimePayloadSchemaVersion = "p1-11");

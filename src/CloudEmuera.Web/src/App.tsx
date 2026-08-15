@@ -1,4 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Link,
   NavLink,
@@ -39,6 +40,9 @@ import {
   updateGame,
   validateGame,
 } from "./games";
+import { ConsolePage as RealtimeConsolePage } from "./console/ConsolePage";
+import { SavesPage as NativeSavesPage } from "./saves/SavesPage";
+import { NewSessionPage as RealNewSessionPage, SessionsPage as RealSessionsPage } from "./sessions/pages";
 
 type IconName =
   | "archive"
@@ -96,14 +100,6 @@ const paths: Record<IconName, ReactNode> = {
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   return <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
-
-
-
-const initialSessions = [
-  { id: "sess-world", name: "周目二 · 港口存档", game: "ERA: The World", sourceContentDigest: "sha256:8f2a…d391", state: "RUNNING", waiting: true, activity: "刚刚", played: "3 小时 24 分", glyph: "世", color: "coral" },
-  { id: "sess-megaten", name: "初见流程", game: "ERA Megaten", sourceContentDigest: "sha256:9c41…a07e", state: "RUNNING", waiting: true, activity: "12 分钟前", played: "46 分钟", glyph: "M", color: "violet" },
-  { id: "sess-training", name: "测试 07", game: "ERA Training", sourceContentDigest: "sha256:7b0e…c221", state: "CLOSED", waiting: false, activity: "昨天 23:14", played: "1 小时 08 分", glyph: "練", color: "amber" },
-];
 
 function Logo() {
   return <Link className="brand" to="/games" aria-label="CloudEmuera 首页"><span className="brand-mark">C</span><span>CloudEmuera</span></Link>;
@@ -596,103 +592,9 @@ function GameFilesPanel({ game }: { game: GameLibraryItem }) {
   </div>;
 }
 
-function SessionsPage() {
-  const [filter, setFilter] = useState("全部");
-  const shown = initialSessions.filter(s => filter === "全部" || (filter === "活动中" ? s.state === "RUNNING" : s.state === "CLOSED"));
-  return <>
-    <PageHeader eyebrow="SESSIONS" title="游戏 Session" description="浏览器离开后，活动 Session 仍会继续运行并等待你回来。" actions={<Link className="primary-button" to="/sessions/new"><Icon name="plus"/>创建 Session</Link>}/>
-    <div className="session-stats"><article><span className="pulse-dot"/><div><strong>2</strong><small>占用 Worker</small></div></article><article><Icon name="clock"/><div><strong>1</strong><small>等待输入</small></div></article><article><Icon name="archive"/><div><strong>3</strong><small>Session 总数</small></div></article></div>
-    <div className="toolbar"><div className="segment-control">{["全部", "活动中", "已关闭"].map(item => <button key={item} onClick={() => setFilter(item)} className={filter === item ? "selected" : ""}>{item}</button>)}</div></div>
-    <section className="session-list">
-      {shown.map(session => <article key={session.id} className="session-row"><span className={`session-art ${session.color}`}>{session.glyph}</span><div className="session-main"><div><h2>{session.name}</h2><p>{session.game} <span>·</span> {session.sourceContentDigest}</p></div><div className="session-badges"><Status state={session.state}/>{session.waiting && <span className="tag waiting"><Icon name="clock" size={13}/>等待输入</span>}</div></div><div className="session-meta"><span>最后活动</span><strong>{session.activity}</strong></div><div className="session-meta"><span>本次时长</span><strong>{session.played}</strong></div>{session.state === "CLOSED" ? <Link className="secondary-button" to="/saves">查看存档</Link> : <Link className="play-button" to={`/sessions/${session.id}`}><Icon name="play" size={17}/>继续游戏</Link>}</article>)}
-    </section>
-    <div className="info-banner"><Icon name="spark"/><p><strong>Session 与浏览器连接相互独立</strong><small>关闭标签页不会停止游戏。请在不再需要时显式关闭 Session，以释放实例 Worker 名额。</small></p></div>
-  </>;
-}
-
 function Status({ state }: { state: string }) {
   const label = state === "RUNNING" ? "运行中" : "已关闭";
   return <span className={`status-pill ${state.toLowerCase()}`}><i/>{label}</span>;
-}
-
-function NewSessionPage() {
-  const navigate = useNavigate();
-  const [name, setName] = useState("周目三 · 新旅程");
-  const [creating, setCreating] = useState(false);
-  const submit = (event: FormEvent) => { event.preventDefault(); setCreating(true); window.setTimeout(() => navigate("/sessions/sess-world"), 650); };
-  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><PageHeader eyebrow="NEW SESSION" title="创建 Session" description="每个 Session 都拥有独立、持久的游戏目录与原生存档。"/>
-    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={e => setName(e.target.value)} required/></label><label><span>游戏</span><select defaultValue="world"><option value="world">ERA: The World</option><option value="megaten">ERA Megaten</option><option value="training">ERA Training</option></select></label><div className="form-explain"><Icon name="archive"/><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div><div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={creating}>{creating ? <><span className="mini-spinner"/>正在启动 Worker…</> : <><Icon name="play"/>创建并开始</>}</button></div></form>
-  </div>;
-}
-
-function ConsolePage() {
-  const [connected, setConnected] = useState(true);
-  const [input, setInput] = useState("");
-  const [log, setLog] = useState<string[]>([]);
-  const [closing, setClosing] = useState(false);
-  const [displayMode, setDisplayMode] = useState<"modern" | "compatibility">("modern");
-  const submit = (value: string) => { if (!value.trim()) return; setLog(previous => [...previous, `> ${value}`, "港口的风带来微咸的气息。接下来要去哪里？"]); setInput(""); };
-  return <div className={`console-page ${displayMode === "compatibility" ? "compatibility-mode" : "modern-mode"}`}>
-    <header className="console-header"><div className="console-title"><Link className="icon-button" to="/sessions" aria-label="返回 Session"><span className="back-arrow">←</span></Link><span className="session-art coral">世</span><div><h1>周目二 · 港口存档</h1><p>ERA: The World · v2.14.7</p></div></div><div className="console-controls"><div className="display-mode-toggle" aria-label="控制台显示模式"><button aria-pressed={displayMode === "modern"} onClick={() => setDisplayMode("modern")}>现代</button><button aria-pressed={displayMode === "compatibility"} onClick={() => setDisplayMode("compatibility")}>兼容</button></div><button className="connection-chip" onClick={() => setConnected(!connected)}><span className={connected ? "online" : "offline"}/>{connected ? "实时连接" : "连接中断"}</button><button className="icon-button" aria-label="Session 设置"><Icon name="settings"/></button><button className="danger-text" onClick={() => setClosing(true)}>关闭 Session</button></div></header>
-    {!connected && <div className="reconnect-banner"><span className="mini-spinner"/><p><strong>连接已中断，正在恢复…</strong><small>游戏仍在服务器上运行，你的输入会在重新连接后恢复。</small></p><button onClick={() => setConnected(true)}>立即重试</button></div>}
-    <div className="console-layout">
-      {displayMode === "modern"
-        ? <ModernConsole log={log} onSubmit={submit}/>
-        : <CompatibilityConsole log={log} onSubmit={submit}/>}
-      <aside className="console-aside"><div className="aside-block"><p className="aside-title">SESSION</p><dl><div><dt>状态</dt><dd><Status state="RUNNING"/></dd></div><div><dt>浏览器连接</dt><dd>{connected ? "已连接" : "正在重连"}</dd></div><div><dt>运行时长</dt><dd>3 小时 24 分</dd></div><div><dt>存档布局</dt><dd>sav/</dd></div><div><dt>输出序号</dt><dd>#18,429</dd></div></dl></div><div className="aside-block"><p className="aside-title">QUICK ACTIONS</p><Link to="/saves"><Icon name="save"/>查看存档<Icon name="arrow"/></Link><button><Icon name="download"/>保存控制台记录<Icon name="arrow"/></button></div><div className="aside-note"><Icon name="clock"/><p><strong>正在等待输入</strong><small>其他已连接设备也能看到此提示，第一个有效回答会生效。</small></p></div></aside>
-    </div>
-    <form className="console-input" onSubmit={e => { e.preventDefault(); submit(input); }}><div className="input-inner"><label><span className="sr-only">输入游戏指令</span><input value={input} onChange={e => setInput(e.target.value)} placeholder="输入选项编号或文字…" disabled={!connected}/></label><span className="input-hint">Enter 发送</span><button className="primary-button" disabled={!connected || !input.trim()}>发送 <Icon name="arrow"/></button></div></form>
-    {closing && <ConfirmDialog title="关闭这个 Session？" body="Worker 会停止，之后不能从当前指令继续；SessionRoot 和其中的原生存档会被保留。" confirm="确认关闭" onCancel={() => setClosing(false)}/>}
-  </div>;
-}
-
-function ModernConsole({ log, onSubmit }: { log: string[]; onSubmit: (value: string) => void }) {
-  return <section className="game-console" aria-label="游戏控制台（现代模式）" aria-live="polite"><div className="console-paper">
-    <div className="chapter-mark"><span>03</span><i/></div><p className="narration muted">—— 海风历 1024 年，夏月第七日 ——</p><h2>港口都市 · 阿尔忒弥斯</h2><p className="narration">午后的阳光穿过百叶窗，在木质地板上留下细长的光斑。远处传来海鸟的鸣叫，与码头工人的号子混在一起。</p><p className="speaker">艾莉西亚</p><p className="dialogue">“你终于醒了。今天可有不少事情要做呢。”</p><div className="stat-board"><div><span>体力</span><strong>842 / 1,000</strong><i><b style={{width:"84%"}}/></i></div><div><span>心情</span><strong>平静</strong><i><b className="mood" style={{width:"68%"}}/></i></div><div><span>时间</span><strong>14:20</strong></div></div><p className="prompt-title">你打算怎么做？</p><div className="choice-grid"><button onClick={() => onSubmit("前往港口市场")}><kbd>1</kbd><span><strong>前往港口市场</strong><small>也许能找到一些有用的东西</small></span><Icon name="arrow"/></button><button onClick={() => onSubmit("留在旅店休息")}><kbd>2</kbd><span><strong>留在旅店休息</strong><small>恢复体力，推进时间</small></span><Icon name="arrow"/></button><button onClick={() => onSubmit("和艾莉西亚交谈")}><kbd>3</kbd><span><strong>和艾莉西亚交谈</strong><small>询问关于委托的消息</small></span><Icon name="arrow"/></button></div>{log.map((line, index) => line.startsWith(">") ? <p className="player-input" key={index}>{line}</p> : <p className="narration" key={index}>{line}</p>)}<div className="scroll-anchor"/>
-  </div></section>;
-}
-
-function CompatibilityConsole({ log, onSubmit }: { log: string[]; onSubmit: (value: string) => void }) {
-  return <section className="game-console classic-console" aria-label="游戏控制台（兼容模式）" aria-live="polite"><div className="classic-screen">
-    <div className="classic-toolbar"><span>Emuera Console</span><span>640 × 480 等宽布局</span></div>
-    <div className="classic-output">
-      <p className="classic-rule">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</p>
-      <p className="classic-center">海风历 1024 年　夏月第七日</p>
-      <p className="classic-center classic-heading">港口都市・阿尔忒弥斯</p>
-      <p className="classic-rule">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</p>
-      <p>午后的阳光穿过百叶窗，在木质地板上留下细长的光斑。</p>
-      <p>远处传来海鸟的鸣叫，与码头工人的号子混在一起。</p>
-      <p className="classic-spacer">　</p>
-      <p><span className="classic-name">【艾莉西亚】</span>“你终于醒了。今天可有不少事情要做呢。”</p>
-      <p className="classic-spacer">　</p>
-      <p>体力：<span className="classic-value">842 / 1000</span>　心情：<span className="classic-value">平静</span>　时间：<span className="classic-value">14:20</span></p>
-      <p className="classic-spacer">　</p>
-      <p className="classic-prompt">你打算怎么做？</p>
-      <div className="classic-choices">
-        <button onClick={() => onSubmit("1")}><span>[1]</span> 前往港口市场</button>
-        <button onClick={() => onSubmit("2")}><span>[2]</span> 留在旅店休息</button>
-        <button onClick={() => onSubmit("3")}><span>[3]</span> 和艾莉西亚交谈</button>
-      </div>
-      {log.map((line, index) => <p className={line.startsWith(">") ? "classic-user-input" : ""} key={index}>{line}</p>)}
-      <p className="classic-caret" aria-hidden="true">■</p>
-    </div>
-  </div></section>;
-}
-
-function SavesPage() {
-  const [session, setSession] = useState("closed");
-  const [deleteName, setDeleteName] = useState<string | null>(null);
-  const files = [{name:"save01.sav", label:"港口 · 第 18 日", size:"2.4 MB", modified:"今天 14:18"},{name:"save02.sav", label:"王都入口 · 第 12 日", size:"2.3 MB", modified:"昨天 22:40"},{name:"global.sav", label:"全局数据", size:"18 KB", modified:"今天 14:18"}];
-  const locked = session === "running";
-  return <>
-    <PageHeader eyebrow="NATIVE SAVES" title="原生存档" description="直接管理每个 SessionRoot 中由 Emuera 创建的存档文件。" actions={<button className="secondary-button" disabled={locked}><Icon name="upload"/>导入存档</button>}/>
-    <div className="save-layout"><aside className="save-sessions"><p className="aside-title">选择 SESSION</p><button className={session === "closed" ? "active" : ""} onClick={() => setSession("closed")}><span className="session-art amber">練</span><span><strong>测试 07</strong><small>ERA Training · 已关闭</small></span><Icon name="arrow"/></button><button className={session === "running" ? "active" : ""} onClick={() => setSession("running")}><span className="session-art coral">世</span><span><strong>周目二 · 港口存档</strong><small>ERA: The World · 运行中</small></span><Icon name="arrow"/></button></aside><section className="panel save-panel">
-      <div className="panel-heading"><div><h2>{locked ? "周目二 · 港口存档" : "测试 07"}</h2><p>原生布局：<code>{locked ? "sav/" : "GameRoot"}</code> · {locked ? "3 个文件" : "3 个文件，共 4.7 MB"}</p></div><Status state={locked ? "RUNNING" : "CLOSED"}/></div>
-      {locked && <div className="locked-banner"><Icon name="warning"/><p><strong>Session 运行时存档由 Worker 独占</strong><small>你仍可下载当前文件，但上传、重命名和删除需要先关闭 Session。</small></p><Link to="/sessions/sess-world">前往 Session</Link></div>}
-      <div className="save-table"><div className="save-table-head"><span>文件</span><span>大小</span><span>修改时间</span><span/></div>{files.map(file => <div className="save-file" key={file.name}><span className="file-icon"><Icon name="save"/></span><span><strong>{file.name}</strong><small>{file.label}</small></span><span>{file.size}</span><span>{file.modified}</span><span className="file-actions"><button aria-label={`下载 ${file.name}`}><Icon name="download"/></button><button aria-label={`删除 ${file.name}`} disabled={locked} onClick={() => setDeleteName(file.name)}><Icon name="close"/></button></span></div>)}</div>
-    </section></div>
-    {deleteName && <ConfirmDialog title={`删除 ${deleteName}？`} body="此操作会删除 SessionRoot 中的原生文件，且不能撤销。其他 Session 的存档不会受到影响。" confirm="删除存档" onCancel={() => setDeleteName(null)}/>}
-  </>;
 }
 
 function AdminPage() {
@@ -808,21 +710,33 @@ function RequireAuthenticated({ children }: { children: ReactNode }) {
 
 function RequireAdmin({ children }: { children: ReactNode }) { const { user } = useAuth(); return user?.role === "ADMIN" ? <>{children}</> : <Navigate to="/games" replace/>; }
 
-export function App() {
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, refetchOnWindowFocus: true },
+    mutations: { retry: false },
+  },
+});
+
+function AppRoutes() {
   return <Routes>
     <Route path="/login" element={<LoginPage/>}/>
     <Route path="/change-password" element={<ChangePasswordPage/>}/>
     <Route path="*" element={<RequireAuthenticated><AppShell><Routes>
       <Route path="/games" element={<GamesPage/>}/>
       <Route path="/games/:gameId" element={<GameDetailPage/>}/>
-      <Route path="/sessions" element={<SessionsPage/>}/>
-      <Route path="/sessions/new" element={<NewSessionPage/>}/>
-      <Route path="/sessions/:sessionId" element={<ConsolePage/>}/>
-      <Route path="/saves" element={<SavesPage/>}/>
+      <Route path="/sessions" element={<RealSessionsPage/>}/>
+      <Route path="/sessions/new" element={<RealNewSessionPage/>}/>
+      <Route path="/sessions/:sessionId/saves" element={<NativeSavesPage/>}/>
+      <Route path="/sessions/:sessionId" element={<RealtimeConsolePage/>}/>
+      <Route path="/saves" element={<NativeSavesPage/>}/>
       <Route path="/admin" element={<RequireAdmin><AdminPage/></RequireAdmin>}/>
       <Route path="/admin/users" element={<RequireAdmin><AdminUsersPage/></RequireAdmin>}/>
       <Route path="/settings" element={<SettingsPage/>}/>
       <Route path="*" element={<Navigate to="/games" replace/>}/>
     </Routes></AppShell></RequireAuthenticated>}/>
   </Routes>;
+}
+
+export function App() {
+  return <QueryClientProvider client={queryClient}><AppRoutes/></QueryClientProvider>;
 }

@@ -12,7 +12,9 @@ elif [[ $# -ne 0 ]]; then
   exit 64
 fi
 
-temp_root="$(mktemp -d)"
+temp_parent="$repo_root/.tmp"
+mkdir -p "$temp_parent"
+temp_root="$(mktemp -d "$temp_parent/identity-e2e.XXXXXX")"
 mkdir "$temp_root/data"
 project_name="cloudemuera-identity-e2e-${RANDOM}-${RANDOM}"
 cleanup() {

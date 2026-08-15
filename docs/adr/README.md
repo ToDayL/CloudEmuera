@@ -25,3 +25,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0020：API 快照镜像与有界实时输出](0020-api-snapshot-mirror-and-bounded-realtime-output.md)
 - [ADR-0021：冻结 Realtime WebSocket v1 与输入回执边界](0021-freeze-realtime-websocket-v1.md)
 - [ADR-0022：Session 原生存档单文件大小上限](0022-session-save-file-cap.md)
+- [ADR-0023：Session Presentation Asset 身份、清单与浏览器安全策略](0023-session-presentation-assets-and-csp.md)

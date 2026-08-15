@@ -1,0 +1,111 @@
+import { useQuery } from "@tanstack/react-query";
+import { FormEvent, useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ApiError } from "../api";
+import { formatDateTime, listGames, shortDigest } from "../games";
+import { closeSession, createSession, openSession, useSessionList, waitForSession, type SessionState, type SessionView } from "./api";
+
+function stateLabel(state: SessionState): string {
+  return ({ CREATING: "创建中", STARTING: "启动中", RUNNING: "运行中", STOPPING: "停止中", CLOSED: "已关闭", CRASHED: "已崩溃" } as Record<SessionState, string>)[state];
+}
+
+function isActive(state: SessionState): boolean {
+  return state === "RUNNING" || state === "STARTING" || state === "STOPPING";
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.code === "GAME_HAS_NO_CURRENT_CONTENT") return "这个游戏还没有可运行的当前内容。";
+    if (error.code === "GAME_BLOCKED") return "这个游戏当前已被禁用。";
+    if (error.code === "SESSION_TRANSITION_IN_PROGRESS") return "Session 正在进行另一个生命周期操作，请稍后刷新。";
+    if (error.code === "ACTIVE_WORKER_LIMIT_EXCEEDED") return "活动 Worker 名额已满，请先关闭其他 Session。";
+  }
+  return error instanceof Error ? error.message : "操作失败。";
+}
+
+export function SessionsPage() {
+  const navigate = useNavigate();
+  const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "CLOSED" | "CRASHED">("ALL");
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [actionId, setActionId] = useState<string | null>(null);
+  const query = useSessionList({ state: filter === "CLOSED" ? "CLOSED" : filter === "CRASHED" ? "CRASHED" : undefined, cursor, limit: 50 });
+  const items = (query.data?.items ?? []).filter(item => filter !== "ACTIVE" || isActive(item.state));
+  const activeCount = items.filter(item => isActive(item.state)).length;
+  const waitingCount = items.filter(item => item.waitingForInput && item.state === "RUNNING").length;
+  const [message, setMessage] = useState<string | null>(null);
+
+  const lifecycle = async (session: SessionView, operation: "open" | "close") => {
+    if (operation === "close" && !window.confirm(`关闭「${session.name}」？Worker 会停止，但 SessionRoot 和存档会保留。`)) return;
+    setActionId(session.id); setMessage(null);
+    try {
+      const result = operation === "open" ? await openSession(session.id) : await closeSession(session.id);
+      await waitForSession(session.id, operation === "open" ? new Set<SessionState>(["RUNNING"]) : new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === (operation === "open" ? "RUNNING" : "CLOSED") ? 1 : 60 });
+      await query.refetch();
+      if (operation === "open") navigate(`/sessions/${session.id}`);
+    } catch (error) { setMessage(errorMessage(error)); }
+    finally { setActionId(null); }
+  };
+
+  return <>
+    <header className="page-header"><div><p className="eyebrow">SESSIONS</p><h1>游戏 Session</h1><p>浏览器离开后，活动 Session 仍会继续运行并等待你回来。</p></div><div className="page-actions"><Link className="primary-button" to="/sessions/new">＋ 创建 Session</Link></div></header>
+    <div className="session-stats"><article><span className="pulse-dot"/><div><strong>{activeCount}</strong><small>活动 Worker</small></div></article><article><span aria-hidden="true">◷</span><div><strong>{waitingCount}</strong><small>等待输入</small></div></article><article><span aria-hidden="true">▦</span><div><strong>{items.length}</strong><small>当前列表 Session</small></div></article></div>
+    <div className="toolbar"><div className="segment-control" aria-label="Session 筛选"><button className={filter === "ALL" ? "selected" : ""} onClick={() => { setFilter("ALL"); setCursor(undefined); }}>全部</button><button className={filter === "ACTIVE" ? "selected" : ""} onClick={() => { setFilter("ACTIVE"); setCursor(undefined); }}>活动中</button><button className={filter === "CLOSED" ? "selected" : ""} onClick={() => { setFilter("CLOSED"); setCursor(undefined); }}>已关闭</button><button className={filter === "CRASHED" ? "selected" : ""} onClick={() => { setFilter("CRASHED"); setCursor(undefined); }}>已崩溃</button></div></div>
+    {message && <div className="error-banner" role="alert"><strong>操作未完成</strong><small>{message}</small></div>}
+    {query.isPending ? <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/>正在读取 Session…</div>
+      : query.isError ? <div className="panel error-panel" role="alert"><strong>无法读取 Session</strong><p>{errorMessage(query.error)}</p><button className="secondary-button" onClick={() => void query.refetch()}>重试</button></div>
+      : items.length === 0 ? <div className="empty-state"><span className="empty-icon">◌</span><h2>还没有 Session</h2><p>从已启用当前内容的游戏创建一个独立、可重连的 Session。</p><Link className="primary-button" to="/sessions/new">创建 Session</Link></div>
+      : <section className="session-list" aria-label="Session 列表">{items.map(session => <SessionRow key={session.id} session={session} busy={actionId === session.id} onLifecycle={operation => void lifecycle(session, operation)} />)}</section>}
+    {query.data?.nextCursor && <div className="pagination-actions"><button className="secondary-button" onClick={() => setCursor(query.data?.nextCursor ?? undefined)} disabled={query.isFetching}>加载更多</button></div>}
+    <div className="info-banner"><span aria-hidden="true">✦</span><p><strong>Session 与浏览器连接相互独立</strong><small>关闭标签页不会停止游戏。请在不再需要时显式关闭 Session，以释放 Worker 名额。</small></p></div>
+  </>;
+}
+
+function SessionRow({ session, busy, onLifecycle }: { session: SessionView; busy: boolean; onLifecycle: (operation: "open" | "close") => void }) {
+  const color = ["coral", "violet", "amber", "blue", "green"][session.id.charCodeAt(0) % 5];
+  const canOpen = session.state === "CLOSED" || session.state === "CRASHED";
+  return <article className="session-row">
+    <span className={`session-art ${color}`}>{session.name.slice(0, 1)}</span>
+    <div className="session-main"><div><h2>{session.name}</h2><p>{session.game.name} <span>·</span> {shortDigest(session.sourceContentDigest)}</p></div><div className="session-badges"><span className={`status-pill ${session.state.toLowerCase()}`}><i/>{stateLabel(session.state)}</span>{session.waitingForInput && session.state === "RUNNING" && <span className="tag waiting">◷ 等待输入</span>}</div></div>
+    <div className="session-meta"><span>最后活动</span><strong>{formatDateTime(session.lastActivityAt)}</strong></div>
+    <div className="session-meta"><span>创建时间</span><strong>{formatDateTime(session.createdAt)}</strong></div>
+    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? "启动中…" : "继续游戏"}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>继续游戏</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>关闭</button>}<Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>存档</Link></div>
+  </article>;
+}
+
+export function NewSessionPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedGame = searchParams.get("game");
+  const games = useQuery({ queryKey: ["games", "session-create"], queryFn: listGames, staleTime: 3_000 });
+  const availableGames = (games.data ?? []).filter(game => game.status === "ACTIVE" && game.hasCurrentContent);
+  const [gameId, setGameId] = useState(requestedGame && availableGames.some(game => game.id === requestedGame) ? requestedGame : "");
+  const [name, setName] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!gameId && requestedGame && availableGames.some(game => game.id === requestedGame)) setGameId(requestedGame);
+  }, [availableGames, gameId, requestedGame]);
+
+  const selected = availableGames.find(game => game.id === gameId);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selected) { setError("请选择一个有当前内容的可运行游戏。"); return; }
+    setPending(true); setError(null);
+    try {
+      const created = await createSession(selected.id, name.trim() || `${selected.name} · 新旅程`);
+      const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]));
+      const opened = await openSession(ready.id);
+      const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING"]));
+      navigate(`/sessions/${running.id}`);
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setPending(false); }
+  };
+
+  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">NEW SESSION</p><h1>创建 Session</h1><p>每个 Session 都拥有独立、持久的游戏目录与原生存档。</p></div></header>
+    {games.isError && <div className="error-banner" role="alert"><strong>无法读取游戏库</strong><small>{errorMessage(games.error)}</small></div>}
+    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：周目三 · 新旅程" maxLength={120} required /></label><label><span>游戏</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">请选择游戏</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? "（已禁用）" : !game.hasCurrentContent ? "（无当前内容）" : ""}</option>)}</select></label><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || games.isPending || !selected}>{pending ? <><span className="mini-spinner"/>正在创建并启动…</> : "创建并开始"}</button></div></form>
+  </div>;
+}
+
+export function sessionGameGlyph(session: SessionView): string { return session.game.name.slice(0, 1); }

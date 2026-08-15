@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "reducer-v1",
+  "initialState": {
+    "lines": [
+      { "lineId": "seed", "text": "Seed", "alignment": "left", "temporary": false }
+    ]
+  },
+  "transactions": [
+    {
+      "sequence": 1,
+      "operations": [
+        { "type": "appendLine", "line": { "lineId": "intro", "text": "Hello", "alignment": "center", "temporary": false } },
+        { "type": "appendInline", "lineId": "seed", "text": "!" }
+      ]
+    },
+    {
+      "sequence": 2,
+      "operations": [
+        { "type": "replaceLine", "line": { "lineId": "intro", "text": "Running", "alignment": "center", "temporary": true } },
+        { "type": "appendLine", "line": { "lineId": "remove-me", "text": "Transient", "alignment": "right", "temporary": false } }
+      ]
+    },
+    {
+      "sequence": 3,
+      "operations": [
+        { "type": "deleteLines", "lineIds": ["seed", "remove-me"] },
+        { "type": "appendLine", "line": { "lineId": "done", "text": "Done", "alignment": "left", "temporary": false } }
+      ]
+    }
+  ],
+  "expectedState": {
+    "sequence": 3,
+    "lines": [
+      { "lineId": "intro", "text": "Running", "alignment": "center", "temporary": true },
+      { "lineId": "done", "text": "Done", "alignment": "left", "temporary": false }
+    ]
+  }
+}

@@ -36,6 +36,41 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Response | Prom
   return fetchMock;
 }
 
+function session(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 1,
+    id: "sess-world",
+    name: "港口旅程",
+    game: { id: "g1", name: "ERA: The World" },
+    sourceContentDigest: digest,
+    sourceContentRevision: 1,
+    runtimeVersion: "emuera-test",
+    state: "RUNNING",
+    stateVersion: 3,
+    workerEpoch: 7,
+    waitingForInput: false,
+    createdAt: "2026-08-10T00:00:00Z",
+    startedAt: "2026-08-10T00:01:00Z",
+    lastActivityAt: "2026-08-10T00:02:00Z",
+    closedAt: null,
+    closeReason: null,
+    ...overrides,
+  };
+}
+
+function emptyPresentationManifest() {
+  return { schemaVersion: 1, assets: [], fonts: [], fontDiagnostics: [] };
+}
+
+class SilentWebSocket {
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+  readonly readyState = 0;
+  addEventListener(): void { /* connection remains pending for this test */ }
+  send(): void { /* no server is needed for the reconnect UI assertion */ }
+  close(): void { /* no-op */ }
+}
+
 describe("App", () => {
   function renderAt(path: string) {
     const user: CurrentUser = { id: "usr_test", username: "tester", email: "tester@example.com", role: "PLAYER", status: "ACTIVE", mustChangePassword: false, stateVersion: 0 };
@@ -264,32 +299,37 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows reconnect state without closing the session", () => {
+  it("loads a real Session while the browser connection is pending", async () => {
+    const currentSession = session();
+    mockFetch((url) => {
+      if (url === "/api/v1/sessions/sess-world") return jsonResponse(currentSession);
+      if (url === "/api/v1/sessions/sess-world/presentation-manifest") return jsonResponse(emptyPresentationManifest());
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    vi.stubGlobal("WebSocket", SilentWebSocket);
     renderAt("/sessions/sess-world");
 
-    fireEvent.click(screen.getByRole("button", { name: "实时连接" }));
-
-    expect(screen.getByText("连接已中断，正在恢复…")).toBeInTheDocument();
-    expect(screen.getByText("游戏仍在服务器上运行，你的输入会在重新连接后恢复。")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "港口旅程" })).toBeInTheDocument();
+    expect(screen.getAllByText("连接中").length).toBeGreaterThan(0);
+    expect(screen.getByText("等待 Worker 快照…")).toBeInTheDocument();
+    expect(screen.getAllByText("运行中").length).toBeGreaterThan(0);
+    vi.unstubAllGlobals();
   });
 
-  it("switches to the Emuera-compatible console without losing input behavior", () => {
-    const view = renderAt("/sessions/sess-world");
-
-    fireEvent.click(view.getByRole("button", { name: "兼容" }));
-
-    expect(view.getByRole("region", { name: "游戏控制台（兼容模式）" })).toBeInTheDocument();
-    expect(view.getByText("Emuera Console")).toBeInTheDocument();
-    fireEvent.click(view.getByRole("button", { name: "[1] 前往港口市场" }));
-    expect(view.getByText("> 1")).toBeInTheDocument();
-  });
-
-  it("locks save mutation while a worker is active", () => {
+  it("locks native save mutations while the real Session is running", async () => {
+    const currentSession = session({ name: "周目二", game: { id: "g1", name: "港口游戏" } });
+    mockFetch((url) => {
+      if (url === "/api/v1/sessions?limit=100") return jsonResponse({ items: [currentSession], nextCursor: null });
+      if (url === "/api/v1/sessions/sess-world") return jsonResponse(currentSession);
+      if (url === "/api/v1/sessions/sess-world/saves") return jsonResponse({ schemaVersion: 1, layout: "SAV_DIRECTORY", items: [{ path: "save01.sav", kind: "NATIVE_SAVE", sizeBytes: 128, modifiedAt: "2026-08-10T00:02:00Z" }] });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
     renderAt("/saves");
-    fireEvent.click(screen.getByRole("button", { name: /周目二 · 港口存档/ }));
 
+    expect(await screen.findByText("周目二")).toBeInTheDocument();
     expect(screen.getByText("Session 运行时存档由 Worker 独占")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "删除 save01.sav" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "重命名 save01.sav" })).toBeDisabled();
   });
 
   it("lets an administrator create a local user through the real admin API contract", async () => {

@@ -2,7 +2,10 @@
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/scripts/lib/dev-env.sh"
-temp_root="$(mktemp -d)"
+temp_parent="$repo_root/.tmp"
+mkdir -p "$temp_parent"
+temp_root="$(mktemp -d "$temp_parent/identity.XXXXXX")"
+mkdir "$temp_root/data"
 project_name="cloudemuera-identity-${RANDOM}-${RANDOM}"
 cleanup() { docker compose --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/compose.dev.yaml" down --remove-orphans --volumes >/dev/null 2>&1 || true; rm -rf "$temp_root"; }
 trap cleanup EXIT

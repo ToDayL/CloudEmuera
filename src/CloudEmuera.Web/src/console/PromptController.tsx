@@ -1,0 +1,53 @@
+import { useCallback, useEffect, useState } from "react";
+import type { Prompt } from "../realtime/protocol";
+import { DeadlineClock } from "./DeadlineClock";
+import type { ConsoleInputEvent } from "./ScrollbackRenderer";
+
+export function PromptController({ prompt, disabled, pending, serverTimeOffsetMilliseconds, onInput }: { prompt: Prompt; disabled?: boolean; pending?: boolean; serverTimeOffsetMilliseconds: number; onInput: (event: ConsoleInputEvent) => void }) {
+  const [value, setValue] = useState(prompt.defaultValue ?? "");
+  const [deadlineExpired, setDeadlineExpired] = useState(() => prompt.deadlineUnixMilliseconds > 0 && prompt.deadlineUnixMilliseconds <= Date.now() + serverTimeOffsetMilliseconds);
+  useEffect(() => setValue(prompt.defaultValue ?? ""), [prompt.promptId, prompt.defaultValue]);
+  useEffect(() => setDeadlineExpired(prompt.deadlineUnixMilliseconds > 0 && prompt.deadlineUnixMilliseconds <= Date.now() + serverTimeOffsetMilliseconds), [prompt.promptId, prompt.deadlineUnixMilliseconds, serverTimeOffsetMilliseconds]);
+  const markDeadlineExpired = useCallback(() => setDeadlineExpired(true), []);
+  const controlsDisabled = Boolean(disabled || pending || deadlineExpired);
+  const sourceAllowed = (source: "keyboard" | "button" | "pointer") => prompt.allowedSources.includes(source);
+  const submit = (source: ConsoleInputEvent["source"], nextValue = value, metadata: Pick<ConsoleInputEvent, "pointer" | "key"> = {}) => {
+    const sourceName = source === "KEYBOARD" ? "keyboard" : source === "BUTTON" ? "button" : "pointer";
+    if (controlsDisabled || !sourceAllowed(sourceName) || prompt.inputType === "waitOnly") return;
+    onInput({ value: nextValue, source, ...metadata });
+  };
+  const constrainValue = (nextValue: string): string => {
+    const limited = prompt.constraints.maxLength ? nextValue.slice(0, prompt.constraints.maxLength) : nextValue;
+    return prompt.oneInput ? Array.from(limited)[0] ?? "" : limited;
+  };
+  const integerInput = prompt.inputType === "integer" || prompt.inputType === "integerButton";
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const key = { keyCode: event.keyCode || event.which, control: event.ctrlKey, alt: event.altKey, shift: event.shiftKey };
+    if (prompt.inputType === "anyKey" || prompt.inputType === "primitivePointerKey") {
+      event.preventDefault();
+      submit("KEYBOARD", constrainValue(event.key), { key });
+    } else if (prompt.inputType === "enterKey" && event.key === "Enter") {
+      event.preventDefault();
+      submit("KEYBOARD", constrainValue(value), { key });
+    }
+  };
+  const onAnyKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    const key = { keyCode: event.keyCode || event.which, control: event.ctrlKey, alt: event.altKey, shift: event.shiftKey };
+    submit("KEYBOARD", constrainValue(event.key), { key });
+  };
+  const requiresText = !["waitOnly", "anyKey", "primitivePointerKey"].includes(prompt.inputType);
+  if (prompt.systemInput) return <section className="prompt-controller" aria-label="游戏正在处理"><div className="prompt-heading"><p>{prompt.promptText ?? "游戏正在处理"}</p><DeadlineClock deadlineUnixMilliseconds={prompt.deadlineUnixMilliseconds} serverTimeOffsetMilliseconds={serverTimeOffsetMilliseconds} /></div><p className="input-hint">这是由游戏运行时处理的输入，不提供可伪造的浏览器控件。</p></section>;
+  return <section className="prompt-controller" aria-label="游戏输入提示">
+    <div className="prompt-heading"><p>{prompt.promptText ?? "等待输入"}</p><DeadlineClock deadlineUnixMilliseconds={prompt.deadlineUnixMilliseconds} serverTimeOffsetMilliseconds={serverTimeOffsetMilliseconds} onExpired={markDeadlineExpired} /></div>
+    {requiresText && <form onSubmit={event => { event.preventDefault(); submit(sourceAllowed("button") ? "BUTTON" : "KEYBOARD", constrainValue(value), sourceAllowed("button") ? {} : { key: { keyCode: 13, control: false, alt: false, shift: false } }); }}>
+      <input autoFocus type={integerInput ? "number" : "text"} value={value} onChange={event => setValue(constrainValue(event.target.value))} onKeyDown={onKeyDown} disabled={controlsDisabled} maxLength={prompt.constraints.maxLength ?? undefined} min={integerInput ? prompt.constraints.minimum ?? undefined : undefined} max={integerInput ? prompt.constraints.maximum ?? undefined : undefined} step={integerInput ? 1 : undefined} inputMode={integerInput ? "numeric" : "text"} aria-label="游戏输入" />
+      <button className="primary-button" type="submit" disabled={controlsDisabled || (!sourceAllowed("keyboard") && !sourceAllowed("button"))}>{pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "发送"}</button>
+    </form>}
+    {prompt.inputType === "anyKey" && <button className="secondary-button prompt-any-key" type="button" autoFocus onKeyDown={onAnyKeyDown} onClick={event => event.preventDefault()} disabled={controlsDisabled || !sourceAllowed("keyboard")}>{pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "按任意键继续"}</button>}
+    {prompt.inputType === "primitivePointerKey" && <button className="secondary-button prompt-any-key" type="button" autoFocus onKeyDown={onAnyKeyDown} onClick={event => event.preventDefault()} disabled={controlsDisabled || !sourceAllowed("keyboard")}>{pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "按键或触摸画布交互区域"}</button>}
+    {prompt.inputType === "waitOnly" && <p className="input-hint" role="status" aria-live="polite">等待游戏继续，不需要浏览器输入。</p>}
+    {prompt.timeoutMessage && <small className="prompt-timeout-message">{prompt.timeoutMessage}</small>}
+  </section>;
+}

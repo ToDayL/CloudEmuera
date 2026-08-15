@@ -6,6 +6,10 @@
   "scripts": {
     "build:web": "pnpm --dir src/CloudEmuera.Web build",
     "test:web": "pnpm --dir src/CloudEmuera.Web test",
-    "typecheck:web": "pnpm --dir src/CloudEmuera.Web typecheck"
+    "typecheck:web": "pnpm --dir src/CloudEmuera.Web typecheck",
+    "generate:api-types": "node scripts/generate-api-types.mjs",
+    "generate:realtime-types": "node scripts/generate-realtime-types.mjs",
+    "generate:capabilities": "node scripts/generate-capabilities.mjs",
+    "verify:contracts": "node scripts/verify-generated-contracts.mjs"
   }
 }

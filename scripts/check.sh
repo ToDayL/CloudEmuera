@@ -13,4 +13,4 @@ docker compose -f compose.dev.yaml run --rm api dotnet build CloudEmuera.slnx --
 ./scripts/test-identity.sh --suite api
 docker compose -f compose.dev.yaml run --rm api dotnet test CloudEmuera.slnx --no-build --configuration Release
 docker compose -f compose.dev.yaml run --rm web sh -c \
-  "pnpm install --frozen-lockfile && pnpm typecheck:web && pnpm test:web && pnpm build:web"
+  "pnpm install --frozen-lockfile && CLOUDEMUERA_OPENAPI_URL=http://api:28647/openapi/v1.json pnpm verify:contracts && pnpm typecheck:web && pnpm test:web && pnpm build:web"

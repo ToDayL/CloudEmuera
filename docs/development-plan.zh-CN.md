@@ -678,28 +678,46 @@ docker compose -f compose.dev.yaml run --rm api \
 恢复屏障、幂等/审计/删除确认和周期恢复器。新增路径安全、格式/数据库约束和 HTTP 端到端测试；开发容器
 已成功应用 `20260814120000_AddSessionSaveFileOperations`。
 
-### P1-11 — 浏览器 Session 控制台和存档界面（TODO）
+### P1-11 — 浏览器 Session 控制台和存档界面（DONE；最终发布矩阵待 P1-15）
 
-需求映射：SESS-004～006、PLAY-001～003、PLAY-006～009、PLAY-011、SAVE-003、COMP-007、
-AC-005/008/009/011。
+需求映射：AUTH-001～003/005、SESS-003～007/010～012、PLAY-001～012、SAVE-003/006/009、
+COMP-007、SEC-006/008/009、NFR-001/006～008/013、AC-002/005/008/009/011/012/014。
 
-交付物：登录、游戏包检查与只读文件查看、Session 列表、Session 创建/open/close/重开、结构化
-Console、输入控件、完整 Snapshot 重连状态和存档管理页面；实现 P1-07 定义的全部结构化文本、布局、
+详细方案：
+[`tasks/P1-11-browser-session-console-save-ui-plan.zh-CN.md`](tasks/P1-11-browser-session-console-save-ui-plan.zh-CN.md)。
+
+交付物：复用已完成的登录、游戏包检查与只读文件查看；实现 Session 列表、Session 创建/open/close/
+重开、结构化 Console、输入控件、完整 Snapshot 重连状态和存档管理页面；实现按 Session 授权的
+runtime asset/presentation manifest API，以及 P1-07 定义的全部结构化文本、布局、
 按钮、图片/Sprite、背景、Shape/CBG、动画和 WebAudio 渲染，以及全部输入类型、服务端 deadline
-倒计时、超时提示和禁用/迟到状态；移动安全区、软键盘、触摸与键盘处理。删除或隐藏 P1-04 已实现的
-浏览器文件写入、创建、重命名、删除和搜索入口。
+倒计时、超时提示和禁用/迟到状态；移动安全区、软键盘、触摸与键盘处理。删除或隐藏不属于 P1-04
+只读 Game 文件范围的浏览器写入、创建、重命名、删除和搜索入口。
 
 验证：
 
 ```bash
-pnpm --dir src/CloudEmuera.Web test
-pnpm --dir e2e test
+source scripts/lib/dev-env.sh
+docker compose -f compose.dev.yaml run --rm web \
+  sh -c 'pnpm install --frozen-lockfile && CLOUDEMUERA_OPENAPI_URL=http://api:28647/openapi/v1.json pnpm verify:contracts && pnpm typecheck:web && pnpm test:web && pnpm build:web'
+./scripts/test-session-ui-e2e.sh
 ```
 
 通过条件：组件测试覆盖每一种 P1-07 节点/操作、输入类型、媒体状态及错误分支；Playwright 在桌面和
 移动 viewport 完成登录、发布、创建 Session、普通与计时输入、倒计时期间断线重连、超时继续执行、
 Sprite/背景/绘图/音频、存档下载；客户端时钟偏差不改变 Worker 裁决结果；基础键盘导航、媒体控制和
-可访问性扫描无阻断错误。
+可访问性扫描无阻断错误；所有图片、字体和音频只经授权 Session API 提供，协议类型、epoch/sequence
+归约、资源摘要/MIME/CSP 和跨用户边界均有自动化测试。
+
+实施记录（2026-08-15）：完成真实 Session 列表/创建/开启/关闭/重开页面、单一 WebSocket connection
+manager、闭合 realtime decoder、Snapshot/transaction reducer、输入回执与服务端 deadline 展示；完成
+DOM scrollback、安全 HTML AST、Canvas scene/background/raster/shape/hit region、Session-scoped
+asset/presentation manifest、确定性多字体映射与诊断、媒体 revision/手势/失败回调及原生存档
+list/download/upload/replace/rename/delete 页面。新增 [`ADR-0023`](adr/0023-session-presentation-assets-and-csp.md)，
+共享 C#/TypeScript reducer fixture、由 realtime JSON Schema 直接生成闭合 TypeScript payload/node/
+operation/message union、OpenAPI/realtime/capability 生成与 drift check、Range/资产安全/a11y/
+连接和 renderer 测试；`scripts/test-session-ui-e2e.sh --no-build` 在工作区隔离 DataRoot 中通过
+Chromium desktop、mobile Chromium、mobile WebKit 三端真实 create→open→Snapshot→input→close→save
+download→reopen 纵切。完整七场景发布矩阵、Firefox/WebKit desktop 和视觉阈值继续由 P1-15 扩展验收。
 
 ### P1-12 — 基本管理、诊断与就绪检查（TODO）
 

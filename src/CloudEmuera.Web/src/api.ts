@@ -12,18 +12,30 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export interface ApiResponse<T> {
+  value: T;
+  response: Response;
+}
+
+async function readApiError(response: Response): Promise<never> {
+  const body = await response.json().catch(() => ({})) as { message?: string; code?: string; requestId?: string };
+  throw new ApiError(
+    body.message ?? "请求失败。",
+    body.code ?? "REQUEST_FAILED",
+    response.status,
+    body.requestId,
+  );
+}
+
+export async function apiRequestWithMeta<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   const response = await fetch(`/api/v1${path}`, { credentials: "same-origin", ...init });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new ApiError(
-      body.message ?? "请求失败。",
-      body.code ?? "REQUEST_FAILED",
-      response.status,
-      body.requestId,
-    );
-  }
-  return response.status === 204 ? (undefined as T) : (response.json() as Promise<T>);
+  if (!response.ok) await readApiError(response);
+  const value = response.status === 204 ? undefined as T : await response.json() as T;
+  return { value, response };
+}
+
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await apiRequestWithMeta<T>(path, init)).value;
 }
 
 export async function getCsrfToken(): Promise<string> {

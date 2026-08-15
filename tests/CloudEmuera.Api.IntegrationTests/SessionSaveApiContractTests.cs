@@ -3,6 +3,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using System.Security.Cryptography;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using CloudEmuera.Application.GamePackages;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Contracts.Games;
@@ -80,6 +83,148 @@ public sealed class SessionSaveApiContractTests : IDisposable
             .Content.ReadFromJsonAsync<SessionResponse>()
         ?? throw new Xunit.Sdk.XunitException("Session create response was missing.");
         Assert.Equal("CLOSED", session.State);
+
+        HttpResponseMessage manifestResponse = await client.GetAsync($"/api/v1/sessions/{session.Id}/presentation-manifest");
+        Assert.Equal(HttpStatusCode.OK, manifestResponse.StatusCode);
+        PresentationManifestResponse manifest = await manifestResponse.Content.ReadFromJsonAsync<PresentationManifestResponse>()
+            ?? throw new Xunit.Sdk.XunitException("Presentation manifest response was missing.");
+        byte[] expectedPng = FixturePng();
+        string expectedDigest = Convert.ToHexString(SHA256.HashData(expectedPng)).ToLowerInvariant();
+        PresentationAssetResponse asset = Assert.Single(manifest.Assets, item => item.MediaType == "image/png");
+        Assert.Equal($"sha256-{expectedDigest}", asset.AssetId);
+        PresentationFontResponse[] fonts = manifest.Fonts;
+        Assert.Equal(2, fonts.Length);
+        Assert.Contains(fonts, item => item.Family == "default");
+        Assert.Equal(fonts.Length, fonts.Select(item => item.Family).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(fonts.Length, fonts.Select(item => item.CssFamily).Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains("FONT_MULTIPLE_ASSETS_ISOLATED", manifest.FontDiagnostics);
+        using HttpResponseMessage assetResponse = await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        Assert.Equal(HttpStatusCode.OK, assetResponse.StatusCode);
+        Assert.Equal("image/png", assetResponse.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(expectedPng, await assetResponse.Content.ReadAsByteArrayAsync());
+        Assert.Contains("private", assetResponse.Headers.CacheControl?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("immutable", assetResponse.Headers.CacheControl?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("bytes", assetResponse.Headers.AcceptRanges.ToString());
+        Assert.False(string.IsNullOrWhiteSpace(assetResponse.Headers.ETag?.ToString()));
+        using HttpRequestMessage cachedRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        cachedRequest.Headers.TryAddWithoutValidation("If-None-Match", assetResponse.Headers.ETag?.ToString());
+        using HttpResponseMessage cachedResponse = await client.SendAsync(cachedRequest);
+        Assert.Equal(HttpStatusCode.NotModified, cachedResponse.StatusCode);
+        using HttpRequestMessage rangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        rangeRequest.Headers.Range = new RangeHeaderValue(0, 7);
+        using HttpResponseMessage rangeResponse = await client.SendAsync(rangeRequest);
+        Assert.Equal(HttpStatusCode.PartialContent, rangeResponse.StatusCode);
+        Assert.Equal(expectedPng[..8], await rangeResponse.Content.ReadAsByteArrayAsync());
+        using HttpRequestMessage multiRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        multiRangeRequest.Headers.TryAddWithoutValidation("Range", "bytes=0-1,4-5");
+        using HttpResponseMessage multiRangeResponse = await client.SendAsync(multiRangeRequest);
+        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, multiRangeResponse.StatusCode);
+        using HttpRequestMessage suffixRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        suffixRangeRequest.Headers.TryAddWithoutValidation("Range", "bytes=-8");
+        using HttpResponseMessage suffixRangeResponse = await client.SendAsync(suffixRangeRequest);
+        Assert.Equal(HttpStatusCode.PartialContent, suffixRangeResponse.StatusCode);
+        Assert.Equal(expectedPng[^8..], await suffixRangeResponse.Content.ReadAsByteArrayAsync());
+        using HttpRequestMessage invalidRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        invalidRangeRequest.Headers.TryAddWithoutValidation("Range", "bytes=999-");
+        using HttpResponseMessage invalidRangeResponse = await client.SendAsync(invalidRangeRequest);
+        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, invalidRangeResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/not-a-digest")).StatusCode);
+
+        // SEC-008: a frozen entry is fail-closed when the opened file is
+        // replaced with bytes that no longer match its MIME or digest.
+        string assetPath = Path.Combine(dataRoot, "sessions", session.Id, "root", "IMAGE", "hero.png");
+        File.WriteAllBytes(assetPath, Encoding.ASCII.GetBytes("not-a-png"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode);
+        byte[] digestMismatch = expectedPng.ToArray();
+        digestMismatch[^1] ^= 0x01;
+        File.WriteAllBytes(assetPath, digestMismatch);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode);
+        File.WriteAllBytes(assetPath, expectedPng);
+        if (OperatingSystem.IsLinux())
+        {
+            string linkTarget = Path.Combine(dataRoot, "sessions", session.Id, "root", "IMAGE", "other.png");
+            File.WriteAllBytes(linkTarget, expectedPng);
+            File.Delete(assetPath);
+            File.CreateSymbolicLink(assetPath, linkTarget);
+            HttpStatusCode symlinkStatus = (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode;
+            Assert.Contains(symlinkStatus, new[] { HttpStatusCode.NotFound, HttpStatusCode.ServiceUnavailable });
+            File.Delete(assetPath);
+            File.WriteAllBytes(assetPath, expectedPng);
+            File.Delete(linkTarget);
+
+            string hardlinkTarget = Path.Combine(dataRoot, "sessions", session.Id, "root", "IMAGE", "hardlink.png");
+            Assert.Equal(0, Link(assetPath, hardlinkTarget));
+            HttpStatusCode hardlinkStatus = (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode;
+            Assert.Contains(hardlinkStatus, new[] { HttpStatusCode.NotFound, HttpStatusCode.ServiceUnavailable });
+            File.Delete(hardlinkTarget);
+
+            // SEC-008/TOCTOU: repeatedly replace the published name while
+            // requests are opening it. A secure descriptor may yield the
+            // original bytes, but it must never follow the decoy link/file.
+            string decoyPath = Path.Combine(dataRoot, "outside-asset.png");
+            byte[] decoyPng = expectedPng.ToArray();
+            decoyPng[^1] ^= 0x01;
+            File.WriteAllBytes(decoyPath, decoyPng);
+            using CancellationTokenSource raceCancellation = new();
+            Task swapper = Task.Run(() =>
+            {
+                while (!raceCancellation.IsCancellationRequested)
+                {
+                    try
+                    {
+                        File.Delete(assetPath);
+                        File.CreateSymbolicLink(assetPath, decoyPath);
+                        File.Delete(assetPath);
+                        File.WriteAllBytes(assetPath, expectedPng);
+                    }
+                    catch (IOException)
+                    {
+                        // The request may have the name open; retry the next
+                        // replacement rather than weakening the assertion.
+                    }
+                }
+            });
+            try
+            {
+                HttpResponseMessage[] raceResponses = await Task.WhenAll(
+                    Enumerable.Range(0, 12).Select(_ => client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")));
+                foreach (HttpResponseMessage response in raceResponses)
+                {
+                    using (response)
+                    {
+                        Assert.Contains(response.StatusCode, new[] { HttpStatusCode.OK, HttpStatusCode.NotFound, HttpStatusCode.ServiceUnavailable });
+                        if (response.StatusCode == HttpStatusCode.OK) Assert.Equal(expectedPng, await response.Content.ReadAsByteArrayAsync());
+                    }
+                }
+            }
+            finally
+            {
+                raceCancellation.Cancel();
+                await swapper;
+                File.Delete(assetPath);
+                File.WriteAllBytes(assetPath, expectedPng);
+                File.Delete(decoyPath);
+            }
+        }
+
+        // SEC-008/AUTH-003: a different authenticated user must not be able
+        // to enumerate either the presentation manifest or an asset digest.
+        csrf = await GetCsrfAsync(client);
+        CurrentUserResponse player = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/admin/users",
+            new CreateUserRequest("session-save-player", "session-save-player@example.test", "session-save-player-temporary", "PLAYER"), csrf))
+            .Content.ReadFromJsonAsync<CurrentUserResponse>()
+            ?? throw new Xunit.Sdk.XunitException("Cross-user fixture response was missing.");
+        using HttpClient playerClient = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+        string playerCsrf = await GetCsrfAsync(playerClient);
+        Assert.True((await SendJsonAsync(playerClient, HttpMethod.Post, "/api/v1/auth/login",
+            new LoginRequest("session-save-player@example.test", "session-save-player-temporary", false), playerCsrf)).IsSuccessStatusCode);
+        playerCsrf = await GetCsrfAsync(playerClient);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(playerClient, HttpMethod.Post, "/api/v1/auth/change-password",
+            new ChangePasswordRequest("session-save-player-temporary", "session-save-player-permanent"), playerCsrf)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/sessions/{session.Id}/presentation-manifest")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/sessions/{session.Id}/saves")).StatusCode);
+        Assert.True(player.MustChangePassword);
 
         await AddStartingWorkerLeaseAsync(session.Id);
         csrf = await GetCsrfAsync(client);
@@ -318,10 +463,20 @@ public sealed class SessionSaveApiContractTests : IDisposable
             ZipArchiveEntry config = archive.CreateEntry("emuera.config");
             using (Stream writer = config.Open())
             using (StreamWriter text = new(writer)) text.Write(useSavFolder ? "Use sav folder:YES\n" : "Use sav folder:NO\n");
+            ZipArchiveEntry image = archive.CreateEntry("IMAGE/hero.png");
+            using (Stream writer = image.Open()) writer.Write(FixturePng());
+            ZipArchiveEntry defaultFont = archive.CreateEntry("FONT/default.woff2");
+            using (Stream writer = defaultFont.Open()) writer.Write(FixtureWoff2(0x01));
+            ZipArchiveEntry secondFont = archive.CreateEntry("FONT/second.woff2");
+            using (Stream writer = secondFont.Open()) writer.Write(FixtureWoff2(0x02));
         }
         stream.Position = 0;
         return stream;
     }
+
+    private static byte[] FixturePng() => Convert.FromHexString("89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D49444154789C6360F8CFC0000003010100C9FE92EF0000000049454E44AE426082");
+
+    private static byte[] FixtureWoff2(byte marker) => [0x77, 0x4F, 0x46, 0x32, marker, 0x00, 0x00, 0x00];
 
     public void Dispose()
     {
@@ -351,4 +506,13 @@ public sealed class SessionSaveApiContractTests : IDisposable
     }
 
     private sealed record CsrfResponse(string Token);
+    private sealed record PresentationManifestResponse(int SchemaVersion, PresentationAssetResponse[] Assets, PresentationFontResponse[] Fonts, string[] FontDiagnostics);
+    private sealed record PresentationAssetResponse(string AssetId, string MediaType, long ByteLength, string ContentDigest, string? ETag);
+    private sealed record PresentationFontResponse(string Family, string AssetId, string Fallback, string CssFamily, string[] Aliases);
+
+    [SuppressMessage("Security", "CA2101", Justification = "The test P/Invoke explicitly marshals both paths as UTF-8.")]
+    [DllImport("libc", EntryPoint = "link", CharSet = CharSet.Ansi, SetLastError = true)]
+    private static extern int Link(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string source,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string destination);
 }

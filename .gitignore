@@ -23,6 +23,7 @@ test-results/
 data/*
 !data/.gitkeep
 artifacts/
+.tmp/
 *.db
 *.db-shm
 *.db-wal

@@ -188,6 +188,56 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public async Task RichConsoleFixtureRunsThroughPinnedInterpreterAndPublishesAllDrawableKinds()
+    {
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "em-ee-core", "resources", "cloudemuera-em-ee.png");
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL RICH-READY\n" +
+            "HTML_PRINT \"<b>RICH-HTML</b><i>RICH-ITALIC</i>\"\n" +
+            "HTML_PRINT_ISLAND \"<strong>RICH-ISLAND</strong>\"\n" +
+            "PRINT_IMG \"RICH\"\n" +
+            "PRINT_RECT 10,10,40,40\n" +
+            "SETBGIMAGE RICH,0,128\n" +
+            "PRINTL RICH-INPUT\n" +
+            "INPUT\n" +
+            "PRINTL RICH-AFTER\n" +
+            "QUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "rich.png"));
+                File.WriteAllText(Path.Combine(resources, "sprites.csv"), "RICH,rich.png,0,0,2,2\n");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(5));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> runtime = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputResultKind.Accepted, fixture.Console.SubmitInput(
+            new ConsoleInputCommand(prompt.PromptId, "rich-client", "7")).Kind);
+        EmueraRuntimeResult result = await runtime;
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("RICH-READY", transcript, StringComparison.Ordinal);
+        Assert.Contains("RICH-HTML", transcript, StringComparison.Ordinal);
+        Assert.Contains("RICH-INPUT", transcript, StringComparison.Ordinal);
+        Assert.Contains("RICH-AFTER", transcript, StringComparison.Ordinal);
+        IReadOnlyList<ConsoleNode> nodes = fixture.Console.Snapshot.VisibleNodes;
+        Assert.Contains(nodes, node => node is SpriteNode);
+        Assert.Contains(nodes, node => node is ShapeNode);
+        Assert.Contains(fixture.Console.Snapshot.BackgroundLayers, background => background.LayerId == "RICH");
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HeadlessSystemLinesAndWarningsAreNotBlockingScriptDiagnostics()
     {
         // P1-04 GAME-007: the pinned upstream DEBUG build emits elapsed-time

@@ -13,7 +13,7 @@ public static class RealtimeProtocol
 {
     public const int Version = 1;
     public const string Subprotocol = "cloudemuera.realtime.v1";
-    public const string PayloadSchemaVersion = "p1-09";
+    public const string PayloadSchemaVersion = "p1-11";
     public const int DefaultClientJsonMaxDepth = 32;
     public const int DefaultClientMessageMaxBytes = 64 * 1024;
     public const int MaxIdentifierLength = 128;

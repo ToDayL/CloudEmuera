@@ -24,7 +24,7 @@ P1-09 还需要把 Worker v3 的 `SubmitInput`/`InputResult` 接到浏览器：�
 
 - endpoint 固定为 `GET /api/v1/realtime`，必须协商
   `cloudemuera.realtime.v1`，应用 envelope 的 `protocolVersion` 为 `1`；`/version` 分开公开
-  WebSocket 版本和 `p1-09` payload schema 版本。
+  WebSocket 版本和 `p1-11` payload schema 版本。
 - 应用消息是严格 UTF-8 JSON envelope。`Utf8JsonReader` 先检查重复键、深度、有限数字、标识符、大小和
   封闭消息类型，再由 source-generated context 反序列化到 DTO；未知可选字段忽略，未知 type、非法
   discriminator、二进制帧和混合 fragment 按稳定 close code 拒绝。

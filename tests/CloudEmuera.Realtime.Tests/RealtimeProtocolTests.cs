@@ -155,7 +155,7 @@ public sealed class RealtimeProtocolTests
             new ServerHelloPayload(1, RealtimeProtocol.PayloadSchemaVersion, "conn_1", 1, 20_000, 10_000, 4, 32, gateway.ServerMessageMaxBytes, "digest"));
 
         string json = Encoding.UTF8.GetString(message.Bytes);
-        Assert.Contains("\"payloadSchemaVersion\":\"p1-09\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"payloadSchemaVersion\":\"p1-11\"", json, StringComparison.Ordinal);
         Assert.Contains("\"capabilityDigest\":\"digest\"", json, StringComparison.Ordinal);
     }
 
