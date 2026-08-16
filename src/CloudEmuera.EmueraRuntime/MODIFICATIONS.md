@@ -167,3 +167,38 @@ requirements/ADR references, and verification commands.
   API GameLibrary 4 and Infrastructure GameLibrary 28 tests pass; the user's
   eraJK package (single wrapper folder + `GameBase.csv` + COM-function warnings,
   no `@SYSTEM_TITLE`) validates with `canActivate: true` after flattening.
+
+## 2026-08-16 — Linux fixed CSV case compatibility
+
+- Upstream source changes:
+  - `Upstream/Emuera/Runtime/Utils/Preload.cs` exposes a headless-only lookup
+    against its existing ordinal-ignore-case preload cache.
+  - `Upstream/Emuera/Runtime/Script/Data/ConstantData.cs` uses that cache for
+    headless fixed-name CSV and `.als` reads instead of Linux case-sensitive
+    `File.Exists`/`File.ReadAllLines` calls. Desktop builds retain their original
+    path.
+- Reason: real Windows-distributed games commonly contain `Talent.csv` while
+  upstream requests `TALENT.CSV`. On Linux this silently skipped the talent-name
+  table and later produced false unknown-identifier execution failures for names
+  such as `性別` and `胸部尺寸`.
+- Scope: COMP-006 and ADR-0011 Windows-to-Linux filename compatibility. The
+  lookup is limited to the controlled, preloaded Emuera source tree and does not
+  change resource-name or save-file semantics.
+- Verification: `HeadlessRuntimeFixtureTests.MixedCaseTalentCsvUsesWindowsCompatibleLookupOnLinux`
+  executes a named TALENT access with only `Talent.csv` present.
+
+## 2026-08-16 — Simplified Chinese configuration aliases
+
+- Modified upstream file: `Upstream/Emuera/Runtime/Config/ConfigData.cs` accepts
+  the Simplified Chinese labels emitted by the `Nahlot/emuera-cn` Gitee
+  project (`58ffbfdfabf20bd96b1eb5c6ee1689da5df2ecbb`) for the primary runtime
+  configuration, debug configuration and `_Replace.csv` entries. Each label
+  resolves to its existing `ConfigCode`; the current `UseSaveFolder` alias is
+  retained in the same table.
+- Scope: headless configuration compatibility for the pinned runtime. Legacy
+  Chinese encoding switches that have no corresponding `ConfigCode` in the
+  pinned Emuera.EM+EE source are deliberately left unmapped rather than being
+  assigned another setting's semantics.
+- Verification: `ChineseConfigMappingTests` covers all supported translated
+  labels, while the existing localized save-layout/runtime round-trip tests
+  verify that `UseSaveFolder` still controls the native `sav/` layout.

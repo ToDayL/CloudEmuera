@@ -5,25 +5,24 @@ using CloudEmuera.Application.Authorization;
 using CloudEmuera.Application.Identity;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace CloudEmuera.Api.IntegrationTests;
 
-public sealed class RealtimeOriginValidatorTests
+public sealed class RealtimeUpgradeValidatorTests
 {
     [Theory]
-    [InlineData(null, true, true, true, false)]
-    [InlineData("https://evil.example", true, true, true, false)]
+    [InlineData(null, true, true, true, true)]
+    [InlineData("https://evil.example", true, true, true, true)]
+    [InlineData("http://127.0.0.1:5173", true, true, true, true)]
     [InlineData("https://cloudemuera.example", false, true, true, false)]
     [InlineData("https://cloudemuera.example", true, false, true, false)]
     [InlineData("https://cloudemuera.example", true, true, false, false)]
-    [InlineData("https://cloudemuera.example", true, true, true, true)]
     [Trait("Category", "Authorization")]
-    public async Task UpgradeRequiresWebSocketExactOriginPrincipalAndLiveSession(string? origin, bool webSocket, bool liveSession, bool authenticated, bool expected)
+    public async Task UpgradeRequiresWebSocketPrincipalAndLiveSessionButDoesNotRestrictOrigin(string? origin, bool webSocket, bool liveSession, bool authenticated, bool expected)
     {
         SessionIdentity identities = new(liveSession);
-        RealtimeOriginValidator validator = new(Configuration(), identities, new RecordingAuthorizer());
+        RealtimeUpgradeValidator validator = new(identities, new RecordingAuthorizer());
         DefaultHttpContext context = Context(origin, webSocket, authenticated);
 
         Assert.Equal(expected, await validator.IsUpgradeAllowedAsync(context));
@@ -34,16 +33,13 @@ public sealed class RealtimeOriginValidatorTests
     public async Task EveryResumeAttemptCallsTheCentralAuthorizer()
     {
         RecordingAuthorizer authorizer = new();
-        RealtimeOriginValidator validator = new(Configuration(), new SessionIdentity(true), authorizer);
+        RealtimeUpgradeValidator validator = new(new SessionIdentity(true), authorizer);
         CurrentActor actor = new("usr_player", "PLAYER", "auths_live");
 
         Assert.Equal(ResourceAccessDecision.Allowed, await validator.AuthorizeResumeAsync(actor, "sess_one", false));
         Assert.Equal(ResourceAccessDecision.Allowed, await validator.AuthorizeResumeAsync(actor, "sess_one", false));
         Assert.Equal(2, authorizer.Calls);
     }
-
-    private static IConfiguration Configuration() => new ConfigurationBuilder().AddInMemoryCollection(
-        new Dictionary<string, string?> { ["CloudEmuera:PublicOrigin"] = "https://cloudemuera.example" }).Build();
 
     private static DefaultHttpContext Context(string? origin, bool webSocket, bool authenticated)
     {

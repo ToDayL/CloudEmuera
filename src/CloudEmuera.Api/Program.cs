@@ -212,7 +212,7 @@ builder.Services.AddScoped<CloudEmuera.Application.Authorization.IResourceAuthor
 builder.Services.AddSingleton<BootstrapReadiness>();
 builder.Services.AddHostedService<BootstrapAdminInitializer>();
 builder.Services.AddHostedService<AuthSessionCleanupService>();
-builder.Services.AddScoped<RealtimeOriginValidator>();
+builder.Services.AddScoped<RealtimeUpgradeValidator>();
 builder.Services.AddDataProtection().PersistKeysToFileSystem(DataProtectionKeyRing.Prepare(dataRoot)).SetApplicationName("CloudEmuera");
 bool development = builder.Environment.IsDevelopment();
 string cookieName = development ? "CloudEmuera.Dev.Session" : "__Host-CloudEmuera.Session";

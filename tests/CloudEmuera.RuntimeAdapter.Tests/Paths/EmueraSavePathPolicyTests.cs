@@ -10,6 +10,8 @@ public sealed class EmueraSavePathPolicyTests
     [Theory]
     [InlineData("global.sav", EmueraSaveFileKind.Global)]
     [InlineData("save1.sav", EmueraSaveFileKind.Normal)]
+    [InlineData("GLOBAL.SAV", EmueraSaveFileKind.Global)]
+    [InlineData("Save01.SAV", EmueraSaveFileKind.Normal)]
     public void RootLayoutAcceptsOnlyNativeSaveFiles(string candidate, EmueraSaveFileKind kind)
     {
         EmueraSavePath path = EmueraSavePathPolicy.Parse(RuntimeSaveLayout.Root, candidate);
@@ -47,7 +49,6 @@ public sealed class EmueraSavePathPolicyTests
     [InlineData("save1.sav\u0001")]
     [InlineData("save1.sav\u0000")]
     [InlineData("save.sav")]
-    [InlineData("save01.SAV")]
     public void MaliciousOrNonNativeNamesAreRejected(string candidate)
     {
         Assert.False(EmueraSavePathPolicy.TryParse(RuntimeSaveLayout.Root, candidate, out _));

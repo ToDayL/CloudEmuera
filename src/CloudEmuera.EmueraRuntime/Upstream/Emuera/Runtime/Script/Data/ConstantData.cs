@@ -218,10 +218,21 @@ internal sealed class ConstantData
 
 	private void loadVariableSizeData(string csvPath, bool disp)
 	{
+#if CLOUDEMUERA_HEADLESS
+		// CloudEmuera modification: Linux must retain Windows Emuera's
+		// case-insensitive lookup for the already controlled/preloaded CSV tree.
+		if (!Preload.ContainsFile(csvPath))
+			return;
+#else
 		if (!File.Exists(csvPath))
 			return;
+#endif
 		using var eReader = new EraStreamReader(false);
+#if CLOUDEMUERA_HEADLESS
+		if (!eReader.OpenOnCache(csvPath))
+#else
 		if (!eReader.Open(csvPath))
+#endif
 		{
 			output.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename));
 			return;
@@ -1686,8 +1697,15 @@ internal sealed class ConstantData
 	private void loadDataTo(string csvPath, int targetIndex, long[] targetI, bool disp)
 	{
 
+#if CLOUDEMUERA_HEADLESS
+		// CloudEmuera modification: Preload uses OrdinalIgnoreCase, matching the
+		// Windows filesystem semantics expected by upstream fixed CSV names.
+		if (!Preload.ContainsFile(csvPath))
+			return;
+#else
 		if (!File.Exists(csvPath))
 			return;
+#endif
 		string[] target = names[targetIndex];
 		HashSet<int> defined = [];
 		using var eReader = new EraStreamReader(false);
@@ -1695,7 +1713,11 @@ internal sealed class ConstantData
 		// if (!eReader.Open(csvPath))
 		// ERD機能と競合するっぽいので一旦保留
 		// if (!eReader.OpenOnCache(csvPath) && output != null)
+#if CLOUDEMUERA_HEADLESS
+		if (!eReader.OpenOnCache(csvPath) && output != null)
+#else
 		if (!eReader.Open(csvPath) && output != null)
+#endif
 		#endregion
 		{
 			output.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename));
@@ -1767,7 +1789,12 @@ internal sealed class ConstantData
 		}
 
 		var aliasPath = Path.GetDirectoryName(csvPath) + "\\" + Path.GetFileNameWithoutExtension(csvPath) + ".als";
+#if CLOUDEMUERA_HEADLESS
+		aliasPath = Path.Combine(Path.GetDirectoryName(csvPath)!, Path.GetFileNameWithoutExtension(csvPath) + ".als");
+		if (Preload.ContainsFile(aliasPath))
+#else
 		if (File.Exists(aliasPath))
+#endif
 		{
 			loadAliases(aliasPath, targetIndex);
 		}
@@ -1776,8 +1803,13 @@ internal sealed class ConstantData
 	private void loadAliases(string aliasPath, int targetIndex)
 	{
 
+#if CLOUDEMUERA_HEADLESS
+		if (!Preload.ContainsFile(aliasPath))
+			return;
+#else
 		if (!File.Exists(aliasPath))
 			return;
+#endif
 		if (aliases[targetIndex] == null)
 		{
 			aliases[targetIndex] = [];
@@ -1785,7 +1817,11 @@ internal sealed class ConstantData
 		Dictionary<string, int> target = aliases[targetIndex];
 		HashSet<int> defined = [];
 		EraStreamReader eReader = new(false);
+#if CLOUDEMUERA_HEADLESS
+		if (!eReader.OpenOnCache(aliasPath) && output != null)
+#else
 		if (!eReader.Open(aliasPath) && output != null)
+#endif
 		{
 			output.PrintError(string.Format(trerror.FailedOpenFile.Text, eReader.Filename));
 			return;

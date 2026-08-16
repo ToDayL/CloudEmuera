@@ -363,7 +363,7 @@ public sealed class LinuxSessionSaveRootAccessor(SqliteDatabaseOptions databaseO
                     throw InvalidRoot("The SessionRoot save layout does not match its protected binding.");
                 SafeFileHandle saveRoot = layout == RuntimeSaveLayout.Root
                     ? LinuxFileOperations.DuplicateDirectory(root)
-                    : LinuxFileOperations.TryOpenDirectoryAt(root, "sav")
+                    : LinuxFileOperations.TryOpenDirectoryAt(root, ResolveCaseInsensitiveEntryName(root, "sav"))
                         ?? throw InvalidRoot("The SessionRoot sav directory is missing.");
                 LinuxFileOperations.FileIdentity saveIdentity = LinuxFileOperations.ReadIdentity(saveRoot);
                 if (!saveIdentity.IsDirectory || saveIdentity.UserId != LinuxFileOperations.CurrentUserId || !IsPrivateDirectory(saveIdentity))
@@ -466,18 +466,19 @@ public sealed class LinuxSessionSaveRootAccessor(SqliteDatabaseOptions databaseO
 
     private static SafeFileHandle OpenSaveParent(SafeFileHandle saveRoot, EmueraSavePath parsed, out string leaf)
     {
-        leaf = parsed.FileName;
         SafeFileHandle current = LinuxFileOperations.DuplicateDirectory(saveRoot);
         try
         {
             foreach (string segment in (parsed.ParentPath ?? string.Empty).Split('/', StringSplitOptions.RemoveEmptyEntries))
             {
-                SafeFileHandle next = LinuxFileOperations.TryOpenDirectoryAt(current, segment)
+                string actualSegment = ResolveCaseInsensitiveEntryName(current, segment);
+                SafeFileHandle next = LinuxFileOperations.TryOpenDirectoryAt(current, actualSegment)
                     ?? throw new SessionSaveException(SaveErrorCodes.NotFound, "存档文件不存在。", 404);
                 ValidateDirectory(next);
                 current.Dispose();
                 current = next;
             }
+            leaf = ResolveCaseInsensitiveEntryName(current, parsed.FileName);
             return current;
         }
         catch
@@ -485,6 +486,24 @@ public sealed class LinuxSessionSaveRootAccessor(SqliteDatabaseOptions databaseO
             current.Dispose();
             throw;
         }
+    }
+
+    private static string ResolveCaseInsensitiveEntryName(SafeFileHandle directory, string requested)
+    {
+        string normalized = requested.Normalize(System.Text.NormalizationForm.FormC);
+        string? match = null;
+        string descriptorPath = LinuxFileOperations.GetProcFileDescriptorPath(directory);
+        foreach (string path in Directory.EnumerateFileSystemEntries(descriptorPath))
+        {
+            string name = Path.GetFileName(path);
+            if (!name.Normalize(System.Text.NormalizationForm.FormC)
+                    .Equals(normalized, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (match is not null && !match.Equals(name, StringComparison.Ordinal))
+                throw InvalidRoot("The native save tree contains an ambiguous case-insensitive path.");
+            match = name;
+        }
+        return match ?? requested;
     }
 
     private SafeFileHandle OpenOperationDirectory(string sessionId, string operationId, out SaveOperationMarker marker)

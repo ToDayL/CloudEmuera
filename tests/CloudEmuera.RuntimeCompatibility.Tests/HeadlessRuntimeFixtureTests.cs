@@ -2,6 +2,7 @@ using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.UI.Game.Image;
 using System.Drawing;
 using static MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
@@ -112,6 +113,37 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(new ConsoleRect(7, 8, 2, 2), drawable.Bounds);
         Assert.Equal(9, drawable.ZIndex);
         Assert.Equal([50, 75], drawable.AnimationFrames.Select(frame => frame.DurationMilliseconds));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task StaticSpriteCsvClipsLegacyRectangleWhilePreservingDestinationSize()
+    {
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "v18-core", "resources", "cloudemuera-v18.png");
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINT_IMG \"EDGE\"\nQUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "edge.png"));
+                File.WriteAllText(Path.Combine(resources, "sprites.csv"), "EDGE,edge.png,0,1,2,2\n");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+        Assert.Contains(initialized.Diagnostics, diagnostic =>
+            diagnostic.Code == "runtime_warning" &&
+            diagnostic.Message.Contains("was clipped", StringComparison.Ordinal));
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        SpriteNode sprite = Assert.IsType<SpriteNode>(
+            fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes).Single(node => node is SpriteNode));
+        Assert.Equal(new ConsoleRect(0, 1, 2, 1), sprite.SourceRect);
+        Assert.Equal(sprite.Destination.Width, sprite.Destination.Height);
     }
 
     [Fact]
@@ -243,7 +275,7 @@ public sealed class HeadlessRuntimeFixtureTests
         // P1-04 GAME-007: the pinned upstream DEBUG build emits elapsed-time
         // status lines through PrintSystemLine and non-fatal parser warnings via
         // PrintWarning. Both are informational and must never gate activation;
-        // only errors become fatal runtime messages.
+        // only an explicit interpreter error transition is fatal.
         var console = new StructuredGameConsole();
         var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
         headless.PrintSystemLine("経過時間:1234.5ms");
@@ -252,6 +284,60 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Contains(headless.RuntimeWarnings, message => message.Contains("COM1000", StringComparison.Ordinal));
         headless.PrintError("real error");
         Assert.Contains(headless.RuntimeMessages, message => message.Contains("real error", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HeadlessErrorsAreEmittedButWarningsStayOutOfTheConsoleTranscript()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintWarning("脚本警告", null, 2);
+        headless.PrintErrorButton("脚本错误", null, 2);
+        headless.PrintError("错误详情");
+
+        string transcript = RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes);
+        Assert.DoesNotContain("脚本警告", transcript, StringComparison.Ordinal);
+        Assert.Contains("⚠ 脚本错误", transcript, StringComparison.Ordinal);
+        Assert.Contains("⚠ 错误详情", transcript, StringComparison.Ordinal);
+        Assert.Contains(headless.RuntimeWarnings, warning => warning.Contains("脚本警告", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void StartupWarningsRemainDiagnosticsAfterExecutionOutputBegins()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.PrintWarning("启动阶段脚本警告", null, 2);
+
+        Assert.Empty(console.Snapshot.VisibleNodes);
+
+        headless.BeginExecutionOutput();
+
+        string transcript = RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes);
+        Assert.DoesNotContain("启动阶段脚本警告", transcript, StringComparison.Ordinal);
+        Assert.Single(headless.RuntimeWarnings);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void PrintedErrorDoesNotBecomeFatalUntilInterpreterTransitionsToError()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+
+        headless.PrintError("recoverable script diagnostic");
+
+        Assert.False(headless.HasFatalError);
+        Assert.True(headless.IsRunning);
+
+        headless.ThrowError(playSound: false);
+
+        Assert.True(headless.HasFatalError);
+        Assert.False(headless.IsRunning);
     }
 
 
@@ -270,6 +356,36 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Contains(
             report.AssertionEvidence,
             evidence => evidence.Name == "score=3" && evidence.Passed && evidence.VerifiedByVisibleOutput);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task MixedCaseTalentCsvUsesWindowsCompatibleLookupOnLinux()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "ADDDEFCHARA\n" +
+            "TALENT:0:性別 = 1\n" +
+            "PRINTFORML GENDER={TALENT:0:性別}\n" +
+            "QUIT\n",
+            configureGame: game => File.WriteAllText(
+                Path.Combine(game, "CSV", "Talent.csv"),
+                "2,性別\n"));
+        Assert.False(File.Exists(Path.Combine(fixture.Paths.CsvRoot, "TALENT.CSV")));
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        Assert.Contains(
+            "GENDER=1",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
     }
 
     [Theory]
@@ -377,6 +493,76 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.True(File.Exists(Path.Combine(second.Paths.SessionRoot, "save00.sav")));
         Assert.True(File.Exists(Path.Combine(first.Paths.SessionRoot, "global.sav")));
         Assert.True(File.Exists(Path.Combine(second.Paths.SessionRoot, "global.sav")));
+    }
+
+    [Fact]
+    [Trait("Category", "NativeSave")]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task MixedCaseSavDirectoryAndFilesRoundTripWithLocalizedConfiguration()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTL CASE-SAVE-START\nINPUT\n" +
+            "IF RESULT == 1\n" +
+            "    savedValue = 321\n" +
+            "    globalValue = 654\n" +
+            "    SAVEDATA 0, \"CASE-SAVE\"\n" +
+            "    SAVEGLOBAL\n" +
+            "    QUIT\n" +
+            "ELSEIF RESULT == 2\n" +
+            "    savedValue = -1\n" +
+            "    globalValue = -1\n" +
+            "    LOADGLOBAL\n" +
+            "    LOADDATA 0\n" +
+            "ENDIF\n" +
+            "@EVENTLOAD\n" +
+            "PRINTFORML CASE-SAVE={savedValue}\n" +
+            "PRINTFORML CASE-GLOBAL={globalValue}\n" +
+            "QUIT\n",
+            RuntimeSaveLayout.SavDirectory,
+            "在sav文件夹中创建存档:YES\n",
+            "#DIM SAVEDATA savedValue\n#DIM GLOBAL SAVEDATA globalValue\n");
+
+        _ = await RunWithInputAsync(fixture, "1");
+        string lowerSav = Path.Combine(fixture.Paths.SessionRoot, "sav");
+        string mixedSav = Path.Combine(fixture.Paths.SessionRoot, "Sav");
+        Directory.Move(lowerSav, mixedSav);
+        File.Move(Path.Combine(mixedSav, "save00.sav"), Path.Combine(mixedSav, "Save00.SAV"));
+        File.Move(Path.Combine(mixedSav, "global.sav"), Path.Combine(mixedSav, "GLOBAL.SAV"));
+
+        string transcript = await RunWithInputAsync(fixture, "2");
+
+        Assert.Contains("CASE-SAVE=321", transcript, StringComparison.Ordinal);
+        Assert.Contains("CASE-GLOBAL=654", transcript, StringComparison.Ordinal);
+        Assert.Single(
+            Directory.EnumerateDirectories(fixture.Paths.SessionRoot),
+            path => Path.GetFileName(path).Equals("sav", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(
+            Directory.EnumerateFiles(mixedSav),
+            path => Path.GetFileName(path).Equals("save00.sav", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(
+            Directory.EnumerateFiles(mixedSav),
+            path => Path.GetFileName(path).Equals("global.sav", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HeadlessPathLookupRejectsAmbiguousCaseVariants()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "cloudemuera-path-case", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "Image.png"), "first");
+            File.WriteAllText(Path.Combine(root, "image.PNG"), "second");
+            HeadlessPathResolver.Configure(root);
+
+            Assert.Throws<IOException>(() => HeadlessFile.Exists(Path.Combine(root, "IMAGE.PNG")));
+        }
+        finally
+        {
+            HeadlessPathResolver.Reset();
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]

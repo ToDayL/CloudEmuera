@@ -28,7 +28,7 @@ export class RealtimeConnectionManager {
   private heartbeatTimer: number | null = null;
   private reconnectAttempt = 0;
   private disposed = false;
-  private serverHello: { serverNowUnixMilliseconds: number; heartbeatTimeoutMilliseconds: number; capabilityDigest: string } | null = null;
+  private serverHello: { serverNowUnixMilliseconds: number; heartbeatIntervalMilliseconds: number; heartbeatTimeoutMilliseconds: number; capabilityDigest: string } | null = null;
   private serverTimeOffsetMilliseconds = 0;
   private networkOnline = typeof navigator === "undefined" || navigator.onLine !== false;
   private readonly handleOnlineEvent = () => this.setNetworkOnline(true);
@@ -98,7 +98,7 @@ export class RealtimeConnectionManager {
   }
 
   connect(): void {
-    if (this.disposed || this.socket || this.phase === "connecting" || this.phase === "hello_pending" || this.phase === "ready") return;
+    if (this.disposed || this.socket) return;
     if (!this.networkOnline) { this.setPhase("disconnected"); return; }
     if (typeof WebSocket === "undefined") { this.setPhase("disconnected", "浏览器不支持 WebSocket。"); return; }
     this.setPhase("connecting");
@@ -111,12 +111,13 @@ export class RealtimeConnectionManager {
     }, 8_000);
     socket.binaryType = "arraybuffer";
     socket.addEventListener("open", () => {
+      if (this.socket !== socket) return;
       this.setPhase("hello_pending");
       this.send("client.hello", { supportedProtocolVersions: [1], capabilityDigest: CAPABILITY_DIGEST, supportedCapabilities: [...SUPPORTED_CAPABILITIES] });
     });
-    socket.addEventListener("message", event => this.handleMessage(event.data));
+    socket.addEventListener("message", event => { if (this.socket === socket) this.handleMessage(event.data); });
     socket.addEventListener("error", () => { /* close is the reconnect boundary */ });
-    socket.addEventListener("close", event => this.handleClose(event.code, event.reason));
+    socket.addEventListener("close", event => this.handleClose(socket, event.code, event.reason));
   }
 
   dispose(): void {
@@ -137,7 +138,12 @@ export class RealtimeConnectionManager {
     this.setPhase("disposed");
   }
 
-  private ensureConnected(): void { if (this.networkOnline && !this.socket && this.phase !== "auth_required" && this.phase !== "incompatible" && !this.disposed) this.connect(); }
+  private ensureConnected(): void {
+    // Closing a browser WebSocket is asynchronous. A page that leaves and
+    // immediately re-enters a Session must not attach to that old socket.
+    if (this.socket && (this.socket.readyState === 2 || this.socket.readyState === 3)) this.socket = null;
+    if (this.networkOnline && !this.socket && this.phase !== "auth_required" && this.phase !== "incompatible" && !this.disposed) this.connect();
+  }
 
   private handleMessage(raw: unknown): void {
     let message: RealtimeServerMessage;
@@ -149,14 +155,14 @@ export class RealtimeConnectionManager {
       this.serverTimeOffsetMilliseconds = message.payload.serverNowUnixMilliseconds - Date.now();
       this.reconnectAttempt = 0;
       if (this.helloTimer !== null) { window.clearTimeout(this.helloTimer); this.helloTimer = null; }
-      this.armHeartbeat(message.payload.heartbeatTimeoutMilliseconds);
+      this.armHeartbeat();
       this.setPhase("ready");
       for (const subscription of this.subscriptions.values()) this.resume(subscription);
       return;
     }
     if (message.type === "connection.ping") {
       this.serverTimeOffsetMilliseconds = smoothOffset(message.payload.serverNowUnixMilliseconds, this.serverTimeOffsetMilliseconds);
-      this.armHeartbeat(this.serverHello?.heartbeatTimeoutMilliseconds ?? 15_000);
+      this.armHeartbeat();
       this.send("connection.pong", { nonce: message.payload.nonce });
       return;
     }
@@ -166,8 +172,15 @@ export class RealtimeConnectionManager {
     if (!message.sessionId) return;
     const subscription = this.subscriptions.get(message.sessionId);
     if (!subscription) return;
+    // `unsubscribed` is an acknowledgement for an explicit subscription
+    // disposal. It is not a Worker lifecycle event. In particular, never let
+    // it mutate the console store or turn a pending input into "unknown".
+    if (message.type === "session.stream.ended" && message.payload.reasonCode === "unsubscribed") return;
     if (message.type === "session.resume.result") {
-      if (message.payload.status === "SNAPSHOT_NOT_READY") this.scheduleResume(subscription);
+      if (message.payload.status === "ACCEPTED") {
+        subscription.retryCount = 0;
+        if (subscription.resumeTimer !== undefined) { window.clearTimeout(subscription.resumeTimer); subscription.resumeTimer = undefined; }
+      } else if (message.payload.status === "SNAPSHOT_NOT_READY") this.scheduleResume(subscription);
       else if (message.payload.status === "CAPABILITY_MISMATCH") { this.setPhase("incompatible", "客户端与 Session 能力版本不一致。"); subscription.state = { ...subscription.state, phase: "error", fatalRenderError: "能力版本不一致。" }; notify(subscription); }
       else if (message.payload.status === "SESSION_NOT_FOUND" || message.payload.status === "SESSION_NOT_RUNNING") { subscription.state = { ...subscription.state, phase: "ended" }; notify(subscription); }
       return;
@@ -175,19 +188,32 @@ export class RealtimeConnectionManager {
     if (message.type === "resync.required") {
       subscription.state = handleServerMessage(subscription.state, message);
       notify(subscription);
-      this.send("session.unsubscribe", {}, message.sessionId);
-      this.scheduleResume(subscription, 20);
+      // The API sends `resync.required` and its replacement snapshot as one
+      // writer work group. Disposing and reopening here creates a second
+      // subscription while the first group is still in flight, which can
+      // deliver an old stream-ended event or make a healthy Worker look
+      // detached. Wait for the snapshot that immediately follows instead.
       return;
     }
+    if (
+      message.type === "session.stream.ended" &&
+      subscription.state.workerEpoch !== null &&
+      message.workerEpoch !== undefined &&
+      message.workerEpoch < subscription.state.workerEpoch
+    ) return;
     const previousPendingStatus = subscription.state.pendingInput?.status;
     subscription.state = handleServerMessage(subscription.state, message);
-    if (message.type === "session.stream.ended" && message.payload.reasonCode === "unsubscribed") return;
+    if (message.type === "session.snapshot") {
+      subscription.retryCount = 0;
+      if (subscription.resumeTimer !== undefined) { window.clearTimeout(subscription.resumeTimer); subscription.resumeTimer = undefined; }
+    }
     if (previousPendingStatus === "pending" && message.type === "session.stream.ended") subscription.state = markInputUnknown(subscription.state);
     notify(subscription);
   }
 
   private resume(subscription: Subscription): void {
-    if (this.phase !== "ready") return;
+    if (this.phase !== "ready" || this.subscriptions.get(subscription.sessionId) !== subscription) return;
+    if (subscription.resumeTimer !== undefined) { window.clearTimeout(subscription.resumeTimer); subscription.resumeTimer = undefined; }
     subscription.state = beginResume(subscription.state);
     notify(subscription);
     this.send("session.resume", { capabilityDigest: CAPABILITY_DIGEST, ...(subscription.state.workerEpoch === null ? {} : { lastEpoch: subscription.state.workerEpoch }) }, subscription.sessionId);
@@ -205,7 +231,8 @@ export class RealtimeConnectionManager {
     this.socket.send(JSON.stringify(message));
   }
 
-  private handleClose(code: number, reason: string): void {
+  private handleClose(socket: WebSocket, code: number, reason: string): void {
+    if (this.socket !== socket) return;
     this.socket = null;
     this.serverHello = null;
     if (this.helloTimer !== null) { window.clearTimeout(this.helloTimer); this.helloTimer = null; }
@@ -230,12 +257,14 @@ export class RealtimeConnectionManager {
     this.reconnectTimer = window.setTimeout(() => { this.reconnectTimer = null; this.connect(); }, jitter);
   }
 
-  private armHeartbeat(timeoutMilliseconds: number): void {
+  private armHeartbeat(): void {
     if (this.heartbeatTimer !== null) window.clearTimeout(this.heartbeatTimer);
+    const intervalMilliseconds = this.serverHello?.heartbeatIntervalMilliseconds ?? 20_000;
+    const timeoutMilliseconds = this.serverHello?.heartbeatTimeoutMilliseconds ?? 10_000;
     this.heartbeatTimer = window.setTimeout(() => {
       this.heartbeatTimer = null;
       if (this.phase === "ready") this.socket?.close(1000, "heartbeat_timeout");
-    }, Math.max(1_000, timeoutMilliseconds));
+    }, Math.max(1_000, intervalMilliseconds + timeoutMilliseconds + 1_000));
   }
 
   private setPhase(phase: ConnectionPhase, detail?: string): void { this.phase = phase; for (const listener of this.listeners) listener(phase, detail); }

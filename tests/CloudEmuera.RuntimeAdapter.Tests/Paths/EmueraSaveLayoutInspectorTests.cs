@@ -15,6 +15,7 @@ public sealed class EmueraSaveLayoutInspectorTests
     [InlineData("Use sav folder:1\n", RuntimeSaveLayout.SavDirectory)]
     [InlineData("セーブデータをsavフォルダ内に作成する:後\n", RuntimeSaveLayout.Root)]
     [InlineData("セーブデータをsavフォルダ内に作成する:前\n", RuntimeSaveLayout.SavDirectory)]
+    [InlineData("在sav文件夹中创建存档:YES\n", RuntimeSaveLayout.SavDirectory)]
     public void InspectorUsesTheFixedUpstreamBooleanContract(string text, RuntimeSaveLayout expected)
     {
         Assert.Equal(expected, EmueraSaveLayoutInspector.Inspect(text));

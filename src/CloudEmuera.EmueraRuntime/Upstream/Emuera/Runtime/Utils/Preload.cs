@@ -20,6 +20,20 @@ static partial class Preload
 		return files[path];
 	}
 
+#if CLOUDEMUERA_HEADLESS
+	// CloudEmuera modification: the Windows Emuera runtime resolves source file
+	// names case-insensitively. The Linux headless host preloads the controlled
+	// CSV/ERB tree into an ordinal-ignore-case dictionary so fixed upstream names
+	// such as TALENT.CSV can find packages that contain Talent.csv.
+	public static bool ContainsFile(string path)
+	{
+		lock (files)
+		{
+			return files.ContainsKey(path);
+		}
+	}
+#endif
+
 	// Opens as UTF8BOM if starts with BOM, else use DetectEncoding
 	private static string[] readAllLinesDetectEncoding(string path)
 	{

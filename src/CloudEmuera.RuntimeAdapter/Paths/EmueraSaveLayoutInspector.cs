@@ -13,6 +13,7 @@ public static class EmueraSaveLayoutInspector
 {
     private const string UpstreamEnglishUseSaveFolderKey = "Use sav folder";
     private const string UpstreamJapaneseUseSaveFolderKey = "セーブデータをsavフォルダ内に作成する";
+    private const string SimplifiedChineseUseSaveFolderKey = "在sav文件夹中创建存档";
     private const int MaximumConfigurationBytes = 1024 * 1024;
 
     public static RuntimeSaveLayout Inspect(string configurationText)
@@ -150,7 +151,8 @@ public static class EmueraSaveLayoutInspector
 
     private static bool IsUseSaveFolderKey(string key) =>
         key.Equals(UpstreamEnglishUseSaveFolderKey, StringComparison.OrdinalIgnoreCase) ||
-        key.Equals(UpstreamJapaneseUseSaveFolderKey, StringComparison.Ordinal);
+        key.Equals(UpstreamJapaneseUseSaveFolderKey, StringComparison.Ordinal) ||
+        key.Equals(SimplifiedChineseUseSaveFolderKey, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class RuntimeSaveLayoutInspectionException : RuntimePathException

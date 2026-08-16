@@ -242,6 +242,11 @@ internal sealed class Utils
 		if (!File.Exists(filepath)) return null;
 		try
 		{
+#if CLOUDEMUERA_HEADLESS
+			// CloudEmuera modification: File.Exists uses Windows-compatible lookup;
+			// pass the resolved spelling to image decoders that open the path directly.
+			filepath = HeadlessPathResolver.ExistingOrOriginal(filepath);
+#endif
 			/*				fs = new FileStream(filepath, FileMode.Open);
 							var factory = new ImageProcessor.ImageFactory();
 							factory.Load(fs);

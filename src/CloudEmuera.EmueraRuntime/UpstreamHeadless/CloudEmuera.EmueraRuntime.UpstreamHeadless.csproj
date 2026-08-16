@@ -25,8 +25,16 @@
     <Compile Include="../Upstream/Emuera/Runtime/**/*.cs"
              Exclude="../Upstream/Emuera/Runtime/Script/Statements/Clipboard.cs;../Upstream/Emuera/Runtime/Utils/PluginSystem/PluginManager.cs;../Upstream/Emuera/Runtime/Utils/Sound.NAudio.cs;../Upstream/Emuera/Runtime/Utils/Sound.WMP.cs;../Upstream/Emuera/Runtime/Utils/NAudio_LoopStream.cs;../Upstream/Emuera/Runtime/Utils/WebPWrapper.cs" />
     <Compile Include="HeadlessPlatformStubs.cs" />
+    <Compile Include="HeadlessFileSystem.cs" />
     <Compile Include="HeadlessEmueraConsole.cs" />
     <Compile Include="UpstreamRuntimeSession.cs" />
     <Compile Include="Properties/AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="MinorShift.Emuera.Runtime.Utils.HeadlessFile" Alias="File" />
+    <Using Include="MinorShift.Emuera.Runtime.Utils.HeadlessDirectory" Alias="Directory" />
+    <Using Include="MinorShift.Emuera.Runtime.Utils.HeadlessFileStream" Alias="FileStream" />
+    <Using Include="MinorShift.Emuera.Runtime.Utils.HeadlessStreamReader" Alias="StreamReader" />
+    <Using Include="MinorShift.Emuera.Runtime.Utils.HeadlessStreamWriter" Alias="StreamWriter" />
   </ItemGroup>
 </Project>

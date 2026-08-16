@@ -886,8 +886,9 @@ Realtime Gateway 对一个 Session 执行以下恢复：
 
 1. 验证 WebSocket 身份和 Session 权限；
 2. 从 API 为当前 Worker epoch 维护的不可变镜像读取 `Snapshot(N)`，其中包含当前 prompt；
-3. 若 Hub 尚未取得首个 Snapshot，返回 `SNAPSHOT_NOT_READY`，客户端带抖动退避后重新 resume；否则注册
-   有界连接队列并再次比较当前 epoch/sequence；若已经前进则直接标记需要重新同步；
+3. 先注册有界连接队列并再次比较当前 epoch/sequence；若 Hub 尚未取得首个 Snapshot，则订阅保持等待，
+   首个 Worker display batch 到达后发送快照；若已经前进则直接标记需要重新同步。对旧 peer 返回的
+   `SNAPSHOT_NOT_READY` 仍按短退避重新 resume；
 4. Gateway 发送 Snapshot，客户端以其完整替换本地显示树；
 5. Gateway 从序号大于 `N` 的下一批实时事件开始转发；
 6. 若读取与转发衔接期间检测到序号缺口或连接队列溢出，放弃待发增量并读取较新的完整 Snapshot。
@@ -1133,7 +1134,8 @@ Worker 从内核视角可能读取 DataRoot 内其他资源；实例不得面向
 ### 12.3 Web 安全
 
 - 生产环境仅使用 HTTPS，Cookie 设置 `Secure`、`HttpOnly`、合适的 `SameSite`；
-- Cookie 认证的写操作使用 CSRF 防护；WebSocket 校验 Origin 和登录态；
+- Cookie 认证的写操作使用 CSRF 防护；Realtime WebSocket 不限制 Origin，但仍校验登录态并在每次资源
+  操作时重新授权；部署网络边界不得面向不受信任的站点开放；
 - CSP 默认禁止脚本来源扩张、对象嵌入和任意媒体 URL；
 - Emuera HTML 先解析为内部节点，再由前端组件生成 DOM；禁止 `innerHTML` 直灌；
 - 文本、tooltip、文件名和错误详情按上下文编码；
@@ -1257,7 +1259,7 @@ pending clientMessageId → result
 配置组包括：
 
 - 身份提供商、email-only 登录、会话 Cookie、仅首次读取的 bootstrap 管理员 username/email/
-  password，以及允许的 WebSocket Origin；
+  password，以及 Realtime WebSocket 的认证/授权策略；Origin 不作为允许列表配置；
 - 数据路径、数据库参数和备份窗口；P1-01 的数据库 CLI 与布局如下：
 
   ```bash

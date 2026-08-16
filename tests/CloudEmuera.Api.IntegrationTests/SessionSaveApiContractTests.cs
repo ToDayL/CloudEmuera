@@ -500,7 +500,6 @@ public sealed class SessionSaveApiContractTests : IDisposable
             builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["CloudEmuera:DataPath"] = dataRoot,
-                ["CloudEmuera:PublicOrigin"] = "http://localhost:5173",
             }));
         }
     }

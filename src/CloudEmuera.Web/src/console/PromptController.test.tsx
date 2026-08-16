@@ -76,6 +76,18 @@ describe("PromptController", () => {
     expect(screen.getByRole("spinbutton", { name: "游戏输入" })).toHaveAttribute("max", "4");
   });
 
+  it("renders native runtime input with constrained controls while preserving its system flag", () => {
+    const onInput = vi.fn();
+    render(<PromptController prompt={{ ...prompt("integer"), promptText: null, systemInput: true }} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+    expect(screen.getByLabelText("游戏运行时输入")).toBeInTheDocument();
+    expect(screen.queryByText("这是由游戏运行时处理的输入，不提供可伪造的浏览器控件。")).not.toBeInTheDocument();
+
+    const input = screen.getByRole("spinbutton", { name: "游戏输入" });
+    fireEvent.change(input, { target: { value: "2" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(onInput).toHaveBeenCalledWith(expect.objectContaining({ source: "BUTTON", value: "2" }));
+  });
+
   it("keeps an untimed prompt enabled when its deadline sentinel is zero", () => {
     const onInput = vi.fn();
     render(<PromptController prompt={{ ...prompt("text"), deadlineUnixMilliseconds: 0, timeoutMilliseconds: null }} serverTimeOffsetMilliseconds={0} onInput={onInput} />);

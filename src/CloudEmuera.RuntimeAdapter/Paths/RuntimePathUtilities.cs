@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 
 namespace CloudEmuera.RuntimeAdapter;
 
@@ -80,6 +81,72 @@ public static partial class RuntimePathUtilities
         }
 
         return Path.GetFullPath(candidate);
+    }
+
+    /// <summary>
+    /// Resolves an entry below a validated runtime root with Windows-compatible
+    /// ordinal, NFC-aware case-insensitive segment matching. A missing tail is
+    /// retained for create operations; ambiguous matches fail closed.
+    /// </summary>
+    internal static string ResolveCaseInsensitivePath(
+        string candidate,
+        string root,
+        string logicalPath,
+        RuntimeFileArea? area = null)
+    {
+        string fullCandidate = Path.GetFullPath(candidate);
+        string fullRoot = Path.GetFullPath(root);
+        if (!IsSameOrWithin(fullCandidate, fullRoot))
+        {
+            throw new RuntimeFileAccessException(
+                RuntimePathReasonCodes.PathOutsideArea,
+                "The logical path is outside its runtime area.",
+                logicalPath,
+                area);
+        }
+
+        string relative = Path.GetRelativePath(fullRoot, fullCandidate);
+        if (relative == ".") return fullRoot;
+        string current = fullRoot;
+        string[] segments = relative.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        for (int index = 0; index < segments.Length; index++)
+        {
+            string exact = Path.Combine(current, segments[index]);
+            if (File.Exists(exact) || Directory.Exists(exact))
+            {
+                ThrowIfReparsePoint(exact, logicalPath, area, missingIsAllowed: false);
+                current = exact;
+                continue;
+            }
+
+            if (!Directory.Exists(current))
+                return Path.Combine(current, Path.Combine(segments[index..]));
+
+            string normalized = segments[index].Normalize(NormalizationForm.FormC);
+            string[] matches = Directory.EnumerateFileSystemEntries(current)
+                .Where(path => Path.GetFileName(path).Normalize(NormalizationForm.FormC)
+                    .Equals(normalized, StringComparison.OrdinalIgnoreCase))
+                .Take(2)
+                .ToArray();
+            if (matches.Length > 1)
+            {
+                throw new RuntimeFileAccessException(
+                    RuntimePathReasonCodes.LayoutConflict,
+                    "The runtime path is ambiguous under case-insensitive lookup.",
+                    logicalPath,
+                    area);
+            }
+
+            if (matches.Length == 0)
+                return Path.Combine(current, Path.Combine(segments[index..]));
+
+            ThrowIfReparsePoint(matches[0], logicalPath, area, missingIsAllowed: false);
+            current = matches[0];
+        }
+
+        return current;
     }
 
     public static string TrimTrailingSeparators(string path)

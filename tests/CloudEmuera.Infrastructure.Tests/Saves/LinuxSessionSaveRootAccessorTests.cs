@@ -34,6 +34,28 @@ public sealed class LinuxSessionSaveRootAccessorTests
     }
 
     [Fact]
+    public async Task SavDirectoryAndFileLookupIsCaseInsensitiveWithoutDuplicatingEntries()
+    {
+        using SaveRootFixture fixture = new(RuntimeSaveLayout.SavDirectory);
+        string mixedRoot = Path.Combine(fixture.SessionRoot, "Sav");
+        Directory.Move(fixture.SaveRoot, mixedRoot);
+        string mixedFile = Path.Combine(mixedRoot, "Save00.SAV");
+        File.WriteAllText(mixedFile, "case-save");
+        File.SetUnixFileMode(mixedFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+        LinuxSessionSaveRootAccessor accessor = new(fixture.Options);
+        SessionSaveRootSnapshot listing = await accessor.ListAsync(fixture.SessionId);
+        SessionSaveItem item = Assert.Single(listing.Items);
+        Assert.Equal("Save00.SAV", item.Path);
+
+        SessionSaveFileRead read = await accessor.OpenReadAsync(fixture.SessionId, "save00.sav")
+            ?? throw new Xunit.Sdk.XunitException("The mixed-case save file was not opened.");
+        await using (read.Content)
+        using (var reader = new StreamReader(read.Content))
+            Assert.Equal("case-save", await reader.ReadToEndAsync());
+    }
+
+    [Fact]
     public async Task SymlinkSaveEntryIsRejectedWithoutFollowingItsTarget()
     {
         using SaveRootFixture fixture = new(RuntimeSaveLayout.Root);

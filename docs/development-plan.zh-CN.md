@@ -632,7 +632,7 @@ docker compose -f compose.dev.yaml run --rm api \
 实施记录（2026-08-14）：修复 `SessionLifecycleExecutor` 具体类型单例注册，确保
 `ISessionLifecycleExecutor` 与 `ISessionCommandGate` 共享同一把 Session command gate；完成 ADR-0021、Realtime
 v1 envelope/schema/golden、原生 WebSocket endpoint、live authorization、Snapshot/resync writer、connection
-admission、应用 heartbeat、Worker correlation pending map、`SNAPSHOT_NOT_READY` 和共享 Session command gate。
+admission、应用 heartbeat、Worker correlation pending map、首帧订阅竞态（兼容 `SNAPSHOT_NOT_READY`）和共享 Session command gate。
 `CloudEmuera.Realtime.Tests` 41 项、`CloudEmuera.Api.IntegrationTests` Realtime/Authorization/SessionLifecycle
 过滤集 9 项、`CloudEmuera.Worker.IntegrationTests` Realtime/Input/WorkerDisconnect 过滤集 4 项通过；真实
 Kestrel + Cookie + UDS Worker 集成测试覆盖 open → resume → Snapshot → prompt → input → output、浏览器断线

@@ -30,6 +30,7 @@ internal sealed class EmueraConsole
     private readonly int viewportWidth;
     private readonly int viewportHeight;
     private bool isRunning = true;
+    private bool hasFatalError;
     private bool isTimeOut;
     private string windowTitle = string.Empty;
     private int generation;
@@ -70,6 +71,7 @@ internal sealed class EmueraConsole
     }
 
     public bool IsRunning => isRunning;
+    public bool HasFatalError => hasFatalError;
     public void SetCancellationToken(CancellationToken value) => cancellationToken = value;
     public void BeginExecutionOutput()
     {
@@ -123,13 +125,18 @@ internal sealed class EmueraConsole
     // Upstream status/progress output (for example the DEBUG-only elapsed-time
     // reports) must not be treated as script diagnostics. Warnings are recorded
     // separately from errors so the headless session only gates activation on
-    // real errors; warnings are surfaced as non-blocking diagnostics.
+    // real errors. Warnings remain compatibility diagnostics and are not
+    // written into the player's console transcript.
     public void PrintSystemLine(string value) => RecordSystemMessage(value);
-    public void PrintError(string value) => RecordMessage(value);
+    public void PrintError(string value)
+    {
+        RecordMessage(value);
+        EmitDiagnosticLine(value);
+    }
     public void PrintWarning(string value, ScriptPosition? position, int level) =>
         RecordWarning(FormatDiagnostic(value, position));
     public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) =>
-        RecordMessage(FormatDiagnostic(value, position));
+        RecordMessageAndDisplay(FormatDiagnostic(value, position));
     public void PrintTemporaryLine(string value) => EmitLine(value, temporary: true);
     public void PrintPlain(string value) => EmitText(value);
     public void PrintPlainWithSingleLineFix(string value) => EmitLine(value);
@@ -323,8 +330,16 @@ internal sealed class EmueraConsole
 
     public void Quit() => isRunning = false;
     public void ForceQuit() => Quit();
-    public void ThrowError(bool playSound) => Quit();
-    public void ThrowTitleError(bool error) => Quit();
+    public void ThrowError(bool playSound)
+    {
+        hasFatalError = true;
+        Quit();
+    }
+    public void ThrowTitleError(bool error)
+    {
+        hasFatalError = true;
+        Quit();
+    }
     public void Await(int milliseconds)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -680,10 +695,22 @@ internal sealed class EmueraConsole
             runtimeMessages.Add(value.Trim());
     }
 
+    private void RecordMessageAndDisplay(string value)
+    {
+        RecordMessage(value);
+        EmitDiagnosticLine(value);
+    }
+
     private void RecordWarning(string value)
     {
         if (!string.IsNullOrWhiteSpace(value))
             runtimeWarnings.Add(value.Trim());
+    }
+
+    private void EmitDiagnosticLine(string value)
+    {
+        if (outputEnabled && !string.IsNullOrWhiteSpace(value))
+            EmitLine($"⚠ {value.Trim()}");
     }
 
     private void RecordSystemMessage(string value)

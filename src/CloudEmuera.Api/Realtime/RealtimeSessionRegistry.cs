@@ -8,8 +8,7 @@ public sealed record RealtimeSubscriptionRoute(
     string WorkerId,
     ulong WorkerEpoch,
     string CapabilityDigest,
-    RealtimeSubscription Subscription,
-    bool SnapshotReady = true);
+    RealtimeSubscription Subscription);
 
 /// <summary>
 /// API-local adapter over the Worker Manager.  It captures the current Worker

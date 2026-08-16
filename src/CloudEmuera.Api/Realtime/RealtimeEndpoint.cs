@@ -4,6 +4,8 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Contracts;
 using CloudEmuera.Contracts.Identity;
 using CloudEmuera.Contracts.Realtime;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Net.Http.Headers;
 using System.Net.WebSockets;
 
@@ -11,7 +13,6 @@ namespace CloudEmuera.Api.Realtime;
 
 /// <summary>HTTP upgrade boundary for the native v1 realtime protocol.</summary>
 public sealed class RealtimeEndpoint(
-    IConfiguration configuration,
     IServiceScopeFactory scopeFactory,
     RealtimeAuthorizationGate authorization,
     RealtimeGatewayOptions options,
@@ -38,14 +39,6 @@ public sealed class RealtimeEndpoint(
             return;
         }
 
-        string? configuredOrigin = configuration["CloudEmuera:PublicOrigin"];
-        string? origin = context.Request.Headers.Origin;
-        if (string.IsNullOrWhiteSpace(configuredOrigin) || !string.Equals(configuredOrigin, origin, StringComparison.Ordinal))
-        {
-            await RejectAsync(context, StatusCodes.Status403Forbidden, "ORIGIN_REJECTED", "The realtime Origin is not allowed.").ConfigureAwait(false);
-            return;
-        }
-
         RealtimeConnectionIdentity? identity = authorization.ReadIdentity(context.User);
         if (identity is null)
         {
@@ -58,10 +51,10 @@ public sealed class RealtimeEndpoint(
         // and password-change state without retaining its scoped services.
         await using (AsyncServiceScope scope = scopeFactory.CreateAsyncScope())
         {
-            RealtimeOriginValidator validator = scope.ServiceProvider.GetRequiredService<RealtimeOriginValidator>();
+            RealtimeUpgradeValidator validator = scope.ServiceProvider.GetRequiredService<RealtimeUpgradeValidator>();
             if (!await validator.IsUpgradeAllowedAsync(context, context.RequestAborted).ConfigureAwait(false))
             {
-                await RejectAsync(context, StatusCodes.Status403Forbidden, "ORIGIN_OR_SESSION_REJECTED", "The realtime upgrade is not allowed.").ConfigureAwait(false);
+                await RejectAsync(context, StatusCodes.Status403Forbidden, "REALTIME_SESSION_REJECTED", "The realtime session is not allowed.").ConfigureAwait(false);
                 return;
             }
         }
@@ -111,7 +104,8 @@ public sealed class RealtimeEndpoint(
                 identity,
                 options,
                 codec,
-                () => workerManager.IsDraining);
+                () => workerManager.IsDraining,
+                context.RequestServices.GetRequiredService<ILogger<RealtimeConnection>>());
             await connection.RunAsync(context.RequestAborted).ConfigureAwait(false);
         }
         catch

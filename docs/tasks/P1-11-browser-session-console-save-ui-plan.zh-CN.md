@@ -298,7 +298,8 @@ any  -> FORBIDDEN | SESSION_STOPPED | UNSUBSCRIBED
 ```
 
 - resume 只发送 `capabilityDigest` 和可选 `lastEpoch`，不发送 lastSequence 并期待历史补发；
-- `SNAPSHOT_NOT_READY` 按独立短退避重试，保持“Worker 正在准备显示”状态，不重新 open Session；
+- 当前 API 在首个 Snapshot 尚未生成时保持订阅，Worker 首个 display batch 到达后直接发送；若兼容旧 peer
+  返回 `SNAPSHOT_NOT_READY`，按独立短退避重试，保持“Worker 正在准备显示”状态，不重新 open Session；
 - Snapshot 到达后验证 envelope `workerEpoch/sequence` 与 payload 一致，再一次性替换 store；
 - Batch 只有在 epoch 相同、`firstSequence == currentSequence + 1`、内部 transaction 连续且
   `lastSequence` 一致时才可归约；
@@ -444,8 +445,10 @@ Console viewport
 | `primitivePointerKey` | Canvas hit region/受限键盘 | POINTER/KEYBOARD |
 | `waitOnly` | 只显示等待/倒计时，无可提交控件 | 无浏览器提交 |
 
-System input 永不显示可伪造控件；`allowedSources` 是 UI 前置约束但 Worker 仍最终校验。OneInput 可以在
-客户端限制一个 Unicode scalar/上游规定格式以改善体验，但不能代替 Worker normalized/invalid receipt。
+System input 保留给 Worker 的运行时语义，但不再因此隐藏浏览器交互：`integer`、`text`、`anyValue`、
+`anyKey` 等可表达类型使用同一套受约束结构化控件，`allowedSources` 是 UI 前置约束但 Worker 仍最终校验；
+`waitOnly` 仍只显示等待状态，不能伪造输入。OneInput 可以在客户端限制一个 Unicode scalar/上游规定格式以
+改善体验，但不能代替 Worker normalized/invalid receipt。
 
 ### 10.2 提交流程
 

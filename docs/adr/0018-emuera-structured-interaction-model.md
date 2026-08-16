@@ -62,6 +62,10 @@ TextButton、PrimitivePointerKey 和 WaitOnly。`ConsolePrompt` 保存默认值�
 stop-message-skip、来源 allowlist、UTC 展示时间、deadline、DisplayTime、TimeUpMes 和封闭
 timeout action。
 
+`systemInput` 是 Worker/上游解释器的语义标记，不是浏览器禁用交互的标记。对能够映射为
+`integer`、`text`、`anyValue` 或按键输入的 prompt，浏览器可以显示受约束的结构化控件；输入仍必须带
+当前 `promptId`/epoch 并由 Worker 最终校验。`waitOnly` 和无法表达的宿主能力继续只显示状态，不伪造控件。
+
 Worker 使用 `IRuntimeClock` 的单调 timestamp 决定超时；UTC opened/deadline 仅用于展示和诊断。
 输入、超时、取消和显式关闭在 `InputCoordinator` 的同一临界区竞争，只能有一个终态。超时按
 `ReturnDefaultValue`、`ContinueWithoutValue` 或 `CancelRuntime` 执行；`StructuredGameConsole.IsTimeOut`

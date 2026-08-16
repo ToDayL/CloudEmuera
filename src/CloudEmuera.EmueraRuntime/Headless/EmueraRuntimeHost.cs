@@ -435,15 +435,35 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                     (!TryInt(fields[2], out x) || !TryInt(fields[3], out y) ||
                      !TryInt(fields[4], out width) || !TryInt(fields[5], out height)))
                     throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite rectangle.");
-                if (width <= 0 || height <= 0 || x < 0 || y < 0 || x > metadata.Width - width || y > metadata.Height - height)
+                if (width <= 0 || height <= 0 || x < 0 || y < 0 || x >= metadata.Width || y >= metadata.Height)
                     throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an out-of-bounds Sprite rectangle.");
+
+                int requestedWidth = width;
+                int requestedHeight = height;
+                long requestedRight = (long)x + requestedWidth;
+                long requestedBottom = (long)y + requestedHeight;
+                int sourceWidthAfterClip = checked((int)(Math.Min((long)metadata.Width, requestedRight) - x));
+                int sourceHeightAfterClip = checked((int)(Math.Min((long)metadata.Height, requestedBottom) - y));
+                if (sourceWidthAfterClip <= 0 || sourceHeightAfterClip <= 0)
+                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an out-of-bounds Sprite rectangle.");
+                if (sourceWidthAfterClip != requestedWidth || sourceHeightAfterClip != requestedHeight)
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} Sprite rectangle ({x},{y},{requestedWidth},{requestedHeight}) was clipped to ({x},{y},{sourceWidthAfterClip},{sourceHeightAfterClip}) to fit the image.",
+                        fatal: false,
+                        sourcePath: spriteCsv.LogicalPath);
+                    width = sourceWidthAfterClip;
+                    height = sourceHeightAfterClip;
+                }
 
                 int offsetX = 0;
                 int offsetY = 0;
                 if (fields.Length >= 8 && (!TryInt(fields[6], out offsetX) || !TryInt(fields[7], out offsetY)))
                     throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite offset.");
-                int destinationWidth = width;
-                int destinationHeight = height;
+                int destinationWidth = requestedWidth;
+                int destinationHeight = requestedHeight;
                 if (fields.Length >= 11 && (!TryInt(fields[9], out destinationWidth) || !TryInt(fields[10], out destinationHeight)))
                     throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite destination size.");
                 if (destinationWidth <= 0 || destinationHeight <= 0)

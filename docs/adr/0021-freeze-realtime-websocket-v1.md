@@ -30,15 +30,17 @@ P1-09 还需要把 Worker v3 的 `SubmitInput`/`InputResult` 接到浏览器：�
   discriminator、二进制帧和混合 fragment 按稳定 close code 拒绝。
 - 每次 `session.resume` 都重新取得当前 Worker 的 `(workerEpoch, snapshotSequence)`，先发完整
   `session.snapshot`，再发连续 `display.batch`。不接受 `lastSequence` 补发承诺、不保存 ack 历史、不把
-  Snapshot 或输入回执写入 SQLite；Hub 尚未取得首个 Snapshot 时返回 `SNAPSHOT_NOT_READY`，客户端退避后
-  重试，而不是让连接无限等待首帧。
+  Snapshot 或输入回执写入 SQLite；Hub 尚未取得首个 Snapshot 时先注册有界订阅，首个 Worker display
+  batch 到达后唤醒该订阅发送快照，避免 Ready 与首帧之间的轮询竞态。仍兼容旧 peer 返回的
+  `SNAPSHOT_NOT_READY`，客户端必须使用短退避重试。
 - `resync.required` 与替代 Snapshot 由单 writer 作为不可拆分 work group 发送；同一连接最多订阅配置数个
   Session，同一 Session 可以被多个连接订阅，断开/取消订阅只释放 Hub subscription，不改变 Session 或
   Worker 生命周期。
 
 ### 2. upgrade 和每次资源操作均实时鉴权
 
-upgrade 要求认证 Cookie、精确配置 Origin、共同子协议、启动 readiness 和未 draining 的 API。连接不
+upgrade 要求认证 Cookie、共同子协议、启动 readiness 和未 draining 的 API；不读取或限制浏览器的
+`Origin`，以支持跨域和非浏览器客户端。连接不
 长期信任 upgrade 时的 `HttpContext.User`：每次 resume/input 调用当前身份会话校验、取得当前用户状态，
 再调用中央 `IResourceAuthorizer` 的 `SessionResume`/`SessionControl`。不存在和越权统一为
 `SESSION_NOT_FOUND`；会话撤销、账户禁用或安全戳变化产生 `AUTHENTICATION_EXPIRED` 并以 `1008` 关闭；
@@ -89,6 +91,9 @@ Session 状态。
 
 - 浏览器重连逻辑简单且确定：总是以当前 epoch 的完整 Snapshot 替换本地状态，不承诺恢复断线期间的
   每一条历史增量。
+- Realtime WebSocket 不再提供 Origin 白名单边界；任意 Origin（包括缺失 Origin）仍必须经过 Cookie 身份、
+  实时会话和每次资源操作授权。实例只能在部署者信任的网络边界内开放，不能把 Origin 校验当作跨站请求
+  防护。
 - API 多持有 transient connection/subscription 和单 Worker Hub mirror，但每个队列、pending map、最终
   message 和全局 admission 都有双维度预算。
 - input timeout 只表示 API 未取得 Worker 回执，不会由 API 生成默认值或重新开始 Runtime prompt 计时；
@@ -111,3 +116,6 @@ Session 状态。
 registry、单 writer/fair scheduler、live authorization、Snapshot/resync stream、应用 heartbeat、
 Worker correlated input map 与共享 Session command gate；协议 schema、golden fixture 和 P1-11
 TypeScript 类型入口已纳入仓库。
+
+2026-08-16：按受信任网络部署要求移除 WebSocket Origin 白名单；保留 Cookie 身份、实时会话校验、v1
+子协议、readiness/draining 和每次 resume/input 资源授权。该部署模式不再把 Origin 作为跨站请求边界。

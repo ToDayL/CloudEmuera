@@ -5,6 +5,7 @@ using CloudEmuera.Api.Workers;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Ipc;
+using Microsoft.Extensions.Logging;
 
 namespace CloudEmuera.Api.Realtime;
 
@@ -26,6 +27,7 @@ public sealed class RealtimeConnection
     private readonly RealtimeGatewayOptions options;
     private readonly RealtimeEnvelopeCodec codec;
     private readonly Func<bool> isDraining;
+    private readonly ILogger? logger;
     private readonly CancellationTokenSource stop = new();
     private readonly object inputSync = new();
     private readonly object subscriptionSync = new();
@@ -42,6 +44,7 @@ public sealed class RealtimeConnection
     private string closeReason = "normal";
     private Task? closeOutputTask;
     private bool closeOutputStarted;
+    private int closeLogged;
     private RealtimeConnectionWriter? writer;
 
     public RealtimeConnection(
@@ -54,7 +57,8 @@ public sealed class RealtimeConnection
         RealtimeConnectionIdentity identity,
         RealtimeGatewayOptions options,
         RealtimeEnvelopeCodec codec,
-        Func<bool> isDraining)
+        Func<bool> isDraining,
+        ILogger? logger = null)
     {
         this.socket = socket ?? throw new ArgumentNullException(nameof(socket));
         this.admission = admission ?? throw new ArgumentNullException(nameof(admission));
@@ -66,6 +70,7 @@ public sealed class RealtimeConnection
         this.options = options ?? throw new ArgumentNullException(nameof(options));
         this.codec = codec ?? throw new ArgumentNullException(nameof(codec));
         this.isDraining = isDraining ?? throw new ArgumentNullException(nameof(isDraining));
+        this.logger = logger;
     }
 
     public string ConnectionId => admission.ConnectionId;
@@ -135,6 +140,8 @@ public sealed class RealtimeConnection
         }
         catch (RealtimeProtocolException exception)
         {
+            if (logger is not null)
+                ProtocolErrorLog(logger, ConnectionId, exception.ReasonCode, exception);
             RequestClose(exception.CloseCode, exception.ReasonCode);
             // The receive-loop cancellation is part of RequestClose.  Use a
             // bounded independent send token here so a protocol.error can be
@@ -147,8 +154,10 @@ public sealed class RealtimeConnection
             if (isDraining())
                 RequestCloseIfUnset(1012, "api_draining");
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            if (logger is not null)
+                ConnectionFaultLog(logger, ConnectionId, exception);
             RequestClose(1011, "internal_error");
         }
         finally
@@ -306,13 +315,6 @@ public sealed class RealtimeConnection
             return;
         }
 
-        if (!route.SnapshotReady)
-        {
-            await route.Subscription.DisposeAsync().ConfigureAwait(false);
-            QueueResumeResult(parsed.Envelope.MessageId, sessionId, "SNAPSHOT_NOT_READY", route.WorkerEpoch, "SNAPSHOT_NOT_READY");
-            return;
-        }
-
         if (!admission.TryAddSubscription(sessionId))
         {
             await route.Subscription.DisposeAsync().ConfigureAwait(false);
@@ -331,6 +333,10 @@ public sealed class RealtimeConnection
         RealtimeSubscriptionRoute? previous;
         lock (subscriptionSync)
             previous = subscriptions.GetValueOrDefault(sessionId);
+        // Register the subscription before the Worker publishes its first
+        // display batch. The hub wakes this reader with a resync snapshot
+        // when that batch arrives; rejecting the route here creates a race
+        // between Ready and the first output and leaves clients polling.
         if (writer is null || !await writer.AddSubscriptionAsync(sessionId, route.Subscription, cancellationToken).ConfigureAwait(false))
         {
             await route.Subscription.DisposeAsync().ConfigureAwait(false);
@@ -736,6 +742,8 @@ public sealed class RealtimeConnection
 
     private void OnWriterFault(Exception exception)
     {
+        if (logger is not null)
+            WriterFaultLog(logger, ConnectionId, exception);
         RequestClose(
             exception is RealtimeSlowConsumerException ? 1008 : 1011,
             exception is RealtimeSlowConsumerException ? "slow_consumer" : "writer_failed");
@@ -746,6 +754,11 @@ public sealed class RealtimeConnection
         Interlocked.CompareExchange(ref closeCode, code, 1000);
         if (Volatile.Read(ref closeCode) == code)
             closeReason = NormalizeCloseReason(reason);
+        if (Interlocked.Exchange(ref closeLogged, 1) == 0)
+        {
+            if (logger is not null)
+                ConnectionCloseLog(logger, ConnectionId, Volatile.Read(ref closeCode), closeReason, null);
+        }
         stop.Cancel();
         lock (closeSync)
         {
@@ -820,6 +833,30 @@ public sealed class RealtimeConnection
     };
 
     private static string NewMessageId() => $"msg_{Guid.CreateVersion7():N}";
+
+    private static readonly Action<ILogger, string, string, Exception?> ProtocolErrorLog =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Information,
+            new EventId(2201, "RealtimeProtocolError"),
+            "realtime_event=protocol_error connectionId={ConnectionId} reason={Reason}");
+
+    private static readonly Action<ILogger, string, Exception?> ConnectionFaultLog =
+        LoggerMessage.Define<string>(
+            LogLevel.Error,
+            new EventId(2202, "RealtimeConnectionFault"),
+            "realtime_event=connection_fault connectionId={ConnectionId}");
+
+    private static readonly Action<ILogger, string, Exception?> WriterFaultLog =
+        LoggerMessage.Define<string>(
+            LogLevel.Warning,
+            new EventId(2203, "RealtimeWriterFault"),
+            "realtime_event=writer_fault connectionId={ConnectionId}");
+
+    private static readonly Action<ILogger, string, int, string, Exception?> ConnectionCloseLog =
+        LoggerMessage.Define<string, int, string>(
+            LogLevel.Information,
+            new EventId(2204, "RealtimeConnectionClose"),
+            "realtime_event=connection_close connectionId={ConnectionId} closeCode={CloseCode} closeReason={CloseReason}");
 
     private static string NormalizeCloseReason(string value) =>
         string.IsNullOrWhiteSpace(value) ? "normal" : value.Length > 120 ? value[..120] : value;

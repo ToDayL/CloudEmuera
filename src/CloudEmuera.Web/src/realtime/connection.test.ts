@@ -4,8 +4,10 @@ import { RealtimeConnectionManager } from "./connection";
 
 class FakeWebSocket {
   static readonly OPEN = 1;
+  static readonly CLOSING = 2;
   static readonly CLOSED = 3;
   static instances: FakeWebSocket[] = [];
+  static deferClose = false;
   readonly sent: string[] = [];
   readyState = 0;
   binaryType = "";
@@ -16,7 +18,11 @@ class FakeWebSocket {
   send(value: string): void { this.sent.push(value); }
   open(): void { this.readyState = FakeWebSocket.OPEN; this.emit("open", {}); }
   message(value: unknown): void { this.emit("message", { data: JSON.stringify(value) }); }
-  close(code = 1000, reason = ""): void { this.readyState = FakeWebSocket.CLOSED; this.emit("close", { code, reason }); }
+  close(code = 1000, reason = ""): void {
+    this.readyState = FakeWebSocket.deferClose ? FakeWebSocket.CLOSING : FakeWebSocket.CLOSED;
+    if (!FakeWebSocket.deferClose) this.emit("close", { code, reason });
+  }
+  finishClose(code = 1000, reason = ""): void { this.readyState = FakeWebSocket.CLOSED; this.emit("close", { code, reason }); }
   private emit(type: string, event: any): void { for (const handler of this.handlers.get(type) ?? []) handler(event); }
 }
 
@@ -99,6 +105,39 @@ describe("RealtimeConnectionManager", () => {
     vi.unstubAllGlobals();
   });
 
+  it("waits for the replacement snapshot instead of unsubscribing during resync", () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    const manager = new RealtimeConnectionManager();
+    manager.subscribe("s1", () => undefined);
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 1, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: state } });
+    socket.message({ protocolVersion: 1, type: "resync.required", messageId: "resync", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, observedSequence: 1, reason: "snapshot-replaced" } });
+    expect(manager.getSessionState("s1")?.phase).toBe("resyncing");
+    expect(socket.sent.filter(value => JSON.parse(value).type === "session.unsubscribe")).toHaveLength(0);
+    socket.message({ protocolVersion: 1, type: "session.snapshot", messageId: "replacement", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, snapshotSequence: 1, consoleState: state } });
+    expect(manager.getSessionState("s1")?.phase).toBe("snapshot_ready");
+    manager.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not mutate the console state for an unsubscribe acknowledgement", () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    const manager = new RealtimeConnectionManager();
+    manager.subscribe("s1", () => undefined);
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 1, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: state } });
+    socket.message({ protocolVersion: 1, type: "session.stream.ended", messageId: "ended", sessionId: "s1", workerEpoch: 3, payload: { reasonCode: "unsubscribed" } });
+    expect(manager.getSessionState("s1")?.phase).toBe("snapshot_ready");
+    manager.dispose();
+    vi.unstubAllGlobals();
+  });
+
   it("stops on capability mismatch and does not enter a partial ready state", () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     FakeWebSocket.instances = [];
@@ -140,7 +179,12 @@ describe("RealtimeConnectionManager", () => {
     const socket = FakeWebSocket.instances[0];
     socket.open();
     socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 1_000, heartbeatTimeoutMilliseconds: 1_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
-    vi.advanceTimersByTime(1_000);
+    // The server sends its first ping after the advertised interval. The
+    // client must not use only the pong deadline from server.hello, or it
+    // will close before the first ping arrives.
+    vi.advanceTimersByTime(2_999);
+    expect(socket.readyState).not.toBe(FakeWebSocket.CLOSED);
+    vi.advanceTimersByTime(1);
     expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
     expect(manager.getSessionState("s1")?.phase).not.toBe("ended");
     manager.dispose();
@@ -161,6 +205,28 @@ describe("RealtimeConnectionManager", () => {
     expect(FakeWebSocket.instances[0].readyState).toBe(FakeWebSocket.CLOSED);
     expect(FakeWebSocket.instances).toHaveLength(1);
     manager.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("replaces an asynchronously closing socket when a Session is re-entered", () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    FakeWebSocket.deferClose = true;
+    const manager = new RealtimeConnectionManager();
+    const firstCleanup = manager.subscribe("s1", () => undefined);
+    const first = FakeWebSocket.instances[0];
+    firstCleanup();
+    const secondCleanup = manager.subscribe("s1", () => undefined);
+    const second = FakeWebSocket.instances[1];
+    expect(first.readyState).toBe(FakeWebSocket.CLOSING);
+    expect(second).toBeTruthy();
+    expect(second).not.toBe(first);
+
+    first.finishClose();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    secondCleanup();
+    manager.dispose();
+    FakeWebSocket.deferClose = false;
     vi.unstubAllGlobals();
   });
 

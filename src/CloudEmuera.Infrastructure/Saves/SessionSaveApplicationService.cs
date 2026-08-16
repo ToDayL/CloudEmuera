@@ -686,10 +686,10 @@ public sealed class SessionSaveApplicationService(
     private static SessionSaveFileKind InferKind(string path)
     {
         string file = LastPathSegment(path);
-        if (file.Equals("global.sav", StringComparison.Ordinal)) return SessionSaveFileKind.Global;
-        if (file.StartsWith("save", StringComparison.Ordinal)) return SessionSaveFileKind.Normal;
-        if (file.StartsWith("txt", StringComparison.Ordinal)) return SessionSaveFileKind.AuxiliaryText;
-        if (file.StartsWith("img", StringComparison.Ordinal)) return SessionSaveFileKind.AuxiliaryImage;
+        if (file.Equals("global.sav", StringComparison.OrdinalIgnoreCase)) return SessionSaveFileKind.Global;
+        if (file.StartsWith("save", StringComparison.OrdinalIgnoreCase)) return SessionSaveFileKind.Normal;
+        if (file.StartsWith("txt", StringComparison.OrdinalIgnoreCase)) return SessionSaveFileKind.AuxiliaryText;
+        if (file.StartsWith("img", StringComparison.OrdinalIgnoreCase)) return SessionSaveFileKind.AuxiliaryImage;
         throw new SessionSaveException(SaveErrorCodes.PathInvalid, "存档路径无效。", 400);
     }
 

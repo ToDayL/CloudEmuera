@@ -16,7 +16,7 @@ Session、存档、管理和设置页面，但尚未连接真实 API
 P1-08 WebSocket 恢复与输入去重
 
 需求映射：AUTH-001～006、OPS-004/005、SEC-009、NFR-011/015～018、AC-004。
-其中 AUTH-005 在本步骤建立可复用的升级/恢复授权器和 Origin 策略，生产 WebSocket 协议接线
+其中 AUTH-005 在本步骤建立可复用的升级/恢复授权器和实时会话策略，生产 WebSocket 协议接线
 仍由 P1-08 完成。
 
 ## 1. 任务结论
@@ -116,7 +116,7 @@ token 存储、轮换和浏览器暴露面。未来非浏览器客户端需要 t
 9. 在 Application 建立 actor、角色策略、资源访问描述符和集中授权服务；
 10. 在 Infrastructure 建立只返回授权所需最小字段的 owner/visibility lookup；
 11. 建立追加式审计端口和 SQLite 实现，敏感状态更新与审计同事务；
-12. 建立 WebSocket upgrade Origin 检查及每次 `session.resume` 可调用的重新授权接口；
+12. 建立 WebSocket upgrade 实时会话检查及每次 `session.resume` 可调用的重新授权接口；
 13. 把现有 React 登录页接入真实 API，增加 AuthProvider、受保护路由、管理员导航和注销；
 14. 新增 API 集成测试、Application 授权测试、Infrastructure 身份测试、Web 组件测试和登录 E2E；
 15. 更新配置、ADR、HTTP 契约、开发计划和安全运维说明。
@@ -190,7 +190,7 @@ src/CloudEmuera.Api/
 │   ├── AuthEndpoints.cs
 │   ├── AdminUserEndpoints.cs
 │   ├── AuthSessionValidator.cs
-│   └── RealtimeOriginValidator.cs
+│   └── RealtimeUpgradeValidator.cs
 ├── Bootstrap/
 │   ├── BootstrapAdminOptions.cs
 │   ├── BootstrapAdminInitializer.cs
@@ -452,9 +452,12 @@ login、logout、change-password 和管理员操作：
 
 建立两个独立检查：
 
-- upgrade gate：要求有效 Cookie session，并将 `Origin` 与显式允许的 HTTPS origin 精确匹配；
+- upgrade gate：要求有效 Cookie session；忽略 `Origin`，由部署者负责网络边界；
 - resume authorizer：每次 `session.resume` 都根据当前 actor 和目标 Session 重新查询数据库授权，
   不能沿用连接建立时缓存的 owner 判断。
+
+这意味着 WebSocket 不再承担跨站请求边界；Cookie、实时身份校验和每次资源授权仍然有效，但公网或
+不受信任网络的暴露必须由反向代理、网络 ACL 或其他部署边界控制。
 
 P1-02 对这两个组件做单元/集成测试，并提供 P1-08 可调用接口；不建立假的生产 WebSocket 消息
 流。P1-08 必须在真实 `/api/v1/realtime` adapter 上再次验证 AUTH-005。
@@ -821,7 +824,7 @@ InMemory provider 替代 SQLite 约束。
 4. ADMIN force-stop descriptor 允许，但私有 console/save read 仍隐藏；
 5. 管理员禁用用户后，目标用户下一请求失败；角色改变后旧 Cookie 权限不残留；
 6. 每次模拟 `session.resume` 都重新读取 owner/status，而不缓存首次结果；
-7. WebSocket upgrade gate 拒绝匿名、无 Origin、错误 Origin 和已撤销 Cookie；
+7. WebSocket upgrade gate 接受任意或缺失 Origin，但拒绝匿名、已撤销 Cookie 和无效实时会话；
 8. `returnTo` 不产生站外重定向；
 9. 用户列表不返回 password hash/security stamp/session ID；
 10. admin mutation 缺 If-Match、版本冲突、最后管理员不变量返回稳定错误。
@@ -977,7 +980,7 @@ bootstrap：
 2. 实现 CurrentActor、资源 descriptor reader 端口和权限矩阵；
 3. 实现 audit writer、强类型 metadata 和事务编排；
 4. 完成管理员最小权限、最后 active admin 和审计失败回滚测试；
-5. 实现 WebSocket Origin/resume 授权组件接口。
+5. 实现 WebSocket upgrade/resume 授权组件接口。
 
 ### 阶段 D：API 安全接线
 
@@ -1063,7 +1066,7 @@ P1-02 只有同时满足以下条件才可标记 DONE：
 11. must-change-password 用户只能访问改密闭环，成功后获得正常访问；
 12. 服务端资源授权器实现完整权限矩阵、SQL 列表过滤和不可枚举 404；
 13. ADMIN 不自动拥有其他用户私有 Console、Session 控制或 Save 内容权限；
-14. WebSocket upgrade Origin gate 和 resume reauthorization 接口通过测试，真实协议留给 P1-08；
+14. WebSocket upgrade gate 和 resume reauthorization 接口通过测试，真实协议留给 P1-08；
 15. 首次初始化、管理员敏感修改和身份事件写入追加式审计；业务与审计同事务；
 16. 审计/日志/错误中没有密码、hash、Cookie、CSRF、session ID、完整邮箱/username 或输入全文；
 17. 现有 React 展示已接真实身份 API；登录只接受邮箱，路由 guard、改密、管理员用户管理和注销可用；

@@ -141,7 +141,7 @@ public sealed class RealtimeStateMachineTests
     }
 
     [Fact]
-    public async Task ResumeReportsSnapshotNotReadyInsteadOfLeavingTheConnectionWaiting()
+    public async Task ResumeAdmitsBeforeTheFirstSnapshotAndDeliversTheWorkerSnapshot()
     {
         RealtimeGatewayOptions options = RealtimeGatewayOptions.Default with
         {
@@ -161,8 +161,7 @@ public sealed class RealtimeStateMachineTests
             "worker_1",
             1,
             StructuredIpcProtocol.CapabilitySetDigest,
-            subscription,
-            SnapshotReady: false));
+            subscription));
         using ServiceProvider services = TestAuthorizationServices();
         var socket = new ScriptedWebSocket();
         var connection = new RealtimeConnection(
@@ -179,12 +178,31 @@ public sealed class RealtimeStateMachineTests
 
         socket.EnqueueText(ClientHello("hello_1"));
         socket.EnqueueText(Resume("resume_1", "sess_1"));
+
+        Task run = connection.RunAsync();
+
+        string acceptedText = await WaitForSentTextAsync(socket, "session.resume.result");
+        using (JsonDocument accepted = JsonDocument.Parse(acceptedText))
+        {
+            Assert.Equal("ACCEPTED", accepted.RootElement.GetProperty("payload").GetProperty("status").GetString());
+        }
+        Assert.Equal(1, registry.SubscriptionCount);
+
+        hub.PublishDisplayBatch(new W.DisplayBatch
+        {
+            IsSnapshot = true,
+            Snapshot = StructuredConsoleWireMapper.ToProto(ConsoleSnapshot.Empty),
+        });
+        string snapshotText = await WaitForSentTextAsync(socket, "session.snapshot");
+        using (JsonDocument snapshot = JsonDocument.Parse(snapshotText))
+        {
+            Assert.Equal("session.snapshot", snapshot.RootElement.GetProperty("type").GetString());
+            Assert.Equal(0, snapshot.RootElement.GetProperty("payload").GetProperty("snapshotSequence").GetInt64());
+        }
+
         socket.EnqueueClose();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
 
-        await connection.RunAsync().WaitAsync(TimeSpan.FromSeconds(5));
-
-        using JsonDocument result = JsonDocument.Parse(socket.SentTexts.Single(text => text.Contains("session.resume.result", StringComparison.Ordinal)));
-        Assert.Equal("SNAPSHOT_NOT_READY", result.RootElement.GetProperty("payload").GetProperty("status").GetString());
         Assert.Equal(0, registry.SubscriptionCount);
     }
 

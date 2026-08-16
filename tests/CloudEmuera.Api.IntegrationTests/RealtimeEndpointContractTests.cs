@@ -31,7 +31,6 @@ public sealed class RealtimeEndpointContractTests : IDisposable
             builder.ConfigureAppConfiguration(config => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["CloudEmuera:DataPath"] = dataRoot,
-                ["CloudEmuera:PublicOrigin"] = "http://localhost:5173",
             }));
             builder.ConfigureTestServices(services =>
             {

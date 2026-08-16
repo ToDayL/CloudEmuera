@@ -364,8 +364,8 @@ Worker/API 必须返回当前 epoch 下序号为 `N` 的完整 ConsoleSnapshot�
 
 P1-09 将该请求封装在 `GET /api/v1/realtime` 的原生 WebSocket v1 envelope 中，协商子协议
 `cloudemuera.realtime.v1`。每次 `session.resume` 都重新检查登录态、Session 授权和当前 Worker binding，
-并以 `session.snapshot` 作为该连接该 epoch 的首个显示帧；Hub 尚未取得首个 Snapshot 时返回
-`SNAPSHOT_NOT_READY`，客户端退避后重试；连接、订阅和 Snapshot 不写入 SQLite。协议接收
+并以 `session.snapshot` 作为该连接该 epoch 的首个显示帧；Hub 尚未取得首个 Snapshot 时先保留有界订阅，
+待 Worker 首个 display batch 到达后发送；兼容旧 peer 的 `SNAPSHOT_NOT_READY`，客户端退避后重试；连接、订阅和 Snapshot 不写入 SQLite。协议接收
 缓冲、控制队列、pending input、订阅数和最终 UTF-8 消息均有消息数/字节数硬上限，溢出只影响当前连接。
 
 ### 10.3 输入请求

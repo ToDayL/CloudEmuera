@@ -25,7 +25,7 @@
 
 ## 2. 明确不做
 
-- 不删除 User、Role、owner、ResourceAuthorizer、本地账户 bootstrap 或 CSRF/Origin 检查；
+- 不删除 User、Role、owner、ResourceAuthorizer、本地账户 bootstrap 或 CSRF/实时会话授权检查；
 - 不删除 `idempotency_records`、`session_creation_operations`、`session_root_mutation_leases`；
 - 不把 Emuera Runtime 合并到 API，也不改为一个 Worker 承载多个 Session；
 - 不回改任何已经发布的 migration；schema 变化只能新增前滚 migration；

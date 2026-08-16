@@ -451,7 +451,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         catch (WorkerSessionRootException exception)
         {
             LogLifecycle("runtime_failed", exception.Code, LogLevel.Warning);
-            await SendFailureCodeAsync(exception.Code, "initialization", exception.SafeMessage).ConfigureAwait(false);
+            await SendFailureCodeAsync(exception.Code, "initialization", exception.SafeMessage, fatal: true).ConfigureAwait(false);
             Complete(WorkerExitCodes.SessionRootInvalid);
         }
         catch (OperationCanceledException)
@@ -465,7 +465,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 "runtime_failed",
                 $"runtime_worker_failure:{exception.GetType().Name}:{SafeMessage(exception.Message)}",
                 LogLevel.Error);
-            await SendFailureCodeAsync("runtime_worker_failure", "execution", SafeMessage(exception.Message)).ConfigureAwait(false);
+            await SendFailureCodeAsync("runtime_worker_failure", "execution", SafeMessage(exception.Message), fatal: true).ConfigureAwait(false);
             Complete(WorkerExitCodes.RuntimeExecutionFailed);
         }
     }
@@ -704,21 +704,38 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task SendRuntimeFailureAsync(EmueraRuntimeResult result, string defaultPhase)
     {
-        EmueraRuntimeDiagnostic? diagnostic = result.Diagnostics.Count > 0 ? result.Diagnostics[0] : null;
-        diagnostic ??=
-            new EmueraRuntimeDiagnostic("runtime_failed", Enum.Parse<EmueraRuntimePhase>(defaultPhase, ignoreCase: true), "The runtime failed.", true);
+        EmueraRuntimeDiagnostic diagnostic = SelectFailureDiagnostic(result, defaultPhase);
         await SendFailureCodeAsync(
                 diagnostic.Code,
                 diagnostic.Phase.ToString(),
                 SafeMessage(diagnostic.Message),
+                diagnostic.IsFatal,
                 lastSequence: Interlocked.Read(ref lastSentSequence))
             .ConfigureAwait(false);
+    }
+
+    internal static EmueraRuntimeDiagnostic SelectFailureDiagnostic(
+        EmueraRuntimeResult result,
+        string defaultPhase)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        EmueraRuntimeDiagnostic? fatal = result.Diagnostics.LastOrDefault(diagnostic => diagnostic.IsFatal);
+        if (fatal is not null)
+            return fatal;
+        if (result.Diagnostics.Count > 0)
+            return result.Diagnostics[^1];
+        return new EmueraRuntimeDiagnostic(
+                "runtime_failed",
+                Enum.Parse<EmueraRuntimePhase>(defaultPhase, ignoreCase: true),
+                "The runtime failed.",
+                true);
     }
 
     private Task SendFailureCodeAsync(
         string code,
         string phase,
         string message,
+        bool fatal,
         long? lastSequence = null) =>
         connection.SendControlAsync(new WorkerEnvelope
         {
@@ -736,7 +753,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 SafeMessage = message.Length > StructuredIpcLimits.MaxProtocolErrorMessageLength
                     ? message[..StructuredIpcLimits.MaxProtocolErrorMessageLength]
                     : message,
-                Fatal = true,
+                Fatal = fatal,
                 LastOutputSequence = lastSequence ?? Interlocked.Read(ref lastSentSequence)
             }
         });

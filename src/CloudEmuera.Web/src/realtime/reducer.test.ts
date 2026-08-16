@@ -85,10 +85,27 @@ describe("realtime reducer", () => {
     state = createPendingInput(state, { promptId: "p1", workerEpoch: 4, clientMessageId: "client-1", value: "yes", source: "KEYBOARD" });
     state = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 2 }, { workerEpoch: 4, firstSequence: 1, lastSequence: 2, transactions: [transaction(1, [{ type: "appendNodes", nodes: [text("one")] }]), transaction(2, [{ type: "appendNodes", nodes: [text("two")] }])] });
     expect(state.sequence).toBe(2);
+    const duplicate = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 2 }, { workerEpoch: 4, firstSequence: 1, lastSequence: 2, transactions: [transaction(1, [{ type: "appendNodes", nodes: [text("duplicate")] }]), transaction(2, [{ type: "appendNodes", nodes: [text("duplicate")] }])] });
+    expect(duplicate).toBe(state);
+    const staleSnapshot = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 1 }, { workerEpoch: 4, snapshotSequence: 1, consoleState: initial });
+    expect(staleSnapshot).toBe(state);
     state = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 4 }, { workerEpoch: 4, firstSequence: 4, lastSequence: 4, transactions: [transaction(4, [{ type: "appendNodes", nodes: [text("must-not-apply")] }])] });
     expect(state.phase).toBe("resyncing");
     expect(state.consoleState?.scrollback.flatMap(item => item.nodes).some(node => node.type === "text" && node.text === "must-not-apply")).toBe(false);
     state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 5, sequence: 0 }, { workerEpoch: 5, snapshotSequence: 0, consoleState: initial });
     expect(state.pendingInput).toBeNull();
+
+    const oldEpochBatch = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 3 }, { workerEpoch: 4, firstSequence: 3, lastSequence: 3, transactions: [transaction(3, [{ type: "appendNodes", nodes: [text("old epoch")] }])] });
+    expect(oldEpochBatch).toBe(state);
+  });
+
+  it("resyncs on an overlapping batch that contains unseen transactions", () => {
+    const initial = createEmptyConsoleState();
+    let state = replaceSnapshot(createSessionStoreState("s1"), { sessionId: "s1", workerEpoch: 1, sequence: 0 }, { workerEpoch: 1, snapshotSequence: 0, consoleState: initial });
+    state = applyBatch(state, { sessionId: "s1", workerEpoch: 1, sequence: 2 }, { workerEpoch: 1, firstSequence: 1, lastSequence: 2, transactions: [transaction(1, [{ type: "appendNodes", nodes: [text("one")] }]), transaction(2, [{ type: "appendNodes", nodes: [text("two")] }])] });
+
+    const overlapping = applyBatch(state, { sessionId: "s1", workerEpoch: 1, sequence: 3 }, { workerEpoch: 1, firstSequence: 2, lastSequence: 3, transactions: [transaction(2, [{ type: "appendNodes", nodes: [text("replayed")] }]), transaction(3, [{ type: "appendNodes", nodes: [text("three")] }])] });
+    expect(overlapping.phase).toBe("resyncing");
+    expect(overlapping.sequence).toBe(2);
   });
 });

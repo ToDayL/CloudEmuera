@@ -34,8 +34,10 @@ export function createSessionStoreState(sessionId: string): SessionStoreState {
 export function replaceSnapshot(state: SessionStoreState, envelope: { sessionId?: string; workerEpoch?: number; sequence?: number }, payload: RealtimeSnapshotPayload): SessionStoreState {
   assertSession(state, envelope.sessionId);
   if (envelope.workerEpoch !== payload.workerEpoch || envelope.sequence !== payload.snapshotSequence) return { ...state, phase: "resyncing", fatalRenderError: "快照元数据与内容不一致，请重新同步。" };
-  if (state.workerEpoch !== null && payload.workerEpoch < state.workerEpoch) return { ...state, phase: "resyncing", fatalRenderError: "收到旧 Worker 的快照，请重新同步。" };
-  if (state.workerEpoch === payload.workerEpoch && state.sequence !== null && payload.snapshotSequence < state.sequence) return { ...state, phase: "resyncing", fatalRenderError: "收到旧序号的快照，请重新同步。" };
+  // A snapshot from an old subscription can still be in flight when a replacement
+  // subscription is installed. It is stale data, not a reason to resync again.
+  if (state.workerEpoch !== null && payload.workerEpoch < state.workerEpoch) return state;
+  if (state.workerEpoch === payload.workerEpoch && state.sequence !== null && payload.snapshotSequence < state.sequence) return state;
   const epochChanged = state.workerEpoch !== null && payload.workerEpoch !== state.workerEpoch;
   return {
     ...state,
@@ -52,7 +54,16 @@ export function replaceSnapshot(state: SessionStoreState, envelope: { sessionId?
 export function applyBatch(state: SessionStoreState, envelope: { sessionId?: string; workerEpoch?: number; sequence?: number }, payload: RealtimeTransactionBatchPayload): SessionStoreState {
   assertSession(state, envelope.sessionId);
   if (state.phase === "resyncing" || state.phase === "ended" || state.phase === "error") return state;
-  if (state.workerEpoch !== payload.workerEpoch || envelope.workerEpoch !== payload.workerEpoch || envelope.sequence !== payload.lastSequence || state.sequence === null || payload.firstSequence !== state.sequence + 1)
+  if (state.workerEpoch !== null && payload.workerEpoch < state.workerEpoch) return state;
+  if (state.workerEpoch !== payload.workerEpoch || envelope.workerEpoch !== payload.workerEpoch || envelope.sequence !== payload.lastSequence || state.sequence === null)
+    return { ...state, phase: "resyncing" };
+
+  // Duplicate and stale batches are expected at a reconnect boundary and must be
+  // fenced without disturbing the already rendered state. A batch that overlaps
+  // the local tail while extending beyond it is not safe to apply: it indicates
+  // reordering or a broken replay boundary and requires a complete snapshot.
+  if (payload.lastSequence <= state.sequence) return state;
+  if (payload.firstSequence <= state.sequence || payload.firstSequence !== state.sequence + 1)
     return { ...state, phase: "resyncing" };
   if (!state.consoleState) return { ...state, phase: "resyncing" };
   try {

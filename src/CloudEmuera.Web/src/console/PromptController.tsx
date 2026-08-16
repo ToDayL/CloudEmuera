@@ -38,9 +38,9 @@ export function PromptController({ prompt, disabled, pending, serverTimeOffsetMi
     submit("KEYBOARD", constrainValue(event.key), { key });
   };
   const requiresText = !["waitOnly", "anyKey", "primitivePointerKey"].includes(prompt.inputType);
-  if (prompt.systemInput) return <section className="prompt-controller" aria-label="游戏正在处理"><div className="prompt-heading"><p>{prompt.promptText ?? "游戏正在处理"}</p><DeadlineClock deadlineUnixMilliseconds={prompt.deadlineUnixMilliseconds} serverTimeOffsetMilliseconds={serverTimeOffsetMilliseconds} /></div><p className="input-hint">这是由游戏运行时处理的输入，不提供可伪造的浏览器控件。</p></section>;
-  return <section className="prompt-controller" aria-label="游戏输入提示">
-    <div className="prompt-heading"><p>{prompt.promptText ?? "等待输入"}</p><DeadlineClock deadlineUnixMilliseconds={prompt.deadlineUnixMilliseconds} serverTimeOffsetMilliseconds={serverTimeOffsetMilliseconds} onExpired={markDeadlineExpired} /></div>
+  const promptLabel = prompt.systemInput ? "游戏运行时输入" : "游戏输入提示";
+  return <section className="prompt-controller" aria-label={promptLabel}>
+    <div className="prompt-heading"><p>{prompt.promptText ?? (prompt.systemInput ? "运行时菜单输入" : "等待输入")}</p><DeadlineClock deadlineUnixMilliseconds={prompt.deadlineUnixMilliseconds} serverTimeOffsetMilliseconds={serverTimeOffsetMilliseconds} onExpired={markDeadlineExpired} /></div>
     {requiresText && <form onSubmit={event => { event.preventDefault(); submit(sourceAllowed("button") ? "BUTTON" : "KEYBOARD", constrainValue(value), sourceAllowed("button") ? {} : { key: { keyCode: 13, control: false, alt: false, shift: false } }); }}>
       <input autoFocus type={integerInput ? "number" : "text"} value={value} onChange={event => setValue(constrainValue(event.target.value))} onKeyDown={onKeyDown} disabled={controlsDisabled} maxLength={prompt.constraints.maxLength ?? undefined} min={integerInput ? prompt.constraints.minimum ?? undefined : undefined} max={integerInput ? prompt.constraints.maximum ?? undefined : undefined} step={integerInput ? 1 : undefined} inputMode={integerInput ? "numeric" : "text"} aria-label="游戏输入" />
       <button className="primary-button" type="submit" disabled={controlsDisabled || (!sourceAllowed("keyboard") && !sourceAllowed("button"))}>{pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "发送"}</button>

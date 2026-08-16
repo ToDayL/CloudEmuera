@@ -38,7 +38,7 @@ P1-09 把 P1-08 已完成的 transport-neutral `SessionOutputHub` 接到正式�
 
 ### 2.1 本任务交付
 
-- 原生 ASP.NET Core WebSocket endpoint、子协议协商、严格 Origin/Cookie gate 和应用握手；
+- 原生 ASP.NET Core WebSocket endpoint、子协议协商、Cookie 实时会话 gate 和应用握手；
 - WebSocket v1 envelope、封闭消息 union、JSON Schema、source-generated JSON context 和 golden JSON；
 - `session.resume`、`session.unsubscribe`、完整 Snapshot、display batch、resync、Session 流终止消息；
 - `session.input` 的 text/button/pointer/keyboard 载荷、IPC correlation 和确定结果；
@@ -63,7 +63,7 @@ P1-09 把 P1-08 已完成的 transport-neutral `SessionOutputHub` 接到正式�
 
 ### 3.1 可直接复用
 
-- `RealtimeOriginValidator` 已验证 WebSocket upgrade、精确 `PublicOrigin`、实时 Cookie Session，且
+- `RealtimeUpgradeValidator` 已验证 WebSocket upgrade、实时 Cookie Session，且
   `AuthorizeResumeAsync` 每次调用中央 `IResourceAuthorizer`；
 - `SessionOutputHub` 已维护每 Worker epoch 一份完整镜像，提供惰性编码 Snapshot、连续 batch、
   byte/count 双预算 subscription、缺口重同步和慢消费者判定；
@@ -129,22 +129,21 @@ P1-12 管理视图，不保存 Cookie、prompt、输入或 Worker 状态，不�
 
 ```http
 GET /api/v1/realtime
-Origin: https://configured-public-origin
 Cookie: <protected auth session>
 Sec-WebSocket-Protocol: cloudemuera.realtime.v1
 ```
 
-- endpoint 必须 `RequireAuthorization()`，upgrade 前调用 `RealtimeOriginValidator.IsUpgradeAllowedAsync`；
+- endpoint 必须 `RequireAuthorization()`，upgrade 前调用 `RealtimeUpgradeValidator.IsUpgradeAllowedAsync`；
 - upgrade 必须位于 `UseAuthentication/UseAuthorization` 之后，并要求 Worker Manager、启动对账和
   Session operation recovery readiness 可接收实时流量；API draining 时以 `503` 拒绝新连接；
-- 缺失/错误 Origin、已撤销或禁用账户、强制改密账户均不得建立可用连接；
+- 任意/缺失 Origin 均可继续进入身份检查；已撤销或禁用账户、强制改密账户不得建立可用连接；
 - 客户端必须提出且服务端必须回显 `cloudemuera.realtime.v1`，不静默选择未知版本；
-- 非 WebSocket 请求返回 `400`，未认证返回 `401`，Origin/账户策略失败返回 `403`，无共同子协议返回
+- 非 WebSocket 请求返回 `400`，未认证返回 `401`，账户策略失败返回 `403`，无共同子协议返回
   `426`；响应均 `Cache-Control: no-store`；
 - upgrade 在 registry 中原子取得全局连接名额后才能 accept；失败或 accept 抛错必须释放预留。逐
   Session 上限在 resume 注册 subscription 时原子检查，因为 upgrade 时尚不知道目标 Session；
-- WebSocket 不要求 `X-CSRF-TOKEN`：SameSite Cookie、精确 Origin、v1 subprotocol 与每次资源操作重新
-  鉴权共同构成跨站请求边界；这不改变普通 HTTP 写操作的 CSRF 要求；
+- WebSocket 不要求 `X-CSRF-TOKEN`：v1 subprotocol 与每次资源操作重新鉴权仍有效，但 Origin 不承担跨站
+  请求边界；部署网络必须由外部边界控制，这不改变普通 HTTP 写操作的 CSRF 要求；
 - 不启用 `permessage-deflate`。大型 raster 已受 Snapshot 上限约束，压缩会增加状态和资源边界复杂度。
 
 ### 5.2 统一 envelope
@@ -281,7 +280,7 @@ subscription completed；不能切换到新 Worker。`TryDispatchInput` 同样�
 5. 发送 `session.resume.result(ACCEPTED, currentEpoch)`；
 6. subscription 第一帧必须是 `session.snapshot`，客户端以完整状态替换本地 store；
 7. 之后只发送 `firstSequence == expected + 1` 的 `display.batch`；P1-08 已在不连续时返回替换 Snapshot；
-8. resync 时把 `resync.required` 与紧随其后的 `session.snapshot` 作为一个 writer work item，保持顺序；
+8. resync 时把 `resync.required` 与紧随其后的 `session.snapshot` 作为一个 writer work item，保持顺序；客户端直接消费该替换快照，不发送 `session.unsubscribe` 重新制造一轮流结束；
 9. subscription 完成后先排空 P1-08 明确保留的 pending frame，再发 `session.stream.ended` 并从连接移除。
 
 同一连接再次 resume 同一 Session 是幂等替换，不建立两个 Hub subscription。新订阅成功进入 map 后才
@@ -440,6 +439,8 @@ Worker 的 `CANCELLED/TIMED_OUT` 是 prompt 自身的内部完成原因，正常
 
 - 默认 20 秒发送 ping，pong deadline 10 秒；任何有效入站消息也可更新 transport activity，但不能伪造
   对指定 ping nonce 的 pong；
+- 浏览器 watchdog 按 `heartbeat interval + pong deadline + 1 秒余量` 计时，不能只使用 pong deadline，
+  否则会在服务端发送首个 ping 之前误关闭连接；
 - 连续一次 deadline 未收到匹配 pong 即关闭该 WebSocket 并释放订阅；
 - Kestrel transport keepalive 可作为网络辅助，但不代替应用 heartbeat 测试；
 - heartbeat timeout 不 close Session、不 stop Worker、不清 prompt。
@@ -452,7 +453,8 @@ resume/input 的业务失败通过带 request `correlationId` 的结果消息返
 
 - 不存在与越权 resume 都返回 `SESSION_NOT_FOUND`；
 - 静止 Session 返回 `SESSION_NOT_RUNNING`；旧 epoch 输入返回 `STALE_EPOCH`；
-- Hub 尚未取得首 Snapshot 可返回 `SNAPSHOT_NOT_READY`，客户端按带抖动退避重新 resume；
+- 当前 API 在 Hub 尚未取得首 Snapshot 时先保留有界订阅，首个 Worker display batch 到达后发送；兼容旧
+  peer 的 `SNAPSHOT_NOT_READY`，客户端按带抖动退避重新 resume；
 - `session.stream.ended` 只终止该 epoch subscription。`CLOSED/CRASHED` 的权威状态由 HTTP Session API
   查询，不从 Hub reason 猜测。
 
@@ -463,7 +465,7 @@ resume/input 的业务失败通过带 request `correlationId` 的结果消息返
 | `1000` | 客户端正常关闭或服务端正常完成连接 |
 | `1002` | envelope/schema/fragment/版本协议错误 |
 | `1003` | binary 或不支持的数据类型 |
-| `1008` | Origin/auth 策略失效、hello/heartbeat timeout、slow consumer |
+| `1008` | auth 策略失效、hello/heartbeat timeout、slow consumer |
 | `1009` | 单消息超过硬上限 |
 | `1011` | 无法保持协议一致性的内部/Hub fault |
 | `1012` | API draining/restart |
@@ -532,8 +534,8 @@ schema 版本；不得继续用一个含糊数字代表所有协议。
 
 ### 12.2 Upgrade、身份和授权
 
-- 匿名、无 Origin、错误 Origin、非 WebSocket、撤销/过期 Cookie、disabled user、security stamp 改变；
-- 精确 Origin 和 v1 subprotocol 成功；伪造 forwarded host 不能绕过配置 Origin；
+- 任意/无 Origin、非 WebSocket、撤销/过期 Cookie、disabled user、security stamp 改变；
+- 任意 Origin 和 v1 subprotocol 成功；Origin/forwarded host 不参与授权；
 - readiness 未完成、API draining、全局连接预留达到上限以及 accept 失败释放预留；
 - 每次 resume 和 input 都调用 live session validation 与中央 authorizer；
 - 跨用户 Session 返回与不存在相同结果；强制改密禁止 resume/input；
@@ -604,7 +606,7 @@ schema 版本；不得继续用一个含糊数字代表所有协议。
 
 ### 切片 4：WebSocket endpoint、身份和连接状态机
 
-- 接入 `UseWebSockets`、`/api/v1/realtime`、精确 Origin、v1 subprotocol 和 hello deadline；
+- 接入 `UseWebSockets`、`/api/v1/realtime`、无 Origin 白名单、v1 subprotocol 和 hello deadline；
 - 实现瞬时 connection registry、readiness/draining gate、全局与逐 Session admission，并保证所有
   失败/关闭路径释放计数；
 - 实现 live authorization gate、resume/unsubscribe 和 generic hidden error；
@@ -653,7 +655,7 @@ git diff --check
 
 ## 15. 完成条件
 
-1. `/api/v1/realtime` 只接受实时有效登录、精确 Origin 和共同 v1 subprotocol；
+1. `/api/v1/realtime` 只接受实时有效登录、共同 v1 subprotocol，并接受任意 Origin；
 2. 每次 resume/input 都重新检查登录态与资源权限，跨用户资源不可枚举；
 3. 每个订阅首个显示基线是当前 epoch 的完整 Snapshot，缺口/overflow 只以更新 Snapshot 收敛；
 4. Snapshot 恢复完整覆盖 P1-07 状态且不改变 prompt deadline；

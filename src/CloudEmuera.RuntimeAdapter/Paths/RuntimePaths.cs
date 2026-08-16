@@ -316,23 +316,30 @@ public sealed class RuntimePaths
         string root = GetAreaRoot(path.Area);
         string candidate = RuntimePathUtilities.Combine(root, path.RelativePath);
         RuntimePathUtilities.ThrowIfOutside(candidate, root, path.LogicalPath, path.Area);
+        candidate = RuntimePathUtilities.ResolveCaseInsensitivePath(candidate, root, path.LogicalPath, path.Area);
         RuntimePathUtilities.ValidateNoReparsePointsAlongPath(candidate, path.LogicalPath, path.Area);
         return candidate;
     }
 
     public string Resolve(RuntimeFilePath path) => ResolvePhysicalPath(path);
 
-    internal string GetAreaRoot(RuntimeFileArea area) => area switch
+    internal string GetAreaRoot(RuntimeFileArea area)
     {
-        RuntimeFileArea.GameContent => SessionRoot,
-        RuntimeFileArea.Configuration => ConfigurationRoot,
-        RuntimeFileArea.Save => SaveLayout == RuntimeSaveLayout.Root ? RootSaveRoot : SavDirectoryRoot,
-        RuntimeFileArea.Temporary => TemporaryRoot,
-        _ => throw new RuntimePathException(
-            RuntimePathReasonCodes.PathOutsideArea,
-            "The runtime file area is invalid.",
-            area: area)
-    };
+        string root = area switch
+        {
+            RuntimeFileArea.GameContent => SessionRoot,
+            RuntimeFileArea.Configuration => ConfigurationRoot,
+            RuntimeFileArea.Save => SaveLayout == RuntimeSaveLayout.Root ? RootSaveRoot : SavDirectoryRoot,
+            RuntimeFileArea.Temporary => TemporaryRoot,
+            _ => throw new RuntimePathException(
+                RuntimePathReasonCodes.PathOutsideArea,
+                "The runtime file area is invalid.",
+                area: area)
+        };
+        return root.Equals(SessionRoot, RuntimePathUtilities.PathComparison)
+            ? root
+            : RuntimePathUtilities.ResolveCaseInsensitivePath(root, SessionRoot, $"<{area}-root>", area);
+    }
 
     /// <summary>
     /// Revalidates the actual directory before it is handed to the fixed
@@ -396,9 +403,14 @@ public sealed class RuntimePaths
 
     private static string ResolveSaveEntryCandidate(RuntimeRelativePath logicalPath, string root)
     {
+        if (Path.GetFileName(root).Equals("sav", StringComparison.OrdinalIgnoreCase))
+        {
+            string parent = Directory.GetParent(root)?.FullName ?? root;
+            root = RuntimePathUtilities.ResolveCaseInsensitivePath(root, parent, "sav", RuntimeFileArea.Save);
+        }
         string candidate = RuntimePathUtilities.Combine(root, logicalPath);
         RuntimePathUtilities.ThrowIfOutside(candidate, root, logicalPath.Value, RuntimeFileArea.Save);
-        return candidate;
+        return RuntimePathUtilities.ResolveCaseInsensitivePath(candidate, root, logicalPath.Value, RuntimeFileArea.Save);
     }
 
     private string ResolveCanonicalContentRoot(string? explicitRoot, string name)
@@ -502,6 +514,9 @@ public sealed class RuntimePaths
 
     private static void ValidateDirectory(string path, string logicalPath, bool required)
     {
+        string? parent = Directory.GetParent(path)?.FullName;
+        if (parent is not null && Directory.Exists(parent))
+            path = RuntimePathUtilities.ResolveCaseInsensitivePath(path, parent, logicalPath);
         RuntimePathUtilities.ThrowIfReparsePoint(path, logicalPath, missingIsAllowed: !required);
         if (required && !Directory.Exists(path))
         {
@@ -522,6 +537,9 @@ public sealed class RuntimePaths
 
     private static void ValidateRegularFile(string path, string logicalPath, bool required)
     {
+        string? parent = Directory.GetParent(path)?.FullName;
+        if (parent is not null && Directory.Exists(parent))
+            path = RuntimePathUtilities.ResolveCaseInsensitivePath(path, parent, logicalPath);
         RuntimePathUtilities.ThrowIfReparsePoint(path, logicalPath, missingIsAllowed: !required);
         if (required && !File.Exists(path))
         {

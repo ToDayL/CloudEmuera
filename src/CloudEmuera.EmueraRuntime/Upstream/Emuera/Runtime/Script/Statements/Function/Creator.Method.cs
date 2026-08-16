@@ -7142,6 +7142,11 @@ internal static partial class FunctionMethodCreator
 			try
 			{
 				Config.CreateSavDir();
+#if CLOUDEMUERA_HEADLESS
+				// CloudEmuera modification: preserve an existing save-directory spelling
+				// (for example Sav/) when the image encoder opens its output directly.
+				filepath = HeadlessPathResolver.ForCreate(filepath);
+#endif
 				g.Bitmap.Save(filepath);
 			}
 			catch

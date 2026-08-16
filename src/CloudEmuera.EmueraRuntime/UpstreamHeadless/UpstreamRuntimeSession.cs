@@ -80,6 +80,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         ownsGate = true;
         runtimeGateAcquired?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
+        HeadlessPathResolver.Configure(paths.SessionRoot);
         MinorShift.Emuera.Program.ConfigureHeadless(
             paths.SessionRoot,
             paths.CsvRoot,
@@ -141,7 +142,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         runtimeProcess.DoScript();
         console.PrintFlush(force: false);
         runCancellationToken.ThrowIfCancellationRequested();
-        if (console.RuntimeMessages.Count > initializationMessageCount)
+        if (console.HasFatalError)
         {
             string details = string.Join(" | ", console.RuntimeMessages.Skip(initializationMessageCount));
             throw new InvalidDataException($"The upstream interpreter reported an execution error. {details}");
@@ -163,6 +164,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
             AppContents.UnloadContents();
             MinorShift.Emuera.GlobalStatic.Reset();
             Preload.Clear();
+            HeadlessPathResolver.Reset();
         }
         finally
         {

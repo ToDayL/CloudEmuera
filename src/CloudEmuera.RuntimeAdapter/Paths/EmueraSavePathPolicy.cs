@@ -79,7 +79,7 @@ public static class EmueraSavePathPolicy
             return false;
 
         string[] segments = relative.Segments.ToArray();
-        if (!allowPhysicalSavPrefix && segments.Length > 0 && string.Equals(segments[0], "sav", StringComparison.Ordinal))
+        if (!allowPhysicalSavPrefix && segments.Length > 0 && string.Equals(segments[0], "sav", StringComparison.OrdinalIgnoreCase))
             return false;
         if (layout == RuntimeSaveLayout.Root && segments.Length != 1)
             return false;
@@ -104,7 +104,7 @@ public static class EmueraSavePathPolicy
     {
         if (filename is null)
             return false;
-        if (filename.Equals("global.sav", StringComparison.Ordinal))
+        if (filename.Equals("global.sav", StringComparison.OrdinalIgnoreCase))
             return true;
         return IsNumberedFile(filename, "save", ".sav") ||
             IsNumberedFile(filename, "txt", ".txt") ||
@@ -122,13 +122,13 @@ public static class EmueraSavePathPolicy
 
     public static EmueraSaveFileKind ClassifyFileName(string filename)
     {
-        if (filename.Equals("global.sav", StringComparison.Ordinal))
+        if (filename.Equals("global.sav", StringComparison.OrdinalIgnoreCase))
             return EmueraSaveFileKind.Global;
-        if (filename.StartsWith("save", StringComparison.Ordinal) && filename.EndsWith(".sav", StringComparison.Ordinal))
+        if (filename.StartsWith("save", StringComparison.OrdinalIgnoreCase) && filename.EndsWith(".sav", StringComparison.OrdinalIgnoreCase))
             return EmueraSaveFileKind.Normal;
-        if (filename.StartsWith("txt", StringComparison.Ordinal) && filename.EndsWith(".txt", StringComparison.Ordinal))
+        if (filename.StartsWith("txt", StringComparison.OrdinalIgnoreCase) && filename.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
             return EmueraSaveFileKind.AuxiliaryText;
-        if (filename.StartsWith("img", StringComparison.Ordinal) && filename.EndsWith(".png", StringComparison.Ordinal))
+        if (filename.StartsWith("img", StringComparison.OrdinalIgnoreCase) && filename.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
             return EmueraSaveFileKind.AuxiliaryImage;
         throw new ArgumentException("The file name is outside the native save contract.", nameof(filename));
     }
@@ -155,7 +155,7 @@ public static class EmueraSavePathPolicy
 
     private static bool IsNumberedFile(string value, string prefix, string suffix)
     {
-        if (!value.StartsWith(prefix, StringComparison.Ordinal) || !value.EndsWith(suffix, StringComparison.Ordinal))
+        if (!value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
             return false;
         int digitsLength = value.Length - prefix.Length - suffix.Length;
         if (digitsLength is < 1 or > 10)

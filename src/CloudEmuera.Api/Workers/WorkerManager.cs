@@ -198,8 +198,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                     worker.Binding.WorkerId,
                     worker.Binding.WorkerEpoch,
                     StructuredIpcProtocol.CapabilitySetDigest,
-                    subscription,
-                    worker.OutputHub.CurrentSnapshot is not null));
+                    subscription));
             }
             catch (InvalidOperationException)
             {
@@ -384,7 +383,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         {
             session.LogLifecycle("worker_launch_failed", SessionRuntimeResultCodes.WorkerStartFailed, LogLevel.Warning);
             WorkerBootstrapFile.DeleteIfOwned(bootstrapPath);
-            bool exited = await session.TerminateProcessAsync(options.WorkerShutdownTimeout, CancellationToken.None).ConfigureAwait(false);
+            bool exited = await session.TerminateProcessAsync(options.WorkerShutdownTimeout, "launch-failed", CancellationToken.None).ConfigureAwait(false);
             if (exited)
             {
                 lock (sync)
@@ -454,6 +453,19 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch)
         {
             RealtimePublishResult outputResult = connection.Session.AcceptDisplayBatch(message.DisplayBatch);
+            if (message.DisplayBatch.IsSnapshot)
+            {
+                connection.Session.LogLifecycle(
+                    "display_snapshot_received",
+                    $"sequence={outputResult.SnapshotSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            }
+            if (!outputResult.Accepted)
+            {
+                connection.Session.LogLifecycle(
+                    "display_batch_not_applied",
+                    outputResult.ReasonCode ?? outputResult.Disposition.ToString(),
+                    outputResult.Disposition == RealtimePublishDisposition.Faulted ? LogLevel.Error : LogLevel.Warning);
+            }
             if (outputResult.Disposition == RealtimePublishDisposition.Faulted)
             {
                 connection.Session.RecordProtocolError(outputResult.ReasonCode ?? IpcReasonCodes.OutputResumeGap);
@@ -510,16 +522,26 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         switch (message.PayloadCase)
         {
             case WorkerEnvelope.PayloadOneofCase.RuntimeCompleted:
+                connection.Session.LogLifecycle(
+                    "runtime_completed_received",
+                    $"status={message.RuntimeCompleted.Status};lastSequence={message.RuntimeCompleted.LastOutputSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
                 connection.Session.MarkGracefulTerminationObserved();
                 connection.Session.OutputHub.Complete("runtime-completed");
                 break;
             case WorkerEnvelope.PayloadOneofCase.RuntimeFailed:
+                connection.Session.LogLifecycle(
+                    "runtime_failed_received",
+                    $"code={message.RuntimeFailed.StableCode};phase={message.RuntimeFailed.Phase};fatal={message.RuntimeFailed.Fatal};lastSequence={message.RuntimeFailed.LastOutputSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)};message={SanitizeRuntimeDiagnostic(message.RuntimeFailed.SafeMessage)}",
+                    message.RuntimeFailed.Fatal ? LogLevel.Error : LogLevel.Warning);
                 connection.Session.OutputHub.Complete(
                     string.IsNullOrWhiteSpace(message.RuntimeFailed.StableCode)
                         ? "runtime-failed"
                         : message.RuntimeFailed.StableCode);
                 break;
             case WorkerEnvelope.PayloadOneofCase.WorkerStopped when message.WorkerStopped.Graceful:
+                connection.Session.LogLifecycle(
+                    "worker_stopped_received",
+                    $"reason={message.WorkerStopped.ReasonCode};graceful=true;lastSequence={message.WorkerStopped.LastOutputSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
                 connection.Session.MarkGracefulTerminationObserved();
                 connection.Session.OutputHub.Complete(
                     string.IsNullOrWhiteSpace(message.WorkerStopped.ReasonCode)
@@ -527,6 +549,10 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                         : message.WorkerStopped.ReasonCode);
                 break;
             case WorkerEnvelope.PayloadOneofCase.WorkerStopped:
+                connection.Session.LogLifecycle(
+                    "worker_stopped_received",
+                    $"reason={message.WorkerStopped.ReasonCode};graceful=false;lastSequence={message.WorkerStopped.LastOutputSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+                    LogLevel.Warning);
                 connection.Session.OutputHub.Complete(
                     string.IsNullOrWhiteSpace(message.WorkerStopped.ReasonCode)
                         ? "worker-stopped"
@@ -534,6 +560,12 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 break;
         }
         await connection.Session.PublishAsync(message).ConfigureAwait(false);
+    }
+
+    private static string SanitizeRuntimeDiagnostic(string value)
+    {
+        string safe = (value ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return safe.Length <= 1_000 ? safe : safe[..1_000];
     }
 
     public static void Disconnect(ApiWorkerConnection connection) => connection.Session.DetachConnection(connection);
@@ -552,7 +584,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             }
             catch
             {
-                await worker.TerminateProcessAsync(options.WorkerShutdownTimeout, CancellationToken.None).ConfigureAwait(false);
+                await worker.TerminateProcessAsync(options.WorkerShutdownTimeout, "manager-dispose", CancellationToken.None).ConfigureAwait(false);
             }
             await worker.DisposeAsync().ConfigureAwait(false);
         }
@@ -1240,7 +1272,10 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         }
     }
 
-    internal async Task<bool> TryTerminateProcessAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    internal async Task<bool> TryTerminateProcessAsync(
+        TimeSpan timeout,
+        string reason = "requested",
+        CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
         if (process is null)
@@ -1249,7 +1284,10 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         try
         {
             if (!process.HasExited)
+            {
+                LogLifecycle("worker_process_kill_requested", reason, LogLevel.Warning);
                 process.Kill(entireProcessTree: true);
+            }
         }
         catch (InvalidOperationException)
         {
@@ -1266,8 +1304,11 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         }
     }
 
-    internal Task<bool> TerminateProcessAsync(TimeSpan timeout, CancellationToken cancellationToken = default) =>
-        TryTerminateProcessAsync(timeout, cancellationToken);
+    internal Task<bool> TerminateProcessAsync(
+        TimeSpan timeout,
+        string reason = "requested",
+        CancellationToken cancellationToken = default) =>
+        TryTerminateProcessAsync(timeout, reason, cancellationToken);
 
     internal void LogLifecycle(string eventName, string reason = "", LogLevel level = LogLevel.Information)
     {
@@ -1314,7 +1355,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             eventSignal.TrySetResult(true);
         }
         commands.Writer.TryComplete();
-        bool exited = await TerminateProcessAsync(options.WorkerShutdownTimeout, CancellationToken.None).ConfigureAwait(false);
+        bool exited = await TerminateProcessAsync(options.WorkerShutdownTimeout, "session-dispose", CancellationToken.None).ConfigureAwait(false);
         if (!exited)
             LogLifecycle("worker_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
         await OutputHub.DisposeAsync().ConfigureAwait(false);
@@ -1425,7 +1466,7 @@ internal sealed class ApiWorkerProcessHandle(ApiWorkerSession session) : IWorker
     private async Task KillBoundedAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!await session.TerminateProcessAsync(session.ShutdownTimeout, cancellationToken).ConfigureAwait(false))
+        if (!await session.TerminateProcessAsync(session.ShutdownTimeout, "runtime-coordinator", cancellationToken).ConfigureAwait(false))
             throw new SessionRuntimeException(SessionRuntimeResultCodes.WorkerExitUnconfirmed, "The Worker exit could not be confirmed.");
     }
 
@@ -1714,7 +1755,7 @@ internal sealed class WorkerManagerHostedService(
             if (completed == heartbeatTimeoutTask && !exitTask.IsCompleted)
             {
                 worker.LogLifecycle("heartbeat_timeout", "lease_expired", LogLevel.Warning);
-                if (!await worker.TryTerminateProcessAsync(managerOptions.WorkerShutdownTimeout, CancellationToken.None).ConfigureAwait(false))
+                if (!await worker.TryTerminateProcessAsync(managerOptions.WorkerShutdownTimeout, "heartbeat-timeout", CancellationToken.None).ConfigureAwait(false))
                 {
                     worker.LogLifecycle("heartbeat_termination_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
                     return;
@@ -1732,6 +1773,13 @@ internal sealed class WorkerManagerHostedService(
             }
 
             int exitCode = await exitTask.ConfigureAwait(false);
+            string diagnostics = worker.ProcessDiagnostics.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (diagnostics.Length > 1_800)
+                diagnostics = diagnostics[^1_800..];
+            worker.LogLifecycle(
+                "worker_process_exit_observed",
+                $"exit={exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)};ready={worker.ReadyConfirmed};graceful={worker.GracefulTerminationObserved};diagnostics={diagnostics}",
+                exitCode == 0 ? LogLevel.Information : LogLevel.Warning);
 
             // A zero exit code is not sufficient: when the UDS control stream
             // disappears the Worker deliberately shuts itself down with the
