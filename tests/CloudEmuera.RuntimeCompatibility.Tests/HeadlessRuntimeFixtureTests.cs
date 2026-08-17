@@ -120,6 +120,64 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void AppContentsRegistryLoadsLinuxResourcesForSpriteCreatedLookup()
+    {
+        // COMP-007: eraTW gates portraits on SPRITECREATED (Look.ERB →
+        // PRINT_TARGET_IMAGE → 画像セット). The pinned AppContents must resolve
+        // Windows-style CSV resource paths on Linux or every declared sprite
+        // stays invisible to script gates.
+        string root = Path.Combine(Path.GetTempPath(), "cloudemuera-appcontents", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "resources"));
+        Directory.CreateDirectory(Path.Combine(root, "CSV"));
+        Directory.CreateDirectory(Path.Combine(root, "ERB"));
+        Directory.CreateDirectory(Path.Combine(root, "tmp"));
+        Directory.CreateDirectory(Path.Combine(root, "sound"));
+        Directory.CreateDirectory(Path.Combine(root, "font"));
+        try
+        {
+            string sourceImage = Path.Combine(
+                RuntimeCompatibilityCli.FindRepositoryRoot(),
+                "data", "sessions", "sess_01a00f1017c0715798ed61a24837cfc7", "root", "resources", "1.png");
+            File.Copy(sourceImage, Path.Combine(root, "resources", "1.png"));
+            File.WriteAllText(
+                Path.Combine(root, "resources", "立ち絵.csv"),
+                "立絵_服_通常_1,1.png,0,0,180,180\n");
+
+            HeadlessPathResolver.Configure(root);
+            MinorShift.Emuera.Program.ConfigureHeadless(
+                root,
+                Path.Combine(root, "CSV"),
+                Path.Combine(root, "ERB"),
+                Path.Combine(root, "tmp"),
+                Path.Combine(root, "resources"),
+                Path.Combine(root, "sound"),
+                Path.Combine(root, "font"));
+            MinorShift.Emuera.GlobalStatic.Reset();
+            MinorShift.Emuera.Runtime.Config.ConfigData.ResetHeadless();
+            MinorShift.Emuera.Runtime.Config.ConfigData.Instance.LoadConfig();
+
+            Exception error = AppContents.LoadContents(reload: false);
+
+            Assert.Null(error);
+            Assert.NotNull(AppContents.GetSprite("立絵_服_通常_1"));
+            Assert.NotNull(AppContents.GetSprite("立絵_服_通常_1".ToUpperInvariant()));
+        }
+        finally
+        {
+            AppContents.UnloadContents();
+            HeadlessPathResolver.Reset();
+            try
+            {
+                Directory.Delete(root, true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task StaticSpriteCsvClipsLegacyRectangleWhilePreservingDestinationSize()
     {
         string sourceImage = Path.Combine(
@@ -210,6 +268,80 @@ public sealed class HeadlessRuntimeFixtureTests
         headless.PrintHtml(string.Empty, toPrintBuffer: false);
 
         Assert.Empty(console.Snapshot.Scrollback);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintStartsImagesOnANewLineAfterPartialPrintOutput()
+    {
+        // PLAY-002/COMP-007: HTML_PRINT flushes a partial PRINT line but
+        // starts its own physical display row. This keeps the right-aligned
+        // clock between the leading marker and the following status output.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(
+            console,
+            console.Clock,
+            CancellationToken.None,
+            name => string.Equals(name, "CLOCK", StringComparison.OrdinalIgnoreCase)
+                ? new RuntimeSpriteDefinition("sha256-clock", 0, 0, 54, 16, 0, 0, 54, 16)
+                : null);
+        headless.BeginExecutionOutput();
+
+        headless.Print("*", lineEnd: false);
+        headless.PrintHtml("<p align='right'><nobr><img src='CLOCK' height='8px' ypos='4px'></nobr></p>", toPrintBuffer: false);
+        headless.Print("春之月");
+        headless.NewLine();
+        headless.printCustomBar("--Status---------", isConst: false);
+        headless.NewLine();
+
+        Assert.Collection(
+            console.Snapshot.Scrollback,
+            line => Assert.Equal("*", RuntimeTranscriptProjector.Project(line.Nodes)),
+            line =>
+            {
+                Assert.Equal(ConsoleLineAlignment.Right, line.Alignment);
+                Assert.IsType<SpriteNode>(Assert.Single(line.Nodes));
+            },
+            line => Assert.Equal("春之月", RuntimeTranscriptProjector.Project(line.Nodes)),
+            line =>
+            {
+                // COMP-007: DRAWLINEFORM fills the drawable width like the
+                // desktop PrintBar; the headless no longer emits one glyph.
+                Assert.True(line.NoWrap);
+                string projected = RuntimeTranscriptProjector.Project(line.Nodes);
+                Assert.StartsWith("--Status---------", projected, StringComparison.Ordinal);
+                Assert.True(projected.Length > 40, "DRAWLINEFORM should expand past a single copy.");
+            });
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintImageKeepsTheYposPercentageInTheSpriteDestination()
+    {
+        // PLAY-002/COMP-007: eraTW draws its clock with ypos as a font-size
+        // percentage so the image overlays the rows below the DRAWLINE. The
+        // translated SpriteNode must preserve that offset for the browser.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(
+            console,
+            console.Clock,
+            CancellationToken.None,
+            name => string.Equals(name, "CLOCK", StringComparison.OrdinalIgnoreCase)
+                ? new RuntimeSpriteDefinition("sha256-clock", 0, 0, 100, 100, 0, 0, 100, 100)
+                : null);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(
+            "<p align='right'><nobr><img src='CLOCK' height='500' ypos='201'></nobr></p>",
+            toPrintBuffer: false);
+
+        SpriteNode sprite = Assert.IsType<SpriteNode>(
+            Assert.Single(Assert.Single(console.Snapshot.Scrollback).Nodes));
+        Assert.Equal(0, sprite.Destination.X);
+        Assert.True(sprite.Destination.Y > 0, "ypos must not be dropped by the translator.");
+        Assert.Equal(
+            sprite.Destination.Height * 201 / 500,
+            sprite.Destination.Y);
     }
 
     [Fact]
@@ -333,6 +465,110 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal("logical", text.Style.FontFamily);
         Assert.Equal(new RuntimeConsoleColor(0x11, 0x22, 0x33), text.Style.Foreground);
         Assert.Equal(new RuntimeConsoleColor(0x44, 0x55, 0x66), text.Style.ButtonColor);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void PrintButtonsPreserveTheCurrentErbForegroundColor()
+    {
+        // PLAY-002/COMP-007: PRINTBUTTON_EX's bright and dark branches must
+        // survive the structured button projection.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.SetStringStyle(Color.FromArgb(255, 255, 255));
+        headless.PrintButton("明るい", "bright");
+        headless.NewLine();
+        headless.SetStringStyle(Color.FromArgb(96, 96, 96));
+        headless.PrintButton("暗い", "dark");
+        headless.NewLine();
+
+        Assert.Collection(
+            console.Snapshot.Scrollback,
+            line => Assert.Equal(
+                new RuntimeConsoleColor(255, 255, 255),
+                Assert.IsType<TextNode>(Assert.IsType<ButtonNode>(Assert.Single(line.Nodes)).Children.Single()).Style.Foreground),
+            line => Assert.Equal(
+                new RuntimeConsoleColor(96, 96, 96),
+                Assert.IsType<TextNode>(Assert.IsType<ButtonNode>(Assert.Single(line.Nodes)).Children.Single()).Style.Foreground));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void PrintLineEndMergesPartialOutputThroughTheStructuredInlineOperation()
+    {
+        // PLAY-002/COMP-007: PRINT/PRINTL boundaries must retain upstream
+        // physical-line versus logical-line semantics.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.Print("春の", lineEnd: false);
+        headless.PrintFlush(force: false);
+        headless.Print("月", lineEnd: true);
+        headless.NewLine();
+
+        Assert.Single(console.Snapshot.Scrollback);
+        Assert.Equal("春の月", RuntimeTranscriptProjector.Project(console.Snapshot.Scrollback[0].Nodes));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void DrawLineUsesTheFollowingNewLineInsteadOfEmittingAnExtraBlankLine()
+    {
+        // PLAY-002/COMP-007: DRAWLINEFORM must not add an extra structured row.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.printCustomBar("--Status---------", isConst: false);
+        headless.NewLine();
+
+        Assert.Single(console.Snapshot.Scrollback);
+        ConsoleLine barLine = console.Snapshot.Scrollback[0];
+        Assert.True(barLine.NoWrap);
+        string projected = RuntimeTranscriptProjector.Project(barLine.Nodes);
+        Assert.StartsWith("--Status---------", projected, StringComparison.Ordinal);
+        Assert.True(projected.Length > 40, "DRAWLINEFORM should expand past a single copy.");
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void DrawLineExpandsTheConfiguredCharacterAcrossTheDrawableWidth()
+    {
+        // PLAY-002/COMP-007: DRAWLINE/PRINTBAR prints the stored bar string
+        // repeated until it fills Config.DrawableWidth, matching upstream
+        // StringMeasure.GetDisplayLength semantics (single "*" is not enough).
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.setStBar("*");
+        headless.PrintBar();
+        headless.NewLine();
+
+        ConsoleLine barLine = Assert.Single(console.Snapshot.Scrollback);
+        Assert.True(barLine.NoWrap);
+        string projected = RuntimeTranscriptProjector.Project(barLine.Nodes);
+        Assert.False(projected.Contains(' ', StringComparison.Ordinal));
+        Assert.All(projected, character => Assert.Equal('*', character));
+        Assert.True(projected.Length > 40, "DRAWLINE must produce a full-width bar, not a single glyph.");
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void CustomDrawLineRejectsAnEmptyBarString()
+    {
+        // Upstream printCustomBar throws Error.EmptyDrawline for an empty bar;
+        // the headless console must keep that failure path instead of silently
+        // emitting an empty row.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        Assert.Throws<MinorShift.Emuera.Runtime.Utils.CodeEE>(
+            () => headless.printCustomBar(string.Empty, isConst: true));
     }
 
     [Fact]
@@ -1115,6 +1351,11 @@ public sealed class HeadlessRuntimeFixtureTests
                 Assert.Equal("left-value", button.Value);
                 Assert.Null(button.Tooltip);
             });
+        Assert.All(
+            buttons,
+            button => Assert.Equal(
+                new RuntimeConsoleColor(255, 255, 0),
+                Assert.IsType<TextNode>(Assert.Single(button.Children)).Style.ButtonColor));
     }
 
     [Fact]

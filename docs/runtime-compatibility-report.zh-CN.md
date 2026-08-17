@@ -51,6 +51,10 @@ Runtime integration：`headless-p0.5.1`
 - 固定上游动态 Graphics 在 Linux Worker 内由 `System.Drawing.Common 6.0.0 + libgdiplus` 执行；
   CBG 输出为带 PNG 签名校验和组合字节上限的 `RasterDrawable`，静态动画 Sprite 仍保留各帧 asset、
   source rect、offset 与 duration。该实现不向 RuntimeAdapter/IPC 暴露 `System.Drawing` 类型。
+- eraTW 实机兼容（2026-08-18）：`AppContents` 资源注册表在 Linux 上用平台分隔符组合父图片路径，
+  `SPRITECREATED`/`SPRITEHEIGHT` 等脚本门恢复真值，`Look.ERB` 的立绘恢复下发；`DRAWLINEFORM`/
+  `DRAWLINE` 按 `Config.DrawableWidth` 展开为整行；`HTML_PRINT` 图片的 `ypos` 保留在
+  `SpriteNode.Destination`，浏览器按桌面覆盖层语义渲染，不再撑高文本行。
 
 ## 自动化验证映射
 

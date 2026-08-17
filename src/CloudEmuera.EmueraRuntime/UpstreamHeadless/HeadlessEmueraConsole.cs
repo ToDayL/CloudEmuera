@@ -12,6 +12,7 @@ using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using MinorShift.Emuera.Forms;
 using MinorShift.Emuera.Runtime;
+using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.UI.Game;
@@ -31,6 +32,7 @@ internal sealed class EmueraConsole
     private readonly Func<string, RuntimeSpriteDefinition> imageResolver;
     private readonly int viewportWidth;
     private readonly int viewportHeight;
+    private string barString = "-";
     private bool isRunning = true;
     private bool hasFatalError;
     private bool isTimeOut;
@@ -40,6 +42,7 @@ internal sealed class EmueraConsole
     private long logicalLineCount;
     private long deletedLines;
     private string? lastLineId;
+    private bool lastLineCanAppend;
     private bool lastLineTemporary;
     private string? htmlIslandDrawableId;
     private int redrawIntervalMilliseconds;
@@ -48,6 +51,7 @@ internal sealed class EmueraConsole
     private readonly List<PendingBufferedLine> pendingBufferedLines = [];
     private ConsoleLineAlignment? pendingLineAlignment;
     private bool pendingLineNoWrap;
+    private bool pendingLineEnd = true;
     private StringStyle stringStyle;
     private readonly List<string> runtimeMessages = [];
     private readonly List<string> runtimeWarnings = [];
@@ -58,7 +62,8 @@ internal sealed class EmueraConsole
     private sealed record PendingBufferedLine(
         IReadOnlyList<ConsoleNode> Nodes,
         ConsoleLineAlignment? Alignment,
-        bool NoWrap);
+        bool NoWrap,
+        bool LineEnd);
 
     public EmueraConsole(
         IGameConsole adapter,
@@ -76,7 +81,7 @@ internal sealed class EmueraConsole
             throw new ArgumentOutOfRangeException(nameof(viewportWidth), "The logical headless viewport is outside its limit.");
         this.viewportWidth = viewportWidth;
         this.viewportHeight = viewportHeight;
-        stringStyle = new StringStyle(Color.Empty, FontStyle.Regular, string.Empty);
+        stringStyle = new StringStyle(Config.ForeColor, FontStyle.Regular, string.Empty);
         GlobalStatic.Console = this;
     }
 
@@ -129,7 +134,25 @@ internal sealed class EmueraConsole
     public IReadOnlyList<string> RuntimeSystemMessages => runtimeSystemMessages;
     public IReadOnlyList<string> RuntimeDebugMessages => runtimeDebugMessages;
 
-    public void Print(string value, bool lineEnd = true) => EmitText(value);
+    public void Print(string value, bool lineEnd = true)
+    {
+        if (!outputEnabled || string.IsNullOrEmpty(value))
+            return;
+
+        int lineEndIndex = value.IndexOf('\n', StringComparison.Ordinal);
+        if (lineEndIndex >= 0)
+        {
+            AppendText(value[..lineEndIndex]);
+            pendingLineEnd = true;
+            NewLine();
+            if (lineEndIndex < value.Length - 1)
+                Print(value[(lineEndIndex + 1)..]);
+            return;
+        }
+
+        AppendText(value);
+        pendingLineEnd = lineEnd;
+    }
     public void PrintSingleLine(string value) => PrintSingleLine(value, false);
     public void PrintSingleLine(string value, bool temporary) => EmitLine(value, temporary);
     // Upstream status/progress output (for example the DEBUG-only elapsed-time
@@ -157,6 +180,7 @@ internal sealed class EmueraConsole
         // Upstream PRINTC appends a fixed-width field to PrintStringBuffer. It
         // does not commit a display line; PRINTL/PrintFlush owns that boundary.
         pendingLine.Add(new TextNode(FormatPrintCValue(value, alignmentRight), ToConsoleTextStyle()));
+        pendingLineEnd = true;
     }
     public void PrintButton(string value, string input) => EmitButton(value, input);
     public void PrintButton(string value, long input) => EmitButton(value, input.ToString(CultureInfo.InvariantCulture));
@@ -165,7 +189,10 @@ internal sealed class EmueraConsole
     public void NewLine()
     {
         if (outputEnabled)
+        {
+            pendingLineEnd = true;
             FlushPendingLine(force: true);
+        }
     }
     public void PrintFlush(bool force) => FlushPendingLine(force);
     // Upstream RefreshStrings only repaints already committed display lines;
@@ -176,6 +203,7 @@ internal sealed class EmueraConsole
         FlushPendingLine();
         EmitStructured(ConsoleOperation.ClearConsole());
         lastLineId = null;
+        lastLineCanAppend = false;
         lastLineTemporary = false;
     }
     public void ClearDisplay() => ClearText();
@@ -195,6 +223,7 @@ internal sealed class EmueraConsole
             deletedLines = checked(deletedLines + ids.Length);
             ConsoleLine? remaining = structured.Snapshot.Scrollback.LastOrDefault();
             lastLineId = remaining?.LineId;
+            lastLineCanAppend = false;
             lastLineTemporary = remaining?.Temporary ?? false;
             logicalLineCount = Math.Max(0, logicalLineCount - ids.Length);
         }
@@ -261,7 +290,13 @@ internal sealed class EmueraConsole
             : UpstreamHtmlParseMode.DisplayLines;
         UpstreamHtmlTranslationResult translated = TranslateHtmlFragment(fragment, mode);
         if (!toPrintBuffer)
+        {
             FlushPendingLine();
+            // The desktop console flushes the ordinary PrintStringBuffer and
+            // then appends HTML as a new display-line range. A partial PRINT
+            // line must therefore not absorb the first HTML image/text node.
+            lastLineCanAppend = false;
+        }
         AppendHtmlNodes(translated.Nodes, translated.Alignment, translated.NoWrap, toPrintBuffer);
         if (!toPrintBuffer)
             FlushPendingLine();
@@ -425,9 +460,13 @@ internal sealed class EmueraConsole
         if (milliseconds > 0)
             clock.DelayAsync(TimeSpan.FromMilliseconds(milliseconds), cancellationToken).AsTask().GetAwaiter().GetResult();
     }
-    public void ResetStyle() => stringStyle = new StringStyle(Color.Empty, FontStyle.Regular, string.Empty);
+    public void ResetStyle() => stringStyle = new StringStyle(Config.ForeColor, FontStyle.Regular, string.Empty);
     public void SetStringStyle(FontStyle style) => stringStyle.FontStyle = style;
-    public void SetStringStyle(Color color) => stringStyle.Color = color;
+    public void SetStringStyle(Color color)
+    {
+        stringStyle.Color = color;
+        stringStyle.ColorChanged = color != Config.ForeColor;
+    }
     public void SetFont(string fontName) => stringStyle.Fontname = fontName;
     public void SetBgColor(Color color) => bgColor = color;
     public void SetWindowTitle(string value)
@@ -452,11 +491,45 @@ internal sealed class EmueraConsole
         return result;
     }
     public int GetLinePointY(int lineNo) => checked(lineNo * 16);
-    public string getDefStBar() => "-";
-    public string getStBar(string value) => value;
-    public void setStBar(string value) { }
-    public void PrintBar() => EmitLine("-");
-    public void printCustomBar(string value, bool isConst) => EmitLine(value);
+    public string getDefStBar() => barString;
+    public string getStBar(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
+        // Upstream StringMeasure.GetDisplayLength measures the real fixed-pitch
+        // font; the headless runtime has no GDI text meter, so the same
+        // DrawableWidth loop is reproduced with a deterministic em-based
+        // estimate (wide/fullwidth glyph = one em, everything else = half em).
+        int fontSize = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize);
+        int target = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.DrawableWidth > 0
+            ? MinorShift.Emuera.Runtime.Config.Config.DrawableWidth
+            : viewportWidth);
+        var builder = new System.Text.StringBuilder();
+        int width = 0;
+        while (width < target)
+        {
+            builder.Append(value);
+            width = BarDisplayWidth(builder, fontSize);
+        }
+        while (width > target && builder.Length > 0)
+        {
+            builder.Length--;
+            width = BarDisplayWidth(builder, fontSize);
+        }
+        return builder.ToString();
+    }
+    public void setStBar(string value) => barString = getStBar(value);
+    public void PrintBar() => EmitBar(string.IsNullOrEmpty(barString)
+        ? getStBar(MinorShift.Emuera.Runtime.Config.Config.DrawLineString)
+        : barString);
+    public void printCustomBar(string value, bool isConst)
+    {
+        if (string.IsNullOrEmpty(value))
+            throw new MinorShift.Emuera.Runtime.Utils.CodeEE(
+                MinorShift.Emuera.Runtime.Utils.EvilMask.Lang.Error.EmptyDrawline.Text);
+        EmitBar(isConst ? value : getStBar(value));
+    }
     public bool OutputLog(string filename, bool hideInfo) => throw new NotSupportedException("The host log file capability is blocked in the headless runtime.");
     public bool OutputSystemLog(string filename) => throw new NotSupportedException("The host log file capability is blocked in the headless runtime.");
     public void OutputLog(string filename) => throw new NotSupportedException("The host log file capability is blocked in the headless runtime.");
@@ -489,7 +562,11 @@ internal sealed class EmueraConsole
                     MixedNum.ToPixel(parameters[2]),
                     MixedNum.ToPixel(parameters[3]))
                 : new ConsoleRect(0, 0, Math.Max(1, MixedNum.ToPixel(parameters.FirstOrDefault())), 16);
-        AppendNode(new ShapeNode(shape, bounds, fill: ToConsoleColor(stringStyle.Color)));
+        AppendNode(new ShapeNode(
+            shape,
+            bounds,
+            fill: ToConsoleColor(stringStyle.Color),
+            buttonColor: ToConsoleColor(stringStyle.ButtonColor)));
     }
 
     public void PrintHTMLIsland(params object[] args)
@@ -630,16 +707,21 @@ internal sealed class EmueraConsole
     public void SetToolTipFormat(params object[] args) => throw HostTooltipBlocked();
     public void SetToolTipImg(params object[] args) => throw HostTooltipBlocked();
 
-    private void EmitText(string value)
+    private void AppendText(string value)
     {
         if (outputEnabled && !string.IsNullOrEmpty(value))
-            AppendNode(new TextNode(value, ToConsoleTextStyle()));
+            pendingLine.Add(new TextNode(value, ToConsoleTextStyle()));
     }
+
+    private void EmitText(string value) => AppendText(value);
 
     private void EmitButton(string label, string input)
     {
         if (outputEnabled && !string.IsNullOrEmpty(label))
-            AppendNode(new ButtonNode(label, input, generation: generation));
+            AppendNode(new ButtonNode(
+                [new TextNode(label, ToConsoleTextStyle())],
+                input,
+                generation: generation));
     }
 
     private void EmitLine(string value) => EmitLine(value, temporary: false);
@@ -648,13 +730,52 @@ internal sealed class EmueraConsole
     {
         if (!outputEnabled)
             return;
+
+        // PrintSingleLine and diagnostic output flush the ordinary PRINT
+        // buffer first. If that buffer was marked as a partial line, the
+        // structured store will merge the next line through AppendInline,
+        // matching the desktop console's IsLineEnd behavior.
+        FlushPendingLine();
         if (string.IsNullOrEmpty(value))
             FlushPendingLine(force: true, temporary: temporary);
         else
         {
-            pendingLine.Add(new TextNode(value, ToConsoleTextStyle()));
+            AppendText(value);
+            pendingLineEnd = true;
             FlushPendingLine(force: true, temporary: temporary);
         }
+    }
+
+    private void EmitBar(string value)
+    {
+        StringStyle previous = stringStyle;
+        stringStyle.FontStyle = FontStyle.Regular;
+        pendingLineNoWrap = true;
+        Print(value);
+        stringStyle = previous;
+    }
+
+    private static int BarDisplayWidth(System.Text.StringBuilder builder, int fontSize)
+    {
+        int width = 0;
+        for (int index = 0; index < builder.Length; index++)
+            width += IsWideBarCharacter(builder[index]) ? fontSize : Math.Max(1, fontSize / 2);
+        return width;
+    }
+
+    private static bool IsWideBarCharacter(char value)
+    {
+        int code = value;
+        return code >= 0x1100 && (
+            code <= 0x115F ||
+            code == 0x2329 || code == 0x232A ||
+            (code >= 0x2E80 && code <= 0xA4CF && code != 0x303F) ||
+            (code >= 0xAC00 && code <= 0xD7A3) ||
+            (code >= 0xF900 && code <= 0xFAFF) ||
+            (code >= 0xFE10 && code <= 0xFE19) ||
+            (code >= 0xFE30 && code <= 0xFE6F) ||
+            (code >= 0xFF00 && code <= 0xFF60) ||
+            (code >= 0xFFE0 && code <= 0xFFE6));
     }
 
     private void AppendNode(ConsoleNode node, ConsoleLineAlignment? alignment = null, bool? noWrap = null)
@@ -664,7 +785,10 @@ internal sealed class EmueraConsole
         if (noWrap is not null)
             pendingLineNoWrap = noWrap.Value;
         if (node is LineBreakNode)
+        {
+            pendingLineEnd = true;
             FlushPendingLine(force: true);
+        }
         else
             pendingLine.Add(node);
     }
@@ -682,10 +806,12 @@ internal sealed class EmueraConsole
                 pendingBufferedLines.Add(new PendingBufferedLine(
                     pendingLine.ToArray(),
                     pendingLineAlignment ?? alignment,
-                    pendingLineNoWrap || noWrap));
+                    pendingLineNoWrap || noWrap,
+                    LineEnd: true));
                 pendingLine.Clear();
                 pendingLineAlignment = null;
                 pendingLineNoWrap = false;
+                pendingLineEnd = true;
                 continue;
             }
 
@@ -708,32 +834,45 @@ internal sealed class EmueraConsole
         var lines = new List<PendingBufferedLine>(pendingBufferedLines);
         if (pendingLine.Count > 0 || force)
         {
+            if (force && pendingLine.Count == 0 && pendingBufferedLines.Count == 0)
+                pendingLine.Add(new TextNode(" ", ToConsoleTextStyle()));
             lines.Add(new PendingBufferedLine(
                 pendingLine.ToArray(),
                 alignment ?? pendingLineAlignment,
-                noWrap ?? pendingLineNoWrap));
+                noWrap ?? pendingLineNoWrap,
+                pendingLineEnd));
         }
 
         foreach (PendingBufferedLine line in lines)
         {
-            string id = $"emuera-line-{checked(++lineId):x}";
             IReadOnlyList<ConsoleNode> projectedNodes = AutoButtonize(line.Nodes);
-            EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(
-                id,
-                projectedNodes,
-                line.Alignment ?? ToAlignment(),
-                temporary,
-                line.NoWrap)));
-            lastLineId = id;
-            lastLineTemporary = temporary;
-            logicalLineCount = checked(logicalLineCount + 1);
-            DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+            if (lastLineCanAppend && lastLineId is not null && projectedNodes.Count > 0)
+            {
+                EmitStructured(ConsoleOperation.AppendInline(lastLineId, projectedNodes));
+            }
+            else
+            {
+                string id = $"emuera-line-{checked(++lineId):x}";
+                EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(
+                    id,
+                    projectedNodes,
+                    line.Alignment ?? ToAlignment(),
+                    temporary,
+                    line.NoWrap)));
+                lastLineId = id;
+                lastLineTemporary = temporary;
+                logicalLineCount = checked(logicalLineCount + 1);
+                DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+            }
+
+            lastLineCanAppend = !line.LineEnd;
         }
 
         pendingBufferedLines.Clear();
         pendingLine.Clear();
         pendingLineAlignment = null;
         pendingLineNoWrap = false;
+        pendingLineEnd = true;
     }
 
     /// <summary>
@@ -903,7 +1042,8 @@ internal sealed class EmueraConsole
             ToConsoleColor(stringStyle.Color),
             ToConsoleColor(bgColor),
             decorations,
-            string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname);
+            string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname,
+            buttonColor: ToConsoleColor(stringStyle.ButtonColor));
     }
 
     private ConsoleContractLimits HtmlContractLimits => adapter is StructuredGameConsole structured

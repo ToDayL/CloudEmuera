@@ -17,6 +17,25 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-18 — Linux resource path composition in AppContents
+
+- Modified upstream file: `Upstream/Emuera/UI/Game/Image/AppContents.cs`.
+  `LoadContents` composed the parent image path as
+  `Path.GetDirectoryName(path) + "\\"` and `CreateFromCsv` concatenated
+  `dir + arg2`, producing Windows-only separators. On Linux every declared
+  sprite failed `File.Exists`/bitmap load, so `SPRITECREATED` was false for all
+  resources and era-games such as eraTW silently skipped `SPRITECREATED`-gated
+  portraits (`Look.ERB` → `PRINT_TARGET_IMAGE` → `画像セット`). The headless
+  build now uses `Path.DirectorySeparatorChar` and `Path.Combine`, which is
+  byte-identical on the desktop Windows build.
+- Scope: COMP-007 headless Linux resource compatibility with real era-game
+  distributions; no desktop behavior change, no resource-name semantics change.
+- Verification:
+  `ReproAppContentsSpriteRegistryLoadsResources` loads `立ち絵.csv`/`1.png`
+  through the pinned `AppContents.LoadContents` and asserts
+  `SPRITECREATED(立絵_服_通常_1)`; dev-Docker RuntimeBridge tests and the full
+  `scripts/check.sh` pass.
+
 ## 2026-08-17 — P1-07 upstream HTML parser extraction
 
 - Modified the pinned upstream HTML display area: `Upstream/Emuera/UI/Game/HtmlManager.cs`,

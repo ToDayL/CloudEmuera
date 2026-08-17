@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
-import { SpriteCanvas } from "./SpriteRenderer";
+import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
 import type { Prompt, RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode } from "../realtime/protocol";
 
 export interface ConsoleInputEvent {
@@ -125,10 +125,10 @@ export function NodeRenderer({ node, currentPrompt, currentButtonGeneration, ass
     }
     case "image": {
       const destination = node.destination ?? node.sourceRect;
-      if (node.sourceRect && destination) return <SpriteCanvas sprite={{ assetId: node.assetId, sourceRect: node.sourceRect, frame: 0, animationFrames: [], opacity: 1 }} assets={assets} alt={node.decorative ? "" : node.altText ?? "游戏图片"} className="console-image" width={destination.width} height={destination.height} onRenderError={onRenderError} />;
+      if (node.sourceRect && destination) return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(destination)}><SpriteCanvas sprite={{ assetId: node.assetId, sourceRect: node.sourceRect, frame: 0, animationFrames: [], opacity: 1 }} assets={assets} alt={node.decorative ? "" : node.altText ?? "游戏图片"} className="console-image" width={destination.width} height={destination.height} style={inlineSpriteStyle(destination)} onRenderError={onRenderError} /></span>;
       return <AssetImage assetId={node.assetId} alt={node.decorative ? "" : node.altText ?? "游戏图片"} assets={assets} className="console-image" width={node.destination?.width} height={node.destination?.height} />;
     }
-    case "sprite": return <SpriteCanvas sprite={node} assets={assets} alt={node.altText ?? "游戏精灵"} className="console-sprite" width={node.destination.width} height={node.destination.height} onRenderError={onRenderError} />;
+    case "sprite": return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(node.destination)}><SpriteCanvas sprite={node} assets={assets} alt={node.altText ?? "游戏精灵"} className="console-sprite" width={node.destination.width} height={node.destination.height} style={inlineSpriteStyle(node.destination)} onRenderError={onRenderError} /></span>;
     case "shape": return <ShapeSvg shape={node.shape} bounds={node.bounds} points={node.points} fill={node.fill} stroke={node.stroke} buttonColor={node.buttonColor} />;
     case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</div>;
     case "htmlIsland": return node.nodes
@@ -172,7 +172,7 @@ export function ShapeSvg({ shape, bounds, points, fill, stroke, buttonColor }: {
   const fillValue = fill ? `rgba(${fill.red},${fill.green},${fill.blue},${fill.alpha / 255})` : "none";
   const strokeValue = stroke ? `rgba(${stroke.red},${stroke.green},${stroke.blue},${stroke.alpha / 255})` : "none";
   const shapeStyle = geometryStyle(bounds, buttonColor);
-  const shapeClassName = `console-shape ${buttonColor ? "is-selectable" : ""}`;
+  const shapeClassName = `console-shape ${buttonColor ? "is-selectable" : ""} ${shape === "space" ? "is-space" : ""}`;
   const localPoints = points.map(point => ({ x: point.x - bounds.x, y: point.y - bounds.y }));
   if (shape === "line") {
     const first = localPoints[0] ?? { x: 0, y: 0 };

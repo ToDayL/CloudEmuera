@@ -27,6 +27,42 @@ export function spriteFrameAt(frames: SpriteAnimationFrame[], initialFrame: numb
   return start;
 }
 
+export function imageHasLoaded(image: Pick<HTMLImageElement, "complete" | "naturalWidth">): boolean {
+  return image.complete && image.naturalWidth !== 0;
+}
+
+/**
+ * HTML_PRINT images are inline display parts. Their destination rectangle is
+ * an offset within the physical line, not a new block position. Relative
+ * positioning preserves that offset without changing the line's measured
+ * width/height (matching the desktop ConsoleImagePart drawing model).
+ */
+export function inlineSpriteStyle(destination: RealtimeRect): CSSProperties {
+  return {
+    position: "absolute",
+    left: destination.x,
+    top: destination.y,
+  };
+}
+
+/**
+ * The desktop ConsoleImagePart never contributes to the display line's height;
+ * it is drawn as an overlay at `ypos` relative to the line top. The text-flow
+ * slot keeps the part's horizontal footprint (so alignment and wrapping match
+ * upstream) while its zero height stops the image from pushing later lines
+ * down. The canvas itself is positioned absolutely inside the slot.
+ */
+export function inlineSpriteSlotStyle(destination: RealtimeRect): CSSProperties {
+  return {
+    position: "relative",
+    display: "inline-block",
+    width: destination.width,
+    height: 0,
+    overflow: "visible",
+    verticalAlign: "text-top",
+  };
+}
+
 export function SpriteCanvas({ sprite, assets, width, height, alt, className, style, onRenderError }: {
   sprite: SpriteVisual;
   assets: AssetResolver;
@@ -57,9 +93,19 @@ export function SpriteCanvas({ sprite, assets, width, height, alt, className, st
     for (const url of sourceUrls) {
       if (images.current.has(url)) continue;
       const image = new Image();
-      image.onload = () => { if (!cancelled) { images.current.set(url, image); setImageRevision(revision => revision + 1); } };
+      const publishLoadedImage = () => {
+        if (cancelled || image.naturalWidth === 0 || images.current.get(url) === image) return;
+        images.current.set(url, image);
+        setImageRevision(revision => revision + 1);
+      };
+      image.onload = publishLoadedImage;
       image.onerror = () => { if (!cancelled) onRenderError?.("Sprite 资源加载失败，已停止渲染该节点。"); };
       image.src = url;
+      // A browser may satisfy a presentation-manifest request from its
+      // memory/disk cache before the effect gets another render opportunity.
+      // Check the completed image explicitly so a cached SpriteNode cannot
+      // remain a blank canvas waiting for an onload notification.
+      if (imageHasLoaded(image)) publishLoadedImage();
     }
     return () => { cancelled = true; };
   }, [onRenderError, sourceUrls]);

@@ -753,6 +753,8 @@ download→reopen 纵切。完整七场景发布矩阵、Firefox/WebKit desktop 
 
 实施记录（2026-08-17）：为移动端页面固定 `text-size-adjust: 100%`，避免竖屏与横屏触发不同的浏览器文字自动放大规则，保持普通 Console 文本与按钮使用一致的运行时字号。
 
+实施记录（2026-08-17）：依据 `eraTW` Session 的实际输出修复 Console 兼容性：按钮标签保留 ERB 当前前景色/按钮高亮色，`PRINT`/`PRINTL`/`DRAWLINEFORM` 恢复上游物理行边界与 inline 合并，`SpriteCanvas` 补充缓存图片完成态触发绘制；`shape type=space` 继续作为透明布局占位，不误绘成黄色图形。新增 RuntimeBridge、Scrollback/Canvas/Sprite 回归覆盖，未改变 realtime/IPC 协议。
+
 实施记录（2026-08-16）：开发环境的 API/Worker 改为直接运行显式构建的 DLL，并清理 dotnet watch、
 Hot Reload 和诊断端口环境，保持 API 直接管理 Worker 的父子生命周期契约。
 

@@ -6,6 +6,7 @@ import { ScrollbackRenderer, trimTrailingEmptyLines } from "./ScrollbackRenderer
 import type { RealtimeLine } from "../realtime/protocol";
 
 const assets = new AssetResolver("s1", { schemaVersion: 1, assets: [], fonts: [], fontDiagnostics: [] });
+const clockAssets = new AssetResolver("s1", { schemaVersion: 1, assets: [{ assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", mediaType: "image/png", byteLength: 128, contentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", eTag: null }], fonts: [], fontDiagnostics: [] });
 const line = (id: string, text: string): RealtimeLine => ({ lineId: id, nodes: [{ type: "text", text, style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], alignment: "left", temporary: false });
 
 function scrollContainer(atLatest: boolean) {
@@ -89,6 +90,47 @@ describe("ScrollbackRenderer", () => {
     expect(button.querySelector(".console-choice-label")?.textContent).toBe("ACTION");
     expect(button.previousSibling?.textContent).toBe("   ");
     expect(button.nextSibling?.textContent).toBe("   ");
+  });
+
+  it("keeps the ERB foreground color on each button label", () => {
+    const color = (red: number, green: number, blue: number) => ({ red, green, blue, alpha: 255 });
+    const styledLine: RealtimeLine = {
+      lineId: "styled-buttons",
+      nodes: [
+        { type: "button", children: [{ type: "text", text: "明亮", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: color(255, 255, 255), background: null, buttonColor: color(255, 255, 0) } }], value: "bright", tooltip: null, enabled: false, generation: 0 },
+        { type: "button", children: [{ type: "text", text: "暗い", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: color(96, 96, 96), background: null, buttonColor: color(255, 255, 0) } }], value: "dark", tooltip: null, enabled: false, generation: 0 },
+      ],
+      alignment: "left",
+      temporary: false,
+    };
+
+    render(<ScrollbackRenderer lines={[styledLine]} assets={assets} onInput={() => undefined} />);
+
+    const labels = screen.getAllByRole("button").map(button => button.querySelector(".console-text"));
+    expect(labels[0]).toHaveStyle({ color: "rgb(255, 255, 255)" });
+    expect(labels[1]).toHaveStyle({ color: "rgb(96, 96, 96)" });
+  });
+
+  it("keeps sprite destination offsets without inflating the text line height", () => {
+    const spriteLine: RealtimeLine = {
+      lineId: "clock-line",
+      nodes: [{ type: "sprite", assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRect: { x: 0, y: 0, width: 54, height: 16 }, destination: { x: 12, y: 4, width: 54, height: 16 }, frame: 0, zIndex: 0, opacity: 1, altText: "clock", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
+      alignment: "right",
+      temporary: false,
+    };
+
+    render(<ScrollbackRenderer lines={[spriteLine]} assets={clockAssets} onInput={() => undefined} />);
+
+    const slot = document.querySelector(".console-sprite-slot") as HTMLElement;
+    expect(slot).not.toBeNull();
+    // The desktop ConsoleImagePart is an overlay: it keeps its horizontal
+    // footprint but must not push the following display lines down.
+    expect(slot.style.position).toBe("relative");
+    expect(slot.style.display).toBe("inline-block");
+    expect(slot.style.width).toBe("54px");
+    expect(slot.style.height).toBe("0px");
+    expect(slot.style.overflow).toBe("visible");
+    expect(screen.getByRole("img", { name: "clock" })).toHaveStyle({ left: "12px", top: "4px", position: "absolute" });
   });
 
   it("renders native Emuera div layout and button x positioning", () => {

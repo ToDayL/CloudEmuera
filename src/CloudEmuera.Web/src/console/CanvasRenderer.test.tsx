@@ -44,4 +44,11 @@ describe("CanvasRenderer scene ordering", () => {
       view.unmount();
     }
   });
+
+  it("keeps a space shape transparent even when it carries a selectable button color", () => {
+    const view = render(<ShapeSvg shape="space" bounds={{ x: 0, y: 0, width: 54, height: 16 }} points={[]} buttonColor={{ red: 255, green: 255, blue: 0, alpha: 255 }} />);
+    expect(view.container.querySelector("svg")).toHaveClass("is-space");
+    expect(view.container.querySelector("rect")).toHaveAttribute("fill", "none");
+    expect(view.container.querySelector("rect")).toHaveAttribute("stroke", "none");
+  });
 });

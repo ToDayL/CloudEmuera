@@ -125,7 +125,13 @@ static class AppContents
 				{
 					//アニメスプライト宣言。nullでないとき、フレーム追加モード
 					SpriteAnime currentAnime = null;
-					string directory = Path.GetDirectoryName(path) + "\\";
+					// CloudEmuera modification: use the platform directory
+					// separator when composing resource paths. The upstream
+					// Windows-only "\\" suffix made every resource load fail on
+					// the Linux headless runtime, leaving SPRITECREATED false
+					// for all declared sprites. Path.Combine also keeps the
+					// desktop build byte-identical on Windows.
+					string directory = Path.GetDirectoryName(path) + Path.DirectorySeparatorChar;
 					string filename = Path.GetFileName(path);
 					string[] lines = File.ReadAllLines(path, EncodingHandler.DetectEncoding(path));
 					int lineNo = 0;
@@ -254,7 +260,10 @@ static class AppContents
 			ParserMediator.Warn(string.Format(trerror.MissingSecondArgumentExtension.Text, arg2), sp, 1);
 			return null;
 		}
-		string parentName = dir + arg2;
+		// CloudEmuera modification: compose the parent image path with
+		// Path.Combine so Linux headless runs resolve "resources\1.png" style
+		// Windows separators to the actual file. See LoadContents above.
+		string parentName = Path.Combine(dir, arg2);
 
 
 		//親画像のロードConstImage
