@@ -14,7 +14,9 @@ public sealed class SessionRow
 
     public long SourceContentRevision { get; set; }
 
-    public string RuntimeManifestJson { get; set; } = "{}";
+    public string SessionRootManifestDigest { get; set; } = string.Empty;
+
+    public int SaveLayout { get; set; }
 
     public string RuntimeVersion { get; set; } = string.Empty;
 

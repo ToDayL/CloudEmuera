@@ -1582,14 +1582,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("owner_user_id");
 
-                    b.Property<string>("RuntimeManifestJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(1048576)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
-                        .HasColumnName("runtime_manifest_json");
-
                     b.Property<string>("RuntimeVersion")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -1611,6 +1603,16 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                     b.Property<long>("SourceContentRevision")
                         .HasColumnType("INTEGER")
                         .HasColumnName("source_content_revision");
+
+                    b.Property<int>("SaveLayout")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("save_layout");
+
+                    b.Property<string>("SessionRootManifestDigest")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_root_manifest_digest");
 
                     b.Property<long?>("StartedAt")
                         .HasColumnType("INTEGER")
@@ -1679,7 +1681,9 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_sessions_root_path", "length(session_root_path) BETWEEN 1 AND 512 AND substr(session_root_path, 1, 1) <> '/' AND instr(session_root_path, char(92)) = 0 AND instr(session_root_path, char(0)) = 0 AND instr(session_root_path, '//') = 0 AND instr('/' || session_root_path || '/', '/./') = 0 AND instr('/' || session_root_path || '/', '/../') = 0");
 
-                            t.HasCheckConstraint("ck_sessions_runtime_manifest_json", "length(runtime_manifest_json) BETWEEN 2 AND 1048576 AND json_valid(runtime_manifest_json) = 1 AND runtime_manifest_json <> ''");
+                            t.HasCheckConstraint("ck_sessions_manifest_digest", "length(session_root_manifest_digest) BETWEEN 1 AND 128 AND instr(session_root_manifest_digest, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_sessions_save_layout", "save_layout IN (0, 1)");
 
                             t.HasCheckConstraint("ck_sessions_runtime_version", "length(runtime_version) BETWEEN 1 AND 128 AND instr(runtime_version, char(0)) = 0");
 

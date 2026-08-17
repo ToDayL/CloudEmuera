@@ -25,6 +25,8 @@ public static class SessionErrorCodes
     public const string ServiceNotReady = "SERVICE_NOT_READY";
     public const string StorageBudgetExceeded = "SESSION_STORAGE_QUOTA_EXCEEDED";
     public const string StorageUnavailable = "DATA_ROOT_UNAVAILABLE";
+    public const string InactiveSessionLimitExceeded = "INACTIVE_SESSION_LIMIT_EXCEEDED";
+    public const string SessionNotDeletable = "SESSION_NOT_DELETABLE";
     public const string IdempotencyKeyReused = "IDEMPOTENCY_KEY_REUSED";
     public const string IdempotencyKeyRequired = "IDEMPOTENCY_KEY_REQUIRED";
     public const string SessionNotAcceptingInput = "SESSION_NOT_ACCEPTING_INPUT";
@@ -46,6 +48,8 @@ public sealed class SessionApplicationException(
 public sealed record CreateSessionCommand(string GameId, string Name, string IdempotencyKey);
 
 public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey);
+
+public sealed record SessionDeleteCommand(string SessionId, string IdempotencyKey);
 
 public sealed record SessionListQuery(string? GameId, SessionState? State, string? Cursor, int Limit = 50);
 
@@ -87,6 +91,15 @@ public sealed record SessionCommandResult(
     public bool Succeeded => Failure is null && Value is not null;
 }
 
+public sealed record SessionDeleteResult(
+    int StatusCode,
+    bool Replayed,
+    bool Pending,
+    SessionCommandFailure? Failure = null)
+{
+    public bool Succeeded => Failure is null && !Pending;
+}
+
 public interface ISessionApplicationService
 {
     Task<SessionCommandResult> CreateAsync(
@@ -112,6 +125,11 @@ public interface ISessionApplicationService
     Task<SessionCommandResult> CloseAsync(
         CurrentActor actor,
         SessionLifecycleCommand command,
+        CancellationToken cancellationToken = default);
+
+    Task<SessionDeleteResult> DeleteAsync(
+        CurrentActor actor,
+        SessionDeleteCommand command,
         CancellationToken cancellationToken = default);
 }
 

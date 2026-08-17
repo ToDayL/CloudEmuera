@@ -6,6 +6,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Domain.Sessions;
 using CloudEmuera.Infrastructure.Games;
+using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Infrastructure.Tests.Support;
@@ -59,6 +60,86 @@ public sealed class SqliteSessionApplicationServiceTests
         Assert.Equal(IdempotencyRecordStatus.Succeeded, (await verify.Context.IdempotencyRecords.SingleAsync()).Status);
     }
 
+    [Fact]
+    public async Task ClosedAndCrashedSessionsCanBeDeletedButActiveSessionsCannot()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        await SeedGameAsync(database);
+        await using ServiceProvider provider = BuildProvider(database.Options);
+        ISessionApplicationService service = provider.GetRequiredService<ISessionApplicationService>();
+        CurrentActor actor = new("usr_fixture", "PLAYER", "auth_fixture");
+
+        SessionView closed = (await service.CreateAsync(actor, new CreateSessionCommand("game_fixture", "待删除", "create-delete"))).Value!;
+        string closedContainer = Path.Combine(database.RootPath, "sessions", closed.Id);
+        Assert.True(Directory.Exists(closedContainer));
+
+        SessionDeleteResult deleted = await service.DeleteAsync(actor, new SessionDeleteCommand(closed.Id, "delete-closed"));
+
+        Assert.True(deleted.Succeeded, $"status={deleted.StatusCode}, pending={deleted.Pending}, failure={deleted.Failure?.Code}:{deleted.Failure?.Message}");
+        Assert.Equal(204, deleted.StatusCode);
+        Assert.False(Directory.Exists(closedContainer));
+        Assert.Null(await service.GetAsync(actor, closed.Id));
+        SessionDeleteResult replay = await service.DeleteAsync(actor, new SessionDeleteCommand(closed.Id, "delete-closed"));
+        Assert.True(replay.Succeeded, replay.Failure?.Code);
+        Assert.True(replay.Replayed);
+
+        SessionView active = (await service.CreateAsync(actor, new CreateSessionCommand("game_fixture", "运行中不可删", "create-active"))).Value!;
+        await using (DbContextScope scope = database.OpenContext())
+        {
+            SessionRow row = await scope.Context.Sessions.SingleAsync(value => value.Id == active.Id);
+            row.State = SessionState.Running;
+            row.StartedAt = row.CreatedAt;
+            row.ClosedAt = null;
+            row.StateVersion++;
+            await scope.Context.SaveChangesAsync();
+        }
+
+        SessionDeleteResult rejected = await service.DeleteAsync(actor, new SessionDeleteCommand(active.Id, "delete-active"));
+
+        Assert.False(rejected.Succeeded);
+        Assert.Equal(SessionErrorCodes.SessionNotDeletable, rejected.Failure?.Code);
+        Assert.True(Directory.Exists(Path.Combine(database.RootPath, "sessions", active.Id)));
+        Assert.NotNull(await service.GetAsync(actor, active.Id));
+
+        SessionView crashed = (await service.CreateAsync(actor, new CreateSessionCommand("game_fixture", "崩溃后删除", "create-crashed"))).Value!;
+        await using (DbContextScope scope = database.OpenContext())
+        {
+            SessionRow row = await scope.Context.Sessions.SingleAsync(value => value.Id == crashed.Id);
+            row.State = SessionState.Crashed;
+            row.ClosedAt = row.LastActivityAt;
+            row.StateVersion++;
+            await scope.Context.SaveChangesAsync();
+        }
+
+        SessionDeleteResult crashedDeleted = await service.DeleteAsync(actor, new SessionDeleteCommand(crashed.Id, "delete-crashed"));
+
+        Assert.True(crashedDeleted.Succeeded, crashedDeleted.Failure?.Code);
+        Assert.False(Directory.Exists(Path.Combine(database.RootPath, "sessions", crashed.Id)));
+        await using DbContextScope audit = database.OpenContext();
+        Assert.Equal(2, await audit.Context.AuditEvents.CountAsync(row => row.Action == "SESSION_DELETED"));
+    }
+
+    [Fact]
+    public async Task CreateRejectsWhenInactiveSessionLimitIsReached()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        await SeedGameAsync(database);
+        await using ServiceProvider provider = BuildProvider(database.Options, new InstanceCapacityOptions { MaxInactiveSessions = 1 });
+        ISessionApplicationService service = provider.GetRequiredService<ISessionApplicationService>();
+        CurrentActor actor = new("usr_fixture", "PLAYER", "auth_fixture");
+
+        SessionCommandResult first = await service.CreateAsync(actor, new CreateSessionCommand("game_fixture", "第一个", "create-limit-1"));
+
+        Assert.True(first.Succeeded, first.Failure?.Code);
+        SessionApplicationException exception = await Assert.ThrowsAsync<SessionApplicationException>(() =>
+            service.CreateAsync(actor, new CreateSessionCommand("game_fixture", "第二个", "create-limit-2")));
+
+        Assert.Equal(SessionErrorCodes.InactiveSessionLimitExceeded, exception.Code);
+        Assert.Equal(409, exception.StatusCode);
+    }
+
     private static async Task SeedGameAsync(TemporarySqliteDatabase database)
     {
         string gameDirectory = Path.Combine(database.RootPath, "games", "game_fixture");
@@ -83,10 +164,11 @@ public sealed class SqliteSessionApplicationServiceTests
         await scope.Context.SaveChangesAsync();
     }
 
-    private static ServiceProvider BuildProvider(SqliteDatabaseOptions options)
+    private static ServiceProvider BuildProvider(SqliteDatabaseOptions options, InstanceCapacityOptions? capacityOptions = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(options);
+        services.AddSingleton(capacityOptions ?? InstanceCapacityOptions.Default);
         services.AddSingleton(TimeProvider.System);
         services.AddLogging();
         services.AddScoped(_ =>

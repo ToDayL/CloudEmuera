@@ -136,7 +136,7 @@ NFR-011/013、AC-008～010/014。
 - 新增 `CollapseGameVersionsIntoGames` 及后续 schema migration；最终产品模型删除
   `GameVersionRow/Configuration/DbSet/status/resource action` 和 `game_versions`，历史 migration 原样保留；
 - `games` 已具备唯一 workspace/current content、摘要、内部 revision、启用/删除审计字段；Session
-  改为 `game_id + source_content_digest + source_content_revision + runtime_manifest_json`；
+  改为 `game_id + source_content_digest + source_content_revision + session_root_manifest_digest + save_layout`；
 - 增加 `game_files`、`compatibility_diagnostics`、`game_content_operations` 及活动 operation/ingestion
   唯一约束；
 - 实现 Game CRUD、管理员 block/unblock、P1-03 READY 摄取绑定、从 current 开始编辑、丢弃工作区、
@@ -280,7 +280,7 @@ NONE ──upload/edit──> DRAFT ──CAS──> VALIDATING
 - current metadata 要么全部为空，要么 digest/path/manifest/runtime config/activated fields 全部存在；
 - workspace_status NONE 时 workspace_path 为空，DRAFT/VALIDATING 时存在；
 - Game 被 Session 引用时不能 DELETED；
-- Session 固定 `game_id + source_content_digest + runtime_manifest_json`，不固定内部 revision 资源；
+- Session 固定 `game_id + source_content_digest + session_root_manifest_digest + save_layout`，完整运行时清单写入受保护的 SessionRoot metadata，不固定内部 revision 资源；
 - Game 内容替换和 Session 创建竞争时，SessionRoot 只能是完整旧树或完整新树。
 
 ## 4. 目标数据库模型
@@ -332,7 +332,8 @@ ix_sessions_game_version*
 ```text
 source_content_digest TEXT NOT NULL
 source_content_revision INTEGER NOT NULL
-runtime_manifest_json TEXT NOT NULL
+session_root_manifest_digest TEXT NOT NULL
+save_layout INTEGER NOT NULL
 ```
 
 保留 `game_id` FK RESTRICT。`source_content_revision` 只用于诊断和竞态核对，不使旧内容成为可读取
@@ -441,7 +442,7 @@ schema version 和报告摘要，数据库变化后拒绝复用；计划和错�
 
 - `source_content_digest = oldVersion.content_digest`；NULL 时迁移失败，除非 Session 状态/根目录可
   通过安全重扫得到 digest；
-- `runtime_manifest_json` 由 old manifest + runtime config 规范构造；
+- SessionRoot 的 `runtime-manifest.json` 由 old manifest + runtime config 规范构造，并通过摘要字段绑定到 Session 行；
 - `source_content_revision` 使用迁移生成的只读诊断序号，不建立旧内容引用；
 - 保留 `game_id/runtime_version/session_root_path`；
 - 校验 SessionRoot 存在性不应成为 DB migration 的普通 EF SQL 副作用；由迁移 preflight/report

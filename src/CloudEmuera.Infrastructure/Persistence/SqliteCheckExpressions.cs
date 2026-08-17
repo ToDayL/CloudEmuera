@@ -23,8 +23,10 @@ internal static class SqliteCheckExpressions
     public static string RelativePath(string column) =>
         $"length({column}) BETWEEN 1 AND 512 AND substr({column}, 1, 1) <> '/' AND instr({column}, char(92)) = 0 AND instr({column}, char(0)) = 0 AND instr({column}, '//') = 0 AND instr('/' || {column} || '/', '/./') = 0 AND instr('/' || {column} || '/', '/../') = 0";
 
-    public static string ValidJson(string column) =>
-        $"length({column}) BETWEEN 2 AND 1048576 AND json_valid({column}) = 1 AND {column} <> ''";
+    public static string ValidJson(string column) => ValidJson(column, PersistenceLimits.JsonMaxLength);
+
+    public static string ValidJson(string column, int maxLength) =>
+        $"length({column}) BETWEEN 2 AND {maxLength} AND json_valid({column}) = 1 AND {column} <> ''";
 
     public static string Sha256DigestColumn(string column, bool nullable = false)
     {

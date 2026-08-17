@@ -145,7 +145,7 @@ internal static class SessionRootProtectedMarkerStore
 
     public static void WriteRuntimeManifest(string stagingContainer, string runtimeManifestJson)
     {
-        if (string.IsNullOrWhiteSpace(runtimeManifestJson) || runtimeManifestJson.Length > PersistenceLimits.JsonMaxLength)
+        if (string.IsNullOrWhiteSpace(runtimeManifestJson) || runtimeManifestJson.Length > PersistenceLimits.SessionRuntimeManifestMaxLength)
             throw new ArgumentException("The runtime manifest is outside the permitted size.", nameof(runtimeManifestJson));
         using JsonDocument _ = JsonDocument.Parse(runtimeManifestJson);
         string metadataDirectory = Path.Combine(stagingContainer, "metadata");
@@ -161,11 +161,53 @@ internal static class SessionRootProtectedMarkerStore
         SetPrivateFileMode(path);
     }
 
+    public static string ReadRuntimeManifest(SqliteDatabaseOptions options, string sessionId)
+    {
+        string path = RuntimeManifestPath(options, sessionId);
+        try
+        {
+            string json = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(json) || json.Length > PersistenceLimits.SessionRuntimeManifestMaxLength)
+                throw new InvalidDataException("The runtime manifest is outside the permitted size.");
+            using JsonDocument _ = JsonDocument.Parse(json);
+            return json;
+        }
+        catch (JsonException exception)
+        {
+            throw new SessionRuntimeException(SessionRuntimeResultCodes.SessionRootInvalid, "The runtime manifest is malformed.", exception);
+        }
+        catch (IOException exception)
+        {
+            throw new SessionRuntimeException(SessionRuntimeResultCodes.SessionRootInvalid, "The runtime manifest cannot be read.", exception);
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            throw new SessionRuntimeException(SessionRuntimeResultCodes.SessionRootInvalid, "The runtime manifest cannot be read.", exception);
+        }
+        catch (InvalidDataException exception)
+        {
+            throw new SessionRuntimeException(SessionRuntimeResultCodes.SessionRootInvalid, "The runtime manifest is outside the permitted size.", exception);
+        }
+    }
+
     public static void ValidateSessionId(string sessionId)
     {
         if (sessionId.Length is < 6 or > 64 || !sessionId.StartsWith("sess_", StringComparison.Ordinal) ||
             sessionId.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('_' or '-')))
             throw new ArgumentException("The Session ID is invalid.", nameof(sessionId));
+    }
+
+    private static string RuntimeManifestPath(SqliteDatabaseOptions options, string sessionId)
+    {
+        string container = ContainerPath(options, sessionId);
+        string metadataDirectory = Path.Combine(container, "metadata");
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(metadataDirectory, "session-metadata", RuntimeFileArea.Configuration);
+        RuntimePathUtilities.ThrowIfReparsePoint(metadataDirectory, "session-metadata", RuntimeFileArea.Configuration, missingIsAllowed: false);
+        string path = Path.Combine(metadataDirectory, "runtime-manifest.json");
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(path, "protected-runtime-manifest", RuntimeFileArea.Configuration);
+        RuntimePathUtilities.ThrowIfReparsePoint(path, "protected-runtime-manifest", RuntimeFileArea.Configuration, missingIsAllowed: false);
+        RuntimePathUtilities.ThrowIfHardLink(path, "protected-runtime-manifest", RuntimeFileArea.Configuration);
+        return path;
     }
 
     public static bool SameRootIdentity(SessionRootProtectedMarker marker, string rootPath)

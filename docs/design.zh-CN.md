@@ -322,7 +322,7 @@ Game 内容 revision 是内部单调计数，不是外部资源 ID，也不提�
 
 Session 是状态转换和 WorkerLease 的事务边界。核心不变量：
 
-- 一个 Session 固定一个 `gameId`、创建时源内容摘要和运行时清单快照，创建后不可更改；
+- 一个 Session 固定一个 `gameId`、创建时源内容摘要和受保护的运行时清单快照，创建后不可更改；
 - 活动状态最多有一个当前 WorkerLease；
 - 当前租约 epoch 只能递增，不能复用；
 - `CLOSED` 和 `CRASHED` 都是无 Worker、可重新开启的持久状态，不是 Session 资源终态；
@@ -502,7 +502,8 @@ owner_user_id TEXT NOT NULL FK users
 game_id TEXT NOT NULL FK games
 source_content_digest TEXT NOT NULL
 source_content_revision INTEGER NOT NULL
-runtime_manifest_json TEXT NOT NULL
+session_root_manifest_digest TEXT NOT NULL
+save_layout INTEGER NOT NULL             -- 0 ROOT | 1 SAV_DIRECTORY
 runtime_version TEXT NOT NULL
 session_root_path TEXT NOT NULL UNIQUE
 name TEXT NOT NULL
@@ -519,6 +520,11 @@ last_activity_at INTEGER NOT NULL
 closed_at INTEGER NULL
 FOREIGN KEY(game_id) REFERENCES games(id)
 ```
+
+Session 行不再保存完整的 `runtime_manifest_json`。创建和物化时生成的完整运行时清单写入受保护的
+`SessionRoot/metadata/runtime-manifest.json`；数据库只保存其摘要和固定的存档布局，用于配额、重开
+和 Worker 启动前绑定校验。清单文件只允许由 API 在 SessionRoot 发布阶段创建，读取时重复执行路径、
+普通文件、硬链接、大小和 JSON 校验。
 
 P1-01 已固定 `close_reason/closed_at` 列名；在可重开模型中，它们表示当前静止状态的最近一次 Worker
 停止原因和时间，而不是 Session 资源删除或终态时间。进入 `CLOSED/CRASHED` 时设置，成功进入新
@@ -772,7 +778,8 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 2. 在短事务中执行已实现的 SessionRoot 存储预算流程，插入 `CREATING` Session 和幂等记录；创建
    不占用活动 Worker 名额；
 3. 按事务固定的 Game content revision/digest，把完整合法普通文件树复制到同父目录 staging；
-4. 校验 manifest、文件类型、字节数和摘要后原子发布 SessionRoot，并持久化源 manifest 快照；
+4. 校验 manifest、文件类型、字节数和摘要后原子发布 SessionRoot，并将完整源/运行时 manifest 快照写入
+   受保护 metadata 文件；数据库只持久化摘要和保存布局；
 5. API 以 CAS 把 Session 置为 `CLOSED` 并返回资源。前端若要“一步开始”，在创建成功后另行调用
    open；两个操作使用不同幂等键和事务边界。
 
@@ -855,7 +862,7 @@ Clear(scope)
 ```
 
 所有颜色、尺寸、枚举、文本长度、资源 ID 和层级深度在 Worker 与浏览器两端校验。资源只使用由
-Session 创建时保存的 Game runtime manifest 解析出的 `assetId`，不能使用游戏提供的任意 URL。
+Session 创建时保存于受保护 metadata 的 Game runtime manifest 解析出的 `assetId`，不能使用游戏提供的任意 URL。
 
 P1-11 将这条边界落为两个只读 HTTP 端点：
 
@@ -1001,6 +1008,7 @@ timeout 仍由 Worker 决定。连接、订阅、接收消息、控制队列、p
 | `GET /sessions/{id}` | Session 详情 | 所有者/管理员 |
 | `POST /sessions/{id}:open` | 启动或重新启动 Worker | 幂等、`CLOSED/CRASHED`、检查实例级 Worker 上限、递增 epoch |
 | `POST /sessions/{id}:close` | 优雅关闭 Worker | 幂等，不删除 SessionRoot |
+| `DELETE /sessions/{id}` | 删除 SessionRoot 与 Session 元数据 | 幂等，仅 `CLOSED/CRASHED` 且无 Worker/文件操作，安全清理并审计 |
 | `GET /sessions/{id}/presentation-manifest` | 读取 Session 浏览器资源清单 | 所有者，opaque asset ID、只读 |
 | `GET /sessions/{id}/assets/{assetId}` | 流式读取图片/音频/字体 | 所有者，MIME/摘要/Range/ETag 校验 |
 | `GET /sessions/{id}/saves` | 列出存档 | 所有者 |
@@ -1282,12 +1290,12 @@ pending clientMessageId → result
   只读验证 migration history、foreign-key check 和 quick check。退出码 `0/10/11/12/13/14/15`
   分别表示成功、配置非法、锁竞争、数据库高于当前 binary、备份失败、migration 失败和完整性
   检查失败。业务 API 和 Worker 不调用 `Database.Migrate()`。
-- `CloudEmuera:Capacity:*` 实例级容量：活动 Worker、游戏包/SessionRoot/暂存字节、单个存档文件和 DataRoot 最低
+- `CloudEmuera:Capacity:*` 实例级容量：活动 Worker（默认 8）、未启动 Session（默认 64）、游戏包/SessionRoot/暂存字节、单个存档文件和 DataRoot 最低
   剩余空间；历史 `CloudEmuera:MinDataRootFreeBytes` 仅兼容读取一个周期并输出弃用 warning，
   新部署使用带 `Capacity` 前缀的键；`CloudEmuera:Capacity:MaxSaveFileBytes` 默认 64 MiB，且不得超过
   `MaxSessionRootBytes`；
 - 上传/解压/文件数量/编码限制；
-- 实例级最大活动 Worker 数、上传/展开/文件数量、存档文件和 DataRoot 最低剩余空间上限；
+- 实例级最大活动 Worker 数、未启动 Session 数、上传/展开/文件数量、存档文件和 DataRoot 最低剩余空间上限；
 - Snapshot、IPC 和 WebSocket 队列上限；容器整体 CPU/内存/PID 限制属于部署选项；
 - 心跳、启动、停止、强制终止超时；
 - 存档文件大小、停止态管理操作和 SessionRoot 备份保留；

@@ -64,7 +64,6 @@ public sealed class SqliteSessionRuntimeStoreTests
         Assert.Equal(2, secondLease.Binding.WorkerEpoch);
         Assert.Equal(7, secondLease.Binding.InitialOutputSequence);
         Assert.Equal(firstLease.Binding.SessionRootPath, secondLease.Binding.SessionRootPath);
-        Assert.Equal(firstLease.Binding.RuntimeManifestJson, secondLease.Binding.RuntimeManifestJson);
 
         Assert.False((await store.RecordProcessIdentityAsync(firstLease.Binding, firstIdentity, now.AddSeconds(7))).Applied);
         SessionRuntimeCompletionResult stale = await store.CompleteAsync(
@@ -274,7 +273,8 @@ public sealed class SqliteSessionRuntimeStoreTests
             SessionRow session = PersistenceFixtures.CreateSession(sessionId);
             session.State = SessionState.Closed;
             session.ClosedAt = PersistenceFixtures.CreatedAt;
-            session.RuntimeManifestJson = "{\"compatibilityProfile\":\"v18-compatible\",\"saveLayout\":0,\"manifestDigest\":\"sha256:" + new string('a', 64) + "\"}";
+            session.SessionRootManifestDigest = "sha256:" + new string('a', 64);
+            session.SaveLayout = 0;
             scope.Context.Sessions.Add(session);
         }
 

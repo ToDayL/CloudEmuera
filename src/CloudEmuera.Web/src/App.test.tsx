@@ -316,6 +316,32 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
+  it("deletes a closed Session from the Session list", async () => {
+    const closedSession = session({ state: "CLOSED", closedAt: "2026-08-10T00:03:00Z", closeReason: "requested" });
+    let sessions: unknown[] = [closedSession];
+    const fetchMock = mockFetch((url, init) => {
+      if (url === "/api/v1/sessions?limit=50") return jsonResponse({ items: sessions, nextCursor: null });
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/sessions/sess-world" && init?.method === "DELETE") {
+        sessions = [];
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderAt("/sessions");
+
+    expect(await screen.findByRole("heading", { name: "港口旅程" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+
+    expect(await screen.findByText("还没有 Session")).toBeInTheDocument();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("永久删除 SessionRoot"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/sessions/sess-world", expect.objectContaining({ method: "DELETE" }));
+    confirm.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("locks native save mutations while the real Session is running", async () => {
     const currentSession = session({ name: "周目二", game: { id: "g1", name: "港口游戏" } });
     mockFetch((url) => {

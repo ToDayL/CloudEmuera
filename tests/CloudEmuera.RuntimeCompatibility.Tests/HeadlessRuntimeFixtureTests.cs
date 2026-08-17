@@ -178,16 +178,77 @@ public sealed class HeadlessRuntimeFixtureTests
 
         ConsoleLine temporary = console.Snapshot.Scrollback[0];
         Assert.True(temporary.Temporary);
-        Assert.Equal(ConsoleLineAlignment.Right, console.Snapshot.Scrollback[1].Alignment);
-        SpriteNode sprite = Assert.IsType<SpriteNode>(Assert.Single(console.Snapshot.Scrollback[2].Nodes));
+        ConsoleLine combined = console.Snapshot.Scrollback[1];
+        Assert.Equal(ConsoleLineAlignment.Left, combined.Alignment);
+        Assert.Contains(combined.Nodes, node => node is TextNode text && text.Text.Contains("right", StringComparison.Ordinal));
+        SpriteNode sprite = Assert.IsType<SpriteNode>(Assert.Single(combined.Nodes, node => node is SpriteNode));
         Assert.Equal(new ConsoleRect(4, 5, 8, 10), sprite.SourceRect);
         Assert.Equal(new ConsoleRect(4, 11, 32, 40), sprite.Destination);
         Assert.Equal("sha256-hover", sprite.HoverAssetId?.Value);
         Assert.Equal("sha256-map", sprite.MappingAssetId?.Value);
 
-        headless.deleteLine(2);
+        headless.deleteLine(1);
         Assert.Single(console.Snapshot.Scrollback);
         Assert.Equal("temporary", Assert.IsType<TextNode>(Assert.Single(console.Snapshot.Scrollback[0].Nodes)).Text);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task PrintCUsesPrintLBoundariesAndPreservesFixedWidthButtonColumns()
+    {
+        // PLAY-002/COMP-007: PRINTC is a fixed-width field append operation;
+        // only PRINTL creates the two logical rows in this menu-shaped output.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTC FIRST[800]\n" +
+            "PRINTC SECOND[801]\n" +
+            "PRINTL\n" +
+            "PRINTC THIRD[803]\n" +
+            "PRINTC FOURTH[804]\n" +
+            "PRINTC FIFTH[809]\n" +
+            "PRINTC SIXTH [888]\n" +
+            "PRINTL\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\nPRINTC并列数量:4\nPRINTC文字数量:25\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        IReadOnlyList<ConsoleLine> lines = fixture.Console.Snapshot.Scrollback;
+        Assert.Equal(2, lines.Count);
+        Assert.Equal(["800", "801"], lines[0].Nodes.OfType<ButtonNode>().Select(button => button.Value));
+        Assert.Equal(["803", "804", "809", "888"], lines[1].Nodes.OfType<ButtonNode>().Select(button => button.Value));
+
+        string firstRow = RuntimeTranscriptProjector.Project(lines[0].Nodes);
+        string secondRow = RuntimeTranscriptProjector.Project(lines[1].Nodes);
+        Assert.Equal(50, EncodingHandler.shiftjisEncoding.GetByteCount(firstRow));
+        Assert.Equal(100, EncodingHandler.shiftjisEncoding.GetByteCount(secondRow));
+        Assert.DoesNotContain("\n", firstRow, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n", secondRow, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task PrintCUsesReplacementWidthForCharactersOutsideShiftJis()
+    {
+        // COMP-007: a Unicode display label must not crash width calculation
+        // when it cannot be represented in the legacy Shift-JIS code page.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTC 动作[800]\n" +
+            "PRINTL\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\nPRINTC文字数量:25\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        ConsoleLine line = Assert.Single(fixture.Console.Snapshot.Scrollback);
+        ButtonNode button = Assert.IsType<ButtonNode>(Assert.Single(line.Nodes));
+        Assert.Equal("800", button.Value);
+        Assert.Contains("动作", RuntimeTranscriptProjector.Project(button.Children), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -680,13 +741,13 @@ public sealed class HeadlessRuntimeFixtureTests
             },
             button =>
             {
-                Assert.Equal("RIGHT", Assert.IsType<TextNode>(Assert.Single(button.Children)).Text);
+                Assert.Equal("RIGHT", Assert.IsType<TextNode>(Assert.Single(button.Children)).Text.Trim());
                 Assert.Equal("7", button.Value);
                 Assert.Null(button.Tooltip);
             },
             button =>
             {
-                Assert.Equal("LEFT", Assert.IsType<TextNode>(Assert.Single(button.Children)).Text);
+                Assert.Equal("LEFT", Assert.IsType<TextNode>(Assert.Single(button.Children)).Text.Trim());
                 Assert.Equal("left-value", button.Value);
                 Assert.Null(button.Tooltip);
             });

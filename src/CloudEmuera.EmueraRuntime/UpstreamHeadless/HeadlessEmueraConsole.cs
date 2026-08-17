@@ -6,6 +6,7 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
@@ -23,6 +24,7 @@ internal enum ConsoleRedraw { None, Normal }
 
 internal sealed class EmueraConsole
 {
+    private static readonly Encoding printCByteCountEncoding = CreatePrintCByteCountEncoding();
     private readonly IGameConsole adapter;
     private readonly IRuntimeClock clock;
     private CancellationToken cancellationToken;
@@ -144,20 +146,23 @@ internal sealed class EmueraConsole
     {
         if (!outputEnabled || string.IsNullOrEmpty(value))
             return;
-        pendingLine.Add(new TextNode(value, ToConsoleTextStyle()));
-        FlushPendingLine(force: true, alignment: alignmentRight ? ConsoleLineAlignment.Right : ConsoleLineAlignment.Left);
+        // Upstream PRINTC appends a fixed-width field to PrintStringBuffer. It
+        // does not commit a display line; PRINTL/PrintFlush owns that boundary.
+        pendingLine.Add(new TextNode(FormatPrintCValue(value, alignmentRight), ToConsoleTextStyle()));
     }
     public void PrintButton(string value, string input) => EmitButton(value, input);
     public void PrintButton(string value, long input) => EmitButton(value, input.ToString(CultureInfo.InvariantCulture));
-    public void PrintButtonC(string value, string input, bool isRight) => EmitButton(value, input);
-    public void PrintButtonC(string value, long input, bool isRight) => EmitButton(value, input.ToString(CultureInfo.InvariantCulture));
+    public void PrintButtonC(string value, string input, bool isRight) => EmitButton(FormatPrintCValue(value, isRight), input);
+    public void PrintButtonC(string value, long input, bool isRight) => EmitButton(FormatPrintCValue(value, isRight), input.ToString(CultureInfo.InvariantCulture));
     public void NewLine()
     {
         if (outputEnabled)
             FlushPendingLine(force: true);
     }
     public void PrintFlush(bool force) => FlushPendingLine(force);
-    public void RefreshStrings(bool forcePaint) => FlushPendingLine();
+    // Upstream RefreshStrings only repaints already committed display lines;
+    // it must not turn a partial PRINT/PRINTC buffer into a logical line.
+    public void RefreshStrings(bool forcePaint) { }
     public void ClearText()
     {
         FlushPendingLine();
@@ -647,6 +652,32 @@ internal sealed class EmueraConsole
             }
             offset = checked(offset + primitive.Str.Length);
         }
+    }
+
+    private static string FormatPrintCValue(string value, bool alignmentRight)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
+        int printCWidth = MinorShift.Emuera.Runtime.Config.Config.PrintCLength;
+        if (printCWidth <= 0)
+            return value;
+
+        // Upstream uses the default replacement fallback for PRINTC width
+        // measurement. The shared EncodingHandler instance is intentionally
+        // strict for script/file decoding and must not be used here.
+        int byteLength = printCByteCountEncoding.GetByteCount(value);
+        if (alignmentRight && byteLength < printCWidth)
+            return new string(' ', printCWidth - byteLength) + value;
+        if (!alignmentRight && byteLength < printCWidth + 1)
+            return value + new string(' ', printCWidth + 1 - byteLength);
+        return value;
+    }
+
+    private static Encoding CreatePrintCByteCountEncoding()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        return Encoding.GetEncoding("Shift-JIS");
     }
 
     private static TextNode[] SliceStyledText(IReadOnlyList<TextNode> nodes, int start, int length)

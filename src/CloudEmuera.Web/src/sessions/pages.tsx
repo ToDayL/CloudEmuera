@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api";
 import { formatDateTime, listGames, shortDigest } from "../games";
-import { closeSession, createSession, openSession, useSessionList, waitForSession, type SessionState, type SessionView } from "./api";
+import { closeSession, createSession, deleteSession, openSession, useSessionList, waitForSession, waitForSessionDeletion, type SessionState, type SessionView } from "./api";
 
 function stateLabel(state: SessionState): string {
   return ({ CREATING: "创建中", STARTING: "启动中", RUNNING: "运行中", STOPPING: "停止中", CLOSED: "已关闭", CRASHED: "已崩溃" } as Record<SessionState, string>)[state];
@@ -19,6 +19,8 @@ function errorMessage(error: unknown): string {
     if (error.code === "GAME_BLOCKED") return "这个游戏当前已被禁用。";
     if (error.code === "SESSION_TRANSITION_IN_PROGRESS") return "Session 正在进行另一个生命周期操作，请稍后刷新。";
     if (error.code === "ACTIVE_WORKER_LIMIT_EXCEEDED") return "活动 Worker 名额已满，请先关闭其他 Session。";
+    if (error.code === "INACTIVE_SESSION_LIMIT_EXCEEDED") return "未启动 Session 已达到实例上限，请先删除不再需要的 Session。";
+    if (error.code === "SESSION_NOT_DELETABLE") return "只有已关闭或已崩溃的 Session 可以删除。";
   }
   return error instanceof Error ? error.message : "操作失败。";
 }
@@ -46,6 +48,18 @@ export function SessionsPage() {
     finally { setActionId(null); }
   };
 
+  const remove = async (session: SessionView) => {
+    if (session.state !== "CLOSED" && session.state !== "CRASHED") return;
+    if (!window.confirm(`删除「${session.name}」？此操作会永久删除 SessionRoot 和存档，不能撤销。`)) return;
+    setActionId(session.id); setMessage(null);
+    try {
+      const result = await deleteSession(session.id);
+      if (result.pending) await waitForSessionDeletion(session.id);
+      await query.refetch();
+    } catch (error) { setMessage(errorMessage(error)); }
+    finally { setActionId(null); }
+  };
+
   return <>
     <header className="page-header"><div><p className="eyebrow">SESSIONS</p><h1>游戏 Session</h1><p>浏览器离开后，活动 Session 仍会继续运行并等待你回来。</p></div><div className="page-actions"><Link className="primary-button" to="/sessions/new">＋ 创建 Session</Link></div></header>
     <div className="session-stats"><article><span className="pulse-dot"/><div><strong>{activeCount}</strong><small>活动 Worker</small></div></article><article><span aria-hidden="true">◷</span><div><strong>{waitingCount}</strong><small>等待输入</small></div></article><article><span aria-hidden="true">▦</span><div><strong>{items.length}</strong><small>当前列表 Session</small></div></article></div>
@@ -54,13 +68,13 @@ export function SessionsPage() {
     {query.isPending ? <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/>正在读取 Session…</div>
       : query.isError ? <div className="panel error-panel" role="alert"><strong>无法读取 Session</strong><p>{errorMessage(query.error)}</p><button className="secondary-button" onClick={() => void query.refetch()}>重试</button></div>
       : items.length === 0 ? <div className="empty-state"><span className="empty-icon">◌</span><h2>还没有 Session</h2><p>从已启用当前内容的游戏创建一个独立、可重连的 Session。</p><Link className="primary-button" to="/sessions/new">创建 Session</Link></div>
-      : <section className="session-list" aria-label="Session 列表">{items.map(session => <SessionRow key={session.id} session={session} busy={actionId === session.id} onLifecycle={operation => void lifecycle(session, operation)} />)}</section>}
+      : <section className="session-list" aria-label="Session 列表">{items.map(session => <SessionRow key={session.id} session={session} busy={actionId === session.id} onLifecycle={operation => void lifecycle(session, operation)} onDelete={() => void remove(session)} />)}</section>}
     {query.data?.nextCursor && <div className="pagination-actions"><button className="secondary-button" onClick={() => setCursor(query.data?.nextCursor ?? undefined)} disabled={query.isFetching}>加载更多</button></div>}
     <div className="info-banner"><span aria-hidden="true">✦</span><p><strong>Session 与浏览器连接相互独立</strong><small>关闭标签页不会停止游戏。请在不再需要时显式关闭 Session，以释放 Worker 名额。</small></p></div>
   </>;
 }
 
-function SessionRow({ session, busy, onLifecycle }: { session: SessionView; busy: boolean; onLifecycle: (operation: "open" | "close") => void }) {
+function SessionRow({ session, busy, onLifecycle, onDelete }: { session: SessionView; busy: boolean; onLifecycle: (operation: "open" | "close") => void; onDelete: () => void }) {
   const color = ["coral", "violet", "amber", "blue", "green"][session.id.charCodeAt(0) % 5];
   const canOpen = session.state === "CLOSED" || session.state === "CRASHED";
   return <article className="session-row">
@@ -68,7 +82,7 @@ function SessionRow({ session, busy, onLifecycle }: { session: SessionView; busy
     <div className="session-main"><div><h2>{session.name}</h2><p>{session.game.name} <span>·</span> {shortDigest(session.sourceContentDigest)}</p></div><div className="session-badges"><span className={`status-pill ${session.state.toLowerCase()}`}><i/>{stateLabel(session.state)}</span>{session.waitingForInput && session.state === "RUNNING" && <span className="tag waiting">◷ 等待输入</span>}</div></div>
     <div className="session-meta"><span>最后活动</span><strong>{formatDateTime(session.lastActivityAt)}</strong></div>
     <div className="session-meta"><span>创建时间</span><strong>{formatDateTime(session.createdAt)}</strong></div>
-    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? "启动中…" : "继续游戏"}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>继续游戏</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>关闭</button>}<Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>存档</Link></div>
+    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? "启动中…" : "继续游戏"}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>继续游戏</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>关闭</button>}{canOpen && <button className="text-button danger" onClick={onDelete} disabled={busy}>删除</button>}<Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>存档</Link></div>
   </article>;
 }
 

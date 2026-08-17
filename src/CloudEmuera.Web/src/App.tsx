@@ -673,7 +673,7 @@ function AdminUsersPage() {
 }
 
 function SettingsPage() {
-  return <><PageHeader eyebrow="PREFERENCES" title="设置" description="调整浏览器体验与账户偏好；运行时配置由游戏的当前内容决定。"/><section className="panel settings-panel"><h2>外观与交互</h2><label className="setting-row"><span><strong>跟随游戏自动滚动</strong><small>仅当你已经靠近控制台底部时自动滚动</small></span><input type="checkbox" defaultChecked/></label><label className="setting-row"><span><strong>减少动态效果</strong><small>关闭界面过渡与加载动画</small></span><input type="checkbox"/></label><label className="setting-row"><span><strong>控制台文字大小</strong><small>仅影响游戏输出，不改变应用界面</small></span><select defaultValue="medium"><option value="small">较小</option><option value="medium">标准</option><option value="large">较大</option></select></label></section></>;
+  return <><PageHeader eyebrow="PREFERENCES" title="设置" description="调整浏览器体验与账户偏好；运行时配置由游戏的当前内容决定。"/><section className="panel settings-panel"><h2>外观与交互</h2><label className="setting-row"><span><strong>跟随游戏自动滚动</strong><small>收到新输出或提交输入后回到控制台底部</small></span><input type="checkbox" defaultChecked/></label><label className="setting-row"><span><strong>减少动态效果</strong><small>关闭界面过渡与加载动画</small></span><input type="checkbox"/></label><label className="setting-row"><span><strong>控制台文字大小</strong><small>仅影响游戏输出，不改变应用界面</small></span><select defaultValue="medium"><option value="small">较小</option><option value="medium">标准</option><option value="large">较大</option></select></label></section></>;
 }
 
 function ConfirmDialog({ title, body, confirm, onCancel, onConfirm, pending = false }: { title: string; body: string; confirm: string; onCancel: () => void; onConfirm?: () => void; pending?: boolean }) {

@@ -39,6 +39,8 @@ public static class PersistenceLimits
     public const int PathMaxLength = 512;
     public const int DigestLength = 71;
     public const int JsonMaxLength = 1_048_576;
+    public const int SessionRuntimeManifestMaxLength = 64 * 1_048_576;
+    public const int SessionRootManifestDigestMaxLength = 128;
     public const int PromptIdMaxLength = 256;
     public const int CloseReasonMaxLength = 256;
     public const int WorkerIdMaxLength = 128;

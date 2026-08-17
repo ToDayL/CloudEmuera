@@ -124,13 +124,13 @@ Session 1 ── 1 私有 SessionRoot
 - **GAME-005**：上传和检查必须写入 Game 的独立摄取工作区；验证并原子启用前不得改变当前可运行内容，也不得改变任何既有 Session 已复制的文件内容。
 - **GAME-006**：系统必须提供已上传文件的目录浏览、文本只读查看和文件下载能力；浏览器内创建、编辑、重命名、删除或搜索 ERB/CSV 文件不在 MVP 范围内。
 - **GAME-007**：把摄取工作区启用为当前内容前必须执行基础验证，包括目录结构、编码、解析错误、缺失资源和已禁止功能的诊断。
-- **GAME-008**：创建 Session 时必须完整复制 Game 当时的当前可运行内容到私有 SessionRoot，并记录源内容摘要和运行时清单快照；Game 后续上传替换或重新启用不能隐式改变既有 Session。
+- **GAME-008**：创建 Session 时必须完整复制 Game 当时的当前可运行内容到私有 SessionRoot，并记录源内容摘要和运行时清单快照；运行时清单快照存放在受保护的 SessionRoot metadata 中，数据库不保存完整清单；Game 后续上传替换或重新启用不能隐式改变既有 Session。
 - **GAME-009**：游戏可见性至少支持私有和服务器共享；公开市场式发布不在 MVP 范围内。
 - **GAME-010**：删除仍被任意 Session 引用的 Game 时必须拒绝；未被引用的 Game 先执行可恢复的逻辑删除，不在普通请求中立即递归删除内容。
 
 ### 6.3 Session 管理
 
-- **SESS-001**：用户可以为同一或不同 Game 创建任意数量的 Session；系统不得因已创建的 Session 总数而拒绝创建请求。实例可以配置一个全局最大活动 Worker 数，不要求按用户调度或预留活动配额。
+- **SESS-001**：用户可以为同一或不同 Game 创建 Session；实例默认最多同时运行 8 个活动 Worker，并最多保留 64 个未启动 Session（`CREATING`、`CLOSED` 和 `CRASHED`），均可通过实例容量配置覆盖；不要求按用户调度或预留活动配额。
 - **SESS-002**：每个活动 Session 必须由且仅由一个有效 Runtime 所有；切换 Worker 时必须使用递增 epoch 防止旧 Worker 继续接受输入。
 - **SESS-003**：浏览器断开不得自动关闭 Session，也不得清除运行时状态。
 - **SESS-004**：Session 在无浏览器连接时必须继续处理已经开始的执行、计时输入和内部计时器。
@@ -145,7 +145,8 @@ Session 1 ── 1 私有 SessionRoot
   每次开启都复用原 SessionRoot、递增 worker epoch 并创建新 Worker；不得重新复制 Game current
   content 或要求用户创建新 Session。
 - **SESS-012**：Session 是从创建到显式删除持续存在的资源；开启和关闭只获取或释放 Worker。
-  删除 Session 必须与关闭分离，并且不得因关闭、崩溃、API 重启或浏览器断开自动发生。
+  删除 Session 必须与关闭分离，仅允许对 `CLOSED`/`CRASHED` 且没有活动 Worker 或进行中的文件操作的
+  Session 显式执行，并且不得因关闭、崩溃、API 重启或浏览器断开自动发生。
 
 ### 6.4 游戏显示与交互
 
@@ -170,7 +171,7 @@ Session 1 ── 1 私有 SessionRoot
 - **SAVE-002**：Worker 不得通过游戏提供的相对路径越过分配的存档或临时目录。
 - **SAVE-003**：用户必须能够按 Session 列出和下载自己的原生存档，并在 Session 没有活动 Worker 时上传、重命名和删除。
 - **SAVE-004**：Emuera 必须直接在当前 SessionRoot 中按原生行为写入存档；CloudEmuera 不在运行链路中增加 generation、提交队列或第二份权威存档副本。
-- **SAVE-005**：Session 元数据必须记录其 Game、创建时源内容摘要、Runtime 版本、运行时清单快照和私有 SessionRoot；原生存档文件作为该 Session 的不透明内容管理，不建立逐次保存 generation。
+- **SAVE-005**：Session 元数据必须记录其 Game、创建时源内容摘要、Runtime 版本、运行时清单快照和私有 SessionRoot；完整运行时清单保存在受保护的 SessionRoot metadata 中，数据库只保留重开和校验所需的摘要/布局字段；原生存档文件作为该 Session 的不透明内容管理，不建立逐次保存 generation。
 - **SAVE-006**：导入存档前必须验证文件大小、路径、基本原生文件约束和 Session 权限，并再次确认目标 Session 没有活动 Worker；不要求证明内容与 Game 摘要语义兼容。
 - **SAVE-007**：MVP 不提供 Session 之间的直接存档复制；用户可以下载后显式上传到另一个停止态 Session，且系统不得让多个活动 Worker 共享同一物理文件。
 - **SAVE-008**：自动保存和覆盖行为遵循游戏及 Emuera 原生语义；系统级历史保留由整个 SessionRoot 的外部备份策略提供，不介入每次运行时保存。
@@ -186,7 +187,7 @@ Session 1 ── 1 私有 SessionRoot
 ### 6.6 管理与运维
 
 - **OPS-001**：管理员必须能够查看 Session 状态、当前 Worker 标识/PID、心跳和最近错误，并能强制停止活动 Worker；MVP 不要求细粒度进程资源指标平台。
-- **OPS-002**：系统必须允许配置实例级最大活动 Worker 数、游戏包/展开内容/文件数量、存档文件、ConsoleSnapshot/WebSocket 队列和 DataRoot 最低剩余空间上限；MVP 不要求按用户或进程拆分资源配额、调度、预留和计费。
+- **OPS-002**：系统必须允许配置实例级最大活动 Worker 数、未启动 Session 数、游戏包/展开内容/文件数量、存档文件、ConsoleSnapshot/WebSocket 队列和 DataRoot 最低剩余空间上限；MVP 不要求按用户或进程拆分资源配额、调度、预留和计费。
 - **OPS-003**：API 必须提供健康检查、就绪检查和版本信息。
 - **OPS-004**：日志必须包含可关联的 `requestId`、`sessionId`、`workerId` 和 `workerEpoch`，但不得记录密码或默认记录用户输入全文。
 - **OPS-005**：已实现的身份、资源变更、管理员终止、Game 内容启用和存档删除等关键审计事件必须保留；MVP 不要求通用审计界面或为普通连接/只读操作建立完整审计流水。

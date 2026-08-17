@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest, apiRequestWithMeta, getCsrfToken, newIdempotencyKey } from "../api";
+import { ApiError, apiRequest, apiRequestWithMeta, getCsrfToken, newIdempotencyKey } from "../api";
 import type { SessionGameSummaryDto, SessionListResponseDto, SessionResponseDto, SessionStateDto } from "../api/generated";
 
 export type SessionState = SessionStateDto;
@@ -55,6 +55,37 @@ export async function openSession(sessionId: string, idempotencyKey = newIdempot
 
 export async function closeSession(sessionId: string, idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
   return lifecycleRequest(sessionId, "close", idempotencyKey);
+}
+
+export async function deleteSession(sessionId: string, idempotencyKey = newIdempotencyKey()): Promise<{ pending: boolean }> {
+  const token = await getCsrfToken();
+  const response = await apiRequestWithMeta<{ pending?: boolean }>(`/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    headers: jsonMutationHeaders(token, idempotencyKey),
+  });
+  return { pending: response.value?.pending === true };
+}
+
+export async function waitForSessionDeletion(
+  sessionId: string,
+  options: { signal?: AbortSignal; attempts?: number } = {},
+): Promise<void> {
+  const attempts = options.attempts ?? 60;
+  let delayMilliseconds = 150;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    options.signal?.throwIfAborted();
+    try {
+      await getSession(sessionId);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) return;
+      throw cause;
+    }
+    if (attempt + 1 < attempts) {
+      await wait(delayMilliseconds, options.signal);
+      delayMilliseconds = Math.min(1_000, Math.round(delayMilliseconds * 1.35));
+    }
+  }
+  throw new Error("Session 删除在限定时间内没有完成。");
 }
 
 async function lifecycleRequest(sessionId: string, operation: "open" | "close", idempotencyKey: string): Promise<SessionView> {

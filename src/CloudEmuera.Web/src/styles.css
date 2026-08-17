@@ -18,8 +18,9 @@
 }
 
 * { box-sizing: border-box; }
-html { min-width: 320px; background: var(--canvas); }
+html { min-width: 320px; background: var(--canvas); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { min-width: 320px; min-height: 100vh; margin: 0; }
+html.console-route, html.console-route body { overflow: hidden; }
 button, input, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { color: inherit; }
@@ -173,6 +174,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .content-list p { margin: 6px 0; color: #60645d; font-size: 11px; }
 .content-list small { color: #989b94; font-size: 9px; }
 .text-button { display: inline-flex; align-items: center; gap: 4px; border: 0; color: var(--accent); background: transparent; font-size: 10px; font-weight: 700; }
+.text-button.danger { color: #a24a3e; }
 .file-panel { display: grid; min-height: 440px; grid-template-columns: 220px 1fr; }
 .file-tree { padding: 18px 12px; border-right: 1px solid var(--line); }
 .file-tree h3 { margin: 3px 9px 12px; font-size: 12px; }
@@ -502,10 +504,42 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 
 /* ---- Compact dark terminal presentation ---- */
 .realtime-console {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: flex;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0 !important;
   color-scheme: dark;
   color: #d8e2d7;
   background: #080a09;
 }
+.realtime-console .console-overlay-actions {
+  position: fixed;
+  z-index: 3;
+  top: 12px;
+  right: clamp(10px, 3vw, 28px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.realtime-console .console-overlay-back {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #2e3a30;
+  border-radius: 2px;
+  color: #9eafa0;
+  background: #151b16;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 15px;
+}
+.realtime-console .console-overlay-back:hover { color: #d8e8d8; background: #202c21; }
 .realtime-console .console-header {
   min-height: 52px;
   padding: 7px clamp(12px, 3vw, 28px);
@@ -565,12 +599,25 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   font-weight: 400;
 }
 .realtime-console .danger-text:hover:not(:disabled) { border-color: #a95d4e; color: #ffc2b2; background: #2b1715; }
-.realtime-console .console-layout { display: block; min-height: calc(100vh - 52px); background: #080a09; }
+.realtime-console .console-layout { display: flex; width: 100%; height: auto; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: hidden; background: #080a09; }
 .realtime-console .console-aside { display: none; }
 .realtime-console .realtime-game-console {
-  min-height: calc(100vh - 52px);
-  padding: 15px clamp(10px, 3vw, 28px) 96px;
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 56px clamp(10px, 3vw, 28px) 24px;
   background: #080a09;
+}
+.realtime-console .console-input-dock {
+  flex: 0 0 auto;
+  width: 100%;
+  padding: 7px clamp(10px, 3vw, 28px) calc(7px + env(safe-area-inset-bottom));
+  border-top: 1px solid #273128;
+  background: #101410;
 }
 .realtime-console .canvas-renderer {
   border-color: #263227;
@@ -600,8 +647,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .realtime-console .console-choice {
   display: inline;
   min-height: 0;
-  margin: 0 2px;
-  padding: 0 3px;
+  margin: 0;
+  padding: 0;
   border: 0;
   border-radius: 2px;
   color: #8bd6a2;
@@ -611,6 +658,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   line-height: inherit;
   vertical-align: baseline;
   box-shadow: none;
+  text-decoration: none;
+}
+.realtime-console .console-choice-label {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-line: underline;
 }
 .realtime-console .console-choice:hover:not(:disabled),
 .realtime-console .console-choice:focus-visible:not(:disabled) {
@@ -635,15 +688,15 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .realtime-console .prompt-controller {
   width: min(960px, 100%);
-  margin-top: 10px;
-  padding: 8px 10px;
-  border: 1px solid #304334;
+  margin: 0 auto;
+  padding: 0 4px;
+  border: 0;
   border-radius: 2px;
   color: #d8e2d7;
-  background: #111712;
+  background: transparent;
   box-shadow: none;
 }
-.realtime-console .prompt-heading { min-height: 30px; }
+.realtime-console .prompt-heading { min-height: 0; margin-bottom: 5px; }
 .realtime-console .prompt-heading p {
   color: #aebfae;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -652,7 +705,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .realtime-console .prompt-heading p::before { margin-right: 6px; color: #70c888; content: ">"; }
 .realtime-console .prompt-heading-actions { display: flex; align-items: center; gap: 8px; }
-.realtime-console .prompt-controller form { gap: 6px; margin-top: 5px; }
+.realtime-console .prompt-controller form { gap: 6px; margin-top: 0; }
 .realtime-console .prompt-controller input {
   height: 30px;
   padding: 0 8px;
@@ -684,7 +737,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .realtime-console .prompt-enter-button:hover:not(:disabled),
 .realtime-console .prompt-enter-button:focus-visible:not(:disabled) { border-color: #8ed49b; color: #fff; background: #275234; outline: none; }
-.realtime-console .prompt-enter-button:disabled { color: #66736a; border-color: #35443a; background: #151b16; }
+.realtime-console .prompt-enter-button.is-ready { border-color: #4b7655; color: #c4e9ca; background: #183020; }
+.realtime-console .prompt-enter-button.is-waiting,
+.realtime-console .prompt-enter-button:disabled { opacity: 1; color: #66736a; border-color: #35443a; background: #151b16; }
+.realtime-console .prompt-enter-button.is-pending { opacity: 1; border-color: #8a6f42; color: #e5c98b; background: #302819; }
 .realtime-console .prompt-any-key { min-height: 30px; margin-top: 5px; padding: 0 9px; border: 1px solid #3d5942; border-radius: 2px; color: #b9d5bd; background: #142119; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 10px; }
 .realtime-console .deadline-clock { color: #9dcc9e; font-size: 10px; }
 .realtime-console .deadline-clock.expired { color: #e6a08e; }
@@ -718,8 +774,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .realtime-console .connection-chip { max-width: 30vw; min-height: 24px; overflow: hidden; padding: 0 5px; text-overflow: ellipsis; white-space: nowrap; }
   .realtime-console .danger-text { min-height: 26px; padding: 0 7px; font-size: 9px; }
   .realtime-console .console-layout,
-  .realtime-console .realtime-game-console { min-height: calc(100dvh - 46px); }
-  .realtime-console .realtime-game-console { padding: 9px 8px 88px; }
+  .realtime-console .realtime-game-console { height: auto; min-height: 0; }
+  .realtime-console .console-overlay-actions { top: 8px; right: 8px; gap: 5px; }
+  .realtime-console .console-overlay-back { width: 26px; height: 26px; }
+  .realtime-console .connection-chip { max-width: 30vw; }
+  .realtime-console .realtime-game-console { padding: 48px 8px 20px; }
+  .realtime-console .console-input-dock { padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); }
   .realtime-console .scrollback { padding: 6px 1px; }
   .realtime-console .console-line { font-size: 12px; }
   .realtime-console .prompt-controller { padding: 7px 8px; }

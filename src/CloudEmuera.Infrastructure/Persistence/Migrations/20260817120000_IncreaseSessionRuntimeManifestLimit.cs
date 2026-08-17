@@ -7,8 +7,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace CloudEmuera.Infrastructure.Persistence.Migrations;
 
 [DbContext(typeof(CloudEmueraDbContext))]
-[Migration("20260811120000_RemoveDetachedSessionState")]
-public partial class RemoveDetachedSessionState : Migration
+[Migration("20260817120000_IncreaseSessionRuntimeManifestLimit")]
+public partial class IncreaseSessionRuntimeManifestLimit : Migration
 {
     protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
@@ -18,15 +18,14 @@ public partial class RemoveDetachedSessionState : Migration
 
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        migrationBuilder.Sql("UPDATE sessions SET state = 'RUNNING', state_version = state_version + 1 WHERE state = 'DETACHED';");
-        // The state CHECK is refreshed by the final schema migration. Keeping
-        // this transition free of SQLite table rebuilds lets older databases
-        // cross the migration while the current model has newer Session
-        // columns that are not present yet.
+        // Retained as a migration-history marker for databases that saw the
+        // short-lived JSON-column limit change. The subsequent migration
+        // removes that column, so rebuilding the sessions table here would
+        // only create an unnecessary SQLite compatibility hazard.
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)
     {
-        // The state CHECK is owned by the final schema migration.
+        // See Up: the next schema migration owns the old column's removal.
     }
 }

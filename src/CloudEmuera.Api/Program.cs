@@ -93,6 +93,7 @@ workerSocketLifecycle.Prepare();
 InstanceCapacityOptions capacityOptions = new()
 {
     MaxActiveWorkers = builder.Configuration.GetValue<int?>("CloudEmuera:Capacity:MaxActiveWorkers") ?? InstanceCapacityOptions.DefaultMaxActiveWorkers,
+    MaxInactiveSessions = builder.Configuration.GetValue<int?>("CloudEmuera:Capacity:MaxInactiveSessions") ?? InstanceCapacityOptions.DefaultMaxInactiveSessions,
     MaxGamePackageBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxGamePackageBytes") ?? InstanceCapacityOptions.DefaultMaxGamePackageBytes,
     MaxSessionRootBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxSessionRootBytes") ?? InstanceCapacityOptions.DefaultMaxSessionRootBytes,
     MaxStagingReservedBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxStagingReservedBytes") ?? InstanceCapacityOptions.DefaultMaxStagingReservedBytes,
@@ -660,6 +661,33 @@ sessions.MapGet("/{sessionId}", async (string sessionId, HttpContext context, IS
   .Produces<ApiError>(StatusCodes.Status404NotFound)
   .Produces<ApiError>(StatusCodes.Status429TooManyRequests);
 
+sessions.MapDelete("/{sessionId}", async (string sessionId, HttpContext context, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, IAntiforgery antiforgery, ISessionApplicationService service, SessionCommandReadiness readiness) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    if (!readiness.IsReady) return ApiIdentity.Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", StatusCodes.Status503ServiceUnavailable);
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false))
+        return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", StatusCodes.Status400BadRequest);
+    if (!ApiIdentity.TryIdempotencyKey(idempotencyKey, out string key))
+        return ApiIdentity.Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", StatusCodes.Status428PreconditionRequired);
+    try
+    {
+        SessionDeleteResult result = await service.DeleteAsync(actor, new SessionDeleteCommand(sessionId, key), context.RequestAborted).ConfigureAwait(false);
+        return ApiIdentity.SessionDelete(result);
+    }
+    catch (SessionApplicationException exception)
+    {
+        return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
+    }
+}).RequireRateLimiting("session-write")
+  .Produces(StatusCodes.Status204NoContent)
+  .Produces(StatusCodes.Status202Accepted)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status404NotFound)
+  .Produces<ApiError>(StatusCodes.Status409Conflict)
+  .Produces<ApiError>(StatusCodes.Status428PreconditionRequired)
+  .Produces<ApiError>(StatusCodes.Status429TooManyRequests)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
 sessions.MapGet("/{sessionId}/presentation-manifest", async (string sessionId, HttpContext context, ISessionAssetService service) =>
 {
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
@@ -982,6 +1010,15 @@ internal static class ApiIdentity
         return result.StatusCode == StatusCodes.Status201Created
             ? Results.Created($"/api/v1/sessions/{value.Id}", response)
             : Results.Json(response, statusCode: result.StatusCode);
+    }
+
+    public static IResult SessionDelete(SessionDeleteResult result)
+    {
+        if (result.Failure is SessionCommandFailure failure)
+            return Error(failure.Code, failure.Message, failure.StatusCode, failure.Details);
+        return result.Pending
+            ? Results.Json(new { pending = true }, statusCode: StatusCodes.Status202Accepted)
+            : Results.NoContent();
     }
 
     public static async Task<IResult> ExecuteSessionLifecycleAsync(

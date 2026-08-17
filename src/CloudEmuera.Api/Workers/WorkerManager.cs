@@ -1106,8 +1106,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
                     (int)request.SaveLayout,
                     request.SessionRootManifestDigest,
                     "",
-                    LastOutputSequence,
-                    "{}");
+                    LastOutputSequence);
                 return binding with { InitialOutputSequence = Math.Max(binding.InitialOutputSequence, lastDisplaySequence) };
             }
         }

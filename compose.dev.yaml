@@ -26,6 +26,7 @@ services:
       CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
       CloudEmuera__DataPath: /data
       CloudEmuera__Capacity__MaxActiveWorkers: "${CLOUDEMUERA_CAPACITY_MAX_ACTIVE_WORKERS-}"
+      CloudEmuera__Capacity__MaxInactiveSessions: "${CLOUDEMUERA_CAPACITY_MAX_INACTIVE_SESSIONS-}"
       CloudEmuera__Capacity__MaxGamePackageBytes: "${CLOUDEMUERA_CAPACITY_MAX_GAME_PACKAGE_BYTES-}"
       CloudEmuera__Capacity__MaxSessionRootBytes: "${CLOUDEMUERA_CAPACITY_MAX_SESSION_ROOT_BYTES-}"
       CloudEmuera__Capacity__MaxStagingReservedBytes: "${CLOUDEMUERA_CAPACITY_MAX_STAGING_RESERVED_BYTES-}"

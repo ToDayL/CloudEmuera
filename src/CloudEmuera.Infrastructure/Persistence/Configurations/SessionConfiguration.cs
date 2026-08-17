@@ -15,7 +15,8 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             table.HasCheckConstraint("ck_sessions_game_id", SqliteCheckExpressions.IdentifierPrefix("game_id", "game_"));
             table.HasCheckConstraint("ck_sessions_source_digest", "length(source_content_digest) = 71 AND substr(source_content_digest, 1, 7) = 'sha256:' AND lower(source_content_digest) = source_content_digest AND substr(source_content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(source_content_digest, 8)) = 64");
             table.HasCheckConstraint("ck_sessions_source_revision", "source_content_revision > 0");
-            table.HasCheckConstraint("ck_sessions_runtime_manifest_json", SqliteCheckExpressions.ValidJson("runtime_manifest_json"));
+            table.HasCheckConstraint("ck_sessions_manifest_digest", "length(session_root_manifest_digest) BETWEEN 1 AND 128 AND instr(session_root_manifest_digest, char(0)) = 0");
+            table.HasCheckConstraint("ck_sessions_save_layout", "save_layout IN (0, 1)");
             table.HasCheckConstraint("ck_sessions_runtime_version", "length(runtime_version) BETWEEN 1 AND 128 AND instr(runtime_version, char(0)) = 0");
             table.HasCheckConstraint("ck_sessions_root_path", SqliteCheckExpressions.RelativePath("session_root_path"));
             table.HasCheckConstraint("ck_sessions_name", "length(name) BETWEEN 1 AND 200 AND instr(name, char(0)) = 0");
@@ -34,7 +35,8 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
         builder.Property(row => row.GameId).HasColumnName("game_id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IdMaxLength).IsRequired();
         builder.Property(row => row.SourceContentDigest).HasColumnName("source_content_digest").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.DigestLength).IsRequired();
         builder.Property(row => row.SourceContentRevision).HasColumnName("source_content_revision").HasColumnType("INTEGER").IsRequired();
-        builder.Property(row => row.RuntimeManifestJson).HasColumnName("runtime_manifest_json").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.JsonMaxLength).HasDefaultValue("{}").IsRequired();
+        builder.Property(row => row.SessionRootManifestDigest).HasColumnName("session_root_manifest_digest").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.SessionRootManifestDigestMaxLength).IsRequired();
+        builder.Property(row => row.SaveLayout).HasColumnName("save_layout").HasColumnType("INTEGER").IsRequired();
         builder.Property(row => row.RuntimeVersion).HasColumnName("runtime_version").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.RuntimeVersionMaxLength).IsRequired();
         builder.Property(row => row.SessionRootPath).HasColumnName("session_root_path").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.PathMaxLength).IsRequired();
         builder.Property(row => row.Name).HasColumnName("name").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.NameMaxLength).IsRequired();

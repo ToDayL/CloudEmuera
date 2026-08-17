@@ -581,6 +581,12 @@ NuGet 漏洞扫描无已知漏洞。生产 `runtime` 镜像构建成功，镜像
 JPEG/TIFF/GIF/PNG/WebP、Fontconfig 等全部原生链接依赖可解析；能力矩阵 19 项/178 个唯一入口、
 第三方来源检查与 `git diff --check` 通过。
 
+2026-08-17 PRINTC 兼容性补充：Headless Console 恢复上游 `PRINTC/PRINTLC` 的当前物理行缓冲、
+Shift-JIS 固定宽度填充和 `PRINTL/NewLine` 行边界；`RefreshStrings` 不再把未提交的 PRINT/PRINTC
+缓冲误提交为空行，`PRINTBUTTONC/PRINTBUTTONLC` 同样保留列对齐。新增真实解释器回归覆盖两行菜单
+的按钮数量、字段宽度、无额外换行语义和不可编码 Unicode 标签回退；RuntimeCompatibility 全量 47/47、ConsoleContract 56/56
+通过。
+
 ### P1-08 — 完整 Snapshot 重连与有界输出（DONE）
 
 需求映射：SESS-004、PLAY-002、PLAY-004～006、PLAY-010/012、AC-002/012、ADR-0017。
@@ -730,6 +736,12 @@ download→reopen 纵切。完整七场景发布矩阵、Firefox/WebKit desktop 
 
 实施记录（2026-08-16）：按实际游玩反馈收敛控制台视觉层为黑暗等宽终端布局，顶部仅保留离开/关闭和紧凑连接状态；移除控制台侧栏与大尺寸选项卡片。前端按当前 `ButtonNode.generation`、prompt 类型和允许 source 禁用旧帧选项，并让画布命中区域只在当前 pointer prompt 开放；`enterKey` 与普通输入行改为右侧紧凑回车控件。新增当前帧按钮、回车输入和现有前端回归测试，未改变 realtime/IPC 协议。
 
+实施记录（2026-08-17）：控制台改为固定页面，只有输出区域滚动；输入栏从输出流移到固定底部并始终保留输入框和回车控件。`enterKey` 不再单独显示回车按钮，`waitOnly`/无活动 prompt 使用禁用控件且不显示“等待输入”文案；输出、选项点击和提交输入继续回到底部。新增对应 PromptController 回归测试，未改变 realtime/IPC 协议。
+
+实施记录（2026-08-17）：PRINTC 固定宽度产生的前后空格移到按钮元素外，按钮命中范围和下划线只覆盖实际文字；新增带前后填充空格的 ScrollbackRenderer 回归测试，未改变 realtime/IPC 协议。
+
+实施记录（2026-08-17）：为移动端页面固定 `text-size-adjust: 100%`，避免竖屏与横屏触发不同的浏览器文字自动放大规则，保持普通 Console 文本与按钮使用一致的运行时字号。
+
 实施记录（2026-08-16）：开发环境的 API/Worker 改为直接运行显式构建的 DLL，并清理 dotnet watch、
 Hot Reload 和诊断端口环境，保持 API 直接管理 Worker 的父子生命周期契约。
 
@@ -776,6 +788,16 @@ Snapshot 大小和队列溢出，且不出现专用遥测或通用审计浏览�
 通过条件：生产进程非 root且没有敏感宿主挂载；正常 Worker 启动参数不包含 Game workspace/current
 或其他 SessionRoot；实例级上限产生稳定错误且队列不无界增长；文档明确同 UID 不提供恶意 Worker
 隔离，缺少额外内核隔离能力不影响 ready。
+
+实施记录（2026-08-17）：实例默认活动 Worker 上限调整为 8，并新增 `CREATING`/`CLOSED`/`CRASHED`
+合计 64 的未启动 Session 上限；Session 列表接入显式删除，服务端仅接受 `CLOSED`/`CRASHED` 且无
+Worker/文件操作的删除请求，并使用受保护标记、dirfd 身份校验和审计完成 SessionRoot 清理。新增
+Infrastructure 与 Web 回归测试覆盖正常删除、活动态拒绝、崩溃态删除、配额边界和列表确认操作。
+
+实施记录（2026-08-17）：移除 `sessions.runtime_manifest_json`。Session 行只保留源/SessionRoot 清单
+摘要和保存布局；完整运行时清单写入受保护的 `SessionRoot/metadata/runtime-manifest.json`，资源读取、
+Worker 启动校验和迁移回填均不再依赖数据库中的大 JSON 字段。新增旧库删列迁移与最终 schema 字段断言，
+避免 Session runtime manifest 因 SQLite 单字段上限失败。
 
 ### P1-14 — 单容器生产进程管理与恢复（TODO）
 

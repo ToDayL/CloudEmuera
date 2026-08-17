@@ -148,8 +148,7 @@ public sealed class SessionRuntimeCoordinatorTests
                 0,
                 "sha256:" + new string('a', 64),
                 options.RuntimeVersion,
-                3,
-                "{\"compatibilityProfile\":\"v18-compatible\",\"saveLayout\":0}");
+                3);
             SessionRuntimeLease lease = new(
                 binding,
                 "usr_coordinator",

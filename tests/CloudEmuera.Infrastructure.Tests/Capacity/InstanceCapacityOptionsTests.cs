@@ -9,6 +9,8 @@ public sealed class InstanceCapacityOptionsTests
     public void DefaultInstanceCapacityIsValid()
     {
         InstanceCapacityOptions.Default.Validate();
+        Assert.Equal(8, InstanceCapacityOptions.DefaultMaxActiveWorkers);
+        Assert.Equal(64, InstanceCapacityOptions.DefaultMaxInactiveSessions);
     }
 
     [Theory]
@@ -17,6 +19,16 @@ public sealed class InstanceCapacityOptionsTests
     public void ActiveWorkerLimitMustStayWithinSupportedBounds(int value)
     {
         InstanceCapacityOptions options = new() { MaxActiveWorkers = value };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => options.Validate());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4097)]
+    public void InactiveSessionLimitMustStayWithinSupportedBounds(int value)
+    {
+        InstanceCapacityOptions options = new() { MaxInactiveSessions = value };
 
         Assert.Throws<ArgumentOutOfRangeException>(() => options.Validate());
     }

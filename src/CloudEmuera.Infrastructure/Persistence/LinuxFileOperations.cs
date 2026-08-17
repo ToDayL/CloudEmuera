@@ -466,13 +466,13 @@ internal static class LinuxFileOperations
     private static bool IsSafeFileMode(ushort mode, bool allowReadOnly)
     {
         int permissions = mode & 0x1FF;
-        return permissions == 0x180 || (allowReadOnly && permissions is 0x100 or 0x124);
+        return permissions == 0x180 || (allowReadOnly && permissions is 0x100 or 0x124 or 0x1A4);
     }
 
     private static bool IsSafeDirectoryMode(ushort mode, bool allowReadOnly)
     {
         int permissions = mode & 0x1FF;
-        return permissions == 0x1C0 || (allowReadOnly && permissions is 0x140 or 0x16D);
+        return permissions == 0x1C0 || (allowReadOnly && permissions is 0x140 or 0x16D or 0x1ED);
     }
 
     private static SafeFileHandle OpenPathAt(SafeFileHandle parentDirectory, string name)

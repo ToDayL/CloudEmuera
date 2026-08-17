@@ -32,9 +32,10 @@ Session 创建时完整复制游戏内容到私有、持久 SessionRoot；因此
   - 成功启用后新 content 原子替换 current content，旧库内容不形成用户可见或可恢复版本。
 - `content_revision` 只是 Game 内部的单调并发计数，不是资源 ID、版本实体或历史选择能力。API 不
   提供 revision 列表、按 revision 读取、回滚或基于 revision 创建 Session。
-- Session 只外键引用 `game_id`，并记录创建时的 `source_content_digest`、`runtime_version` 和
-  `runtime_manifest_json` 快照。SessionRoot 完成物化后是运行内容的权威副本；Game 后续编辑、
-  重新上传、阻止或删除都不改写已有 SessionRoot。
+- Session 只外键引用 `game_id`，并记录创建时的 `source_content_digest`、`runtime_version`、
+  `session_root_manifest_digest` 和 `save_layout`。完整 `runtime_manifest` 快照写入受保护的
+  SessionRoot metadata；SessionRoot 完成物化后是运行内容的权威副本；Game 后续编辑、重新上传、
+  阻止或删除都不改写已有 SessionRoot。
 - Session 创建从 Game 当前 content 的受保护目录句柄复制完整合法普通文件树。复制前在 SQLite
   中记录期望 `game_id + content_revision + content_digest`，复制后再次核对；Game 启用新内容与
   Session 复制通过 revision CAS 和持久 operation 协调。

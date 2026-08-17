@@ -31,11 +31,13 @@ public sealed partial class SqliteSessionApplicationService(
     ISessionLifecycleExecutor lifecycle,
     TimeProvider timeProvider,
     ILogger<SqliteSessionApplicationService> logger,
-    InstanceCapacityOptions? capacityOptions = null) : ISessionApplicationService, ISessionOperationRecovery
+    InstanceCapacityOptions? capacityOptions = null,
+    ISessionCommandGate? commandGate = null) : ISessionApplicationService, ISessionOperationRecovery
 {
     private const string CreateScope = "SESSION_CREATE";
     private const string OpenScope = "SESSION_OPEN";
     private const string CloseScope = "SESSION_CLOSE";
+    private const string DeleteScope = "SESSION_DELETE";
     private static readonly TimeSpan HttpWaitBudget = TimeSpan.FromSeconds(2);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -44,6 +46,7 @@ public sealed partial class SqliteSessionApplicationService(
     private readonly ConcurrentDictionary<string, Lazy<Task<SessionCommandResult>>> createOperations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<SessionCommandResult>>> openOperations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<SessionCommandResult>>> closeOperations = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<Task<SessionDeleteResult>>> deleteOperations = new(StringComparer.Ordinal);
     private InstanceCapacityOptions Capacity => capacityOptions ?? InstanceCapacityOptions.Default;
 
     public async Task<SessionCommandResult> CreateAsync(
@@ -118,6 +121,24 @@ public sealed partial class SqliteSessionApplicationService(
             await RecoverLifecycleOperationAsync(item, cancellationToken).ConfigureAwait(false);
         }
 
+        DeleteRecoveryItem[] deleteItems = await db.IdempotencyRecords.AsNoTracking()
+            .Where(row => row.Status == IdempotencyRecordStatus.InProgress && row.Scope == DeleteScope && row.ResourceId != null)
+            .Select(row => new DeleteRecoveryItem(row.ActorUserId, row.IdempotencyKey, row.RequestDigest, row.ResourceId!))
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (DeleteRecoveryItem item in deleteItems)
+        {
+            Task<SessionDeleteResult> operation = ScheduleDeleteOperation(
+                item.ActorUserId,
+                false,
+                new SessionDeleteCommand(item.SessionId, item.IdempotencyKey),
+                item.RequestDigest,
+                allowMissingRoot: true);
+            SessionDeleteResult result = await operation.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (result.Pending)
+                throw new InvalidOperationException("A Session delete operation remains pending after recovery.");
+        }
+
         // Readiness is a durable barrier, not merely an indication that one
         // recovery pass was started.  A command whose completion write failed
         // must remain IN_PROGRESS and keep the control plane closed until a
@@ -186,6 +207,68 @@ public sealed partial class SqliteSessionApplicationService(
         SessionLifecycleCommand command,
         CancellationToken cancellationToken = default) =>
         ExecuteLifecycleCommandAsync(actor, command, open: false, cancellationToken);
+
+    public async Task<SessionDeleteResult> DeleteAsync(
+        CurrentActor actor,
+        SessionDeleteCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(command);
+        ValidateSessionId(command.SessionId);
+        ValidateIdempotencyKey(command.IdempotencyKey);
+        string digest = SessionIdempotency.Digest(actor.UserId, DeleteScope, command.SessionId, new { sessionId = command.SessionId });
+        PersistentIdempotencyRecord record = await idempotency.BeginAsync(
+            actor.UserId,
+            DeleteScope,
+            command.IdempotencyKey,
+            digest,
+            resourceId: command.SessionId,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (record.State == PersistentIdempotencyBeginState.Conflict)
+            throw new SessionApplicationException(SessionErrorCodes.IdempotencyKeyReused, "Idempotency-Key 已用于另一规范请求。", 409);
+        if (record.State is PersistentIdempotencyBeginState.Succeeded or PersistentIdempotencyBeginState.Failed)
+            return ConvertExistingDelete(record);
+
+        SessionView? current = await GetAsync(actor, command.SessionId, cancellationToken).ConfigureAwait(false);
+        bool recovery = record.State == PersistentIdempotencyBeginState.InProgress;
+        if (current is null)
+        {
+            if (recovery)
+            {
+                if (!await TryCompleteDeleteSuccessAsync(actor.UserId, command.IdempotencyKey, digest, command.SessionId).ConfigureAwait(false))
+                    return new SessionDeleteResult(202, Replayed: true, Pending: true);
+                return new SessionDeleteResult(204, Replayed: true, Pending: false);
+            }
+
+            return await CompleteDeleteFailureResultAsync(
+                actor.UserId,
+                command.IdempotencyKey,
+                digest,
+                command.SessionId,
+                new SessionCommandFailure(SessionErrorCodes.SessionNotFound, "Session 不存在。", 404),
+                replayed: false).ConfigureAwait(false);
+        }
+
+        if (!recovery && !current.State.IsQuiescent())
+        {
+            return await CompleteDeleteFailureResultAsync(
+                actor.UserId,
+                command.IdempotencyKey,
+                digest,
+                command.SessionId,
+                new SessionCommandFailure(SessionErrorCodes.SessionNotDeletable, "仅 CLOSED 或 CRASHED Session 可删除。", 409),
+                replayed: false).ConfigureAwait(false);
+        }
+
+        Task<SessionDeleteResult> operation = ScheduleDeleteOperation(
+            actor.UserId,
+            actor.IsAdmin,
+            command,
+            digest,
+            allowMissingRoot: recovery);
+        return await WaitForDeleteHttpBudgetAsync(operation, cancellationToken).ConfigureAwait(false);
+    }
 
     private async Task<SessionCommandResult> ExecuteLifecycleCommandAsync(
         CurrentActor actor,
@@ -360,7 +443,7 @@ public sealed partial class SqliteSessionApplicationService(
             .ConfigureAwait(false);
         bool hasPendingCommand = await db.IdempotencyRecords.AsNoTracking()
             .AnyAsync(row => row.Status == IdempotencyRecordStatus.InProgress &&
-                (row.Scope == CreateScope || row.Scope == OpenScope || row.Scope == CloseScope), cancellationToken)
+                (row.Scope == CreateScope || row.Scope == OpenScope || row.Scope == CloseScope || row.Scope == DeleteScope), cancellationToken)
             .ConfigureAwait(false);
         if (hasPendingCreate || hasPendingCommand)
             throw new InvalidOperationException("Durable Session recovery is not complete.");
@@ -530,6 +613,12 @@ public sealed partial class SqliteSessionApplicationService(
             return existingPreparation;
         }
 
+        int inactiveSessionCount = await db.Sessions.CountAsync(
+            row => row.State == SessionState.Creating || row.State == SessionState.Closed || row.State == SessionState.Crashed,
+            cancellationToken).ConfigureAwait(false);
+        if (inactiveSessionCount >= Capacity.MaxInactiveSessions)
+            throw new SessionApplicationException(SessionErrorCodes.InactiveSessionLimitExceeded, "实例未启动 Session 上限已用尽。", 409);
+
         GameRow? game = await db.Games.AsNoTracking().SingleOrDefaultAsync(
             row => row.Id == gameId && row.Status != GameStatus.Deleted &&
                 (row.OwnerUserId == actor.UserId || row.Visibility == GameVisibility.ServerShared),
@@ -553,7 +642,14 @@ public sealed partial class SqliteSessionApplicationService(
         long fileCount = files.LongCount(row => row.EntryKind == "FILE");
         long directoryCount = files.LongCount(row => row.EntryKind == "DIRECTORY");
         long contentBytes = files.Where(row => row.EntryKind == "FILE").Sum(row => row.ByteLength);
-        long reservedBytes = checked(contentBytes + 64 * 1024 + fileCount * 512 + directoryCount * 256);
+        string sessionId = $"sess_{Guid.CreateVersion7():N}";
+        string operationId = $"scop_{Guid.CreateVersion7():N}";
+        string stagingPath = $"sessions/.staging/{sessionId}-{operationId}";
+        string runtimeManifestJson = CreateRuntimeManifest(game, sourceManifest, files, saveLayout);
+        if (runtimeManifestJson.Length > PersistenceLimits.SessionRuntimeManifestMaxLength)
+            throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "Session runtime manifest 超过存储上限。", 413);
+        long runtimeManifestBytes = Encoding.UTF8.GetByteCount(runtimeManifestJson);
+        long reservedBytes = checked(contentBytes + 64 * 1024 + fileCount * 512 + directoryCount * 256 + runtimeManifestBytes);
         if (reservedBytes > Capacity.MaxSessionRootBytes)
             throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "SessionRoot 超过实例存储上限。", 413);
         long alreadyReserved = await db.SessionCreationOperations
@@ -565,13 +661,6 @@ public sealed partial class SqliteSessionApplicationService(
             .Where(row => row.Status != SessionCreationOperationStatus.Committed && row.Status != SessionCreationOperationStatus.Failed)
             .SumAsync(row => (long?)row.ReservedBytes, cancellationToken).ConfigureAwait(false) ?? 0;
         EnsureDataRootFreeSpace(checked(globalReserved + reservedBytes));
-
-        string sessionId = $"sess_{Guid.CreateVersion7():N}";
-        string operationId = $"scop_{Guid.CreateVersion7():N}";
-        string stagingPath = $"sessions/.staging/{sessionId}-{operationId}";
-        string runtimeManifestJson = CreateRuntimeManifest(game, sourceManifest, files, saveLayout);
-        if (runtimeManifestJson.Length > PersistenceLimits.JsonMaxLength)
-            throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "Session runtime manifest 超过存储上限。", 413);
         var session = new SessionRow
         {
             Id = sessionId,
@@ -579,7 +668,8 @@ public sealed partial class SqliteSessionApplicationService(
             GameId = game.Id,
             SourceContentDigest = game.ContentDigest,
             SourceContentRevision = game.ContentRevision,
-            RuntimeManifestJson = runtimeManifestJson,
+            SessionRootManifestDigest = sourceManifest.ManifestDigest,
+            SaveLayout = (int)saveLayout,
             RuntimeVersion = RuntimeBaseline.CloudEmueraIntegrationVersion,
             SessionRootPath = $"sessions/{sessionId}/root",
             Name = name,
@@ -703,9 +793,6 @@ public sealed partial class SqliteSessionApplicationService(
             if (operation.Status == SessionCreationOperationStatus.Committed) return;
         }
 
-        FrozenRuntimeManifest frozen = JsonSerializer.Deserialize<FrozenRuntimeManifest>(session.RuntimeManifestJson, JsonOptions)
-            ?? throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session runtime manifest 无效。", 503);
-        SessionRootPublishedManifest manifest = frozen.ToPublishedManifest(session.SourceContentDigest);
         string stagingContainer = ResolveDataPath(operation.StagingPath);
         string finalContainer = SessionRootProtectedMarkerStore.ContainerPath(databaseOptions, sessionId);
         ValidateStagingContainer(stagingContainer, operation.StagingPath);
@@ -726,6 +813,29 @@ public sealed partial class SqliteSessionApplicationService(
             CancellationToken.None).ConfigureAwait(false);
         try
         {
+            GameRow game = await db.Games.AsNoTracking()
+                .SingleOrDefaultAsync(row => row.Id == session.GameId && row.Status == GameStatus.Active &&
+                    row.ContentRevision == session.SourceContentRevision && row.ContentDigest == session.SourceContentDigest)
+                .ConfigureAwait(false)
+                ?? throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session source content 已发生变化。", 503);
+            GameFileRow[] files = await db.GameFiles.AsNoTracking()
+                .Where(row => row.GameId == session.GameId && row.Scope == "CURRENT")
+                .OrderBy(row => row.LogicalPath)
+                .ToArrayAsync()
+                .ConfigureAwait(false);
+            if (files.Length == 0)
+                throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session source content 清单不可用。", 503);
+            SessionRootPublishedManifest manifest = CreatePublishedManifest(game, files);
+            if (!string.Equals(manifest.ManifestDigest, session.SessionRootManifestDigest, StringComparison.OrdinalIgnoreCase))
+                throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session source manifest 已发生变化。", 503);
+            if (!Enum.IsDefined((RuntimeSaveLayout)session.SaveLayout))
+                throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session save layout 无效。", 503);
+            RuntimeSaveLayout saveLayout = (RuntimeSaveLayout)session.SaveLayout;
+            if (InspectSourceSaveLayoutAtRoot(lease.ContentRootPath) != saveLayout)
+                throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session source save layout 已发生变化。", 503);
+            string runtimeManifestJson = CreateRuntimeManifest(game, manifest, files, saveLayout);
+            if (runtimeManifestJson.Length > PersistenceLimits.SessionRuntimeManifestMaxLength)
+                throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "Session runtime manifest 超过存储上限。", 413);
             if (Directory.Exists(finalContainer) || File.Exists(finalContainer) || RuntimePathUtilities.IsReparsePoint(finalContainer))
             {
                 if (!IsPublishedRootValid(sessionId))
@@ -742,7 +852,7 @@ public sealed partial class SqliteSessionApplicationService(
             SessionRootCopyLimits limits = new(
                 maxTotalBytes: Capacity.MaxSessionRootBytes,
                 maxSingleFileBytes: Math.Min(Capacity.MaxSessionRootBytes, 512L * 1024 * 1024));
-            SessionRootLayout layout = new SessionRootLayoutBuilder(lease.ContentRootPath, stagingContainer, frozen.SaveLayout)
+            SessionRootLayout layout = new SessionRootLayoutBuilder(lease.ContentRootPath, stagingContainer, saveLayout)
                 .WithPublishedManifest(manifest)
                 .WithCopyLimits(limits)
                 .Build();
@@ -758,11 +868,11 @@ public sealed partial class SqliteSessionApplicationService(
                 session.SourceContentDigest,
                 manifest.ManifestDigest,
                 layout.CopiedManifestDigest,
-                frozen.SaveLayout,
+                saveLayout,
                 session.RuntimeVersion,
                 session.CreatedAt,
                 layout.SessionRoot);
-            SessionRootProtectedMarkerStore.WriteRuntimeManifest(stagingContainer, session.RuntimeManifestJson);
+            SessionRootProtectedMarkerStore.WriteRuntimeManifest(stagingContainer, runtimeManifestJson);
             SyncDirectoryTree(stagingContainer);
             if (Directory.Exists(finalContainer) || File.Exists(finalContainer) || RuntimePathUtilities.IsReparsePoint(finalContainer))
                 throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot final container 已被占用。", 503);
@@ -1086,6 +1196,153 @@ public sealed partial class SqliteSessionApplicationService(
         return task;
     }
 
+    private Task<SessionDeleteResult> ScheduleDeleteOperation(
+        string actorUserId,
+        bool actorIsAdmin,
+        SessionDeleteCommand command,
+        string digest,
+        bool allowMissingRoot)
+    {
+        string operationKey = $"{actorUserId}\u001f{command.IdempotencyKey}";
+        Lazy<Task<SessionDeleteResult>> operation = deleteOperations.GetOrAdd(
+            operationKey,
+            _ => new Lazy<Task<SessionDeleteResult>>(
+                () => Task.Run(() => ExecuteDeleteAsync(actorUserId, actorIsAdmin, command, digest, allowMissingRoot), CancellationToken.None),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+        Task<SessionDeleteResult> task = operation.Value;
+        _ = task.ContinueWith(
+            _ => deleteOperations.TryRemove(new KeyValuePair<string, Lazy<Task<SessionDeleteResult>>>(operationKey, operation)),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return task;
+    }
+
+    private static async Task<SessionDeleteResult> WaitForDeleteHttpBudgetAsync(
+        Task<SessionDeleteResult> operation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await operation.WaitAsync(HttpWaitBudget, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            return new SessionDeleteResult(202, Replayed: false, Pending: true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new SessionDeleteResult(202, Replayed: false, Pending: true);
+        }
+    }
+
+    private async Task<SessionDeleteResult> ExecuteDeleteAsync(
+        string actorUserId,
+        bool actorIsAdmin,
+        SessionDeleteCommand command,
+        string digest,
+        bool allowMissingRoot)
+    {
+        try
+        {
+            if (commandGate is not null)
+            {
+                await using SessionCommandLease lease = await commandGate.EnterAsync(command.SessionId, CancellationToken.None).ConfigureAwait(false);
+                return await ExecuteDeleteUnderGateAsync(actorUserId, actorIsAdmin, command, digest, allowMissingRoot).ConfigureAwait(false);
+            }
+
+            return await ExecuteDeleteUnderGateAsync(actorUserId, actorIsAdmin, command, digest, allowMissingRoot).ConfigureAwait(false);
+        }
+        catch (SessionApplicationException exception)
+        {
+            SessionCommandFailure failure = new(exception.Code, exception.Message, exception.StatusCode);
+            if (!await TryCompleteFailureAsync(actorUserId, DeleteScope, command.IdempotencyKey, digest, failure, command.SessionId).ConfigureAwait(false))
+                return new SessionDeleteResult(202, Replayed: false, Pending: true, failure);
+            return new SessionDeleteResult(failure.StatusCode, Replayed: false, Pending: false, failure);
+        }
+        catch (Exception exception)
+        {
+            LogDeleteFailed(logger, exception, command.SessionId);
+            // Filesystem and database failures leave the durable command in
+            // progress so a later recovery pass can retry without guessing
+            // whether the root was fully removed.
+            return new SessionDeleteResult(202, Replayed: false, Pending: true);
+        }
+    }
+
+    private async Task<SessionDeleteResult> ExecuteDeleteUnderGateAsync(
+        string actorUserId,
+        bool actorIsAdmin,
+        SessionDeleteCommand command,
+        string digest,
+        bool allowMissingRoot)
+    {
+        await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
+        CloudEmueraDbContext db = scope.ServiceProvider.GetRequiredService<CloudEmueraDbContext>();
+        IAuditContext? auditContext = scope.ServiceProvider.GetService<IAuditContext>();
+        await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db).ConfigureAwait(false);
+        SessionRow? session = await db.Sessions.SingleOrDefaultAsync(
+            row => row.Id == command.SessionId && row.OwnerUserId == actorUserId).ConfigureAwait(false);
+        if (session is null)
+        {
+            await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+            if (!await TryCompleteDeleteSuccessAsync(actorUserId, command.IdempotencyKey, digest, command.SessionId).ConfigureAwait(false))
+                return new SessionDeleteResult(202, Replayed: false, Pending: true);
+            return new SessionDeleteResult(204, Replayed: false, Pending: false);
+        }
+
+        await EnsureDeletePreconditionsAsync(db, session).ConfigureAwait(false);
+        DeleteSessionContainer(session, allowMissingRoot);
+
+        SessionCreationOperationRow? creation = await db.SessionCreationOperations.SingleOrDefaultAsync(
+            row => row.SessionId == session.Id).ConfigureAwait(false);
+        await db.SaveFileOperations
+            .Where(row => row.SessionId == session.Id &&
+                (row.Status == SaveFileOperationStatus.Committed || row.Status == SaveFileOperationStatus.Failed))
+            .ExecuteDeleteAsync()
+            .ConfigureAwait(false);
+        if (creation is not null)
+            db.SessionCreationOperations.Remove(creation);
+        db.AuditEvents.Add(new AuditEventRow
+        {
+            Id = $"audit_{Guid.CreateVersion7():N}",
+            OccurredAt = timeProvider.GetUtcNow(),
+            ActorUserId = actorUserId,
+            ActorType = actorIsAdmin ? AuditActorType.Admin : AuditActorType.User,
+            Action = AuditActions.SessionDeleted,
+            ResourceType = "SESSION",
+            ResourceId = session.Id,
+            RequestId = auditContext?.RequestId,
+            Result = AuditResult.Succeeded,
+            MetadataJson = JsonSerializer.Serialize(new { gameId = session.GameId, previousState = session.State.ToString().ToUpperInvariant() }),
+        });
+        db.Sessions.Remove(session);
+        await db.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+
+        if (!await TryCompleteDeleteSuccessAsync(actorUserId, command.IdempotencyKey, digest, command.SessionId).ConfigureAwait(false))
+            return new SessionDeleteResult(202, Replayed: false, Pending: true);
+        return new SessionDeleteResult(204, Replayed: false, Pending: false);
+    }
+
+    private static async Task EnsureDeletePreconditionsAsync(CloudEmueraDbContext db, SessionRow session)
+    {
+        if (!session.State.IsQuiescent())
+            throw new SessionApplicationException(SessionErrorCodes.SessionNotDeletable, "仅 CLOSED 或 CRASHED Session 可删除。", 409);
+        if (await db.WorkerLeases.AnyAsync(row => row.SessionId == session.Id).ConfigureAwait(false))
+            throw new SessionApplicationException(SessionErrorCodes.SessionNotDeletable, "Session 仍有 Worker 租约。", 409);
+        if (await db.SessionRootMutationLeases.AnyAsync(row => row.SessionId == session.Id).ConfigureAwait(false))
+            throw new SessionApplicationException(SessionErrorCodes.MutationInProgress, "Session 当前有文件操作正在执行。", 409);
+        if (await db.SaveFileOperations.AnyAsync(row => row.SessionId == session.Id &&
+                row.Status != SaveFileOperationStatus.Committed && row.Status != SaveFileOperationStatus.Failed).ConfigureAwait(false))
+            throw new SessionApplicationException(SessionErrorCodes.MutationInProgress, "Session 当前有文件操作正在执行。", 409);
+
+        SessionCreationOperationRow? creation = await db.SessionCreationOperations.AsNoTracking()
+            .SingleOrDefaultAsync(row => row.SessionId == session.Id).ConfigureAwait(false);
+        if (creation is not null && creation.Status != SessionCreationOperationStatus.Committed)
+            throw new SessionApplicationException(SessionErrorCodes.SessionNotReady, "Session 创建操作尚未完成。", 409);
+    }
+
     private static bool CanScheduleLifecycleRecovery(SessionView view, bool open) => open
         ? view.State is SessionState.Closed or SessionState.Crashed
         : view.State is SessionState.Starting or SessionState.Running;
@@ -1196,6 +1453,14 @@ public sealed partial class SqliteSessionApplicationService(
         return new SessionCommandResult(value, record.ResponseStatus, true, record.State == PersistentIdempotencyBeginState.InProgress, failure);
     }
 
+    private static SessionDeleteResult ConvertExistingDelete(PersistentIdempotencyRecord record)
+    {
+        SessionCommandFailure? failure = record.State == PersistentIdempotencyBeginState.Failed
+            ? Deserialize<SessionCommandFailure>(record.ResponseJson)
+            : null;
+        return new SessionDeleteResult(record.ResponseStatus, Replayed: true, Pending: record.State == PersistentIdempotencyBeginState.InProgress, failure);
+    }
+
     private static SessionCommandResult ConvertExisting(PersistentIdempotencyRecord record, SessionView? pendingView)
     {
         if (record.State == PersistentIdempotencyBeginState.InProgress)
@@ -1223,6 +1488,44 @@ public sealed partial class SqliteSessionApplicationService(
             JsonSerializer.Serialize(failure, JsonOptions),
             resourceId,
             CancellationToken.None).ConfigureAwait(false);
+
+    private Task CompleteDeleteSuccessAsync(string actorUserId, string key, string digest, string resourceId) =>
+        idempotency.CompleteSuccessAsync(
+            actorUserId,
+            DeleteScope,
+            key,
+            digest,
+            204,
+            "{\"deleted\":true}",
+            resourceId,
+            CancellationToken.None);
+
+    private async Task<bool> TryCompleteDeleteSuccessAsync(string actorUserId, string key, string digest, string resourceId)
+    {
+        try
+        {
+            await CompleteDeleteSuccessAsync(actorUserId, key, digest, resourceId).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            LogLifecycleCompletionFailed(logger, exception, resourceId, "delete-success");
+            return false;
+        }
+    }
+
+    private async Task<SessionDeleteResult> CompleteDeleteFailureResultAsync(
+        string actorUserId,
+        string key,
+        string digest,
+        string resourceId,
+        SessionCommandFailure failure,
+        bool replayed)
+    {
+        if (!await TryCompleteFailureAsync(actorUserId, DeleteScope, key, digest, failure, resourceId).ConfigureAwait(false))
+            return new SessionDeleteResult(202, replayed, Pending: true, failure);
+        return new SessionDeleteResult(failure.StatusCode, replayed, Pending: false, failure);
+    }
 
     private async Task<bool> TryCompleteSuccessAsync(
         string actorUserId,
@@ -1399,6 +1702,11 @@ public sealed partial class SqliteSessionApplicationService(
     private RuntimeSaveLayout InspectSourceSaveLayout(string relativeContentPath)
     {
         string root = ResolveDataPath(relativeContentPath);
+        return InspectSourceSaveLayoutAtRoot(root);
+    }
+
+    private static RuntimeSaveLayout InspectSourceSaveLayoutAtRoot(string root)
+    {
         string? configuration = Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly)
             .SingleOrDefault(path => string.Equals(Path.GetFileName(path), "emuera.config", StringComparison.OrdinalIgnoreCase));
         if (configuration is null)
@@ -1443,7 +1751,7 @@ public sealed partial class SqliteSessionApplicationService(
             game.ManifestJson,
             game.RuntimeConfigJson,
             game.CompatibilitySummaryJson,
-            "v18-compatible",
+            RuntimeBaseline.CompatibilityProfile,
             RuntimeBaseline.UpstreamCommit,
             RuntimeBaseline.CloudEmueraIntegrationVersion,
             saveLayout,
@@ -1470,6 +1778,77 @@ public sealed partial class SqliteSessionApplicationService(
     {
         string path = SessionRootProtectedMarkerStore.ContainerPath(databaseOptions, sessionId);
         return Directory.Exists(path) || File.Exists(path) || RuntimePathUtilities.IsReparsePoint(path);
+    }
+
+    private void DeleteSessionContainer(SessionRow session, bool allowMissingRoot)
+    {
+        string container = SessionRootProtectedMarkerStore.ContainerPath(databaseOptions, session.Id);
+        string root = ResolveDataPath(session.SessionRootPath);
+        string expectedRoot = Path.GetFullPath(Path.Combine(container, "root"));
+        if (!string.Equals(root, expectedRoot, StringComparison.Ordinal))
+            throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 路径与受保护容器不匹配。", 503);
+
+        bool containerPresent = Directory.Exists(container) || File.Exists(container) || RuntimePathUtilities.IsReparsePoint(container);
+        if (!containerPresent)
+        {
+            if (allowMissingRoot) return;
+            throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 不存在。", 503);
+        }
+        if (!Directory.Exists(container) || RuntimePathUtilities.IsReparsePoint(container))
+            throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 容器不是安全目录。", 503);
+
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(container, "session-container");
+        SessionRootProtectedMarker marker;
+        try
+        {
+            marker = SessionRootProtectedMarkerStore.Read(databaseOptions, session.Id);
+        }
+        catch (SessionRuntimeException exception)
+        {
+            throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 保护标记无效。", 503, innerException: exception);
+        }
+        if (marker.SchemaVersion != 1 ||
+            !string.Equals(marker.SessionId, session.Id, StringComparison.Ordinal) ||
+            !string.Equals(marker.OwnerUserId, session.OwnerUserId, StringComparison.Ordinal) ||
+            !string.Equals(marker.GameId, session.GameId, StringComparison.Ordinal))
+            throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 保护标记与 Session 不匹配。", 503);
+
+        bool rootIsReparse = RuntimePathUtilities.IsReparsePoint(root);
+        bool rootPresent = Directory.Exists(root) || File.Exists(root) || rootIsReparse;
+        if (rootIsReparse)
+            throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 根目录不能是符号链接。", 503);
+        if (!rootPresent && !allowMissingRoot)
+            throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 根目录不存在。", 503);
+        if (rootPresent)
+        {
+            try
+            {
+                if (!Directory.Exists(root) || !SessionRootProtectedMarkerStore.SameRootIdentity(marker, root))
+                    throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 根目录身份校验失败。", 503);
+            }
+            catch (SessionApplicationException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot 根目录身份校验失败。", 503, innerException: exception);
+            }
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            string sessionsDirectory = Path.Combine(Path.GetFullPath(databaseOptions.DataRoot), "sessions");
+            RuntimePathUtilities.ValidateNoReparsePointsAlongPath(sessionsDirectory, "session-container-parent");
+            using Microsoft.Win32.SafeHandles.SafeFileHandle parent = LinuxFileOperations.OpenDirectory(sessionsDirectory);
+            using Microsoft.Win32.SafeHandles.SafeFileHandle current = LinuxFileOperations.OpenDirectory(container);
+            LinuxFileOperations.FileIdentity identity = LinuxFileOperations.ReadIdentity(current);
+            LinuxFileOperations.DeleteTreeAt(parent, session.Id, expectedIdentity: identity, allowReadOnly: true);
+            LinuxFileOperations.Sync(parent);
+            return;
+        }
+
+        SafeDeleteOwnedStaging(container, $"sessions/{session.Id}");
     }
 
     private void ValidateStagingContainer(string path, string relative)
@@ -1617,6 +1996,8 @@ public sealed partial class SqliteSessionApplicationService(
 
     private sealed record LifecycleRecoveryItem(string ActorUserId, string Scope, string IdempotencyKey, string RequestDigest, string SessionId);
 
+    private sealed record DeleteRecoveryItem(string ActorUserId, string IdempotencyKey, string RequestDigest, string SessionId);
+
     private enum CreateFailureDisposition
     {
         Failed,
@@ -1644,16 +2025,7 @@ public sealed partial class SqliteSessionApplicationService(
         string SourceManifestDigest,
         IReadOnlyList<FrozenManifestEntry> Entries,
         string CapabilityMatrixVersion = RuntimeBaseline.CapabilityMatrixVersion,
-        string CapabilitySetDigest = RuntimeBaseline.CapabilitySetDigest)
-    {
-        public SessionRootPublishedManifest ToPublishedManifest(string contentIdentity) => new(
-            Entries.Select(entry => new SessionRootManifestEntry(
-                entry.Path,
-                entry.EntryKind == "DIRECTORY" ? SessionRootManifestEntryKind.Directory : SessionRootManifestEntryKind.File,
-                entry.Bytes,
-                entry.EntryKind == "DIRECTORY" ? string.Empty : entry.Digest.Replace("sha256:", string.Empty, StringComparison.OrdinalIgnoreCase))),
-            contentIdentity);
-    }
+        string CapabilitySetDigest = RuntimeBaseline.CapabilitySetDigest);
 
     [LoggerMessage(EventId = 2601, Level = LogLevel.Error, Message = "session_lifecycle_failed sessionId={SessionId} operation={Operation}")]
     private static partial void LogLifecycleFailed(ILogger logger, Exception exception, string sessionId, string operation);
@@ -1675,4 +2047,7 @@ public sealed partial class SqliteSessionApplicationService(
 
     [LoggerMessage(EventId = 2608, Level = LogLevel.Warning, Message = "session_lifecycle_view_read_failed sessionId={SessionId}")]
     private static partial void LogLifecycleReadFailed(ILogger logger, Exception exception, string sessionId);
+
+    [LoggerMessage(EventId = 2609, Level = LogLevel.Error, Message = "session_delete_failed sessionId={SessionId}")]
+    private static partial void LogDeleteFailed(ILogger logger, Exception exception, string sessionId);
 }

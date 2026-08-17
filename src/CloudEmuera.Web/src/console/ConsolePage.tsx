@@ -48,6 +48,11 @@ export function ConsolePage() {
 
   if (!media.current) media.current = new MediaController(message => setRendererError(message));
 
+  useEffect(() => {
+    if (!session.data) return;
+    document.documentElement.classList.add("console-route");
+    return () => document.documentElement.classList.remove("console-route");
+  }, [session.data]);
   useEffect(() => manager.onStatus((phase, detail) => { setConnectionPhase(phase); if (detail && phase === "incompatible") setCloseError(detail); }), [manager]);
   useEffect(() => manager.onNetworkStatus(setNetworkOnline), [manager]);
   useEffect(() => {
@@ -86,6 +91,14 @@ export function ConsolePage() {
   }, [assets, stream.consoleState]);
   useEffect(() => () => media.current?.dispose(), []);
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const container = gameConsoleRef.current;
+    if (!container) return;
+    const top = Math.max(0, container.scrollHeight - container.clientHeight);
+    if (typeof container.scrollTo === "function") container.scrollTo({ top, behavior });
+    else container.scrollTop = top;
+  }, []);
+
   const input = useCallback((event: ConsoleInputEvent) => {
     if (!sessionId || !stream.consoleState?.currentPrompt) return;
     const prompt = stream.consoleState.currentPrompt;
@@ -95,9 +108,10 @@ export function ConsolePage() {
     if (event.source === "POINTER" && prompt.inputType !== "primitivePointerKey") return;
     if (prompt.inputType === "anyKey" && event.source !== "KEYBOARD") return;
     if (prompt.inputType === "primitivePointerKey" && event.source === "BUTTON") return;
+    scrollToBottom();
     const clientMessageId = manager.sendInput(sessionId, { promptId: prompt.promptId, source: event.source, value: event.value, pointer: event.pointer ?? null, key: event.key ?? null });
     if (!clientMessageId) setCloseError("当前实时连接尚未就绪，输入没有发送。请等待连接恢复后重试。");
-  }, [manager, sessionId, stream.consoleState]);
+  }, [manager, scrollToBottom, sessionId, stream.consoleState]);
   const reportRendererError = useCallback((message: string) => setRendererError(message), []);
 
   const close = async () => {
@@ -121,19 +135,28 @@ export function ConsolePage() {
   const terminalSession = session.data.state === "CLOSED" || session.data.state === "CRASHED";
   const fatal = stream.fatalRenderError ?? rendererError ?? (manifest.isError ? "Presentation manifest 无法加载，已停止渲染资源。" : null);
   return <div className="console-page realtime-console">
-    <header className="console-header"><div className="console-title"><Link className="console-leave" to="/sessions" aria-label="离开游戏">← 离开</Link><div><h1>{session.data.name}</h1><p>{session.data.game.name} · {session.data.runtimeVersion} · <span className="console-session-state">{sessionStateLabel(session.data.state)}</span></p></div></div><div className="console-controls"><span className={`connection-chip ${connectionPhase === "ready" && networkOnline ? "is-online" : ""}`} role="status" aria-live="polite"><span className={connectionPhase === "ready" && networkOnline ? "online" : "offline"}/>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</span><button className="danger-text" aria-label="关闭 Session" onClick={() => void close()} disabled={closing || session.data.state !== "RUNNING"}>{closing ? "正在关闭…" : "关闭"}</button></div></header>
-    {(!networkOnline || (connectionPhase !== "ready" && connectionPhase !== "disconnected")) && <div className="reconnect-banner" role="status" aria-live="polite"><span className="mini-spinner"/><p><strong>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</strong><small>{networkOnline ? "游戏仍在服务器上运行；浏览器连接恢复后会按 epoch 和序号重新同步。" : "浏览器离线只影响当前显示；Session 和 Worker 不会被关闭。"}</small></p></div>}
-    {stream.phase === "resyncing" && <div className="reconnect-banner resync-banner" role="status" aria-live="polite"><span>↻</span><p><strong>正在重新同步控制台</strong><small>检测到输出间隙或旧 Worker 事件，当前画面暂不继续应用。</small></p></div>}
-    {stream.phase === "ended" && <div className="reconnect-banner ended-banner" role="status" aria-live="polite"><span>✓</span><p><strong>{terminalSession ? "Session 实时流已结束" : "Session 实时流暂时中断"}</strong><small>{terminalSession ? "Session 已进入终态，Worker 不再接收输入；SessionRoot 和存档仍会保留。" : "Session 状态仍由服务端维护；Worker 可能仍在运行，页面会以新的完整快照恢复。"}</small></p></div>}
-    {(closeError || stream.pendingInput?.status === "unknown") && <div className="error-banner" role="alert"><strong>实时操作提示</strong><small>{closeError ?? "上次输入的结果未知；服务端可能已经处理，请确认当前提示后再决定是否重试。"}</small>{stream.pendingInput?.status === "unknown" && <button className="secondary-button" onClick={() => manager.retryUnknownInput(sessionId)}>重试上次输入</button>}</div>}
-    {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
-    {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
-    {(assets.diagnostics().length > 0 || fontLoadFailed) && <div className="console-compat-warning" role="status"><strong>字体兼容提示</strong><small>{[...assets.diagnostics(), ...(fontLoadFailed ? ["FONT_LOAD_FAILED"] : [])].map(fontDiagnosticLabel).join("；")}</small></div>}
+    <div className="console-overlay-actions">
+      <Link className="console-overlay-back" to="/sessions" aria-label="离开游戏">←</Link>
+      <span className={`connection-chip ${connectionPhase === "ready" && networkOnline ? "is-online" : ""}`} role="status" aria-live="polite"><span className={connectionPhase === "ready" && networkOnline ? "online" : "offline"}/>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</span>
+      <button className="danger-text" aria-label="关闭 Session" onClick={() => void close()} disabled={closing || session.data.state !== "RUNNING"}>{closing ? "正在关闭…" : "关闭"}</button>
+    </div>
     <div className="console-layout">
       <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台">
-        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} interactive={state.currentPrompt?.inputType === "primitivePointerKey" && state.currentPrompt.allowedSources.includes("pointer")} /><ScrollbackRenderer lines={state.scrollback} currentPrompt={state.currentPrompt} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} />{state.truncation.wasTruncated && <p className="console-truncation" role="status">输出过长，已省略 {state.truncation.droppedLineCount} 行和 {state.truncation.droppedNodeCount} 个节点。</p>}{state.currentPrompt && <PromptController prompt={state.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>}</> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
+        <h1 className="sr-only">{session.data.name}</h1>
+        <p className="sr-only">Session 状态：<span>{sessionStateLabel(session.data.state)}</span></p>
+        {(!networkOnline || (connectionPhase !== "ready" && connectionPhase !== "disconnected")) && <div className="reconnect-banner" role="status" aria-live="polite"><span className="mini-spinner"/><p><strong>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</strong><small>{networkOnline ? "游戏仍在服务器上运行；浏览器连接恢复后会按 epoch 和序号重新同步。" : "浏览器离线只影响当前显示；Session 和 Worker 不会被关闭。"}</small></p></div>}
+        {stream.phase === "resyncing" && <div className="reconnect-banner resync-banner" role="status" aria-live="polite"><span>↻</span><p><strong>正在重新同步控制台</strong><small>检测到输出间隙或旧 Worker 事件，当前画面暂不继续应用。</small></p></div>}
+        {stream.phase === "ended" && <div className="reconnect-banner ended-banner" role="status" aria-live="polite"><span>✓</span><p><strong>{terminalSession ? "Session 实时流已结束" : "Session 实时流暂时中断"}</strong><small>{terminalSession ? "Session 已进入终态，Worker 不再接收输入；SessionRoot 和存档仍会保留。" : "Session 状态仍由服务端维护；Worker 可能仍在运行，页面会以新的完整快照恢复。"}</small></p></div>}
+        {(closeError || stream.pendingInput?.status === "unknown") && <div className="error-banner" role="alert"><strong>实时操作提示</strong><small>{closeError ?? "上次输入的结果未知；服务端可能已经处理，请确认当前提示后再决定是否重试。"}</small>{stream.pendingInput?.status === "unknown" && <button className="secondary-button" onClick={() => manager.retryUnknownInput(sessionId)}>重试上次输入</button>}</div>}
+        {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
+        {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
+        {(assets.diagnostics().length > 0 || fontLoadFailed) && <div className="console-compat-warning" role="status"><strong>字体兼容提示</strong><small>{[...assets.diagnostics(), ...(fontLoadFailed ? ["FONT_LOAD_FAILED"] : [])].map(fontDiagnosticLabel).join("；")}</small></div>}
+        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} interactive={state.currentPrompt?.inputType === "primitivePointerKey" && state.currentPrompt.allowedSources.includes("pointer")} /><ScrollbackRenderer lines={state.scrollback} currentPrompt={state.currentPrompt} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${stream.workerEpoch ?? "none"}:${stream.sequence}`} />{state.truncation.wasTruncated && <p className="console-truncation" role="status">输出过长，已省略 {state.truncation.droppedLineCount} 行和 {state.truncation.droppedNodeCount} 个节点。</p>}</> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
       </main>
+      <div className="console-input-dock">
+        <PromptController prompt={state?.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>
+      </div>
     </div>
   </div>;
 }

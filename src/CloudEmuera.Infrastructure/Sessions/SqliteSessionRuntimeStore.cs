@@ -1,4 +1,3 @@
-using System.Text.Json;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Games;
@@ -135,12 +134,11 @@ public sealed class SqliteSessionRuntimeStore(
             nextStateVersion,
             options.ControlPlaneInstanceId,
             session.SessionRootPath,
-            ResolveCompatibilityProfile(session.RuntimeManifestJson),
-            ResolveSaveLayout(session.RuntimeManifestJson),
-            ResolveManifestDigest(session.RuntimeManifestJson),
+            RuntimeBaseline.CompatibilityProfile,
+            session.SaveLayout,
+            session.SessionRootManifestDigest,
             session.RuntimeVersion,
             session.LastOutputSequence,
-            session.RuntimeManifestJson,
             session.OwnerUserId,
             session.GameId,
             session.SourceContentRevision,
@@ -372,12 +370,11 @@ public sealed class SqliteSessionRuntimeStore(
                     session.StateVersion,
                     lease.ControlPlaneInstanceId,
                     session.SessionRootPath,
-                    ResolveCompatibilityProfile(session.RuntimeManifestJson),
-                    ResolveSaveLayout(session.RuntimeManifestJson),
-                    ResolveManifestDigest(session.RuntimeManifestJson),
+                    RuntimeBaseline.CompatibilityProfile,
+                    session.SaveLayout,
+                    session.SessionRootManifestDigest,
                     session.RuntimeVersion,
                     session.LastOutputSequence,
-                    session.RuntimeManifestJson,
                     session.OwnerUserId,
                     session.GameId,
                     session.SourceContentRevision,
@@ -418,12 +415,11 @@ public sealed class SqliteSessionRuntimeStore(
             session.StateVersion,
             lease.ControlPlaneInstanceId,
             session.SessionRootPath,
-            ResolveCompatibilityProfile(session.RuntimeManifestJson),
-            ResolveSaveLayout(session.RuntimeManifestJson),
-            ResolveManifestDigest(session.RuntimeManifestJson),
+            RuntimeBaseline.CompatibilityProfile,
+            session.SaveLayout,
+            session.SessionRootManifestDigest,
             session.RuntimeVersion,
             session.LastOutputSequence,
-            session.RuntimeManifestJson,
             session.OwnerUserId,
             session.GameId,
             session.SourceContentRevision,
@@ -496,78 +492,4 @@ public sealed class SqliteSessionRuntimeStore(
         return string.IsNullOrWhiteSpace(normalized) ? "worker_finished" : normalized[..Math.Min(128, normalized.Length)];
     }
 
-    private static string ResolveCompatibilityProfile(string manifestJson)
-    {
-        try
-        {
-            using JsonDocument document = JsonDocument.Parse(manifestJson);
-            foreach (string property in new[] { "compatibilityProfile", "CompatibilityProfile", "profile" })
-            {
-                if (document.RootElement.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.String &&
-                    !string.IsNullOrWhiteSpace(value.GetString()))
-                    return value.GetString()!;
-            }
-        }
-        catch (JsonException)
-        {
-        }
-
-        return "v18-compatible";
-    }
-
-    private static int ResolveSaveLayout(string manifestJson)
-    {
-        try
-        {
-            using JsonDocument document = JsonDocument.Parse(manifestJson);
-            foreach (string property in new[] { "saveLayout", "SaveLayout" })
-            {
-                if (!document.RootElement.TryGetProperty(property, out JsonElement value))
-                    continue;
-                if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int layout) && layout is 0 or 1)
-                    return layout;
-                if (value.ValueKind == JsonValueKind.String)
-                {
-                    string? text = value.GetString();
-                    if (Enum.TryParse(text, ignoreCase: true, out RuntimeSaveLayout enumLayout) &&
-                        enumLayout is RuntimeSaveLayout.Root or RuntimeSaveLayout.SavDirectory)
-                        return (int)enumLayout;
-                    if (int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out layout) && layout is 0 or 1)
-                        return layout;
-                }
-            }
-        }
-        catch (JsonException)
-        {
-        }
-
-        return 0;
-    }
-
-    private static string ResolveManifestDigest(string manifestJson)
-    {
-        try
-        {
-            using JsonDocument document = JsonDocument.Parse(manifestJson);
-            foreach (string property in new[]
-            {
-                "manifestDigest",
-                "ManifestDigest",
-                "contentManifestDigest",
-                "sourceManifestDigest",
-                "SourceManifestDigest",
-                "materializedManifestDigest",
-                "MaterializedManifestDigest",
-            })
-            {
-                if (document.RootElement.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.String)
-                    return value.GetString() ?? string.Empty;
-            }
-        }
-        catch (JsonException)
-        {
-        }
-
-        return string.Empty;
-    }
 }

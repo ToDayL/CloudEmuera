@@ -35,20 +35,28 @@ describe("PromptController", () => {
     expect(onInput).toHaveBeenCalledTimes(1);
   });
 
-  it("renders waitOnly as a non-submitting status rather than a fake input control", () => {
+  it("keeps the input bar present but disabled while waitOnly advances automatically", () => {
     const onInput = vi.fn();
     render(<PromptController prompt={prompt("waitOnly")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
-    expect(screen.getByRole("status")).toHaveTextContent("等待游戏继续");
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "游戏输入" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.queryByText("等待输入")).not.toBeInTheDocument();
     expect(onInput).not.toHaveBeenCalled();
   });
 
-  it("renders an inline enter control for a prompt without choices", () => {
+  it("keeps the text input beside the enter control for enterKey prompts", () => {
     const onInput = vi.fn();
     render(<PromptController prompt={prompt("enterKey")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
-    expect(screen.queryByRole("textbox", { name: "游戏输入" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "游戏输入" })).toHaveValue("默认值");
+    expect(screen.getByRole("button", { name: "按回车继续" })).toHaveClass("is-ready");
     fireEvent.click(screen.getByRole("button", { name: "按回车继续" }));
     expect(onInput).toHaveBeenCalledWith(expect.objectContaining({ source: "BUTTON", value: "默认值" }));
+  });
+
+  it("keeps a disabled input bar visible when there is no active prompt", () => {
+    render(<PromptController prompt={null} serverTimeOffsetMilliseconds={0} onInput={() => undefined} />);
+    expect(screen.getByRole("textbox", { name: "游戏输入" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
   });
 
   it("sends a keyboard metadata object when a text form is submitted", () => {
@@ -59,12 +67,22 @@ describe("PromptController", () => {
     expect(onInput).toHaveBeenCalledWith(expect.objectContaining({ source: "BUTTON", value: "回答" }));
   });
 
+  it("does not submit an empty text form", () => {
+    const onInput = vi.fn();
+    render(<PromptController prompt={prompt("text")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+    const input = screen.getByRole("textbox", { name: "游戏输入" });
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(onInput).not.toHaveBeenCalled();
+  });
+
   it("disables every submit control after the local deadline until the prompt changes", () => {
     const onInput = vi.fn();
     render(<PromptController prompt={{ ...prompt("text"), deadlineUnixMilliseconds: Date.now() - 1 }} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
     const input = screen.getByRole("textbox", { name: "游戏输入" });
     expect(input).toBeDisabled();
-    expect(screen.getByRole("button", { name: "等待游戏确认…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送" })).toHaveClass("is-waiting");
     fireEvent.change(input, { target: { value: "late" } });
     fireEvent.submit(input.closest("form")!);
     expect(onInput).not.toHaveBeenCalled();

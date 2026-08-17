@@ -66,7 +66,6 @@ public sealed record SessionRuntimeBinding(
     string SessionRootManifestDigest,
     string RuntimeVersion,
     long InitialOutputSequence,
-    string RuntimeManifestJson,
     string OwnerUserId = "",
     string GameId = "",
     long SourceContentRevision = 0,

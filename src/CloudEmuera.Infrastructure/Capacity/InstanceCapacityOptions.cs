@@ -7,7 +7,8 @@ namespace CloudEmuera.Infrastructure.Capacity;
 /// </summary>
 public sealed record InstanceCapacityOptions
 {
-    public const int DefaultMaxActiveWorkers = 4;
+    public const int DefaultMaxActiveWorkers = 8;
+    public const int DefaultMaxInactiveSessions = 64;
     public const long DefaultMaxGamePackageBytes = 2L * 1024 * 1024 * 1024;
     public const long DefaultMaxSessionRootBytes = 4L * 1024 * 1024 * 1024;
     public const long DefaultMaxStagingReservedBytes = 12L * 1024 * 1024 * 1024;
@@ -15,6 +16,7 @@ public sealed record InstanceCapacityOptions
     public const long DefaultMaxSaveFileBytes = 64L * 1024 * 1024;
 
     public int MaxActiveWorkers { get; init; } = DefaultMaxActiveWorkers;
+    public int MaxInactiveSessions { get; init; } = DefaultMaxInactiveSessions;
     public long MaxGamePackageBytes { get; init; } = DefaultMaxGamePackageBytes;
     public long MaxSessionRootBytes { get; init; } = DefaultMaxSessionRootBytes;
     public long MaxStagingReservedBytes { get; init; } = DefaultMaxStagingReservedBytes;
@@ -26,6 +28,7 @@ public sealed record InstanceCapacityOptions
     public void Validate()
     {
         if (MaxActiveWorkers is <= 0 or > 4096
+            || MaxInactiveSessions is <= 0 or > 4096
             || MaxGamePackageBytes <= 0
             || MaxSessionRootBytes <= 0
             || MaxStagingReservedBytes <= 0

@@ -53,7 +53,11 @@ public sealed class InitialMigrationTests
         Assert.DoesNotContain(tables, name => name.StartsWith("AspNet", StringComparison.Ordinal));
         Assert.DoesNotContain("game_versions", tables);
         Assert.DoesNotContain(tables, name => name == "__EFMigrationsHistory");
-        Assert.Equal(15, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        HashSet<string> sessionColumns = await ReadColumnsAsync(scope.Connection, "sessions");
+        Assert.DoesNotContain("runtime_manifest_json", sessionColumns);
+        Assert.Contains("session_root_manifest_digest", sessionColumns);
+        Assert.Contains("save_layout", sessionColumns);
+        Assert.Equal(17, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -77,7 +81,7 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(15, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(17, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -102,7 +106,7 @@ public sealed class InitialMigrationTests
         Assert.Null(user.PasswordChangedAt);
         Assert.False(user.MustChangePassword);
         Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
-        Assert.Equal(15, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(17, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -116,9 +120,9 @@ public sealed class InitialMigrationTests
             initial.Context.AddRange(
                 PersistenceFixtures.CreateQuotaProfile(),
                 PersistenceFixtures.CreateUser(),
-                PersistenceFixtures.CreateGame(),
-                PersistenceFixtures.CreateSession());
+                PersistenceFixtures.CreateGame());
             await initial.Context.SaveChangesAsync();
+            await ExecuteAsync(initial.Connection, "INSERT INTO sessions (id, owner_user_id, game_id, source_content_digest, source_content_revision, runtime_manifest_json, runtime_version, session_root_path, name, state, state_version, worker_epoch, waiting_for_input, current_prompt_id, last_output_sequence, close_reason, created_at, started_at, last_activity_at, closed_at) VALUES ('sess_fixture', 'usr_fixture', 'game_fixture', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, '{}', 'headless-test', 'sessions/sess_fixture/root', 'Fixture Session', 'CREATING', 0, 0, 0, NULL, 0, NULL, 1, NULL, 1, NULL);");
             await ExecuteAsync(initial.Connection, "UPDATE sessions SET state = 'DETACHED' WHERE id = 'sess_fixture';");
         }
 
@@ -157,7 +161,8 @@ public sealed class InitialMigrationTests
         Assert.Equal("games/game_legacy/content", game.CurrentContentPath);
         Assert.Equal(digest, session.SourceContentDigest);
         Assert.Equal(1, session.SourceContentRevision);
-        Assert.Contains("contentManifest", session.RuntimeManifestJson, StringComparison.Ordinal);
+        Assert.Equal(digest, session.SessionRootManifestDigest);
+        Assert.Equal(0, session.SaveLayout);
         Assert.DoesNotContain("game_versions", await ReadObjectsAsync(verify.Connection, "table"));
         Assert.Equal(0, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM pragma_foreign_key_check;"));
     }
@@ -240,7 +245,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(16, await CountHistoryRowsAsync(database));
+        Assert.Equal(18, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>
@@ -278,6 +283,20 @@ public sealed class InitialMigrationTests
         await using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "SELECT name FROM sqlite_master WHERE type = $type AND name NOT LIKE 'sqlite_%' ORDER BY name;";
         command.Parameters.AddWithValue("$type", type);
+        await using SqliteDataReader reader = await command.ExecuteReaderAsync();
+        HashSet<string> values = new(StringComparer.Ordinal);
+        while (await reader.ReadAsync())
+        {
+            values.Add(reader.GetString(0));
+        }
+
+        return values;
+    }
+
+    private static async Task<HashSet<string>> ReadColumnsAsync(SqliteConnection connection, string table)
+    {
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = $"SELECT name FROM pragma_table_info('{table}') ORDER BY cid;";
         await using SqliteDataReader reader = await command.ExecuteReaderAsync();
         HashSet<string> values = new(StringComparer.Ordinal);
         while (await reader.ReadAsync())

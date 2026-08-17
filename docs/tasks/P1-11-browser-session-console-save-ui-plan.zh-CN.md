@@ -443,12 +443,13 @@ Console viewport
 | `anyValue` | 文本框，不在浏览器猜测数值分支 | KEYBOARD |
 | `integerButton`/`textButton` | 结构化 ButtonNode | BUTTON；若允许也可显示手工输入 |
 | `primitivePointerKey` | Canvas hit region/受限键盘 | POINTER/KEYBOARD |
-| `waitOnly` | 只显示等待/倒计时，无可提交控件 | 无浏览器提交 |
+| `waitOnly` | 固定底部输入栏保留禁用文本框和回车键，不显示等待文案 | 无浏览器提交 |
 
 System input 保留给 Worker 的运行时语义，但不再因此隐藏浏览器交互：`integer`、`text`、`anyValue`、
 `anyKey` 等可表达类型使用同一套受约束结构化控件，`allowedSources` 是 UI 前置约束但 Worker 仍最终校验；
-`waitOnly` 仍只显示等待状态，不能伪造输入。OneInput 可以在客户端限制一个 Unicode scalar/上游规定格式以
-改善体验，但不能代替 Worker normalized/invalid receipt。
+`waitOnly` 仍不可提交；固定底部输入栏只保留禁用的输入框和回车键，使用控件颜色表达当前是否可提交，不能
+代替 Worker 的输入状态。OneInput 可以在客户端限制一个 Unicode scalar/上游规定格式以改善体验，但不能代替
+Worker normalized/invalid receipt。
 
 ### 10.2 提交流程
 

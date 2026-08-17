@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { SpriteCanvas } from "./SpriteRenderer";
@@ -11,12 +11,20 @@ export interface ConsoleInputEvent {
   key?: { keyCode: number; control: boolean; alt: boolean; shift: boolean };
 }
 
-export function ScrollbackRenderer({ lines, currentPrompt, assets, onInput, onRenderError, scrollContainerRef }: { lines: RealtimeLine[]; currentPrompt?: Prompt | null; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void; scrollContainerRef?: RefObject<HTMLElement | null> }) {
+export function ScrollbackRenderer({ lines, currentPrompt, assets, onInput, onRenderError, scrollContainerRef, scrollVersion }: { lines: RealtimeLine[]; currentPrompt?: Prompt | null; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void; scrollContainerRef?: RefObject<HTMLElement | null>; scrollVersion?: string | number }) {
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
-  const lastLine = lines[lines.length - 1];
-  const contentVersion = `${lastLine?.lineId ?? ""}:${lastLine?.nodes.length ?? 0}:${lines.length}`;
   const currentButtonGeneration = latestButtonGeneration(lines);
+  const displayLines = trimTrailingEmptyLines(lines);
+  const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
+    const container = scrollContainerRef?.current;
+    if (!container) return;
+    const top = Math.max(0, container.scrollHeight - container.clientHeight);
+    atLatestRef.current = true;
+    setAtLatest(true);
+    if (typeof container.scrollTo === "function") container.scrollTo({ top, behavior });
+    else container.scrollTop = top;
+  }, [scrollContainerRef]);
   useEffect(() => {
     const container = scrollContainerRef?.current;
     if (!container) return;
@@ -30,24 +38,69 @@ export function ScrollbackRenderer({ lines, currentPrompt, assets, onInput, onRe
     return () => container.removeEventListener("scroll", updatePosition);
   }, [scrollContainerRef]);
   useEffect(() => {
-    const container = scrollContainerRef?.current;
-    if (container && atLatestRef.current && typeof container.scrollTo === "function") container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
-  }, [contentVersion, scrollContainerRef]);
-  const scrollToLatest = () => {
-    const container = scrollContainerRef?.current;
-    if (!container) return;
-    atLatestRef.current = true;
-    setAtLatest(true);
-    if (typeof container.scrollTo === "function") container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
-  };
+    scrollToBottom("auto");
+    // New output is authoritative for the reading position: the console always follows it.
+  }, [lines, scrollToBottom, scrollVersion]);
+  const scrollToLatest = useCallback(() => scrollToBottom("smooth"), [scrollToBottom]);
   return <div className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
-      {lines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""}`} key={line.lineId}>
-        {line.nodes.map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} onInput={onInput} onRenderError={onRenderError} />)}
+      {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""}`} key={line.lineId}>
+        {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} onInput={onInput} onRenderError={onRenderError} />)}
       </div>)}
     </div>
     {!atLatest && <button className="scrollback-latest" type="button" onClick={scrollToLatest}>↓ 回到最新</button>}
   </div>;
+}
+
+export function trimTrailingEmptyLines(lines: readonly RealtimeLine[]): RealtimeLine[] {
+  let end = lines.length;
+  if (end > 0 && isEmptyLine(lines[end - 1])) end--;
+  return lines.slice(0, end);
+}
+
+function isEmptyLine(line: RealtimeLine): boolean {
+  return line.nodes.length === 0 || line.nodes.every(node => node.type === "lineBreak" || (node.type === "text" && node.text.length === 0));
+}
+
+function trimTrailingLineBreaks(nodes: readonly RealtimeNode[]): RealtimeNode[] {
+  let end = nodes.length;
+  while (end > 0 && nodes[end - 1].type === "lineBreak") end--;
+  return nodes.slice(0, end);
+}
+
+function splitButtonLabel(children: readonly RealtimeNode[]): { leading: RealtimeNode[]; label: RealtimeNode[]; trailing: RealtimeNode[] } {
+  if (children.some(child => child.type !== "text"))
+    return { leading: [], label: [...children], trailing: [] };
+
+  const textChildren = children as Extract<RealtimeNode, { type: "text" }>[];
+  const text = textChildren.map(child => child.text).join("");
+  const leadingLength = text.match(/^ */)?.[0].length ?? 0;
+  const trailingLength = text.match(/ *$/)?.[0].length ?? 0;
+  const labelStart = leadingLength;
+  const labelEnd = text.length - trailingLength;
+  if (labelStart >= labelEnd)
+    return { leading: sliceTextNodes(textChildren, 0, text.length), label: [], trailing: [] };
+
+  return {
+    leading: sliceTextNodes(textChildren, 0, labelStart),
+    label: sliceTextNodes(textChildren, labelStart, labelEnd),
+    trailing: sliceTextNodes(textChildren, labelEnd, text.length),
+  };
+}
+
+function sliceTextNodes(children: readonly Extract<RealtimeNode, { type: "text" }>[], start: number, end: number): RealtimeNode[] {
+  const result: RealtimeNode[] = [];
+  let offset = 0;
+  for (const child of children) {
+    const childStart = offset;
+    const childEnd = childStart + child.text.length;
+    const sliceStart = Math.max(start, childStart);
+    const sliceEnd = Math.min(end, childEnd);
+    if (sliceStart < sliceEnd)
+      result.push({ ...child, text: child.text.slice(sliceStart - childStart, sliceEnd - childStart) });
+    offset = childEnd;
+  }
+  return result;
 }
 
 function NodeRenderer({ node, currentPrompt, currentButtonGeneration, assets, onInput, onRenderError }: { node: RealtimeNode; currentPrompt?: Prompt | null; currentButtonGeneration: number; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }): ReactNode {
@@ -56,9 +109,15 @@ function NodeRenderer({ node, currentPrompt, currentButtonGeneration, assets, on
     case "lineBreak": return <br />;
     case "button": {
       const isCurrentFrame = isCurrentFrameButton(node, currentPrompt, currentButtonGeneration);
-      return <button className={`console-choice ${isCurrentFrame ? "" : "is-stale"}`} type="button" disabled={!isCurrentFrame} title={node.tooltip ?? (!isCurrentFrame && node.enabled ? "上一帧选项已失效" : undefined)} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>
-        {node.children.map((child, index) => <NodeRenderer key={index} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
-      </button>;
+      const parts = splitButtonLabel(node.children);
+      const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
+      return <Fragment>
+        {renderChildren(parts.leading, "leading")}
+        <button className={`console-choice ${isCurrentFrame ? "" : "is-stale"}`} type="button" disabled={!isCurrentFrame} title={node.tooltip ?? (!isCurrentFrame && node.enabled ? "上一帧选项已失效" : undefined)} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>
+          <span className="console-choice-label">{renderChildren(parts.label, "label")}</span>
+        </button>
+        {renderChildren(parts.trailing, "trailing")}
+      </Fragment>;
     }
     case "image": {
       const destination = node.destination ?? node.sourceRect;

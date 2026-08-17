@@ -353,16 +353,18 @@ completed_at INTEGER NULL
 state_version INTEGER NOT NULL
 ```
 
-Session 行继续保存 `game_id/source_content_revision/source_content_digest/runtime_manifest_json` 和固定
-`session_root_path`。`runtime_manifest_json` 在 schema v1 内保存创建时的：
+Session 行继续保存 `game_id/source_content_revision/source_content_digest`、固定的
+`session_root_manifest_digest/save_layout` 和 `session_root_path`。完整 runtime manifest 不再写入
+`sessions` 表，而是在 SessionRoot 发布时写入受保护的 `metadata/runtime-manifest.json`；该文件仍有
+独立的有界存储上限，不复用普通元数据 JSON 的 1 MiB 上限：
 
 - Game canonical manifest 快照与 runtime config；
 - compatibility profile、上游 commit、CloudEmuera integration/runtime version；
 - source digest/revision、保存布局；
 - 物化后的 SessionRoot manifest digest 与固定大小写别名清单。
 
-不得只保存一个指向 `games.manifest_json` 的引用。若组合 JSON 超过现有数据库上限，创建在 prepare
-前失败，不截断、不丢字段。
+不得只保存一个指向 `games.manifest_json` 的引用。若组合 JSON 超过 SessionRoot runtime manifest
+文件上限，创建在 prepare 前失败，不截断、不丢字段；其实际 UTF-8 字节数同时计入 SessionRoot 创建预留。
 
 ### 7.3 SessionRoot mutation lease
 

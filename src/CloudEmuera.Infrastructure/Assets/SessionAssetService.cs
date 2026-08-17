@@ -115,14 +115,14 @@ public sealed class SessionAssetService(
         // IDs on one indistinguishable not-found path.
         SessionAssetRow? session = await db.Sessions.AsNoTracking()
             .Where(row => row.Id == sessionId && row.OwnerUserId == actor.UserId)
-            .Select(row => new SessionAssetRow(row.Id, row.OwnerUserId, row.SessionRootPath, row.RuntimeManifestJson))
+            .Select(row => new SessionAssetRow(row.Id, row.OwnerUserId, row.SessionRootPath))
             .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         if (session is null) throw NotFound();
         ResourceAccessDecision decision = await authorizer.AuthorizeAsync(actor, ResourceKind.Session, session.Id, ResourceAction.SessionRead, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (decision != ResourceAccessDecision.Allowed) throw NotFound();
 
-        List<ManifestEntry> entries = ParseEntries(session.RuntimeManifestJson);
         string rootPath = ResolveRoot(session.SessionRootPath, session.Id);
+        List<ManifestEntry> entries;
         try
         {
             RuntimePathUtilities.ValidateNoReparsePointsAlongPath(rootPath, "session-asset-root", RuntimeFileArea.GameContent);
@@ -132,12 +132,19 @@ public sealed class SessionAssetService(
                 !string.Equals(marker.OwnerUserId, session.OwnerUserId, StringComparison.Ordinal) ||
                 !SessionRootProtectedMarkerStore.SameRootIdentity(marker, rootPath))
                 throw StorageFailure("SessionRoot identity 校验失败。");
+            string runtimeManifestJson = SessionRootProtectedMarkerStore.ReadRuntimeManifest(databaseOptions, session.Id);
+            using JsonDocument runtimeManifest = JsonDocument.Parse(runtimeManifestJson);
+            if (runtimeManifest.RootElement.ValueKind != JsonValueKind.Object ||
+                !TryReadManifestDigest(runtimeManifest.RootElement, out string? manifestDigest) ||
+                !string.Equals(manifestDigest, marker.MaterializedManifestDigest, StringComparison.OrdinalIgnoreCase))
+                throw StorageFailure("Session runtime manifest 摘要与受保护标记不一致。");
+            entries = ParseEntries(runtimeManifestJson);
         }
         catch (SessionAssetException)
         {
             throw;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SessionRuntimeException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or SessionRuntimeException)
         {
             throw new SessionAssetException(SessionAssetErrorCodes.StorageFailure, "SessionRoot 无法安全读取。", 503, exception);
         }
@@ -236,6 +243,16 @@ public sealed class SessionAssetService(
         }
     }
 
+    private static bool TryReadManifestDigest(JsonElement root, out string? digest)
+    {
+        digest = null;
+        if (root.TryGetProperty("sourceManifestDigest", out JsonElement source) && source.ValueKind == JsonValueKind.String)
+            digest = source.GetString();
+        else if (root.TryGetProperty("manifestDigest", out JsonElement materialized) && materialized.ValueKind == JsonValueKind.String)
+            digest = materialized.GetString();
+        return !string.IsNullOrWhiteSpace(digest);
+    }
+
     private string ResolveRoot(string relativePath, string sessionId)
     {
         if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath) || relativePath.Contains('\\') || relativePath.Contains('\0')) throw StorageFailure("SessionRoot 路径无效。");
@@ -332,7 +349,7 @@ public sealed class SessionAssetService(
         return true;
     }
 
-    private sealed record SessionAssetRow(string Id, string OwnerUserId, string SessionRootPath, string RuntimeManifestJson);
+    private sealed record SessionAssetRow(string Id, string OwnerUserId, string SessionRootPath);
     private sealed record SessionAssetContext(string SessionId, string RootPath, IReadOnlyList<ManifestEntry> Entries);
     private sealed record ManifestEntry(string Path, string EntryKind, long Bytes, string Digest);
     private sealed record ManifestAsset(string AssetId, string Path, string MediaType, long ByteLength, string ContentDigest);

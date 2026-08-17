@@ -25,11 +25,9 @@ public partial class AddApiOwnedWorkerLifecycle : Migration
         migrationBuilder.Sql("UPDATE worker_leases SET status = 'STARTING', pid = NULL WHERE status IN ('ACTIVE', 'STOPPING', 'EXPIRED');");
         migrationBuilder.Sql("UPDATE sessions SET closed_at = last_activity_at WHERE state = 'CRASHED' AND closed_at IS NULL;");
 
-        migrationBuilder.DropCheckConstraint("ck_sessions_closed_fields", "sessions");
-        migrationBuilder.AddCheckConstraint(
-            "ck_sessions_closed_fields",
-            "sessions",
-            "((state IN ('CLOSED', 'CRASHED') AND closed_at IS NOT NULL) OR (state NOT IN ('CLOSED', 'CRASHED') AND closed_at IS NULL)) AND ((state IN ('CREATING', 'CLOSED', 'CRASHED') AND waiting_for_input = 0 AND current_prompt_id IS NULL) OR state NOT IN ('CREATING', 'CLOSED', 'CRASHED'))");
+        // The Session CHECK is refreshed by the final schema migration. Do
+        // not rebuild this table before the later compact binding columns are
+        // introduced on old databases.
         migrationBuilder.Sql("CREATE INDEX IF NOT EXISTS ix_sessions_owner_state ON sessions (owner_user_id, state);");
 
         migrationBuilder.AddColumn<string>(
@@ -89,10 +87,6 @@ public partial class AddApiOwnedWorkerLifecycle : Migration
         migrationBuilder.DropColumn("control_plane_instance_id", "worker_leases");
 
         migrationBuilder.Sql("DROP INDEX IF EXISTS ix_sessions_owner_state;");
-        migrationBuilder.DropCheckConstraint("ck_sessions_closed_fields", "sessions");
-        migrationBuilder.AddCheckConstraint(
-            "ck_sessions_closed_fields",
-            "sessions",
-            "(state = 'CLOSED' AND closed_at IS NOT NULL) OR (state <> 'CLOSED' AND closed_at IS NULL)");
+        // The Session CHECK is owned by the final schema migration.
     }
 }
