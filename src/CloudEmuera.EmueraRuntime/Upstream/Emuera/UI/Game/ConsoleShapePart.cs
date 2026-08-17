@@ -91,12 +91,24 @@ abstract class ConsoleShapePart : AConsoleColoredPart
 			ret = new ConsoleErrorShapePart(sb.ToString());
 		}
 		ret.AltText = sb.ToString();
+		// CloudEmuera modification: preserve the direct upstream shape
+		// arguments for the headless semantic projection. The translator never
+		// reparses AltText/ToString().
+		ret.SemanticType = type;
+		ret.SemanticParameters = (MixedNum[])param.Clone();
+		ret.SemanticColor = color;
+		ret.SemanticButtonColor = bcolor;
 		ret.Color = color;
 		ret.ButtonColor = bcolor;
 		ret.colorChanged = colorchanged;
 		return ret;
 	}
 	#endregion
+
+	internal string SemanticType { get; private set; }
+	internal MixedNum[] SemanticParameters { get; private set; }
+	internal Color SemanticColor { get; private set; }
+	internal Color SemanticButtonColor { get; private set; }
 
 	public override bool CanDivide
 	{
@@ -205,6 +217,14 @@ internal sealed class ConsoleErrorShapePart : ConsoleShapePart
 			Width = 0;
 			return;
 		}
+#if CLOUDEMUERA_HEADLESS
+		if (sm == null)
+		{
+			Width = (Text?.Length ?? 0) * (Config.FontSize > 0 ? Config.FontSize : 16) / 2;
+			XsubPixel = subPixel;
+			return;
+		}
+#endif
 		Width = sm.GetDisplayLength(Text, Config.DefaultFont);
 		XsubPixel = subPixel;
 	}

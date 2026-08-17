@@ -225,6 +225,7 @@ message ConsoleLine {
   repeated ConsoleNode nodes = 2;
   LineAlignment alignment = 3;
   bool temporary = 4;
+  bool no_wrap = 5;
 }
 
 message ConsoleNode {
@@ -236,17 +237,20 @@ message ConsoleNode {
     SpriteNode sprite = 5;
     ShapeNode shape = 6;
     HtmlIslandNode html_island = 7;
+    DivNode div = 8;
   }
 }
 
 message TextNode { string text = 1; TextStyle style = 2; }
 message LineBreakNode {}
 message ButtonNode {
-  repeated TextNode label = 1;
+  repeated ConsoleNode label = 1;
   string value = 2;
   string tooltip = 3;
   bool enabled = 4;
   int64 generation = 5;
+  int32 position_x = 6;
+  bool has_position_x = 7;
 }
 message ImageNode {
   string asset_id = 1;
@@ -284,8 +288,35 @@ message ShapeNode {
   bool has_stroke = 6;
   int32 z_index = 7;
   repeated Point points = 8;
+  ConsoleColor button_color = 9;
+  bool has_button_color = 10;
 }
-message HtmlIslandNode { HtmlNode root = 1; Rect layout = 2; bool has_layout = 3; }
+message HtmlIslandNode {
+  HtmlNode root = 1;
+  Rect layout = 2;
+  bool has_layout = 3;
+  repeated ConsoleNode nodes = 4;
+  bool has_structured_nodes = 5;
+}
+message DivNode {
+  repeated ConsoleNode children = 1;
+  Rect bounds = 2;
+  ConsoleColor background = 3;
+  bool has_background = 4;
+  int32 z_index = 5;
+  bool is_relative = 6;
+  BoxModel box = 7;
+  bool has_box = 8;
+}
+message BoxModel {
+  Insets margin = 1;
+  Insets padding = 2;
+  Insets border = 3;
+  Insets radius = 4;
+  repeated ConsoleColor border_colors = 5;
+  uint32 border_color_mask = 6;
+}
+message Insets { int32 top = 1; int32 right = 2; int32 bottom = 3; int32 left = 4; }
 
 message HtmlNode {
   oneof kind {
@@ -313,6 +344,8 @@ message TextStyle {
   string font_family = 6;
   int32 font_size = 7;
   int32 line_height = 8;
+  ConsoleColor button_color = 9;
+  bool has_button_color = 10;
 }
 message ConsoleColor { uint32 red = 1; uint32 green = 2; uint32 blue = 3; uint32 alpha = 4; }
 message Point { int32 x = 1; int32 y = 2; }
@@ -336,7 +369,15 @@ message CanvasDrawable {
 }
 message SpriteDrawable { string drawable_id = 1; string asset_id = 2; Rect source_rect = 3; Rect bounds = 4; int32 z_index = 5; float opacity = 6; int32 frame = 7; repeated SpriteAnimationFrame animation_frames = 8; }
 message ShapeDrawable { string drawable_id = 1; ShapeKind shape = 2; Rect bounds = 3; ConsoleColor fill = 4; bool has_fill = 5; ConsoleColor stroke = 6; bool has_stroke = 7; int32 z_index = 8; float opacity = 9; repeated Point points = 10; }
-message HtmlIslandDrawable { string drawable_id = 1; HtmlNode root = 2; Rect bounds = 3; int32 z_index = 4; float opacity = 5; }
+message HtmlIslandDrawable {
+  string drawable_id = 1;
+  HtmlNode root = 2;
+  Rect bounds = 3;
+  int32 z_index = 4;
+  float opacity = 5;
+  repeated ConsoleNode nodes = 6;
+  bool has_structured_nodes = 7;
+}
 message RasterDrawable { string drawable_id = 1; bytes png_data = 2; Rect bounds = 3; int32 z_index = 4; float opacity = 5; bytes hover_png_data = 6; bool has_hover = 7; bool hit_test_map = 8; }
 message HitRegion { string region_id = 1; Rect bounds = 2; string input_value = 3; bool enabled = 4; string tooltip = 5; }
 message MediaState { repeated MediaChannelState channels = 1; }

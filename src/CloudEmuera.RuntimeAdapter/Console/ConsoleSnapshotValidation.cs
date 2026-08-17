@@ -68,7 +68,10 @@ internal static class ConsoleSnapshotValidation
                 case ShapeDrawable shape when shape.Points.Count > limits.MaxGeometryPoints:
                     throw new ConsoleContractException(ConsoleContractViolationReason.GeometryTooLarge, "The snapshot shape exceeds its point limit.");
                 case HtmlIslandDrawable island:
-                    island.Root.Validate(limits, 1);
+                    if (island.StructuredNodes is { } structuredNodes)
+                        ConsoleNodeValidation.ValidateBatchIfNotEmpty(structuredNodes, limits);
+                    else
+                        island.Root!.Validate(limits, 1);
                     break;
                 case RasterDrawable raster:
                     if (raster.PngData.Count > limits.MaxInlineRasterBytes ||

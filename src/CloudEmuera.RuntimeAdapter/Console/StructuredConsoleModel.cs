@@ -126,7 +126,8 @@ public sealed class ConsoleLine
         string lineId,
         IEnumerable<ConsoleNode> nodes,
         ConsoleLineAlignment alignment = ConsoleLineAlignment.Left,
-        bool temporary = false)
+        bool temporary = false,
+        bool noWrap = false)
     {
         ConsoleContractValidation.ValidateIdentifier(lineId, nameof(lineId), ConsoleContractLimits.Default.MaxLineIdLength);
         ArgumentNullException.ThrowIfNull(nodes);
@@ -139,6 +140,7 @@ public sealed class ConsoleLine
         Nodes = Array.AsReadOnly(copy);
         Alignment = alignment;
         Temporary = temporary;
+        NoWrap = noWrap;
     }
 
     public string LineId { get; }
@@ -149,8 +151,15 @@ public sealed class ConsoleLine
 
     public bool Temporary { get; }
 
-    public ConsoleLine WithNodes(IEnumerable<ConsoleNode> nodes, bool? temporary = null, ConsoleLineAlignment? alignment = null) =>
-        new(LineId, nodes, alignment ?? Alignment, temporary ?? Temporary);
+    /// <summary>Preserves Emuera's line-head &lt;nobr&gt; layout semantic.</summary>
+    public bool NoWrap { get; }
+
+    public ConsoleLine WithNodes(
+        IEnumerable<ConsoleNode> nodes,
+        bool? temporary = null,
+        ConsoleLineAlignment? alignment = null,
+        bool? noWrap = null) =>
+        new(LineId, nodes, alignment ?? Alignment, temporary ?? Temporary, noWrap ?? NoWrap);
 
     private static void ValidateAlignment(ConsoleLineAlignment alignment)
     {
@@ -300,9 +309,29 @@ public sealed class HtmlIslandDrawable : CanvasDrawable
     {
         Root = root ?? throw new ArgumentNullException(nameof(root));
         Root.Validate(ConsoleContractLimits.Default, 1);
+        StructuredNodes = null;
     }
 
-    public ConsoleHtmlNode Root { get; }
+    public HtmlIslandDrawable(
+        string drawableId,
+        IEnumerable<ConsoleNode> nodes,
+        ConsoleRect bounds,
+        int zIndex = 0,
+        float opacity = 1f)
+        : base(drawableId, bounds, zIndex, opacity)
+    {
+        ArgumentNullException.ThrowIfNull(nodes);
+        ConsoleNode[] copy = nodes.ToArray();
+        ConsoleNodeValidation.ValidateBatchIfNotEmpty(copy, ConsoleContractLimits.Default);
+        Root = null!;
+        StructuredNodes = Array.AsReadOnly(copy);
+    }
+
+    public ConsoleHtmlNode? Root { get; }
+
+    public IReadOnlyList<ConsoleNode>? StructuredNodes { get; }
+
+    public bool IsStructured => StructuredNodes is not null;
 }
 
 public sealed class RasterDrawable : CanvasDrawable

@@ -35,12 +35,16 @@ public sealed class ConsoleNodeValidationTests
     }
 
     [Fact]
-    public void ButtonLabelsCannotContainBehaviorOrNestedNodes()
+    public void ButtonLabelsMayContainStructuredPresentationNodes()
     {
-        Assert.Throws<ConsoleContractException>(() =>
-            new ButtonNode(
-                new ConsoleNode[] { new ImageNode("hero") },
-                "image"));
+        var button = new ButtonNode(
+            new ConsoleNode[] { new ImageNode("hero"), new TextNode("Run") },
+            "image");
+
+        Assert.Collection(
+            button.Children,
+            node => Assert.IsType<ImageNode>(node),
+            node => Assert.Equal("Run", Assert.IsType<TextNode>(node).Text));
     }
 
     [Fact]

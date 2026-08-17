@@ -13,6 +13,12 @@ sealed class ConsoleImagePart : AConsoleDisplayNode
 	//public ConsoleImagePart(string resName, string resNameb, int raw_height, int raw_width, int raw_ypos)
 	public ConsoleImagePart(string resName, string resNameb, string resNamem, MixedNum raw_height, MixedNum raw_width, MixedNum raw_ypos)
 	{
+		// CloudEmuera modification: retain the parser's original MixedNum
+		// attributes for the headless semantic projection. The desktop materializer
+		// below still computes its normal rectangles exactly as before.
+		RawHeight = raw_height;
+		RawWidth = raw_width;
+		RawYPosition = raw_ypos;
 		top = 0;
 		bottom = Config.FontSize;
 		Text = "";
@@ -127,6 +133,9 @@ sealed class ConsoleImagePart : AConsoleDisplayNode
 		}
 	}
 	public readonly string MappingGraphName;
+	public readonly MixedNum RawHeight;
+	public readonly MixedNum RawWidth;
+	public readonly MixedNum RawYPosition;
 	private readonly ASprite cImageM;
 	#endregion
 	private readonly ASprite cImage;
@@ -152,6 +161,14 @@ sealed class ConsoleImagePart : AConsoleDisplayNode
 		}
 		if (cImage != null)
 			return;
+#if CLOUDEMUERA_HEADLESS
+		if (sm == null)
+		{
+			Width = (Text?.Length ?? 0) * (Config.FontSize > 0 ? Config.FontSize : 16) / 2;
+			XsubPixel = subPixel;
+			return;
+		}
+#endif
 		Width = sm.GetDisplayLength(Text, Config.DefaultFont);
 		XsubPixel = subPixel;
 	}

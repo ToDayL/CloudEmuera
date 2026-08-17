@@ -1,8 +1,8 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { SpriteCanvas } from "./SpriteRenderer";
-import type { Prompt, RealtimeLine, RealtimeNode } from "../realtime/protocol";
+import type { Prompt, RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode } from "../realtime/protocol";
 
 export interface ConsoleInputEvent {
   value: string;
@@ -44,7 +44,7 @@ export function ScrollbackRenderer({ lines, currentPrompt, assets, onInput, onRe
   const scrollToLatest = useCallback(() => scrollToBottom("smooth"), [scrollToBottom]);
   return <div className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
-      {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""}`} key={line.lineId}>
+      {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} key={line.lineId}>
         {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} onInput={onInput} onRenderError={onRenderError} />)}
       </div>)}
     </div>
@@ -103,17 +103,21 @@ function sliceTextNodes(children: readonly Extract<RealtimeNode, { type: "text" 
   return result;
 }
 
-function NodeRenderer({ node, currentPrompt, currentButtonGeneration, assets, onInput, onRenderError }: { node: RealtimeNode; currentPrompt?: Prompt | null; currentButtonGeneration: number; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }): ReactNode {
+export function NodeRenderer({ node, currentPrompt, currentButtonGeneration, assets, onInput, onRenderError }: { node: RealtimeNode; currentPrompt?: Prompt | null; currentButtonGeneration: number; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }): ReactNode {
   switch (node.type) {
-    case "text": return <span style={textStyleToCss(node.style, assets)}>{node.text}</span>;
+    case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{node.text}</span>;
     case "lineBreak": return <br />;
     case "button": {
+      if (!node.enabled && node.value.length === 0) {
+        return <span className="console-nonbutton" title={node.tooltip ?? undefined}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</span>;
+      }
       const isCurrentFrame = isCurrentFrameButton(node, currentPrompt, currentButtonGeneration);
       const parts = splitButtonLabel(node.children);
       const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
+      const buttonStyle: CSSProperties = node.positionX === undefined ? {} : { marginLeft: `${node.positionX}px` };
       return <Fragment>
         {renderChildren(parts.leading, "leading")}
-        <button className={`console-choice ${isCurrentFrame ? "" : "is-stale"}`} type="button" disabled={!isCurrentFrame} title={node.tooltip ?? (!isCurrentFrame && node.enabled ? "上一帧选项已失效" : undefined)} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>
+        <button className={`console-choice ${isCurrentFrame ? "" : "is-stale"}`} style={buttonStyle} type="button" disabled={!isCurrentFrame} title={node.tooltip ?? (!isCurrentFrame && node.enabled ? "上一帧选项已失效" : undefined)} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>
           <span className="console-choice-label">{renderChildren(parts.label, "label")}</span>
         </button>
         {renderChildren(parts.trailing, "trailing")}
@@ -125,8 +129,11 @@ function NodeRenderer({ node, currentPrompt, currentButtonGeneration, assets, on
       return <AssetImage assetId={node.assetId} alt={node.decorative ? "" : node.altText ?? "游戏图片"} assets={assets} className="console-image" width={node.destination?.width} height={node.destination?.height} />;
     }
     case "sprite": return <SpriteCanvas sprite={node} assets={assets} alt={node.altText ?? "游戏精灵"} className="console-sprite" width={node.destination.width} height={node.destination.height} onRenderError={onRenderError} />;
-    case "shape": return <ShapeSvg shape={node.shape} bounds={node.bounds} points={node.points} fill={node.fill} stroke={node.stroke} />;
-    case "htmlIsland": return <SafeHtmlRenderer node={node.root} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
+    case "shape": return <ShapeSvg shape={node.shape} bounds={node.bounds} points={node.points} fill={node.fill} stroke={node.stroke} buttonColor={node.buttonColor} />;
+    case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</div>;
+    case "htmlIsland": return node.nodes
+      ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)
+      : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
 }
 
@@ -139,8 +146,17 @@ function isCurrentFrameButton(node: Extract<RealtimeNode, { type: "button" }>, p
 function latestButtonGeneration(lines: readonly RealtimeLine[]): number {
   let generation = 0;
   for (const line of lines) {
-    for (const node of line.nodes) {
-      if (node.type === "button") generation = Math.max(generation, node.generation);
+    generation = Math.max(generation, latestNodeButtonGeneration(line.nodes));
+  }
+  return generation;
+}
+
+function latestNodeButtonGeneration(nodes: readonly RealtimeNode[]): number {
+  let generation = 0;
+  for (const node of nodes) {
+    if (node.type === "button") generation = Math.max(generation, node.generation, latestNodeButtonGeneration(node.children));
+    else if (node.type === "div" || node.type === "htmlIsland") {
+      generation = Math.max(generation, latestNodeButtonGeneration(node.type === "div" ? node.children : node.nodes ?? []));
     }
   }
   return generation;
@@ -152,15 +168,62 @@ function AssetImage({ assetId, alt, assets, className, width, height }: { assetI
   return <img className={className} src={url} alt={alt} width={width} height={height} loading="lazy" decoding="async" />;
 }
 
-export function ShapeSvg({ shape, bounds, points, fill, stroke }: { shape: string; bounds: { x: number; y: number; width: number; height: number }; points: { x: number; y: number }[]; fill?: { red: number; green: number; blue: number; alpha: number } | null; stroke?: { red: number; green: number; blue: number; alpha: number } | null }) {
+export function ShapeSvg({ shape, bounds, points, fill, stroke, buttonColor }: { shape: string; bounds: { x: number; y: number; width: number; height: number }; points: { x: number; y: number }[]; fill?: RealtimeColor | null; stroke?: RealtimeColor | null; buttonColor?: RealtimeColor | null }) {
   const fillValue = fill ? `rgba(${fill.red},${fill.green},${fill.blue},${fill.alpha / 255})` : "none";
   const strokeValue = stroke ? `rgba(${stroke.red},${stroke.green},${stroke.blue},${stroke.alpha / 255})` : "none";
+  const shapeStyle = geometryStyle(bounds, buttonColor);
+  const shapeClassName = `console-shape ${buttonColor ? "is-selectable" : ""}`;
+  const localPoints = points.map(point => ({ x: point.x - bounds.x, y: point.y - bounds.y }));
   if (shape === "line") {
-    const first = points[0] ?? { x: 0, y: 0 };
-    const second = points[1] ?? { x: bounds.width, y: bounds.height };
-    return <svg className="console-shape" viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><line x1={first.x} y1={first.y} x2={second.x} y2={second.y} stroke={strokeValue === "none" ? fillValue : strokeValue} /></svg>;
+    const first = localPoints[0] ?? { x: 0, y: 0 };
+    const second = localPoints[1] ?? { x: bounds.width, y: bounds.height };
+    return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><line x1={first.x} y1={first.y} x2={second.x} y2={second.y} stroke={strokeValue === "none" ? fillValue : strokeValue} /></svg>;
   }
-  if (shape === "ellipse") return <svg className="console-shape" viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><ellipse cx={bounds.width / 2} cy={bounds.height / 2} rx={bounds.width / 2} ry={bounds.height / 2} fill={fillValue} stroke={strokeValue} /></svg>;
-  if (shape === "polygon") return <svg className="console-shape" viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><polygon points={points.map(point => `${point.x},${point.y}`).join(" ")} fill={fillValue} stroke={strokeValue} /></svg>;
-  return <svg className="console-shape" viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><rect width={bounds.width} height={bounds.height} fill={shape === "space" ? "none" : fillValue} stroke={strokeValue} /></svg>;
+  if (shape === "ellipse") return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><ellipse cx={bounds.width / 2} cy={bounds.height / 2} rx={bounds.width / 2} ry={bounds.height / 2} fill={fillValue} stroke={strokeValue} /></svg>;
+  if (shape === "polygon") return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><polygon points={localPoints.map(point => `${point.x},${point.y}`).join(" ")} fill={fillValue} stroke={strokeValue} /></svg>;
+  return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><rect width={bounds.width} height={bounds.height} fill={shape === "space" ? "none" : fillValue} stroke={strokeValue} /></svg>;
+}
+
+function divStyle(bounds: { x: number; y: number; width: number; height: number }, zIndex: number, background: RealtimeColor | null | undefined, isRelative: boolean, box: RealtimeBoxModel | null | undefined): CSSProperties {
+  const style: CSSProperties = {
+    position: isRelative ? "relative" : "absolute",
+    left: bounds.x,
+    top: isRelative ? bounds.y : undefined,
+    bottom: isRelative ? undefined : bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    zIndex,
+    backgroundColor: colorToCss(background),
+    boxSizing: "border-box",
+    overflow: "hidden",
+  };
+  if (box) {
+    style.margin = insetCss(box.margin);
+    style.padding = insetCss(box.padding);
+    style.borderTopWidth = box.border.top;
+    style.borderRightWidth = box.border.right;
+    style.borderBottomWidth = box.border.bottom;
+    style.borderLeftWidth = box.border.left;
+    style.borderStyle = box.border.top || box.border.right || box.border.bottom || box.border.left ? "solid" : undefined;
+    style.borderTopColor = colorToCss(box.borderColors[0]);
+    style.borderRightColor = colorToCss(box.borderColors[1]);
+    style.borderBottomColor = colorToCss(box.borderColors[2]);
+    style.borderLeftColor = colorToCss(box.borderColors[3]);
+    style.borderRadius = insetCss(box.radius);
+  }
+  return style;
+}
+
+function geometryStyle(bounds: { x: number; y: number; width: number; height: number }, buttonColor: RealtimeColor | null | undefined): CSSProperties {
+  const style: CSSProperties = { width: bounds.width, height: bounds.height, position: "relative", left: bounds.x, top: bounds.y };
+  if (buttonColor) (style as CSSProperties & Record<string, string>)["--console-button-color"] = colorToCss(buttonColor) ?? "";
+  return style;
+}
+
+function insetCss(insets: RealtimeInsets): string {
+  return `${insets.top}px ${insets.right}px ${insets.bottom}px ${insets.left}px`;
+}
+
+function colorToCss(color: RealtimeColor | null | undefined): string | undefined {
+  return color ? `rgba(${color.red},${color.green},${color.blue},${color.alpha / 255})` : undefined;
 }

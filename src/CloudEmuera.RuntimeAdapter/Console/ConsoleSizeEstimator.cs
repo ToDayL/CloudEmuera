@@ -42,6 +42,7 @@ internal static class ConsoleSizeEstimator
             ImageNode image => MeasureImage(image),
             SpriteNode sprite => MeasureSprite(sprite),
             ShapeNode shape => MeasureShape(shape),
+            DivNode div => MeasureDiv(div),
             HtmlIslandNode island => MeasureHtmlIsland(island),
             _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Unknown console node type.")
         };
@@ -114,7 +115,7 @@ internal static class ConsoleSizeEstimator
         ConsoleNodeMetrics result = new(
             NodeCount: 1,
             TextLength: button.Value.Length + (button.Tooltip?.Length ?? 0),
-            EstimatedBytes: checked(80L + button.Value.Length * 2L + (button.Tooltip?.Length ?? 0) * 2L));
+            EstimatedBytes: checked(80L + button.Value.Length * 2L + (button.Tooltip?.Length ?? 0) * 2L + (button.PositionX is null ? 0 : 8L)));
         foreach (ConsoleNode child in button.Children)
         {
             result += MeasureNode(child);
@@ -140,12 +141,37 @@ internal static class ConsoleSizeEstimator
     private static ConsoleNodeMetrics MeasureShape(ShapeNode shape) => new(
         NodeCount: 1,
         TextLength: 0,
-        EstimatedBytes: checked(96L + shape.Points.Count * 16L));
+        EstimatedBytes: checked(96L + shape.Points.Count * 16L + (shape.Fill is null ? 0 : 4L) +
+            (shape.Stroke is null ? 0 : 4L) + (shape.ButtonColor is null ? 0 : 4L)));
 
-    private static ConsoleNodeMetrics MeasureHtmlIsland(HtmlIslandNode island) => new(
-        NodeCount: 1,
-        TextLength: 0,
-        EstimatedBytes: checked(96L + MeasureHtmlNode(island.Root)));
+    private static ConsoleNodeMetrics MeasureDiv(DivNode div)
+    {
+        long boxBytes = div.Box is null
+            ? 0
+            : 4L * 4L + 4L * 4L + div.Box.BorderColors.Count(color => color is not null) * 4L;
+        ConsoleNodeMetrics result = new(1, 0, checked(128L + div.Children.Count * 8L + boxBytes +
+            (div.Background is null ? 0 : 4L)));
+        foreach (ConsoleNode child in div.Children)
+            result += MeasureNode(child);
+        return result;
+    }
+
+    private static ConsoleNodeMetrics MeasureHtmlIsland(HtmlIslandNode island)
+    {
+        if (island.StructuredNodes is { } nodes)
+        {
+            ConsoleNodeMetrics nested = MeasureNodes(nodes);
+            return new(
+                NodeCount: checked(1 + nested.NodeCount),
+                TextLength: nested.TextLength,
+                EstimatedBytes: checked(96L + nested.EstimatedBytes));
+        }
+
+        return new(
+            NodeCount: 1,
+            TextLength: 0,
+            EstimatedBytes: checked(96L + MeasureHtmlNode(island.Root!)));
+    }
 
     private static long MeasureHtmlNode(ConsoleHtmlNode node) => node switch
     {
@@ -160,11 +186,12 @@ internal static class ConsoleSizeEstimator
         SpriteDrawable sprite => checked(128L + sprite.DrawableId.Length * 2L + sprite.AssetId.Value.Length * 2L
             + sprite.AnimationFrames.Sum(frame => 64L + frame.AssetId.Value.Length * 2L)),
         ShapeDrawable shape => checked(112L + shape.DrawableId.Length * 2L + shape.Points.Count * 16L),
-        HtmlIslandDrawable island => checked(112L + island.DrawableId.Length * 2L + MeasureHtmlNode(island.Root)),
+        HtmlIslandDrawable island => checked(112L + island.DrawableId.Length * 2L +
+            (island.StructuredNodes is { } nodes ? MeasureNodes(nodes).EstimatedBytes : MeasureHtmlNode(island.Root!))),
         RasterDrawable raster => checked(112L + raster.DrawableId.Length * 2L + raster.PngData.Count + (raster.HoverPngData?.Count ?? 0)),
         _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Unknown canvas drawable type.")
     };
 
     private static long MeasureStyle(ConsoleTextStyle style) =>
-        checked(16L + (style.Foreground is null ? 0 : 4) + (style.Background is null ? 0 : 4));
+        checked(16L + (style.Foreground is null ? 0 : 4) + (style.Background is null ? 0 : 4) + (style.ButtonColor is null ? 0 : 4));
 }

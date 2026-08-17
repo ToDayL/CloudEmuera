@@ -45,12 +45,20 @@ internal sealed class EmueraConsole
     private int redrawIntervalMilliseconds;
     private long canvasDrawableId;
     private readonly List<ConsoleNode> pendingLine = [];
+    private readonly List<PendingBufferedLine> pendingBufferedLines = [];
+    private ConsoleLineAlignment? pendingLineAlignment;
+    private bool pendingLineNoWrap;
     private StringStyle stringStyle;
     private readonly List<string> runtimeMessages = [];
     private readonly List<string> runtimeWarnings = [];
     private readonly List<string> runtimeSystemMessages = [];
     private readonly List<string> runtimeDebugMessages = [];
     private bool outputEnabled;
+
+    private sealed record PendingBufferedLine(
+        IReadOnlyList<ConsoleNode> Nodes,
+        ConsoleLineAlignment? Alignment,
+        bool NoWrap);
 
     public EmueraConsole(
         IGameConsole adapter,
@@ -196,14 +204,67 @@ internal sealed class EmueraConsole
         }
     }
 
+    private UpstreamHtmlTranslationResult TranslateHtmlFragment(
+        string fragment,
+        UpstreamHtmlParseMode mode)
+    {
+        int fontSize = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize);
+        ConsoleContractLimits limits = HtmlContractLimits;
+        try
+        {
+            UpstreamHtmlFragment parsed = HtmlManager.ParseFragment(fragment, new UpstreamHtmlParseOptions
+            {
+                Mode = mode,
+                Budget = new UpstreamHtmlParseBudget(
+                    limits.MaxHtmlInputLength,
+                    limits.MaxHtmlTagCount,
+                    limits.MaxHtmlNestingDepth,
+                    limits.MaxHtmlSegmentCount,
+                    limits.MaxHtmlPartCount,
+                    limits.MaxHtmlTextLength)
+            });
+            return UpstreamHtmlTranslator.Translate(parsed, new UpstreamHtmlTranslationContext(
+                limits,
+                fontSize,
+                Math.Max(fontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight),
+                ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.ForeColor),
+                ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.FocusColor),
+                generation,
+                imageResolver,
+                mode));
+        }
+        catch (UpstreamHtmlBudgetExceededException exception)
+        {
+            throw new NotSupportedException(exception.ReasonCode, exception);
+        }
+        catch (UpstreamHtmlTranslationException exception)
+        {
+            throw new NotSupportedException(exception.ReasonCode, exception);
+        }
+        catch (ConsoleContractException exception)
+        {
+            throw new NotSupportedException(MapHtmlContractFailure(exception.Reason), exception);
+        }
+        catch (OverflowException exception)
+        {
+            throw new NotSupportedException("EMUERA_HTML_OUTPUT_LIMIT", exception);
+        }
+    }
+
     public void PrintHtml(string fragment, bool toPrintBuffer)
     {
-        EmueraHtmlParseResult result = new EmueraHtmlParser().ParseWithDiagnostics(fragment);
-        if (result.WasFailClosed)
-            throw new NotSupportedException("The HTML fragment is outside the headless allowlist.");
-        foreach (ConsoleNode node in result.Nodes)
-            AppendNode(node);
-        FlushPendingLine(force: true);
+        if (string.IsNullOrEmpty(fragment) || !Enabled)
+            return;
+
+        UpstreamHtmlParseMode mode = toPrintBuffer
+            ? UpstreamHtmlParseMode.PrintBufferParts
+            : UpstreamHtmlParseMode.DisplayLines;
+        UpstreamHtmlTranslationResult translated = TranslateHtmlFragment(fragment, mode);
+        if (!toPrintBuffer)
+            FlushPendingLine();
+        AppendHtmlNodes(translated.Nodes, translated.Alignment, translated.NoWrap, toPrintBuffer);
+        if (!toPrintBuffer)
+            FlushPendingLine();
     }
 
     public void PrintImg(string name, string nameb, string namem, MixedNum height, MixedNum width, MixedNum ypos)
@@ -221,15 +282,28 @@ internal sealed class EmueraConsole
             ? checked(resolved.DestinationWidth * targetHeight / resolved.DestinationHeight)
             : width.isPx ? width.num : checked(fontSize * width.num / 100);
         int y = ypos is null ? 0 : ypos.isPx ? ypos.num : checked(fontSize * ypos.num / 100);
+        AppendNode(CreateSpriteNode(name, resolved, targetWidth, targetHeight, y, hover, mapping));
+    }
+
+    private static SpriteNode CreateSpriteNode(
+        string name,
+        RuntimeSpriteDefinition resolved,
+        int targetWidth,
+        int targetHeight,
+        int y,
+        RuntimeSpriteDefinition hover,
+        RuntimeSpriteDefinition mapping)
+    {
         if (targetWidth == 0 || targetHeight == 0)
             throw new NotSupportedException("Sprite destination dimensions cannot be zero.");
+
         int positiveWidth = Math.Abs(targetWidth);
         int positiveHeight = Math.Abs(targetHeight);
         int destinationX = targetWidth < 0 ? positiveWidth : 0;
         int destinationY = y + (targetHeight < 0 ? positiveHeight : 0);
         destinationX = checked(destinationX + resolved.DestinationOffsetX * positiveWidth / resolved.DestinationWidth);
         destinationY = checked(destinationY + resolved.DestinationOffsetY * positiveHeight / resolved.DestinationHeight);
-        AppendNode(new SpriteNode(
+        return new SpriteNode(
             new ConsoleAssetId(resolved.AssetId),
             new ConsoleRect(resolved.SourceX, resolved.SourceY, resolved.SourceWidth, resolved.SourceHeight),
             new ConsoleRect(destinationX, destinationY, positiveWidth, positiveHeight),
@@ -242,7 +316,7 @@ internal sealed class EmueraConsole
                 new ConsoleAssetId(frame.AssetId),
                 new ConsoleRect(frame.SourceX, frame.SourceY, frame.SourceWidth, frame.SourceHeight),
                 new ConsolePoint(frame.OffsetX, frame.OffsetY),
-                frame.DurationMilliseconds))));
+                frame.DurationMilliseconds)));
     }
 
     public void WaitInput(InputRequest request)
@@ -422,12 +496,14 @@ internal sealed class EmueraConsole
     {
         if (args.Length < 1 || args[0] is not string fragment)
             throw new NotSupportedException("An HTML Island requires a fragment.");
+        UpstreamHtmlTranslationResult translated = TranslateHtmlFragment(
+            fragment,
+            UpstreamHtmlParseMode.DisplayLines);
         FlushPendingLine();
-        HtmlIslandNode island = new EmueraHtmlParser().ParseIsland(fragment);
         htmlIslandDrawableId ??= "html-island";
         EmitStructured(ConsoleOperation.UpsertDrawable(new HtmlIslandDrawable(
             htmlIslandDrawableId,
-            island.Root,
+            translated.Nodes,
             new ConsoleRect(0, 0, 1, 1),
             zIndex: 1)));
     }
@@ -581,26 +657,83 @@ internal sealed class EmueraConsole
         }
     }
 
-    private void AppendNode(ConsoleNode node)
+    private void AppendNode(ConsoleNode node, ConsoleLineAlignment? alignment = null, bool? noWrap = null)
     {
+        if (alignment is not null)
+            pendingLineAlignment = alignment;
+        if (noWrap is not null)
+            pendingLineNoWrap = noWrap.Value;
         if (node is LineBreakNode)
             FlushPendingLine(force: true);
         else
             pendingLine.Add(node);
     }
 
-    private void FlushPendingLine(bool force = false, bool temporary = false, ConsoleLineAlignment? alignment = null)
+    private void AppendHtmlNodes(
+        IReadOnlyList<ConsoleNode> nodes,
+        ConsoleLineAlignment alignment,
+        bool noWrap,
+        bool toPrintBuffer)
     {
-        if (!outputEnabled || (!force && pendingLine.Count == 0))
+        foreach (ConsoleNode node in nodes)
+        {
+            if (toPrintBuffer && node is LineBreakNode)
+            {
+                pendingBufferedLines.Add(new PendingBufferedLine(
+                    pendingLine.ToArray(),
+                    pendingLineAlignment ?? alignment,
+                    pendingLineNoWrap || noWrap));
+                pendingLine.Clear();
+                pendingLineAlignment = null;
+                pendingLineNoWrap = false;
+                continue;
+            }
+
+            AppendNode(node, alignment, noWrap);
+        }
+    }
+
+    private void FlushPendingLine(
+        bool force = false,
+        bool temporary = false,
+        ConsoleLineAlignment? alignment = null,
+        bool? noWrap = null)
+    {
+        if (!outputEnabled)
             return;
-        string id = $"emuera-line-{checked(++lineId):x}";
-        IReadOnlyList<ConsoleNode> projectedNodes = AutoButtonize(pendingLine);
-        EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(id, projectedNodes, alignment ?? ToAlignment(), temporary)));
+
+        if (!force && pendingLine.Count == 0 && pendingBufferedLines.Count == 0)
+            return;
+
+        var lines = new List<PendingBufferedLine>(pendingBufferedLines);
+        if (pendingLine.Count > 0 || force)
+        {
+            lines.Add(new PendingBufferedLine(
+                pendingLine.ToArray(),
+                alignment ?? pendingLineAlignment,
+                noWrap ?? pendingLineNoWrap));
+        }
+
+        foreach (PendingBufferedLine line in lines)
+        {
+            string id = $"emuera-line-{checked(++lineId):x}";
+            IReadOnlyList<ConsoleNode> projectedNodes = AutoButtonize(line.Nodes);
+            EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(
+                id,
+                projectedNodes,
+                line.Alignment ?? ToAlignment(),
+                temporary,
+                line.NoWrap)));
+            lastLineId = id;
+            lastLineTemporary = temporary;
+            logicalLineCount = checked(logicalLineCount + 1);
+            DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+        }
+
+        pendingBufferedLines.Clear();
         pendingLine.Clear();
-        lastLineId = id;
-        lastLineTemporary = temporary;
-        logicalLineCount = checked(logicalLineCount + 1);
-        DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+        pendingLineAlignment = null;
+        pendingLineNoWrap = false;
     }
 
     /// <summary>
@@ -772,6 +905,28 @@ internal sealed class EmueraConsole
             decorations,
             string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname);
     }
+
+    private ConsoleContractLimits HtmlContractLimits => adapter is StructuredGameConsole structured
+        ? structured.StateStore.Options.ContractLimits
+        : ConsoleContractLimits.Default;
+
+    private static string MapHtmlContractFailure(ConsoleContractViolationReason reason) => reason switch
+    {
+        ConsoleContractViolationReason.TextTooLong or
+        ConsoleContractViolationReason.TooltipTooLong or
+        ConsoleContractViolationReason.ButtonValueTooLong or
+        ConsoleContractViolationReason.AltTextTooLong or
+        ConsoleContractViolationReason.BatchTooLarge or
+        ConsoleContractViolationReason.TooManyButtonLabelNodes or
+        ConsoleContractViolationReason.NodeTooDeep or
+        ConsoleContractViolationReason.InvalidGeometry or
+        ConsoleContractViolationReason.InvalidImageDimension or
+        ConsoleContractViolationReason.ImageTooLarge or
+        ConsoleContractViolationReason.GeometryTooLarge or
+        ConsoleContractViolationReason.InvalidSpriteFrame or
+        ConsoleContractViolationReason.HtmlNodeLimitExceeded => "EMUERA_HTML_OUTPUT_LIMIT",
+        _ => "EMUERA_HTML_TRANSLATION_UNSUPPORTED"
+    };
 
     private static CloudEmuera.RuntimeAdapter.ConsoleColor? ToConsoleColor(Color color) => color.IsEmpty
         ? null

@@ -216,7 +216,8 @@ public static class StructuredConsoleWireMapper
                 R.ConsoleLineAlignment.Right => W.LineAlignment.Right,
                 _ => throw new InvalidDataException("The line alignment is unknown.")
             },
-            Temporary = line.Temporary
+            Temporary = line.Temporary,
+            NoWrap = line.NoWrap
         };
         result.Nodes.AddRange(line.Nodes.Select(ToProto));
         return result;
@@ -232,7 +233,7 @@ public static class StructuredConsoleWireMapper
             W.LineAlignment.Right => R.ConsoleLineAlignment.Right,
             _ => throw new InvalidDataException("The line alignment is unknown.")
         };
-        return new R.ConsoleLine(line.LineId, line.Nodes.Select(FromProto), alignment, line.Temporary);
+        return new R.ConsoleLine(line.LineId, line.Nodes.Select(FromProto), alignment, line.Temporary, line.NoWrap);
     }
 
     public static W.ConsoleNode ToProto(R.ConsoleNode node)
@@ -253,13 +254,11 @@ public static class StructuredConsoleWireMapper
                     Value = button.Value,
                     Tooltip = button.Tooltip ?? string.Empty,
                     Enabled = button.Enabled,
-                    Generation = button.Generation
+                    Generation = button.Generation,
+                    PositionX = button.PositionX ?? 0,
+                    HasPositionX = button.PositionX is not null
                 };
-                result.Button.Label.AddRange(button.Children.OfType<R.TextNode>().Select(item => new W.TextNode
-                {
-                    Text = item.Text,
-                    Style = ToProto(item.Style)
-                }));
+                result.Button.Label.AddRange(button.Children.Select(ToProto));
                 break;
             case R.ImageNode image:
                 result.Image = new W.ImageNode
@@ -320,16 +319,38 @@ public static class StructuredConsoleWireMapper
                     result.Shape.Fill = ToProto(fill);
                 if (shape.Stroke is { } stroke)
                     result.Shape.Stroke = ToProto(stroke);
+                result.Shape.HasButtonColor = shape.ButtonColor is not null;
+                if (shape.ButtonColor is { } buttonColor)
+                    result.Shape.ButtonColor = ToProto(buttonColor);
                 result.Shape.Points.AddRange(shape.Points.Select(ToProto));
+                break;
+            case R.DivNode div:
+                result.Div = new W.DivNode
+                {
+                    Bounds = ToProto(div.Bounds),
+                    ZIndex = div.ZIndex,
+                    IsRelative = div.IsRelative,
+                    HasBackground = div.Background is not null,
+                    HasBox = div.Box is not null
+                };
+                if (div.Background is { } background)
+                    result.Div.Background = ToProto(background);
+                if (div.Box is { } box)
+                    result.Div.Box = ToProto(box);
+                result.Div.Children.AddRange(div.Children.Select(ToProto));
                 break;
             case R.HtmlIslandNode island:
                 result.HtmlIsland = new W.HtmlIslandNode
                 {
-                    Root = ToProtoHtml(island.Root),
-                    HasLayout = island.Layout is not null
+                    HasLayout = island.Layout is not null,
+                    HasStructuredNodes = island.IsStructured
                 };
                 if (island.Layout is { } layout)
                     result.HtmlIsland.Layout = ToProto(layout);
+                if (island.StructuredNodes is { } structuredNodes)
+                    result.HtmlIsland.Nodes.AddRange(structuredNodes.Select(ToProto));
+                else
+                    result.HtmlIsland.Root = ToProtoHtml(island.Root!);
                 break;
             default:
                 throw new InvalidDataException("The runtime node is outside the structured protocol.");
@@ -346,11 +367,12 @@ public static class StructuredConsoleWireMapper
             W.ConsoleNode.KindOneofCase.Text => new R.TextNode(node.Text.Text, FromProto(node.Text.Style)),
             W.ConsoleNode.KindOneofCase.LineBreak => R.LineBreakNode.Instance,
             W.ConsoleNode.KindOneofCase.Button => new R.ButtonNode(
-                node.Button.Label.Select(label => new R.TextNode(label.Text, FromProto(label.Style))),
+                node.Button.Label.Select(FromProto),
                 node.Button.Value,
                 string.IsNullOrEmpty(node.Button.Tooltip) ? null : node.Button.Tooltip,
                 node.Button.Enabled,
-                node.Button.Generation),
+                node.Button.Generation,
+                node.Button.HasPositionX ? node.Button.PositionX : null),
             W.ConsoleNode.KindOneofCase.Image => new R.ImageNode(
                 new R.ConsoleAssetId(node.Image.AssetId),
                 node.Image.HasSourceRect ? FromProto(node.Image.SourceRect) : null,
@@ -381,10 +403,22 @@ public static class StructuredConsoleWireMapper
                 node.Shape.HasFill ? FromProto(node.Shape.Fill) : null,
                 node.Shape.HasStroke ? FromProto(node.Shape.Stroke) : null,
                 node.Shape.ZIndex,
-                node.Shape.Points.Select(FromProto)),
-            W.ConsoleNode.KindOneofCase.HtmlIsland => new R.HtmlIslandNode(
-                FromProtoHtml(node.HtmlIsland.Root),
-                node.HtmlIsland.HasLayout ? FromProto(node.HtmlIsland.Layout) : null),
+                node.Shape.Points.Select(FromProto),
+                node.Shape.HasButtonColor ? FromProto(node.Shape.ButtonColor) : null),
+            W.ConsoleNode.KindOneofCase.HtmlIsland => node.HtmlIsland.HasStructuredNodes
+                ? new R.HtmlIslandNode(
+                    node.HtmlIsland.Nodes.Select(FromProto),
+                    node.HtmlIsland.HasLayout ? FromProto(node.HtmlIsland.Layout) : null)
+                : new R.HtmlIslandNode(
+                    FromProtoHtml(node.HtmlIsland.Root),
+                    node.HtmlIsland.HasLayout ? FromProto(node.HtmlIsland.Layout) : null),
+            W.ConsoleNode.KindOneofCase.Div => new R.DivNode(
+                node.Div.Children.Select(FromProto),
+                FromProto(node.Div.Bounds),
+                node.Div.ZIndex,
+                node.Div.HasBackground ? FromProto(node.Div.Background) : null,
+                node.Div.IsRelative,
+                node.Div.HasBox ? FromProto(node.Div.Box) : null),
             _ => throw new InvalidDataException("The structured node has no known payload.")
         };
     }
@@ -450,11 +484,15 @@ public static class StructuredConsoleWireMapper
                 result.HtmlIsland = new W.HtmlIslandDrawable
                 {
                     DrawableId = island.DrawableId,
-                    Root = ToProtoHtml(island.Root),
                     Bounds = ToProto(island.Bounds),
                     ZIndex = island.ZIndex,
-                    Opacity = island.Opacity
+                    Opacity = island.Opacity,
+                    HasStructuredNodes = island.IsStructured
                 };
+                if (island.StructuredNodes is { } structuredNodes)
+                    result.HtmlIsland.Nodes.AddRange(structuredNodes.Select(ToProto));
+                else
+                    result.HtmlIsland.Root = ToProtoHtml(island.Root!);
                 break;
             case R.RasterDrawable raster:
                 result.Raster = new W.RasterDrawable
@@ -504,12 +542,19 @@ public static class StructuredConsoleWireMapper
                 drawable.Shape.ZIndex,
                 drawable.Shape.Opacity,
                 drawable.Shape.Points.Select(FromProto)),
-            W.CanvasDrawable.KindOneofCase.HtmlIsland => new R.HtmlIslandDrawable(
-                drawable.HtmlIsland.DrawableId,
-                FromProtoHtml(drawable.HtmlIsland.Root),
-                FromProto(drawable.HtmlIsland.Bounds),
-                drawable.HtmlIsland.ZIndex,
-                drawable.HtmlIsland.Opacity),
+            W.CanvasDrawable.KindOneofCase.HtmlIsland => drawable.HtmlIsland.HasStructuredNodes
+                ? new R.HtmlIslandDrawable(
+                    drawable.HtmlIsland.DrawableId,
+                    drawable.HtmlIsland.Nodes.Select(FromProto),
+                    FromProto(drawable.HtmlIsland.Bounds),
+                    drawable.HtmlIsland.ZIndex,
+                    drawable.HtmlIsland.Opacity)
+                : new R.HtmlIslandDrawable(
+                    drawable.HtmlIsland.DrawableId,
+                    FromProtoHtml(drawable.HtmlIsland.Root),
+                    FromProto(drawable.HtmlIsland.Bounds),
+                    drawable.HtmlIsland.ZIndex,
+                    drawable.HtmlIsland.Opacity),
             W.CanvasDrawable.KindOneofCase.Raster => new R.RasterDrawable(
                 drawable.Raster.DrawableId,
                 drawable.Raster.PngData.ToByteArray(),
@@ -823,12 +868,15 @@ public static class StructuredConsoleWireMapper
             FontSize = style.FontSize,
             LineHeight = style.LineHeight,
             HasForeground = style.Foreground is not null,
-            HasBackground = style.Background is not null
+            HasBackground = style.Background is not null,
+            HasButtonColor = style.ButtonColor is not null
         };
         if (style.Foreground is { } foreground)
             result.Foreground = ToProto(foreground);
         if (style.Background is { } background)
             result.Background = ToProto(background);
+        if (style.ButtonColor is { } buttonColor)
+            result.ButtonColor = ToProto(buttonColor);
         return result;
     }
 
@@ -838,7 +886,8 @@ public static class StructuredConsoleWireMapper
         (R.ConsoleFontStyle)style.Decorations,
         string.IsNullOrEmpty(style.FontFamily) ? "default" : style.FontFamily,
         style.FontSize == 0 ? 16 : style.FontSize,
-        style.LineHeight);
+        style.LineHeight,
+        style.HasButtonColor ? FromProto(style.ButtonColor) : null);
 
     private static W.TextStyle ToProtoFont(R.ConsoleFontSpec font) => new()
     {
@@ -879,6 +928,50 @@ public static class StructuredConsoleWireMapper
     private static W.Point ToProto(R.ConsolePoint point) => new() { X = point.X, Y = point.Y };
 
     private static R.ConsolePoint FromProto(W.Point point) => new(point.X, point.Y);
+
+    private static W.BoxModel ToProto(R.ConsoleBoxModel box)
+    {
+        var result = new W.BoxModel
+        {
+            Margin = ToProto(box.Margin),
+            Padding = ToProto(box.Padding),
+            Border = ToProto(box.Border),
+            Radius = ToProto(box.Radius)
+        };
+        for (int index = 0; index < 4; index++)
+        {
+            if (box.BorderColors[index] is { } color)
+            {
+                result.BorderColors.Add(ToProto(color));
+                result.BorderColorMask |= 1u << index;
+            }
+            else
+            {
+                result.BorderColors.Add(new W.ConsoleColor());
+            }
+        }
+        return result;
+    }
+
+    private static R.ConsoleBoxModel FromProto(W.BoxModel box) => new(
+        FromProto(box.Margin),
+        FromProto(box.Padding),
+        FromProto(box.Border),
+        FromProto(box.Radius),
+        Enumerable.Range(0, 4).Select(index =>
+            index < box.BorderColors.Count && (box.BorderColorMask & (1u << index)) != 0
+                ? (R.ConsoleColor?)FromProto(box.BorderColors[index])
+                : null));
+
+    private static W.Insets ToProto(R.ConsoleInsets insets) => new()
+    {
+        Top = insets.Top,
+        Right = insets.Right,
+        Bottom = insets.Bottom,
+        Left = insets.Left
+    };
+
+    private static R.ConsoleInsets FromProto(W.Insets insets) => new(insets.Top, insets.Right, insets.Bottom, insets.Left);
 
     private static W.InputType ToProto(R.ConsoleInputType inputType) => inputType switch
     {

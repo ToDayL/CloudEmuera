@@ -34,6 +34,15 @@ public sealed record ConsoleContractLimits
 
     public int MaxHtmlNestingDepth { get; init; } = 16;
 
+    /// <summary>Maximum semantic segments produced by one Emuera HTML fragment.</summary>
+    public int MaxHtmlSegmentCount { get; init; } = 512;
+
+    /// <summary>Maximum semantic parts produced by one Emuera HTML fragment.</summary>
+    public int MaxHtmlPartCount { get; init; } = 2_048;
+
+    /// <summary>Maximum aggregate UTF-16 text emitted by one Emuera HTML fragment.</summary>
+    public int MaxHtmlTextLength { get; init; } = 524_288;
+
     public int MaxPromptIdLength { get; init; } = 128;
 
     public int MaxClientMessageIdLength { get; init; } = 128;
@@ -101,6 +110,9 @@ public sealed record ConsoleContractLimits
         ValidatePositive(MaxHtmlInputLength, nameof(MaxHtmlInputLength));
         ValidatePositive(MaxHtmlTagCount, nameof(MaxHtmlTagCount));
         ValidatePositive(MaxHtmlNestingDepth, nameof(MaxHtmlNestingDepth));
+        ValidatePositive(MaxHtmlSegmentCount, nameof(MaxHtmlSegmentCount));
+        ValidatePositive(MaxHtmlPartCount, nameof(MaxHtmlPartCount));
+        ValidatePositive(MaxHtmlTextLength, nameof(MaxHtmlTextLength));
         ValidatePositive(MaxPromptIdLength, nameof(MaxPromptIdLength));
         ValidatePositive(MaxClientMessageIdLength, nameof(MaxClientMessageIdLength));
         ValidatePositive(MaxPromptTextLength, nameof(MaxPromptTextLength));

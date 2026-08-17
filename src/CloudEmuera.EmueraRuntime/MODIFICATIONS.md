@@ -17,6 +17,24 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-17 — P1-07 upstream HTML parser extraction
+
+- Modified the pinned upstream HTML display area: `Upstream/Emuera/UI/Game/HtmlManager.cs`,
+  `HtmlSemanticModel.cs`, `UpstreamHtmlFragmentMaterializer.cs`, `ConsoleStyledString.cs`,
+  `ConsoleImagePart.cs`, `ConsoleShapePart.cs` and `Runtime/Utils/EvilMask/ConsoleDivPart.cs`.
+  `HtmlManager.ParseFragment` now exposes the original state machine as a neutral internal
+  fragment with bounded input/tag/depth/output accounting; no raw HTML, URL, GDI object or
+  desktop UI object crosses the headless boundary. The part classes retain only direct
+  semantic values needed by that materialization, and the headless build avoids font/GDI
+  lookup while the desktop build remains on the original path.
+- `UpstreamHeadless/UpstreamHtmlTranslator.cs` maps that fragment once into bounded
+  RuntimeAdapter nodes. `HeadlessEmueraConsole.PrintHtml` and `PrintHTMLIsland` share the
+  same parse/translation path, preserve display-line versus print-buffer boundaries, and
+  fail atomically on CloudEmuera resource/capacity errors.
+- Requirements/decisions: P1-07 HTML parser reuse plan, ADR-0024, ADR-0018 and ADR-0019.
+- Verification: dev-Docker solution build, HTML_PRINT/HTML Island RuntimeBridge tests,
+  structured IPC/realtime mapper tests and Web typecheck.
+
 ## 2026-08-12 — P1-07 structured Console/Input/Media boundary
 
 - Headless glue changes (the pinned `Upstream/` source tree remains unchanged):

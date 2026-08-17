@@ -36,6 +36,49 @@ describe("realtime codec", () => {
     expect(decoded.type).toBe("session.snapshot");
   });
 
+  it("decodes native Emuera display semantics without dropping layout fields", () => {
+    const color = { red: 1, green: 2, blue: 3, alpha: 255 };
+    const style = { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null, buttonColor: color };
+    const state = {
+      ...emptyState,
+      scrollback: [{ lineId: "line-1", nodes: [{
+        type: "div", bounds: { x: 1, y: 2, width: 30, height: 12 }, zIndex: 3, background: color, isRelative: false,
+        box: { margin: { top: 1, right: 2, bottom: 3, left: 4 }, padding: { top: 5, right: 6, bottom: 7, left: 8 }, border: { top: 1, right: 1, bottom: 1, left: 1 }, radius: { top: 2, right: 3, bottom: 4, left: 5 }, borderColors: [color, null, color, null] },
+        children: [{ type: "button", children: [{ type: "text", text: "go", style }], value: "go", tooltip: null, enabled: true, generation: 1, positionX: 42 }],
+      }], alignment: "left", temporary: false }],
+    };
+    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
+    const node = (decoded as Extract<typeof decoded, { type: "session.snapshot" }>).payload.consoleState.scrollback[0].nodes[0];
+    expect(node.type).toBe("div");
+    if (node.type === "div") {
+      expect(node.isRelative).toBe(false);
+      expect(node.box?.borderColors[1]).toBeNull();
+      expect(node.children[0].type).toBe("button");
+      if (node.children[0].type === "button") expect(node.children[0].positionX).toBe(42);
+    }
+  });
+
+  it("accepts structured upstream HTML islands without falling back to legacy HTML", () => {
+    const style = { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null };
+    const state = {
+      ...emptyState,
+      scrollback: [{ lineId: "island-line", alignment: "left", temporary: false, noWrap: true, nodes: [{
+        type: "htmlIsland",
+        nodes: [{
+          type: "div", bounds: { x: 1, y: 2, width: 30, height: 12 }, zIndex: 3, background: null, isRelative: true, box: null,
+          children: [{ type: "button", children: [{ type: "text", text: "Go", style }], value: "go", tooltip: null, enabled: true, generation: 4 }],
+        }],
+      }] }],
+    };
+    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
+    const node = (decoded as Extract<typeof decoded, { type: "session.snapshot" }>).payload.consoleState.scrollback[0].nodes[0];
+    expect(node.type).toBe("htmlIsland");
+    if (node.type === "htmlIsland") {
+      expect(node.root).toBeUndefined();
+      expect(node.nodes?.[0].type).toBe("div");
+    }
+  });
+
   it("rejects duplicate keys, unknown fields, unsupported HTML and invalid PNG raster", () => {
     expect(() => decodeRealtimeMessage('{"protocolVersion":1,"type":"server.hello","messageId":"m","messageId":"n","payload":{}}')).toThrowError(RealtimeDecodeError);
     expect(() => decodeRealtimeMessage(envelope("server.hello", { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c", serverNowUnixMilliseconds: 1, heartbeatIntervalMilliseconds: 1, heartbeatTimeoutMilliseconds: 1, maxSubscriptionsPerConnection: 1, maxPendingInputsPerConnection: 1, serverMessageMaxBytes: 1, capabilityDigest: CAPABILITY_DIGEST, extra: true }))).toThrowError("不受支持的字段");

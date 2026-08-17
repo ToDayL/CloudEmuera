@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer } from "./SafeHtmlRenderer";
-import type { BackgroundLayer, CanvasScene, HitRegion, RealtimeDrawable, WindowMetadata } from "../realtime/protocol";
-import type { ConsoleInputEvent } from "./ScrollbackRenderer";
+import type { BackgroundLayer, CanvasScene, HitRegion, Prompt, RealtimeDrawable, WindowMetadata } from "../realtime/protocol";
+import { NodeRenderer, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { SpriteCanvas } from "./SpriteRenderer";
 
 const pngSignature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets, onInput, onRenderError, interactive = true }: {
+export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets, onInput, onRenderError, interactive = true, currentPrompt }: {
   scene: CanvasScene;
   backgroundLayers: BackgroundLayer[];
   windowMetadata: WindowMetadata;
@@ -16,6 +16,7 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
   onInput: (event: ConsoleInputEvent) => void;
   onRenderError?: (message: string) => void;
   interactive?: boolean;
+  currentPrompt?: Prompt | null;
 }) {
   const [hoveredRasterId, setHoveredRasterId] = useState<string | null>(null);
 
@@ -39,7 +40,12 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
     {ordered.map((drawable, index) => {
       const layer = 100 + index;
       if (drawable.type === "sprite") return <div key={drawable.drawableId} className="canvas-sprite-drawable" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }} aria-hidden="true"><SpriteCanvas sprite={drawable} assets={assets} alt="游戏精灵" width={drawable.bounds.width} height={drawable.bounds.height} onRenderError={onRenderError} /></div>;
-      if (drawable.type === "htmlIsland") return <div key={drawable.drawableId} className="canvas-html-island" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }}><SafeHtmlRenderer node={drawable.root} assets={assets} onRenderError={onRenderError} /></div>;
+      if (drawable.type === "htmlIsland") {
+        const islandNodes = drawable.nodes;
+        return <div key={drawable.drawableId} className="canvas-html-island" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }}>
+          {islandNodes ? islandNodes.map((node, nodeIndex) => <NodeRenderer key={`${drawable.drawableId}-${nodeIndex}`} node={node} assets={assets} currentPrompt={currentPrompt} currentButtonGeneration={latestButtonGeneration(islandNodes)} onInput={onInput} onRenderError={onRenderError} />) : <SafeHtmlRenderer node={drawable.root!} assets={assets} onRenderError={onRenderError} />}
+        </div>;
+      }
       return <DrawableCanvas key={drawable.drawableId} drawable={drawable} layer={layer} windowMetadata={windowMetadata} hoveredRasterId={hoveredRasterId} onRenderError={onRenderError} />;
     })}
     <div className="canvas-hit-layer" aria-label="游戏交互区域" style={{ zIndex: 10_000 }}>
@@ -156,6 +162,20 @@ function color(value: { red: number; green: number; blue: number; alpha: number 
 function clamp(value: number, minimum: number, maximum: number): number { return Math.min(maximum, Math.max(minimum, value)); }
 
 function stableStringOrder(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0; }
+
+function latestButtonGeneration(nodes: readonly import("../realtime/protocol").RealtimeNode[]): number {
+  let generation = 0;
+  for (const node of nodes) {
+    if (node.type === "button") {
+      generation = Math.max(generation, node.generation, latestButtonGeneration(node.children));
+    } else if (node.type === "div") {
+      generation = Math.max(generation, latestButtonGeneration(node.children));
+    } else if (node.type === "htmlIsland") {
+      generation = Math.max(generation, latestButtonGeneration(node.nodes ?? []));
+    }
+  }
+  return generation;
+}
 
 function pointInRect(point: { x: number; y: number }, rect: { x: number; y: number; width: number; height: number }): boolean {
   return point.x >= rect.x && point.y >= rect.y && point.x <= rect.x + rect.width && point.y <= rect.y + rect.height;

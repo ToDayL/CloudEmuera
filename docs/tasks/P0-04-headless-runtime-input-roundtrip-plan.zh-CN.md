@@ -271,7 +271,7 @@ P0-04 路径上不允许直接接受 host absolute path。文件枚举顺序必�
 | 普通 PRINT/PRINTFORM | `AppendNodesOperation(TextNode...)` |
 | PRINTL/换行 | 文本节点后接 `LineBreakNode` 或等价原子批次 |
 | 字体粗体/斜体/颜色 | 封闭的 `ConsoleTextStyle`，不传 `System.Drawing.Font/Color` |
-| HTML_PRINT | `EmueraHtmlParser` 的允许列表节点；禁用 raw HTML passthrough |
+| HTML_PRINT | 固定上游 `HtmlManager.ParseFragment` 经 headless translator 将 Emuera 伪 HTML 显示语义转换为结构化文本、按钮、图片、形状、对齐和 nowrap 节点；禁用 raw HTML passthrough |
 | 数值/字符串按钮 | `ButtonNode`，保留输入值和 tooltip 的安全语义 |
 | PRINT_IMG fixture Sprite | 经 image port 验证后的 `ImageNode(ConsoleAssetId, ...)` |
 | CLEARLINE/清屏 | P0-03 已有清除操作；若语义不足，先补 reducer 契约测试 |

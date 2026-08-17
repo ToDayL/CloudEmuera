@@ -8,6 +8,7 @@ public enum ConsoleNodeKind
     Image,
     Sprite,
     Shape,
+    Div,
     HtmlIsland
 }
 
@@ -60,7 +61,8 @@ public sealed class ButtonNode : ConsoleNode
         string value,
         string? tooltip = null,
         bool enabled = true,
-        long generation = 0)
+        long generation = 0,
+        int? positionX = null)
     {
         ArgumentNullException.ThrowIfNull(children);
         ConsoleContractValidation.ValidateText(
@@ -87,14 +89,6 @@ public sealed class ButtonNode : ConsoleNode
                 nameof(children));
         }
 
-        if (copy.Any(child => child is not TextNode))
-        {
-            throw new ConsoleContractException(
-                ConsoleContractViolationReason.InvalidNodeType,
-                "Button labels may contain TextNode values only.",
-                nameof(children));
-        }
-
         if (copy.Length > ConsoleContractLimits.Default.MaxButtonLabelNodeCount)
         {
             throw new ConsoleContractException(
@@ -109,7 +103,10 @@ public sealed class ButtonNode : ConsoleNode
         Enabled = enabled;
         if (generation < 0)
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Button generation cannot be negative.");
+        if (positionX is < -1_000_000 or > 1_000_000)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "Button x position is outside its limit.");
         Generation = generation;
+        PositionX = positionX;
     }
 
     public ButtonNode(
@@ -117,13 +114,14 @@ public sealed class ButtonNode : ConsoleNode
         IEnumerable<ConsoleNode> children,
         string? tooltip = null,
         bool enabled = true,
-        long generation = 0)
-        : this(children, value, tooltip, enabled, generation)
+        long generation = 0,
+        int? positionX = null)
+        : this(children, value, tooltip, enabled, generation, positionX)
     {
     }
 
-    public ButtonNode(string label, string value, string? tooltip = null, bool enabled = true, long generation = 0)
-        : this([new TextNode(label)], value, tooltip, enabled, generation)
+    public ButtonNode(string label, string value, string? tooltip = null, bool enabled = true, long generation = 0, int? positionX = null)
+        : this([new TextNode(label)], value, tooltip, enabled, generation, positionX)
     {
     }
 
@@ -138,6 +136,9 @@ public sealed class ButtonNode : ConsoleNode
     public bool Enabled { get; }
 
     public long Generation { get; }
+
+    /// <summary>Emuera <c>button pos</c> x coordinate in pixels.</summary>
+    public int? PositionX { get; }
 }
 
 public sealed class ImageNode : ConsoleNode
@@ -315,6 +316,9 @@ internal static class ConsoleNodeValidation
                 if (button.Generation < 0)
                     throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Button generation cannot be negative.");
 
+                if (button.PositionX is < -1_000_000 or > 1_000_000)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "Button x position is outside its limit.");
+
                 if (button.Tooltip is not null)
                 {
                     ConsoleContractValidation.ValidateText(
@@ -333,13 +337,6 @@ internal static class ConsoleNodeValidation
 
                 foreach (ConsoleNode child in button.Children)
                 {
-                    if (child is not TextNode)
-                    {
-                        throw new ConsoleContractException(
-                            ConsoleContractViolationReason.InvalidNodeType,
-                            "Button labels may contain TextNode values only.");
-                    }
-
                     ValidateNode(child, limits, depth + 1);
                 }
 
@@ -381,6 +378,12 @@ internal static class ConsoleNodeValidation
                 break;
             case ShapeNode shape:
                 shape.Validate(limits);
+                break;
+            case DivNode div:
+                if (div.Children.Count > limits.MaxBatchNodeCount)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.BatchTooLarge, "A div has too many child nodes.");
+                foreach (ConsoleNode child in div.Children)
+                    ValidateNode(child, limits, depth + 1);
                 break;
             case HtmlIslandNode island:
                 island.Validate(limits);

@@ -13,7 +13,7 @@ export function textStyleToCss(style: RealtimeTextStyle | null | undefined, asse
   if (!style) return undefined;
   const family = /^[A-Za-z0-9 _,'-]{1,80}$/.test(style.fontFamily) ? style.fontFamily : "inherit";
   const decorations = new Set(style.decorations.filter(value => ["bold", "italic", "underline", "line-through"].includes(value)));
-  return {
+  const result: CSSProperties = {
     color: colorToCss(style.foreground),
     backgroundColor: colorToCss(style.background),
     fontFamily: assets ? assets.fontFamily(style.fontFamily) : family,
@@ -23,6 +23,8 @@ export function textStyleToCss(style: RealtimeTextStyle | null | undefined, asse
     fontStyle: decorations.has("italic") ? "italic" : undefined,
     textDecoration: [decorations.has("underline") ? "underline" : "", decorations.has("line-through") ? "line-through" : ""].filter(Boolean).join(" ") || undefined,
   };
+  if (style.buttonColor) (result as CSSProperties & Record<string, string>)["--console-button-color"] = colorToCss(style.buttonColor) ?? "";
+  return result;
 }
 
 export function SafeHtmlRenderer({ node, assets, className, onRenderError }: { node: RealtimeHtmlNode; assets: AssetResolver; className?: string; onRenderError?: (message: string) => void }) {

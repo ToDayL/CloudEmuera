@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace CloudEmuera.Contracts.Realtime;
 
 public sealed record RealtimeSnapshot(
@@ -29,7 +31,8 @@ public sealed record RealtimeLine(
     string LineId,
     IReadOnlyList<RealtimeNode> Nodes,
     string Alignment,
-    bool Temporary);
+    bool Temporary,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool NoWrap = false);
 
 /// <summary>
 /// Closed display union. Type is a protocol discriminator, not CLR type
@@ -44,6 +47,7 @@ public sealed record RealtimeNode(
     string? Tooltip = null,
     bool? Enabled = null,
     long? Generation = null,
+    int? PositionX = null,
     string? AssetId = null,
     RealtimeRect? SourceRect = null,
     RealtimeRect? Destination = null,
@@ -63,7 +67,13 @@ public sealed record RealtimeNode(
     IReadOnlyList<RealtimePoint>? Points = null,
     RealtimeHtmlNode? Root = null,
     RealtimeRect? Layout = null,
-    RealtimeRect? Bounds = null);
+    RealtimeRect? Bounds = null,
+    RealtimeColor? Background = null,
+    RealtimeColor? ButtonColor = null,
+    bool? IsRelative = null,
+    RealtimeBoxModel? Box = null,
+    /// <summary>Structured HTML-island nodes from the pinned upstream parser.</summary>
+    IReadOnlyList<RealtimeNode>? Nodes = null);
 
 public sealed record RealtimeSpriteAnimationFrame(
     string AssetId,
@@ -86,13 +96,23 @@ public sealed record RealtimeTextStyle(
     int FontSize,
     int LineHeight,
     RealtimeColor? Foreground = null,
-    RealtimeColor? Background = null);
+    RealtimeColor? Background = null,
+    RealtimeColor? ButtonColor = null);
 
 public sealed record RealtimeColor(byte Red, byte Green, byte Blue, byte Alpha);
 
 public sealed record RealtimePoint(int X, int Y);
 
 public sealed record RealtimeRect(int X, int Y, int Width, int Height);
+
+public sealed record RealtimeInsets(int Top, int Right, int Bottom, int Left);
+
+public sealed record RealtimeBoxModel(
+    RealtimeInsets Margin,
+    RealtimeInsets Padding,
+    RealtimeInsets Border,
+    RealtimeInsets Radius,
+    IReadOnlyList<RealtimeColor?> BorderColors);
 
 public sealed record RealtimeBackgroundLayer(
     string LayerId,
@@ -120,6 +140,7 @@ public sealed record RealtimeDrawable(
     RealtimeColor? Stroke = null,
     IReadOnlyList<RealtimePoint>? Points = null,
     RealtimeHtmlNode? Root = null,
+    IReadOnlyList<RealtimeNode>? Nodes = null,
     byte[]? PngData = null,
     byte[]? HoverPngData = null,
     bool? HitTestMap = null);

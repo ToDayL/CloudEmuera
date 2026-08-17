@@ -459,15 +459,82 @@ internal static class HtmlManager
 	/// <returns></returns>
 	public static ConsoleDisplayLine[] Html2DisplayLine(string str, StringMeasure sm, EmueraConsole console)
 	{
-		return html2DisplayLine(str, sm, console, null, null);
+		ParseFragment(
+			str,
+			new UpstreamHtmlParseOptions(),
+			sm,
+			console,
+			materializeDesktop: true,
+			out ConsoleDisplayLine[] displayLines,
+			out _);
+		return displayLines;
 	}
 	public static ConsoleButtonString[] Html2ButtonList(string str, StringMeasure sm, EmueraConsole console)
 	{
-		var parts = new List<ConsoleButtonString>();
-		html2DisplayLine(str, sm, console, null, parts);
-		return parts.ToArray();
+		ParseFragment(
+			str,
+			new UpstreamHtmlParseOptions(),
+			sm,
+			console,
+			materializeDesktop: false,
+			out _,
+			out ConsoleButtonString[] buttons);
+		return buttons;
 	}
-	static ConsoleDisplayLine[] html2DisplayLine(string str, StringMeasure sm, EmueraConsole console, HtmlParentInfo parent, List<ConsoleButtonString> buttonsOutput)
+
+	/// <summary>
+	/// CloudEmuera modification: run the pinned HtmlManager state machine once
+	/// and expose only its semantic result to the headless translator. The
+	/// parser itself remains the upstream implementation above; this method is
+	/// not a second HTML grammar.
+	/// </summary>
+	internal static UpstreamHtmlFragment ParseFragment(string str, UpstreamHtmlParseOptions options)
+	{
+		return ParseFragment(str, options, null, null, materializeDesktop: false, out _, out _);
+	}
+
+	private static UpstreamHtmlFragment ParseFragment(
+		string str,
+		UpstreamHtmlParseOptions options,
+		StringMeasure sm,
+		EmueraConsole console,
+		bool materializeDesktop,
+		out ConsoleDisplayLine[] displayLines,
+		out ConsoleButtonString[] buttons)
+	{
+		if (str == null)
+			throw new ArgumentNullException(nameof(str));
+		if (options == null)
+			throw new ArgumentNullException(nameof(options));
+		options.Budget?.ValidateInput(str);
+		var parts = new List<ConsoleButtonString>();
+		var capture = new UpstreamHtmlParseCapture();
+		displayLines = html2DisplayLine(
+			str,
+			sm,
+			console,
+			null,
+			parts,
+			capture,
+			options.Budget,
+			0,
+			materializeDesktop);
+		buttons = parts.ToArray();
+		// Keep the semantic result available to the two public desktop APIs and
+		// the headless wrapper without running the state machine a second time.
+		return UpstreamHtmlFragmentMaterializer.FromButtons(parts, capture, options.Budget);
+	}
+
+	static ConsoleDisplayLine[] html2DisplayLine(
+		string str,
+		StringMeasure sm,
+		EmueraConsole console,
+		HtmlParentInfo parent,
+		List<ConsoleButtonString> buttonsOutput,
+		UpstreamHtmlParseCapture capture = null,
+		UpstreamHtmlParseBudget budget = null,
+		int divDepth = 0,
+		bool materializeDesktop = true)
 	#endregion
 	{
 		#region EM_私家版_HTML_PRINT拡張
@@ -504,6 +571,8 @@ internal static class HtmlManager
 			if (found < 0)
 			{
 				string txt = Unescape(st.Substring());
+				budget?.ConsumeText(txt);
+				budget?.ConsumePart();
 				cssList.Add(new ConsoleStyledString(txt, state.GetSS()));
 				if (state.FlagPClosed)
 					throw new CodeEE(trerror.TextAfterP.Text);
@@ -514,6 +583,8 @@ internal static class HtmlManager
 			else if (found > 0)
 			{
 				string txt = Unescape(st.Substring(st.CurrentPosition, found));
+				budget?.ConsumeText(txt);
+				budget?.ConsumePart();
 				cssList.Add(new ConsoleStyledString(txt, state.GetSS()));
 				state.LineHead = false;
 				st.CurrentPosition += found;
@@ -521,6 +592,7 @@ internal static class HtmlManager
 			//コメントタグのみ特別扱い
 			if (hasComment && st.CurrentEqualTo("<!--"))
 			{
+				budget?.ConsumeTag();
 				st.CurrentPosition += 4;
 				found = st.Find("-->");
 				if (found < 0)
@@ -535,12 +607,16 @@ internal static class HtmlManager
 			}
 			else//タグ解析
 			{
+				budget?.ConsumeTag();
 				st.ShiftNext();
 				AConsoleDisplayNode part = tagAnalyze(state, st);
 				if (st.Current != '>')
 					throw new CodeEE(trerror.NotFoundTerminateTag.Text);
 				if (part != null)
+				{
+					budget?.ConsumePart();
 					cssList.Add(part);
+				}
 				st.ShiftNext();
 
 				#region EM_私家版_HTML_divタグ
@@ -550,6 +626,7 @@ internal static class HtmlManager
 					{
 						if (parent == null)
 						{
+							budget?.EnterDiv(divDepth + 1);
 							if (state.CurrentButtonTag != null || state.FontStyle != FontStyle.Regular || state.FonttagList.Count > 0)
 								throw new CodeEE(trerror.TagIsNotClosed.Text);
 							var width = state.CurrentDivTag.Width;
@@ -580,10 +657,11 @@ internal static class HtmlManager
 								HasReturn = hasReturn,
 								State = state,
 								Stream = st,
-							}, null);
+							}, null, null, budget, divDepth + 1, true);
 							var tagInfo = state.CurrentDivTag;
 							state.CurrentDivTag = null;
 							state.StartingSubDivision = false;
+							budget?.ConsumePart();
 							cssList.Add(new ConsoleDivPart(tagInfo.X, tagInfo.Y, tagInfo.Width, tagInfo.Height, tagInfo.Depth, tagInfo.Color, tagInfo.StyledBox, tagInfo.IsRelative, tagInfo.Lines));
 						}
 					}
@@ -596,11 +674,16 @@ internal static class HtmlManager
 			{
 				state.LastButtonTag = state.CurrentButtonTag;
 				if (cssList.Count > 0)
+				{
+					budget?.ConsumeSegment();
 					buttonList.Add(cssToButton(cssList, state, console));
+				}
+				budget?.ConsumeSegment();
 				buttonList.Add(null);
 			}
 			if (state.FlagButton && cssList.Count > 0)
 			{
+				budget?.ConsumeSegment();
 				buttonList.Add(cssToButton(cssList, state, console));
 			}
 			state.FlagBr = false;
@@ -615,11 +698,11 @@ internal static class HtmlManager
 		if (state.CurrentButtonTag != null || state.FontStyle != FontStyle.Regular || state.FonttagList.Count > 0)
 			throw new CodeEE(trerror.TagIsNotClosed.Text);
 		if (cssList.Count > 0)
+		{
+			budget?.ConsumeSegment();
 			buttonList.Add(cssToButton(cssList, state, console));
-		#region EM_私家版_HTML_PRINT拡張
-		if (buttonsOutput != null) return null;
-		#endregion
-
+		}
+		capture?.Set(state.Alignment, state.FlagNobr);
 		foreach (ConsoleButtonString button in buttonList)
 		{
 			if (button != null && button.PointXisLocked)
@@ -631,6 +714,9 @@ internal static class HtmlManager
 				break;
 			}
 		}
+		#region EM_私家版_HTML_PRINT拡張
+		if (!materializeDesktop) return null;
+		#endregion
 		#region EM_私家版_HTML_divタグ
 		// ConsoleDisplayLine[] ret = PrintStringBuffer.ButtonsToDisplayLines(buttonList, sm, state.FlagNobr, false);
 		ConsoleDisplayLine[] ret;

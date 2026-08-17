@@ -6,7 +6,7 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 
 - [ADR-0001：本地身份与 OIDC 重新评审触发条件](0001-local-identity-and-oidc-trigger.md)
 - [ADR-0003：ConsoleSnapshot 有界内存与恢复语义](0003-console-snapshot-bounds.md)
-- [ADR-0004：Runtime 富内容最小 allowlist](0004-runtime-rich-content-allowlist.md)
+- [ADR-0004：Runtime 富内容安全结构化语义](0004-runtime-rich-content-allowlist.md)
 - [ADR-0005：Emuera 固定源码直接集成](0005-vendored-emuera-source.md)
 - [ADR-0006：CI runtime compatibility fixtures](0006-ci-runtime-compatibility-fixtures.md)
 - [ADR-0007：SessionRoot 直接持有 Emuera 原生存档](0007-session-root-native-save-ownership.md)
@@ -26,3 +26,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0021：冻结 Realtime WebSocket v1 与输入回执边界](0021-freeze-realtime-websocket-v1.md)
 - [ADR-0022：Session 原生存档单文件大小上限](0022-session-save-file-cap.md)
 - [ADR-0023：Session Presentation Asset 身份、清单与浏览器安全策略](0023-session-presentation-assets-and-csp.md)
+- [ADR-0024：HTML_PRINT 使用固定上游解析器并在 headless 边界安全翻译](0024-html-print-upstream-parser-authority.md)

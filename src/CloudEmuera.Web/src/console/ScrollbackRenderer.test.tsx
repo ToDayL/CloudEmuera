@@ -90,4 +90,46 @@ describe("ScrollbackRenderer", () => {
     expect(button.previousSibling?.textContent).toBe("   ");
     expect(button.nextSibling?.textContent).toBe("   ");
   });
+
+  it("renders native Emuera div layout and button x positioning", () => {
+    const stateLine: RealtimeLine = {
+      lineId: "div-line",
+      nodes: [{
+        type: "div",
+        children: [{ type: "button", children: [{ type: "text", text: "Go", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], value: "go", tooltip: null, enabled: false, generation: 0, positionX: 42 }],
+        bounds: { x: 1, y: 2, width: 30, height: 12 },
+        zIndex: 3,
+        background: { red: 1, green: 2, blue: 3, alpha: 255 },
+        isRelative: false,
+        box: null,
+      }],
+      alignment: "left",
+      temporary: false,
+    };
+    render(<ScrollbackRenderer lines={[stateLine]} assets={assets} onInput={() => undefined} />);
+    const div = document.querySelector(".console-emuera-div") as HTMLElement;
+    expect(div).toBeInTheDocument();
+    expect(div.style.position).toBe("absolute");
+    expect(div.style.left).toBe("1px");
+    expect(screen.getByRole("button", { name: "Go" }).style.marginLeft).toBe("42px");
+  });
+
+  it("renders structured upstream island nodes and enables nested current-generation buttons", () => {
+    const button = {
+      type: "button" as const,
+      children: [{ type: "text" as const, text: "Island Go", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }],
+      value: "island-go",
+      tooltip: null,
+      enabled: true,
+      generation: 4,
+    };
+    const structuredLine: RealtimeLine = {
+      lineId: "structured-island",
+      nodes: [{ type: "htmlIsland", nodes: [button] }],
+      alignment: "left",
+      temporary: false,
+    };
+    render(<ScrollbackRenderer lines={[structuredLine]} currentPrompt={{ promptId: "p-island", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 32 }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["button"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null }} assets={assets} onInput={() => undefined} />);
+    expect(screen.getByRole("button", { name: "Island Go" })).toBeEnabled();
+  });
 });

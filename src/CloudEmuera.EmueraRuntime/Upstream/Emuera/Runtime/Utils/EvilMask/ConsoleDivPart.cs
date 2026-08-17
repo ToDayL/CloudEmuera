@@ -13,6 +13,15 @@ class ConsoleDivPart : AConsoleDisplayNode
 {
 	public ConsoleDivPart(MixedNum xPos, MixedNum yPos, MixedNum width, MixedNum height, int depth, int color, StyledBoxModel box, bool isRelative, ConsoleDisplayLine[] childs)
 	{
+		// CloudEmuera modification: retain the original layout values and box
+		// model. The headless translator consumes these values without parsing the
+		// desktop alt serialization.
+		RawX = CloneMixedNum(xPos);
+		RawY = CloneMixedNum(yPos);
+		RawWidth = CloneMixedNum(width);
+		RawHeight = CloneMixedNum(height);
+		RawColor = color;
+		RawBox = box;
 		backgroundColor = color >= 0 ? Color.FromArgb((int)(color | 0xff000000)) : Color.Transparent;
 		StringBuilder sb = new();
 		width.num = Math.Abs(width.num);
@@ -66,6 +75,17 @@ class ConsoleDivPart : AConsoleDisplayNode
 		
 		ShiftChildrenX(PointX + xOffset + divXOffset);
 	}
+
+	private static MixedNum CloneMixedNum(MixedNum value) => value == null
+		? null
+		: new MixedNum { num = value.num, isPx = value.isPx };
+
+	public readonly MixedNum RawX;
+	public readonly MixedNum RawY;
+	public readonly MixedNum RawWidth;
+	public readonly MixedNum RawHeight;
+	public readonly int RawColor;
+	public readonly StyledBoxModel RawBox;
 	int pointX;
 	int xOffset;
 	#region EE_div各要素の修正

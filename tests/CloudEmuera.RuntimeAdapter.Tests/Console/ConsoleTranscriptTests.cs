@@ -19,9 +19,13 @@ public sealed class ConsoleTranscriptTests
         string after)
     {
         var console = new StructuredGameConsole(new ManualRuntimeClock(), new FixedPromptIdGenerator(promptId));
-        var parser = new EmueraHtmlParser();
         console.Emit(new AppendNodesOperation([new TextNode(boot)]));
-        console.Emit(new AppendNodesOperation(parser.Parse(html)));
+        ConsoleFontStyle decoration = html.StartsWith("<b>", StringComparison.Ordinal)
+            ? ConsoleFontStyle.Bold
+            : ConsoleFontStyle.Italic;
+        console.Emit(new AppendNodesOperation([
+            new TextNode(html[3..^4], new ConsoleTextStyle(decorations: decoration))
+        ]));
         console.Emit(new AppendNodesOperation([new ButtonNode("Continue", "continue")]));
         console.Emit(new OpenPromptOperation(new ConsolePrompt(ConsoleInputType.Integer)));
         string assignedPromptId = console.CurrentPrompt!.PromptId;

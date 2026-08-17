@@ -51,15 +51,15 @@
     {
       "capabilityId": "console.html",
       "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
-      "upstreamEntrypoints": ["HeadlessEmueraConsole.PrintHtml", "HTML_PRINT"],
+      "upstreamEntrypoints": ["HtmlManager.ParseFragment", "HeadlessEmueraConsole.PrintHtml", "HTML_PRINT"],
       "category": "html",
       "classification": "Supported",
-      "reasonCode": "ALLOWLISTED_HTML_FORMATTING",
-      "adapterTypes": ["EmueraHtmlParser", "TextNode", "LineBreakNode"],
-      "ipcTypes": ["TextNode", "LineBreakNode", "TextStyle"],
+      "reasonCode": "STRUCTURED_EMUERA_PSEUDO_HTML",
+      "adapterTypes": ["UpstreamHtmlFragment", "UpstreamHtmlTranslator", "TextNode", "LineBreakNode", "ButtonNode", "SpriteNode", "ShapeNode", "DivNode", "ConsoleBoxModel", "ConsoleLineAlignment", "ConsoleLine.NoWrap"],
+      "ipcTypes": ["TextNode", "LineBreakNode", "ButtonNode", "SpriteNode", "ShapeNode", "DivNode", "BoxModel", "TextStyle", "LineAlignment", "ConsoleLine.no_wrap"],
       "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip"],
-      "testNames": ["EmueraHtmlParserTests", "StructuredConsoleContractTests.HtmlIslandIsAnExecutableFreeAllowlistedTree"],
-      "securityNotes": ["Parser fails closed for tags, attributes, URLs, scripts, events, CSS and malformed nesting."]
+      "testNames": ["HeadlessRuntimeFixtureTests.HtmlPrintUsesUpstreamStylesEntitiesAndOmittedParagraphClosures", "HeadlessRuntimeFixtureTests.UpstreamDesktopEntrypointsAndHeadlessParseFragmentShareButtonSemantics", "HeadlessRuntimeFixtureTests.HtmlPrintRealFixturePreservesUpstreamOmissionAndInterleavedStyleState", "HeadlessRuntimeFixtureTests.HtmlPrintPreservesButtonMetadataAndClearbuttonDisablesSelection", "HeadlessRuntimeFixtureTests.HtmlPrintMapsImageVariantsAndMixedNumberGeometryThroughTheResolver", "HeadlessRuntimeFixtureTests.HtmlPrintMapsDivBoxModelAndAbsoluteLayoutWithoutReparsingAltText", "HeadlessRuntimeFixtureTests.HtmlPrintBudgetRejectionDoesNotConsumePendingOutput", "HeadlessRuntimeFixtureTests.HtmlPrintDoesNotCreateAnExtraLineAfterAnUpstreamTrailingBreak", "HeadlessRuntimeFixtureTests.HtmlPrintResolvesCsvSpriteAndParagraphAlignment", "HeadlessRuntimeFixtureTests.HtmlPrintIslandUsesTheSameUpstreamParserAndStructuredNodes", "HeadlessRuntimeFixtureTests.HtmlPrintBufferKeepsUpstreamBreaksInsideThePrintBufferBoundary", "StructuredConsoleWireMapperTests.SnapshotMapperPreservesScrollbackSceneMediaAndPrompt"],
+      "securityNotes": ["The pinned upstream HtmlManager is the sole Emuera pseudo-HTML authority; the headless translator applies independent input, resource, geometry and output budgets.", "Image names are resolved through the session manifest into bounded SpriteNodes; raw HTML, browser URLs and desktop objects never cross the runtime or realtime boundary."]
     },
     {
       "capabilityId": "console.html-island",
@@ -67,12 +67,12 @@
       "upstreamEntrypoints": ["HeadlessEmueraConsole.PrintHTMLIsland", "HeadlessEmueraConsole.ClearHTMLIsland", "HTML_PRINT_ISLAND", "HTML_PRINT_ISLAND_CLEAR"],
       "category": "html",
       "classification": "Supported",
-      "reasonCode": "EXECUTABLE_FREE_HTML_AST",
-      "adapterTypes": ["SafeHtmlIslandParser", "HtmlIslandNode", "HtmlIslandDrawable"],
-      "ipcTypes": ["HtmlNode", "HtmlIslandNode", "HtmlIslandDrawable"],
+      "reasonCode": "UPSTREAM_STRUCTURED_HTML_ISLAND",
+      "adapterTypes": ["UpstreamHtmlFragment", "UpstreamHtmlTranslator", "HtmlIslandNode", "HtmlIslandDrawable"],
+      "ipcTypes": ["ConsoleNode", "HtmlIslandNode", "HtmlIslandDrawable"],
       "fixtureScenarios": ["structured-html-island"],
-      "testNames": ["StructuredConsoleContractTests.HtmlIslandIsAnExecutableFreeAllowlistedTree", "StructuredConsoleWireMapperTests.SnapshotMapperPreservesScrollbackSceneMediaAndPrompt"],
-      "securityNotes": ["The wire model carries only a parsed AST and manifest asset identifiers; it never carries raw HTML or a URL."]
+      "testNames": ["HeadlessRuntimeFixtureTests.HtmlPrintIslandUsesTheSameUpstreamParserAndStructuredNodes", "StructuredConsoleWireMapperTests.SnapshotMapperPreservesScrollbackSceneMediaAndPrompt"],
+      "securityNotes": ["Island output uses the same upstream parser as HTML_PRINT and carries only validated structured nodes and manifest asset identifiers; it never carries raw HTML or a URL."]
     },
     {
       "capabilityId": "console.images-sprites",

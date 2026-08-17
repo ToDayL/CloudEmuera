@@ -371,8 +371,9 @@ public static class StructuredIpcValidator
             ConsoleNode.KindOneofCase.Text => IsText(node.Text.Text) && node.Text.Style is not null && ValidateStyle(node.Text.Style),
             ConsoleNode.KindOneofCase.LineBreak => true,
             ConsoleNode.KindOneofCase.Button => IsText(node.Button.Value) && node.Button.Label.Count > 0 &&
-                node.Button.Label.Count <= 16 && node.Button.Label.All(label => IsText(label.Text) && label.Style is not null && ValidateStyle(label.Style)) &&
-                IsText(node.Button.Tooltip) && node.Button.Generation >= 0,
+                node.Button.Label.Count <= 16 && ValidateChildNodes(node.Button.Label, ref nodeCount, depth + 1) &&
+                IsText(node.Button.Tooltip) && node.Button.Generation >= 0 &&
+                (!node.Button.HasPositionX || node.Button.PositionX is >= -1_000_000 and <= 1_000_000),
             ConsoleNode.KindOneofCase.Image => IsAsset(node.Image.AssetId) &&
                 (!node.Image.HasSourceRect || ValidateRect(node.Image.SourceRect)) &&
                 (!node.Image.HasDestination || ValidateRect(node.Image.Destination)) && IsText(node.Image.AltText),
@@ -385,18 +386,56 @@ public static class StructuredIpcValidator
                 node.Sprite.AnimationFrames.All(frame => IsAsset(frame.AssetId) && ValidateRect(frame.SourceRect) &&
                     frame.Offset is not null && frame.DurationMilliseconds is >= 1 and <= 3_600_000),
             ConsoleNode.KindOneofCase.Shape => ValidateShape(node.Shape),
-            ConsoleNode.KindOneofCase.HtmlIsland => ValidateHtmlIsland(node.HtmlIsland, depth),
+            ConsoleNode.KindOneofCase.HtmlIsland => ValidateHtmlIsland(node.HtmlIsland, depth, ref nodeCount),
+            ConsoleNode.KindOneofCase.Div => ValidateDiv(node.Div, ref nodeCount, depth),
             _ => false
         };
+    }
+
+    private static bool ValidateChildNodes(IEnumerable<ConsoleNode> nodes, ref int nodeCount, int depth)
+    {
+        foreach (ConsoleNode node in nodes)
+        {
+            if (!ValidateNode(node, ref nodeCount, depth))
+                return false;
+        }
+
+        return true;
     }
 
     private static bool ValidateShape(ShapeNode shape) =>
         shape.Shape != ShapeKind.Unspecified && ValidateRect(shape.Bounds) &&
         shape.Points.Count <= StructuredIpcLimits.MaxGeometryPoints && shape.Points.All(ValidatePoint) &&
-        (!shape.HasFill || ValidateColor(shape.Fill)) && (!shape.HasStroke || ValidateColor(shape.Stroke));
+        (!shape.HasFill || ValidateColor(shape.Fill)) && (!shape.HasStroke || ValidateColor(shape.Stroke)) &&
+        (!shape.HasButtonColor || ValidateColor(shape.ButtonColor));
 
-    private static bool ValidateHtmlIsland(HtmlIslandNode island, int depth) =>
-        (!island.HasLayout || ValidateRect(island.Layout)) && ValidateHtml(island.Root, depth);
+    private static bool ValidateDiv(DivNode div, ref int nodeCount, int depth) =>
+        ValidateRect(div.Bounds) && div.ZIndex is >= -1_000_000 and <= 1_000_000 &&
+        div.Children.Count <= StructuredIpcLimits.MaxNodes &&
+        (!div.HasBackground || ValidateColor(div.Background)) &&
+        (!div.HasBox || ValidateBox(div.Box)) &&
+        ValidateChildNodes(div.Children, ref nodeCount, depth + 1);
+
+    private static bool ValidateBox(BoxModel? box) => box is not null &&
+        ValidateInsets(box.Margin) && ValidateInsets(box.Padding) && ValidateInsets(box.Border) && ValidateInsets(box.Radius) &&
+        box.BorderColors.Count == 4 && box.BorderColors.All(ValidateColor) && box.BorderColorMask <= 0b1111;
+
+    private static bool ValidateInsets(Insets? insets) => insets is not null &&
+        insets.Top is >= -1_000_000 and <= 1_000_000 && insets.Right is >= -1_000_000 and <= 1_000_000 &&
+        insets.Bottom is >= -1_000_000 and <= 1_000_000 && insets.Left is >= -1_000_000 and <= 1_000_000;
+
+    private static bool ValidateHtmlIsland(HtmlIslandNode island, int depth, ref int nodeCount)
+    {
+        if (island.HasLayout && !ValidateRect(island.Layout))
+            return false;
+        if (island.HasStructuredNodes)
+        {
+            return island.Nodes.Count <= StructuredIpcLimits.MaxNodes &&
+                ValidateChildNodes(island.Nodes, ref nodeCount, depth + 1);
+        }
+
+        return island.Root is not null && ValidateHtml(island.Root, depth);
+    }
 
     private static bool ValidateHtml(HtmlNode node, int depth)
     {
@@ -421,8 +460,7 @@ public static class StructuredIpcValidator
             drawable.Sprite.AnimationFrames.All(frame => IsAsset(frame.AssetId) && ValidateRect(frame.SourceRect) &&
                 frame.Offset is not null && ValidatePoint(frame.Offset) && frame.DurationMilliseconds is >= 1 and <= 3_600_000),
         CanvasDrawable.KindOneofCase.Shape => IsIdentifier(drawable.Shape.DrawableId) && ValidateShapeDrawable(drawable.Shape),
-        CanvasDrawable.KindOneofCase.HtmlIsland => IsIdentifier(drawable.HtmlIsland.DrawableId) && ValidateRect(drawable.HtmlIsland.Bounds) &&
-            drawable.HtmlIsland.Opacity is >= 0 and <= 1 && ValidateHtml(drawable.HtmlIsland.Root, 1),
+        CanvasDrawable.KindOneofCase.HtmlIsland => ValidateHtmlDrawable(drawable.HtmlIsland),
         CanvasDrawable.KindOneofCase.Raster => IsIdentifier(drawable.Raster.DrawableId) && ValidateRect(drawable.Raster.Bounds) &&
             drawable.Raster.Opacity is >= 0 and <= 1 && IsPng(drawable.Raster.PngData) &&
             drawable.Raster.PngData.Length <= StructuredIpcLimits.MaxInlineRasterBytes &&
@@ -433,6 +471,20 @@ public static class StructuredIpcValidator
 
     private static bool IsPng(Google.Protobuf.ByteString data) =>
         data.Length >= 8 && data.Span[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+
+    private static bool ValidateHtmlDrawable(HtmlIslandDrawable island)
+    {
+        if (!IsIdentifier(island.DrawableId) || !ValidateRect(island.Bounds) || island.Opacity is < 0 or > 1)
+            return false;
+        if (island.HasStructuredNodes)
+        {
+            int nodeCount = 0;
+            return island.Nodes.Count <= StructuredIpcLimits.MaxNodes &&
+                ValidateChildNodes(island.Nodes, ref nodeCount, 2);
+        }
+
+        return island.Root is not null && ValidateHtml(island.Root, 1);
+    }
 
     private static bool ValidateShapeDrawable(ShapeDrawable shape) =>
         shape.Shape != ShapeKind.Unspecified && ValidateRect(shape.Bounds) && shape.Opacity is >= 0 and <= 1 &&
@@ -487,7 +539,8 @@ public static class StructuredIpcValidator
 
     private static bool ValidateStyle(TextStyle? style) => style is not null &&
         IsText(style.FontFamily) && style.FontSize > 0 && style.FontSize <= 256 && style.LineHeight >= 0 && style.LineHeight <= 512 &&
-        (!style.HasForeground || ValidateColor(style.Foreground)) && (!style.HasBackground || ValidateColor(style.Background));
+        (!style.HasForeground || ValidateColor(style.Foreground)) && (!style.HasBackground || ValidateColor(style.Background)) &&
+        (!style.HasButtonColor || ValidateColor(style.ButtonColor));
 
     private static bool ValidateColor(ProtoConsoleColor? color) => color is not null &&
         color.Red <= 255 && color.Green <= 255 && color.Blue <= 255 && color.Alpha <= 255;

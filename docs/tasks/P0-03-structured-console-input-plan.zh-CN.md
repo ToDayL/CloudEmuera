@@ -88,7 +88,9 @@ ADR 必须与本计划一致；若评审决定扩大 allowlist 或改变快照�
 
 ## 5. 建议代码布局
 
-生产代码仍放在 `src/CloudEmuera.RuntimeAdapter`，不新增项目引用。建议按职责拆分：
+RuntimeAdapter 只放封闭的结构化 Console 契约，不引用上游解析程序集。固定 Emuera 伪 HTML 的解析位于
+`src/CloudEmuera.EmueraRuntime/Upstream/Emuera/UI/Game/HtmlManager.cs`，headless 翻译位于
+`src/CloudEmuera.EmueraRuntime/UpstreamHeadless/UpstreamHtmlTranslator.cs`。生产代码按职责拆分：
 
 ```text
 src/CloudEmuera.RuntimeAdapter/
@@ -100,7 +102,6 @@ src/CloudEmuera.RuntimeAdapter/
 │   ├── ConsoleHistoryOptions.cs
 │   ├── ConsoleStateStore.cs
 │   ├── ConsoleResumeResult.cs
-│   ├── EmueraHtmlParser.cs
 │   └── StructuredGameConsole.cs
 ├── Input/
 │   ├── ConsolePrompt.cs
@@ -121,7 +122,6 @@ tests/CloudEmuera.RuntimeAdapter.Tests/
 │   ├── ConsoleSequenceTests.cs
 │   ├── ConsoleSnapshotTests.cs
 │   ├── ConsoleResumeTests.cs
-│   ├── EmueraHtmlParserTests.cs
 │   └── ConsoleTranscriptTests.cs
 └── Input/
     ├── InputCoordinatorTests.cs

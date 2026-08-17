@@ -845,16 +845,19 @@ Worker 以配置间隔发送单调时钟产生的心跳，其中包含当前序�
 
 P1-07 的详细状态拓扑、能力矩阵、输入/计时语义、IPC 升级和验收切片见
 [`tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md`](tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md)。
-Worker 输出的是结构化操作，不是 HTML 字符串。下列能力是最小公共词汇；固定上游中可由浏览器
+Worker 输出的是结构化操作，不是 HTML 字符串。`HTML_PRINT`/`HTML_PRINT_ISLAND` 先由固定上游
+`HtmlManager.ParseFragment` 解释，再由 headless translator 转为下列封闭节点；下列能力是最小公共词汇；固定上游中可由浏览器
 安全表达的行更新、HTML Island、Shape/CBG、字体布局、动画和媒体语义也必须按 P1-07 的封闭状态
 模型表达，不能作为 Phase 2 扩展推迟：
 
 ```text
-TextRun(text, foreground, background, fontStyle)
+TextRun(text, foreground, background, buttonColor, fontStyle)
 LineBreak
-Button(labelNodes, value, tooltip, enabled)
+Button(labelNodes, value, tooltip, enabled, positionX)
 Image(assetId, sourceRect, size, altText)
 Sprite(assetId, frame, position, zIndex)
+Shape(kind, bounds, points, fill, stroke, buttonColor)
+Div(children, bounds, zIndex, background, relative, boxModel)
 Background(assetId, mode)
 Audio(action, assetId, channel, volume, loop)
 Prompt(promptId, inputType, timeoutAt, defaultValue, constraints)

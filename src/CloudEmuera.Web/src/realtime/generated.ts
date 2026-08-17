@@ -123,6 +123,21 @@ export interface RealtimeRect {
   height: number;
 }
 
+export interface RealtimeInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export interface RealtimeBoxModel {
+  margin: RealtimeInsets;
+  padding: RealtimeInsets;
+  border: RealtimeInsets;
+  radius: RealtimeInsets;
+  borderColors: Array<RealtimeColor | null>;
+}
+
 export interface RealtimeTextStyle {
   decorations: string[];
   fontFamily: string;
@@ -130,6 +145,7 @@ export interface RealtimeTextStyle {
   lineHeight: number;
   foreground?: RealtimeColor | null;
   background?: RealtimeColor | null;
+  buttonColor?: RealtimeColor | null;
 }
 
 export interface SpriteAnimationFrame {
@@ -227,6 +243,7 @@ export interface RealtimeLine {
   nodes: RealtimeNode[];
   alignment: "left" | "center" | "right";
   temporary: boolean;
+  noWrap?: boolean;
 }
 
 export interface ConsoleState {
@@ -281,6 +298,7 @@ export interface ButtonNode {
   tooltip?: string | null;
   enabled: boolean;
   generation: number;
+  positionX?: number;
 }
 
 export interface ImageNode {
@@ -317,15 +335,27 @@ export interface ShapeNode {
   stroke?: RealtimeColor | null;
   zIndex: number;
   points: RealtimePoint[];
+  buttonColor?: RealtimeColor | null;
 }
 
 export interface HtmlIslandNode {
   type: "htmlIsland";
-  root: RealtimeHtmlNode;
+  root?: RealtimeHtmlNode;
+  nodes?: RealtimeNode[];
   layout?: RealtimeRect | null;
 }
 
-export type RealtimeNode = TextNode | LineBreakNode | ButtonNode | ImageNode | SpriteNode | ShapeNode | HtmlIslandNode;
+export interface DivNode {
+  type: "div";
+  children: RealtimeNode[];
+  bounds: RealtimeRect;
+  zIndex: number;
+  background?: RealtimeColor | null;
+  isRelative: boolean;
+  box?: RealtimeBoxModel | null;
+}
+
+export type RealtimeNode = TextNode | LineBreakNode | ButtonNode | ImageNode | SpriteNode | ShapeNode | HtmlIslandNode | DivNode;
 
 export interface SpriteDrawable {
   type: "sprite";
@@ -357,7 +387,8 @@ export interface HtmlIslandDrawable {
   bounds: RealtimeRect;
   zIndex: number;
   opacity: number;
-  root: RealtimeHtmlNode;
+  root?: RealtimeHtmlNode;
+  nodes?: RealtimeNode[];
 }
 
 export interface RasterDrawable {

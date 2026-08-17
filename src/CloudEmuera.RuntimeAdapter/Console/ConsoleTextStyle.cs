@@ -18,7 +18,8 @@ public sealed record ConsoleTextStyle
         ConsoleFontStyle decorations = ConsoleFontStyle.None,
         string? fontFamily = null,
         int fontSize = 16,
-        int lineHeight = 0)
+        int lineHeight = 0,
+        ConsoleColor? buttonColor = null)
     {
         ConsoleContractValidation.ValidateFontStyle(decorations);
         string family = string.IsNullOrEmpty(fontFamily) ? "default" : fontFamily;
@@ -31,6 +32,7 @@ public sealed record ConsoleTextStyle
         FontFamily = family;
         FontSize = fontSize;
         LineHeight = lineHeight;
+        ButtonColor = buttonColor;
     }
 
     public static ConsoleTextStyle Default { get; } = new();
@@ -47,11 +49,14 @@ public sealed record ConsoleTextStyle
 
     public int LineHeight { get; }
 
+    /// <summary>Emuera <c>font bcolor</c>: foreground used while this text is selected as a button.</summary>
+    public ConsoleColor? ButtonColor { get; }
+
     public ConsoleFontSpec Font => new(FontFamily, FontSize, LineHeight);
 
-    public bool IsDefault => Foreground is null && Background is null && Decorations == ConsoleFontStyle.None &&
+    public bool IsDefault => Foreground is null && Background is null && ButtonColor is null && Decorations == ConsoleFontStyle.None &&
         FontFamily == "default" && FontSize == 16 && LineHeight == 0;
 
     public ConsoleTextStyle WithDecorations(ConsoleFontStyle decorations) =>
-        new(Foreground, Background, decorations, FontFamily, FontSize, LineHeight);
+        new(Foreground, Background, decorations, FontFamily, FontSize, LineHeight, ButtonColor);
 }

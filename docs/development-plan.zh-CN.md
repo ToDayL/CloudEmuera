@@ -521,10 +521,11 @@ API 集成测试再次以 22/22 通过。API 重启/Worker 崩溃、root 与 `sa
 ### P1-07 — Emuera 运行时语义与完整结构化交互协议（DONE）
 
 需求映射：SESS-004、PLAY-001～004、PLAY-007～012、COMP-002～009、AC-005/008/009/011/012，
-ADR-0004、ADR-0018、ADR-0019。已冻结浏览器可安全表达的完整 Emuera Console/Input/Media 能力矩阵、事件归约
+ADR-0004、ADR-0018、ADR-0019、ADR-0024。已冻结浏览器可安全表达的完整 Emuera Console/Input/Media 能力矩阵、事件归约
 语义和明确禁止的桌面/外部能力；不得以无声 no-op、丢字段或普通文本降级冒充兼容。
 
-详细方案：[`tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md`](tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md)。
+详细方案：[`tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md`](tasks/P1-07-emuera-structured-runtime-plan.zh-CN.md)；
+HTML_PRINT 上游解析复用补充方案：[`tasks/P1-07-html-print-upstream-parser-reuse-plan.zh-CN.md`](tasks/P1-07-html-print-upstream-parser-reuse-plan.zh-CN.md)。
 
 交付物：
 
@@ -567,6 +568,16 @@ EM+EE fixture 对所有支持的输入、计时、显示、绘图和媒体语义
 均与原版语义一致；完整 Snapshot 经序列化、IPC 往返和归约后状态等价；危险 HTML、URL、路径、资源
 引用和超限绘图确定性拒绝。只有 `COMP-008` 明确禁止的 DLL、外部进程和不受限网络等能力可以标记为
 `Blocked`，且加载时必须向用户报告。
+
+2026-08-17 HTML_PRINT 上游解析复用补充：依据 ADR-0024，删除 RuntimeAdapter 中独立的
+`EmueraHtmlParser`/`SafeHtmlIslandParser` 生产实现，桌面入口与 headless `HTML_PRINT`、
+`HTML_PRINT_ISLAND` 共同使用固定上游 `HtmlManager.ParseFragment` 状态机；新增无桌面类型的
+`UpstreamHtmlFragment` 和安全 `UpstreamHtmlTranslator`，保留上游闭合省略、交错样式、按钮分段、
+`div`/MixedNum、图片变体、print-buffer 边界及超限失败不消费 pending 状态。结构化节点经 IPC、API
+mirror、Realtime 和 Web renderer 无损传递，未传输 raw HTML/URL。验证结果：`./scripts/check.sh`
+退出码 0（RuntimeAdapter 173、RuntimeCompatibility 62、IPC 14、Worker 23、Realtime 43、Web
+77 项通过）；`verify-emuera-capabilities.sh` 报告 19 项能力/179 个唯一入口，
+`verify-third-party.sh` 与 `git diff --check` 通过。
 
 2026-08-12 Graphics 兼容补充：依据 ADR-0019，开发/生产镜像安装 `libgdiplus`，固定
 `System.Drawing.Common 6.0.0` 并在 `net10.0` Worker 内启用经验证的 Unix compatibility switch；

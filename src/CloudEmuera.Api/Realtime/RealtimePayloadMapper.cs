@@ -57,7 +57,8 @@ public static class RealtimePayloadMapper
         line.LineId,
         line.Nodes.Select(ToNode).ToArray(),
         ToAlignment(line.Alignment),
-        line.Temporary);
+        line.Temporary,
+        line.NoWrap);
 
     private static RealtimeNode ToNode(R.ConsoleNode node) => node switch
     {
@@ -69,7 +70,8 @@ public static class RealtimePayloadMapper
             Value: button.Value,
             Tooltip: button.Tooltip,
             Enabled: button.Enabled,
-            Generation: button.Generation),
+            Generation: button.Generation,
+            PositionX: button.PositionX),
         R.ImageNode image => new(
             "image",
             AssetId: image.AssetId.Value,
@@ -98,9 +100,22 @@ public static class RealtimePayloadMapper
             Bounds: ToRect(shape.Bounds),
             Fill: ToColor(shape.Fill),
             Stroke: ToColor(shape.Stroke),
+            ButtonColor: ToColor(shape.ButtonColor),
             ZIndex: shape.ZIndex,
             Points: shape.Points.Select(ToPoint).ToArray()),
-        R.HtmlIslandNode html => new("htmlIsland", Root: ToHtml(html.Root), Layout: html.Layout is { } layout ? ToRect(layout) : null),
+        R.DivNode div => new(
+            "div",
+            Children: div.Children.Select(ToNode).ToArray(),
+            Bounds: ToRect(div.Bounds),
+            ZIndex: div.ZIndex,
+            Background: ToColor(div.Background),
+            IsRelative: div.IsRelative,
+            Box: ToBox(div.Box)),
+        R.HtmlIslandNode html => new(
+            "htmlIsland",
+            Root: html.Root is { } root ? ToHtml(root) : null,
+            Layout: html.Layout is { } layout ? ToRect(layout) : null,
+            Nodes: html.StructuredNodes?.Select(ToNode).ToArray()),
         _ => throw new InvalidDataException("The runtime node is outside the realtime contract.")
     };
 
@@ -130,7 +145,8 @@ public static class RealtimePayloadMapper
         style.FontSize,
         style.LineHeight,
         ToColor(style.Foreground),
-        ToColor(style.Background));
+        ToColor(style.Background),
+        ToColor(style.ButtonColor));
 
     private static string[] ToDecorations(R.ConsoleFontStyle decorations)
     {
@@ -149,6 +165,15 @@ public static class RealtimePayloadMapper
     private static RealtimePoint ToPoint(R.ConsolePoint point) => new(point.X, point.Y);
 
     private static RealtimeRect ToRect(R.ConsoleRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
+
+    private static RealtimeBoxModel? ToBox(R.ConsoleBoxModel? box) => box is null ? null : new(
+        ToInsets(box.Margin),
+        ToInsets(box.Padding),
+        ToInsets(box.Border),
+        ToInsets(box.Radius),
+        box.BorderColors.Select(ToColor).ToArray());
+
+    private static RealtimeInsets ToInsets(R.ConsoleInsets insets) => new(insets.Top, insets.Right, insets.Bottom, insets.Left);
 
     private static RealtimeBackgroundLayer ToBackground(R.BackgroundLayer layer) => new(
         layer.LayerId,
@@ -185,7 +210,8 @@ public static class RealtimePayloadMapper
             ToRect(html.Bounds),
             html.ZIndex,
             html.Opacity,
-            Root: ToHtml(html.Root)),
+            Root: html.Root is { } root ? ToHtml(root) : null,
+            Nodes: html.StructuredNodes?.Select(ToNode).ToArray()),
         R.RasterDrawable raster => new(
             "raster",
             raster.DrawableId,

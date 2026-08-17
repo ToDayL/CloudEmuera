@@ -10,6 +10,32 @@ namespace CloudEmuera.Worker.IntegrationTests;
 public sealed class StructuredConsoleWireMapperTests
 {
     [Fact]
+    public void StructuredHtmlIslandNodesRoundTripWithoutFallingBackToLegacyHtml()
+    {
+        var original = new HtmlIslandNode(
+            [
+                new TextNode("island"),
+                LineBreakNode.Instance,
+                new ButtonNode([new TextNode("go")], "go", generation: 4),
+                new ShapeNode(ConsoleShapeKind.Rectangle, new ConsoleRect(0, 0, 4, 8))
+            ],
+            new ConsoleRect(1, 2, 30, 20));
+
+        ConsoleNode roundTripped = StructuredConsoleWireMapper.FromProto(
+            StructuredConsoleWireMapper.ToProto(original));
+
+        HtmlIslandNode island = Assert.IsType<HtmlIslandNode>(roundTripped);
+        Assert.True(island.IsStructured);
+        Assert.Equal(island.Layout, new ConsoleRect(1, 2, 30, 20));
+        Assert.Collection(
+            island.StructuredNodes!,
+            node => Assert.Equal("island", Assert.IsType<TextNode>(node).Text),
+            node => Assert.IsType<LineBreakNode>(node),
+            node => Assert.Equal(4, Assert.IsType<ButtonNode>(node).Generation),
+            node => Assert.IsType<ShapeNode>(node));
+    }
+
+    [Fact]
     public void SnapshotMapperPreservesScrollbackSceneMediaAndPrompt()
     {
         var store = new ConsoleStateStore();
@@ -19,7 +45,21 @@ public sealed class StructuredConsoleWireMapperTests
                     decorations: ConsoleFontStyle.Bold,
                     fontFamily: "noto-cjk",
                     fontSize: 18,
-                    lineHeight: 24)),
+                    lineHeight: 24,
+                    buttonColor: RuntimeColor.FromRgb(4, 5, 6))),
+                new ButtonNode([new TextNode("choice")], "choice", positionX: 42),
+                new DivNode(
+                    [new TextNode("inside")],
+                    new ConsoleRect(1, 2, 30, 12),
+                    zIndex: 3,
+                    background: RuntimeColor.FromRgb(7, 8, 9),
+                    isRelative: false,
+                    box: new ConsoleBoxModel(
+                        new ConsoleInsets(1, 2, 3, 4),
+                        new ConsoleInsets(5, 6, 7, 8),
+                        new ConsoleInsets(1, 1, 1, 1),
+                        new ConsoleInsets(2, 3, 4, 5),
+                        [RuntimeColor.FromRgb(10, 11, 12), null, RuntimeColor.FromRgb(13, 14, 15), null])),
                 new SpriteNode(
                     new ConsoleAssetId("sprite-asset"),
                     new ConsoleRect(0, 0, 16, 16),
@@ -88,7 +128,16 @@ public sealed class StructuredConsoleWireMapperTests
         Assert.Equal(original.Scrollback[0].LineId, roundTripped.Scrollback[0].LineId);
         Assert.Equal(ConsoleLineAlignment.Right, roundTripped.Scrollback[0].Alignment);
         Assert.Equal("noto-cjk", Assert.IsType<TextNode>(roundTripped.Scrollback[0].Nodes[0]).Style.FontFamily);
-        SpriteNode sprite = Assert.IsType<SpriteNode>(roundTripped.Scrollback[0].Nodes[1]);
+        Assert.Equal(RuntimeColor.FromRgb(4, 5, 6), Assert.IsType<TextNode>(roundTripped.Scrollback[0].Nodes[0]).Style.ButtonColor);
+        Assert.Equal(42, Assert.IsType<ButtonNode>(roundTripped.Scrollback[0].Nodes[1]).PositionX);
+        DivNode div = Assert.IsType<DivNode>(roundTripped.Scrollback[0].Nodes[2]);
+        Assert.False(div.IsRelative);
+        Assert.Equal(RuntimeColor.FromRgb(7, 8, 9), div.Background);
+        Assert.Equal(RuntimeColor.FromRgb(10, 11, 12), div.Box!.BorderColors[0]);
+        Assert.Null(div.Box.BorderColors[1]);
+        Assert.Equal(RuntimeColor.FromRgb(13, 14, 15), div.Box.BorderColors[2]);
+        Assert.Null(div.Box.BorderColors[3]);
+        SpriteNode sprite = Assert.IsType<SpriteNode>(roundTripped.Scrollback[0].Nodes[3]);
         Assert.Equal("sprite-hover", sprite.HoverAssetId?.Value);
         Assert.Equal(new ConsoleRect(16, 0, 16, 16), sprite.HoverSourceRect);
         Assert.Equal("sprite-map", sprite.MappingAssetId?.Value);

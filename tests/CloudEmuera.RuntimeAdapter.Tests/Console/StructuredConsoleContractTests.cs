@@ -143,17 +143,20 @@ public sealed class StructuredConsoleContractTests
     [Fact]
     public void HtmlIslandIsAnExecutableFreeAllowlistedTree()
     {
-        var parser = new EmueraHtmlParser();
-        HtmlIslandNode island = parser.ParseIsland("<div><strong>safe</strong><br/><img asset=\"sprite-1\" alt=\"icon\"/></div>");
+        var root = new ConsoleHtmlElementNode("div", [
+            new ConsoleHtmlElementNode("strong", [new ConsoleHtmlTextNode("safe")]),
+            ConsoleHtmlBreakNode.Instance,
+            new ConsoleHtmlElementNode("img", [], assetId: "sprite-1", altText: "icon")
+        ]);
+        HtmlIslandNode island = new(root);
 
-        var root = Assert.IsType<ConsoleHtmlElementNode>(island.Root);
-        Assert.Equal("div", root.Tag);
-        ConsoleHtmlElementNode content = Assert.IsType<ConsoleHtmlElementNode>(Assert.Single(root.Children));
-        Assert.Contains(content.Children, child => child is ConsoleHtmlElementNode element && element.Tag == "strong");
-        Assert.Contains(content.Children, child => child is ConsoleHtmlBreakNode);
+        ConsoleHtmlElementNode islandRoot = Assert.IsType<ConsoleHtmlElementNode>(island.Root);
+        Assert.Equal("div", islandRoot.Tag);
+        Assert.Contains(root.Children, child => child is ConsoleHtmlElementNode element && element.Tag == "strong");
+        Assert.Contains(root.Children, child => child is ConsoleHtmlBreakNode);
 
-        Assert.Throws<ConsoleContractException>(() => parser.ParseIsland("<script>alert(1)</script>"));
-        Assert.Throws<ConsoleContractException>(() => parser.ParseIsland("<img src=\"https://example.invalid/a.png\"/>"));
+        Assert.Throws<ConsoleContractException>(() => new HtmlIslandNode(
+            new ConsoleHtmlElementNode("script", [new ConsoleHtmlTextNode("alert(1)")] )));
     }
 
     [Fact]

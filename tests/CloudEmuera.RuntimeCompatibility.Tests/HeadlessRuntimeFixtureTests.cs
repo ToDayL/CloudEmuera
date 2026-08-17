@@ -4,9 +4,11 @@ using CloudEmuera.RuntimeAdapter;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.UI.Game.Image;
+using MinorShift.Emuera.UI.Game;
 using System.Drawing;
 using System.Text;
 using static MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
+using RuntimeConsoleColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
 using Xunit;
 
 namespace CloudEmuera.RuntimeCompatibility.Tests;
@@ -145,6 +147,368 @@ public sealed class HeadlessRuntimeFixtureTests
             fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes).Single(node => node is SpriteNode));
         Assert.Equal(new ConsoleRect(0, 1, 2, 1), sprite.SourceRect);
         Assert.Equal(sprite.Destination.Width, sprite.Destination.Height);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public async Task HtmlPrintResolvesCsvSpriteAndParagraphAlignment()
+    {
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "em-ee-core", "resources", "cloudemuera-em-ee.png");
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "HTML_PRINT \"<p align='center'><img src='TW_title000'></p>\"\n" +
+            "QUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "title.png"));
+                File.WriteAllText(Path.Combine(resources, "list.csv"), "TW_title000,title.png,0,0,2,2\n");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        ConsoleLine line = Assert.Single(fixture.Console.Snapshot.Scrollback, item => item.Nodes.Any(node => node is SpriteNode));
+        Assert.Equal(ConsoleLineAlignment.Center, line.Alignment);
+        SpriteNode sprite = Assert.IsType<SpriteNode>(Assert.Single(line.Nodes));
+        Assert.Equal(new ConsoleRect(0, 0, 2, 2), sprite.SourceRect);
+        Assert.Equal(new ConsoleRect(0, 0, 18, 18), sprite.Destination);
+        Assert.Equal("TW_title000", sprite.AltText);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintButtonsUseTheCurrentRuntimeGeneration()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        headless.UpdateGeneration();
+        headless.PrintHtml("<p align='left'><nobr><button value='1'>One</button></nobr></p>", toPrintBuffer: false);
+
+        ButtonNode button = Assert.IsType<ButtonNode>(
+            Assert.Single(console.Snapshot.Scrollback.Single().Nodes));
+        Assert.Equal(1, button.Generation);
+        Assert.True(button.Enabled);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintDoesNotCreateAnEmptyLineForAnEmptyFragment()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(string.Empty, toPrintBuffer: false);
+
+        Assert.Empty(console.Snapshot.Scrollback);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintStampsButtonsInsideDivsWithTheCurrentRuntimeGeneration()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        headless.UpdateGeneration();
+
+        headless.PrintHtml(
+            "<div width='80px' height='20px'><button value='1'>One</button></div>",
+            toPrintBuffer: false);
+
+        DivNode div = Assert.IsType<DivNode>(Assert.Single(console.Snapshot.Scrollback.Single().Nodes));
+        Assert.Equal(1, Assert.IsType<ButtonNode>(Assert.Single(div.Children)).Generation);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintCarriesParagraphLayoutAcrossExplicitBreaks()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml("<p align='right'><nobr>One<br>Two</nobr></p>", toPrintBuffer: false);
+
+        Assert.Collection(
+            console.Snapshot.Scrollback,
+            line =>
+            {
+                Assert.Equal(ConsoleLineAlignment.Right, line.Alignment);
+                Assert.True(line.NoWrap);
+                Assert.Equal("One", Assert.IsType<TextNode>(Assert.Single(line.Nodes)).Text);
+            },
+            line =>
+            {
+                Assert.Equal(ConsoleLineAlignment.Right, line.Alignment);
+                Assert.True(line.NoWrap);
+                Assert.Equal("Two", Assert.IsType<TextNode>(Assert.Single(line.Nodes)).Text);
+            });
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintIslandUsesTheSameUpstreamParserAndStructuredNodes()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHTMLIsland("<p align='center'><nobr><button value='go'>Go</button><br><shape type='rect' param='4px'></nobr></p>");
+
+        HtmlIslandDrawable island = Assert.IsType<HtmlIslandDrawable>(Assert.Single(console.Snapshot.CanvasScene.Drawables));
+        Assert.True(island.IsStructured);
+        Assert.Collection(
+            island.StructuredNodes!,
+            node => Assert.IsType<ButtonNode>(node),
+            node => Assert.IsType<LineBreakNode>(node),
+            node => Assert.IsType<ShapeNode>(node));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintBufferKeepsUpstreamBreaksInsideThePrintBufferBoundary()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.Print("before", lineEnd: false);
+        headless.PrintHtml("<br>after", toPrintBuffer: true);
+        Assert.Empty(console.Snapshot.Scrollback);
+
+        headless.PrintFlush(force: true);
+
+        Assert.Collection(
+            console.Snapshot.Scrollback,
+            line => Assert.Equal("before", RuntimeTranscriptProjector.Project(line.Nodes)),
+            line => Assert.Equal("after", RuntimeTranscriptProjector.Project(line.Nodes)));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintDoesNotCreateAnExtraLineAfterAnUpstreamTrailingBreak()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml("<p align='left'>One<br>", toPrintBuffer: false);
+
+        Assert.Single(console.Snapshot.Scrollback);
+        Assert.Equal("One", RuntimeTranscriptProjector.Project(console.Snapshot.Scrollback[0].Nodes));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintUsesUpstreamStylesEntitiesAndOmittedParagraphClosures()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        // The pinned parser permits only the p/nobr closing tags to be
+        // omitted at fragment end, and applies style bits independently.
+        headless.PrintHtml(
+            "<p align='center'><nobr><b><i><u><s><font face='logical' color='#112233' bcolor='#445566'>A &amp; &#x42;</font></s></u></i></b>",
+            toPrintBuffer: false);
+
+        ConsoleLine line = Assert.Single(console.Snapshot.Scrollback);
+        Assert.Equal(ConsoleLineAlignment.Center, line.Alignment);
+        Assert.True(line.NoWrap);
+        TextNode text = Assert.IsType<TextNode>(Assert.Single(line.Nodes));
+        Assert.Equal("A & B", text.Text);
+        Assert.Equal(
+            ConsoleFontStyle.Bold | ConsoleFontStyle.Italic | ConsoleFontStyle.Underline | ConsoleFontStyle.Strike,
+            text.Style.Decorations);
+        Assert.Equal("logical", text.Style.FontFamily);
+        Assert.Equal(new RuntimeConsoleColor(0x11, 0x22, 0x33), text.Style.Foreground);
+        Assert.Equal(new RuntimeConsoleColor(0x44, 0x55, 0x66), text.Style.ButtonColor);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void UpstreamDesktopEntrypointsAndHeadlessParseFragmentShareButtonSemantics()
+    {
+        const string fragment = "<p align='left'><nobr><button value='42'>Answer</button></nobr></p>";
+
+        ConsoleButtonString[] buttons = HtmlManager.Html2ButtonList(fragment, null, null);
+        ConsoleButtonString button = Assert.Single(buttons);
+        Assert.True(button.IsButton);
+        Assert.True(button.IsInteger);
+        Assert.Equal("42", button.Inputs);
+
+        ConsoleDisplayLine[] displayLines = HtmlManager.Html2DisplayLine(fragment, null, null);
+        ConsoleDisplayLine line = Assert.Single(displayLines);
+        Assert.Equal(DisplayLineAlignment.LEFT, line.Align);
+
+        UpstreamHtmlFragment semantic = HtmlManager.ParseFragment(fragment, new UpstreamHtmlParseOptions
+        {
+            Mode = UpstreamHtmlParseMode.PrintBufferParts,
+            Budget = new UpstreamHtmlParseBudget(1024, 32, 4, 32, 64, 1024)
+        });
+        UpstreamHtmlSegment segment = Assert.IsType<UpstreamHtmlSegment>(
+            Assert.Single(semantic.Sequence.Items).Segment);
+        Assert.True(segment.IsInteractive);
+        Assert.Equal(UpstreamHtmlButtonValueKind.Integer, segment.ValueKind);
+        Assert.Equal("42", segment.Value);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task HtmlPrintRealFixturePreservesUpstreamOmissionAndInterleavedStyleState()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "HTML_PRINT \"<p align='center'><nobr><b><i>REAL-UPSTREAM</b></i>\"\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        ConsoleLine line = Assert.Single(fixture.Console.Snapshot.Scrollback);
+        Assert.Equal(ConsoleLineAlignment.Center, line.Alignment);
+        Assert.True(line.NoWrap);
+        TextNode text = Assert.IsType<TextNode>(Assert.Single(line.Nodes));
+        Assert.Equal("REAL-UPSTREAM", text.Text);
+        Assert.Equal(ConsoleFontStyle.Bold | ConsoleFontStyle.Italic, text.Style.Decorations);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintPreservesButtonMetadataAndClearbuttonDisablesSelection()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(
+            "<p align='left'><nobr><button value='42' title='go' pos='7'>Go</button><nonbutton title='static' pos='8'>Static</nonbutton></nobr></p>",
+            toPrintBuffer: false);
+
+        ConsoleLine line = Assert.Single(console.Snapshot.Scrollback);
+        Assert.Collection(
+            line.Nodes,
+            node =>
+            {
+                ButtonNode button = Assert.IsType<ButtonNode>(node);
+                Assert.Equal("42", button.Value);
+                Assert.Equal("go", button.Tooltip);
+                Assert.True(button.Enabled);
+                Assert.Equal(7, button.PositionX);
+            },
+            node =>
+            {
+                ButtonNode nonbutton = Assert.IsType<ButtonNode>(node);
+                Assert.Equal("static", nonbutton.Tooltip);
+                Assert.False(nonbutton.Enabled);
+                Assert.Equal(8, nonbutton.PositionX);
+            });
+
+        var clearConsole = new StructuredGameConsole();
+        var clearHeadless = new EmueraConsole(clearConsole, clearConsole.Clock, CancellationToken.None);
+        clearHeadless.BeginExecutionOutput();
+        clearHeadless.PrintHtml(
+            "<p align='left'><nobr><clearbutton notooltip='true'><button value='7' title='hidden'>Clear</button></clearbutton></nobr></p>",
+            toPrintBuffer: false);
+
+        ConsoleLine clearLine = Assert.Single(clearConsole.Snapshot.Scrollback);
+        Assert.DoesNotContain(clearLine.Nodes, node => node is ButtonNode);
+        Assert.Equal("Clear", RuntimeTranscriptProjector.Project(clearLine.Nodes));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintMapsImageVariantsAndMixedNumberGeometryThroughTheResolver()
+    {
+        var console = new StructuredGameConsole();
+        var sprites = new Dictionary<string, RuntimeSpriteDefinition>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["main"] = new(
+                "asset-main", 1, 2, 8, 10, 2, 3, 16, 20,
+                [new RuntimeSpriteFrame("asset-frame", 0, 0, 4, 5, 1, 2, 50)]),
+            ["hover"] = new("asset-hover", 0, 0, 8, 10, 0, 0, 16, 20),
+            ["map"] = new("asset-map", 0, 0, 8, 10, 0, 0, 16, 20)
+        };
+        var headless = new EmueraConsole(
+            console,
+            console.Clock,
+            CancellationToken.None,
+            name => sprites.GetValueOrDefault(name));
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(
+            "<img src='main' srcb='hover' srcm='map' height='20px' width='-30px' ypos='-4px'>",
+            toPrintBuffer: false);
+
+        SpriteNode sprite = Assert.IsType<SpriteNode>(Assert.Single(console.Snapshot.Scrollback.Single().Nodes));
+        Assert.Equal("asset-main", sprite.AssetId.Value);
+        Assert.Equal(new ConsoleRect(1, 2, 8, 10), sprite.SourceRect);
+        Assert.Equal(new ConsoleRect(33, -1, 30, 20), sprite.Destination);
+        Assert.Equal("asset-hover", sprite.HoverAssetId?.Value);
+        Assert.Equal("asset-map", sprite.MappingAssetId?.Value);
+        Assert.Single(sprite.AnimationFrames);
+        Assert.Equal("asset-frame", sprite.AnimationFrames[0].AssetId.Value);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintMapsDivBoxModelAndAbsoluteLayoutWithoutReparsingAltText()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(
+            "<div rect='10px,20px,80px,40px' depth='3' color='#112233' display='absolute' margin='1px,2px,3px,4px' padding='5px,6px,7px,8px' border='1px' radius='2px' bcolor='#445566'>D</div>",
+            toPrintBuffer: false);
+
+        DivNode div = Assert.IsType<DivNode>(Assert.Single(console.Snapshot.Scrollback.Single().Nodes));
+        Assert.Equal(new ConsoleRect(10, 20, 80, 40), div.Bounds);
+        Assert.Equal(3, div.ZIndex);
+        Assert.False(div.IsRelative);
+        Assert.Equal(new RuntimeConsoleColor(0x11, 0x22, 0x33), div.Background);
+        ConsoleBoxModel box = Assert.IsType<ConsoleBoxModel>(div.Box);
+        Assert.Equal(new ConsoleInsets(1, 2, 3, 4), box.Margin);
+        Assert.Equal(new ConsoleInsets(5, 6, 7, 8), box.Padding);
+        Assert.Equal(new ConsoleInsets(1, 1, 1, 1), box.Border);
+        Assert.Equal(new ConsoleInsets(2, 2, 2, 2), box.Radius);
+        Assert.All(box.BorderColors, color => Assert.Equal(new RuntimeConsoleColor(0x44, 0x55, 0x66), color));
+        Assert.Equal("D", RuntimeTranscriptProjector.Project(div.Children));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintBudgetRejectionDoesNotConsumePendingOutput()
+    {
+        ConsoleContractLimits limits = ConsoleContractLimits.Default with { MaxHtmlTagCount = 1 };
+        var console = new StructuredGameConsole(
+            clock: new TimeProviderRuntimeClock(),
+            options: new ConsoleHistoryOptions { ContractLimits = limits });
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        headless.Print("pending", lineEnd: false);
+
+        NotSupportedException exception = Assert.Throws<NotSupportedException>(
+            () => headless.PrintHtml("<b>rejected</b>", toPrintBuffer: false));
+        Assert.Equal("EMUERA_HTML_TAG_LIMIT", exception.Message);
+        Assert.Empty(console.Snapshot.Scrollback);
+
+        headless.PrintFlush(force: true);
+        Assert.Equal("pending", RuntimeTranscriptProjector.Project(Assert.Single(console.Snapshot.Scrollback).Nodes));
     }
 
     [Fact]
@@ -292,7 +656,7 @@ public sealed class HeadlessRuntimeFixtureTests
             "@SYSTEM_TITLE\n" +
             "PRINTL RICH-READY\n" +
             "HTML_PRINT \"<b>RICH-HTML</b><i>RICH-ITALIC</i>\"\n" +
-            "HTML_PRINT_ISLAND \"<strong>RICH-ISLAND</strong>\"\n" +
+            "HTML_PRINT_ISLAND \"<b>RICH-ISLAND</b>\"\n" +
             "PRINT_IMG \"RICH\"\n" +
             "PRINT_RECT 10,10,40,40\n" +
             "SETBGIMAGE RICH,0,128\n" +

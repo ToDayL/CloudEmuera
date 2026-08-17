@@ -99,7 +99,7 @@ P1-07 把 Phase 0 的受控 Console/Input 切片扩展为 MVP 的正式 Emuera �
 | `DisplayTime/TimeUpMes` 被丢弃 | 倒计时展示状态和到期显示成为结构化语义 |
 | delete/temp/alignment/background/CBG/tooltip 多处 no-op 或 Unsupported | 实现或按批准 Blocked 分类并给出稳定诊断 |
 | Worker 使用 `NoOpRuntimeAudioPort` | 音频命令进入 Console 媒体状态和 IPC |
-| HTML 仅有基础标签 | 按新 ADR 扩展安全子集并保持 fail closed |
+| HTML 仅有基础标签 | 按新 ADR 覆盖固定 Emuera 伪 HTML 的格式、图片、按钮、形状、div 盒模型和行布局语义，并保持 fail closed |
 | fixture 只证明 Phase 0 slice | 能力矩阵逐项映射真实 fixture/测试证据 |
 
 ## 5. 决策与能力矩阵制品
@@ -167,7 +167,7 @@ securityNotes[]
 ConsoleSnapshot
 ├── snapshotSequence
 ├── scrollback
-│   └── ConsoleLine(lineId, alignment, temporary, nodes[])
+│   └── ConsoleLine(lineId, alignment, temporary, noWrap, nodes[])
 ├── backgroundLayers[]
 ├── canvasScene
 │   ├── drawables[]
@@ -292,13 +292,15 @@ Play 替换旧 revision；Stop 幂等。浏览器自动播放限制留给 P1-11�
 
 ## 8. HTML 安全模型
 
-扩展 `EmueraHtmlParser` 时继续遵守 ADR-0004 的 fail-closed 原则：
+HTML 结构化输出统一复用固定版本上游 `HtmlManager`；CloudEmuera 只在 translator 和协议验证边界遵守 ADR-0004 的 fail-closed 原则：
 
-- 先把上游支持的 HTML/HTML Island 语法归一化为 tokenizer/AST，再映射封闭节点；
+- 上游状态机先产生 `UpstreamHtmlFragment`，再映射封闭节点；不得在 RuntimeAdapter 再实现第二套语法 parser；
 - 标签、属性、枚举值、数字、颜色、嵌套和总长度逐项 allowlist；
 - 禁止 script、事件属性、`style` 字符串、CSS expression、自定义元素、iframe/object、导航、
   `src/href/srcset` URL 和 data/blob/javascript scheme；
 - 图片/背景属性只能引用 manifest `assetId`，不能携带浏览器 URL；
+- `HTML_PRINT` 的 `p/nobr/button pos/div` 只映射为对齐、nowrap、像素位置和有界盒模型字段；不把任意 CSS
+  文本或绝对路径传入协议；
 - 未知、错误闭合、超深、超限或属性冲突必须整段 fail closed，并产生稳定诊断；
 - parser、RuntimeAdapter validator、IPC validator 和未来 TypeScript validator 共享测试向量，避免
   “Worker 接受、浏览器解释不同”的差异。
@@ -578,7 +580,7 @@ fixture、18 个文件，`verify-emuera-capabilities.sh` 报告 19 个能力、1
 ### 切片 4：文本、行、HTML、字体和布局
 
 - 接通 style/font/size/alignment、temporary/replace/delete/clear 和上游回读；
-- 扩展 HTML/HTML Island 安全 parser；
+- 抽取固定上游 `HtmlManager.ParseFragment`，并由 translator 完成 HTML/HTML Island 的结构化安全映射；
 - 接入跨平台字体 shaping/measurement 和确定 fallback；
 - 加入 Unicode、行高、按钮 generation/tooltip 和攻击语料测试。
 
