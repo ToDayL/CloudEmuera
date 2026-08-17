@@ -21,6 +21,8 @@ export function PromptController({ prompt, disabled, pending, serverTimeOffsetMi
     return prompt.oneInput ? Array.from(limited)[0] ?? "" : limited;
   };
   const integerInput = prompt.inputType === "integer" || prompt.inputType === "integerButton";
+  const textInput = ["integer", "text", "anyValue", "integerButton", "textButton"].includes(prompt.inputType);
+  const enterOnly = prompt.inputType === "enterKey";
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const key = { keyCode: event.keyCode || event.which, control: event.ctrlKey, alt: event.altKey, shift: event.shiftKey };
     if (prompt.inputType === "anyKey" || prompt.inputType === "primitivePointerKey") {
@@ -39,11 +41,17 @@ export function PromptController({ prompt, disabled, pending, serverTimeOffsetMi
   };
   const requiresText = !["waitOnly", "anyKey", "primitivePointerKey"].includes(prompt.inputType);
   const promptLabel = prompt.systemInput ? "游戏运行时输入" : "游戏输入提示";
+  const enterButtonDisabled = controlsDisabled || (!sourceAllowed("keyboard") && !sourceAllowed("button"));
+  const enterButtonLabel = pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "↵";
+  const submitWithEnter = () => {
+    if (sourceAllowed("button")) submit("BUTTON", constrainValue(value));
+    else submit("KEYBOARD", constrainValue(value), { key: { keyCode: 13, control: false, alt: false, shift: false } });
+  };
   return <section className="prompt-controller" aria-label={promptLabel}>
-    <div className="prompt-heading"><p>{prompt.promptText ?? (prompt.systemInput ? "运行时菜单输入" : "等待输入")}</p><DeadlineClock deadlineUnixMilliseconds={prompt.deadlineUnixMilliseconds} serverTimeOffsetMilliseconds={serverTimeOffsetMilliseconds} onExpired={markDeadlineExpired} /></div>
-    {requiresText && <form onSubmit={event => { event.preventDefault(); submit(sourceAllowed("button") ? "BUTTON" : "KEYBOARD", constrainValue(value), sourceAllowed("button") ? {} : { key: { keyCode: 13, control: false, alt: false, shift: false } }); }}>
+    <div className="prompt-heading"><p>{prompt.promptText ?? (prompt.systemInput ? "运行时菜单输入" : "等待输入")}</p><div className="prompt-heading-actions"><DeadlineClock deadlineUnixMilliseconds={prompt.deadlineUnixMilliseconds} serverTimeOffsetMilliseconds={serverTimeOffsetMilliseconds} onExpired={markDeadlineExpired} />{enterOnly && <button className="prompt-enter-button" type="button" aria-label="按回车继续" title="按回车继续" onClick={submitWithEnter} disabled={enterButtonDisabled}>{enterButtonLabel}</button>}</div></div>
+    {requiresText && textInput && <form onSubmit={event => { event.preventDefault(); submitWithEnter(); }}>
       <input autoFocus type={integerInput ? "number" : "text"} value={value} onChange={event => setValue(constrainValue(event.target.value))} onKeyDown={onKeyDown} disabled={controlsDisabled} maxLength={prompt.constraints.maxLength ?? undefined} min={integerInput ? prompt.constraints.minimum ?? undefined : undefined} max={integerInput ? prompt.constraints.maximum ?? undefined : undefined} step={integerInput ? 1 : undefined} inputMode={integerInput ? "numeric" : "text"} aria-label="游戏输入" />
-      <button className="primary-button" type="submit" disabled={controlsDisabled || (!sourceAllowed("keyboard") && !sourceAllowed("button"))}>{pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "发送"}</button>
+      <button className="prompt-enter-button" type="submit" aria-label={pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "发送"} title="按回车继续" disabled={enterButtonDisabled}>{enterButtonLabel}</button>
     </form>}
     {prompt.inputType === "anyKey" && <button className="secondary-button prompt-any-key" type="button" autoFocus onKeyDown={onAnyKeyDown} onClick={event => event.preventDefault()} disabled={controlsDisabled || !sourceAllowed("keyboard")}>{pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "按任意键继续"}</button>}
     {prompt.inputType === "primitivePointerKey" && <button className="secondary-button prompt-any-key" type="button" autoFocus onKeyDown={onAnyKeyDown} onClick={event => event.preventDefault()} disabled={controlsDisabled || !sourceAllowed("keyboard")}>{pending ? "发送中…" : deadlineExpired ? "等待游戏确认…" : "按键或触摸画布交互区域"}</button>}

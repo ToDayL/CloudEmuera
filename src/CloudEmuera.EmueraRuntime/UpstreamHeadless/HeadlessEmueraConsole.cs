@@ -589,12 +589,90 @@ internal sealed class EmueraConsole
         if (!outputEnabled || (!force && pendingLine.Count == 0))
             return;
         string id = $"emuera-line-{checked(++lineId):x}";
-        EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(id, pendingLine, alignment ?? ToAlignment(), temporary)));
+        IReadOnlyList<ConsoleNode> projectedNodes = AutoButtonize(pendingLine);
+        EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(id, projectedNodes, alignment ?? ToAlignment(), temporary)));
         pendingLine.Clear();
         lastLineId = id;
         lastLineTemporary = temporary;
         logicalLineCount = checked(logicalLineCount + 1);
         DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+    }
+
+    /// <summary>
+    /// Reproduces the pinned desktop console's implicit numeric-button parsing.
+    /// Ordinary PRINT/PRINTL output such as "[0] Yes  [1] No" is split by the
+    /// upstream ButtonStringCreator when a physical line is flushed. The
+    /// headless console must perform the same projection instead of exposing
+    /// the complete line as inert text.
+    /// </summary>
+    private IReadOnlyList<ConsoleNode> AutoButtonize(IReadOnlyList<ConsoleNode> nodes)
+    {
+        var projected = new List<ConsoleNode>(nodes.Count);
+        int index = 0;
+        while (index < nodes.Count)
+        {
+            if (nodes[index] is not TextNode)
+            {
+                projected.Add(nodes[index++]);
+                continue;
+            }
+
+            int start = index;
+            while (index < nodes.Count && nodes[index] is TextNode)
+                index++;
+            AppendAutoButtonizedText(nodes.Skip(start).Take(index - start).Cast<TextNode>().ToArray(), projected);
+        }
+
+        return projected;
+    }
+
+    private void AppendAutoButtonizedText(IReadOnlyList<TextNode> textNodes, List<ConsoleNode> destination)
+    {
+        string text = string.Concat(textNodes.Select(node => node.Text));
+        List<ButtonPrimitive> primitives = ButtonStringCreator.SplitButton(text);
+        int offset = 0;
+        foreach (ButtonPrimitive primitive in primitives)
+        {
+            TextNode[] children = SliceStyledText(textNodes, offset, primitive.Str.Length);
+            if (primitive.CanSelect)
+            {
+                destination.Add(new ButtonNode(
+                    children,
+                    primitive.Input.ToString(CultureInfo.InvariantCulture),
+                    generation: generation));
+            }
+            else
+            {
+                destination.AddRange(children);
+            }
+            offset = checked(offset + primitive.Str.Length);
+        }
+    }
+
+    private static TextNode[] SliceStyledText(IReadOnlyList<TextNode> nodes, int start, int length)
+    {
+        var result = new List<TextNode>();
+        int end = checked(start + length);
+        int nodeStart = 0;
+        foreach (TextNode node in nodes)
+        {
+            int nodeEnd = checked(nodeStart + node.Text.Length);
+            int sliceStart = Math.Max(start, nodeStart);
+            int sliceEnd = Math.Min(end, nodeEnd);
+            if (sliceStart < sliceEnd)
+            {
+                result.Add(new TextNode(
+                    node.Text.Substring(sliceStart - nodeStart, sliceEnd - sliceStart),
+                    node.Style));
+            }
+            nodeStart = nodeEnd;
+            if (nodeStart >= end)
+                break;
+        }
+
+        if (result.Count == 0)
+            throw new InvalidDataException("The upstream button parser returned an empty display segment.");
+        return result.ToArray();
     }
 
     private void EmitStructured(ConsoleOperation operation)

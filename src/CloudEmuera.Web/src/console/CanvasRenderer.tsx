@@ -8,13 +8,14 @@ import { SpriteCanvas } from "./SpriteRenderer";
 
 const pngSignature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets, onInput, onRenderError }: {
+export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets, onInput, onRenderError, interactive = true }: {
   scene: CanvasScene;
   backgroundLayers: BackgroundLayer[];
   windowMetadata: WindowMetadata;
   assets: AssetResolver;
   onInput: (event: ConsoleInputEvent) => void;
   onRenderError?: (message: string) => void;
+  interactive?: boolean;
 }) {
   const [hoveredRasterId, setHoveredRasterId] = useState<string | null>(null);
 
@@ -42,7 +43,7 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
       return <DrawableCanvas key={drawable.drawableId} drawable={drawable} layer={layer} windowMetadata={windowMetadata} hoveredRasterId={hoveredRasterId} onRenderError={onRenderError} />;
     })}
     <div className="canvas-hit-layer" aria-label="游戏交互区域" style={{ zIndex: 10_000 }}>
-      {orderHitRegions(scene.hitRegions).map(region => <button key={region.regionId} className="canvas-hit" type="button" title={region.tooltip ?? undefined} style={hitStyle(region.bounds, windowMetadata)} onClick={event => {
+      {interactive && orderHitRegions(scene.hitRegions).map(region => <button key={region.regionId} className="canvas-hit" type="button" title={region.tooltip ?? undefined} style={hitStyle(region.bounds, windowMetadata)} onClick={event => {
         const root = event.currentTarget.parentElement?.parentElement?.getBoundingClientRect();
         if (!root || root.width <= 0 || root.height <= 0) return;
         const x = clamp((event.clientX - root.left) * windowMetadata.viewportWidth / root.width, 0, windowMetadata.viewportWidth);

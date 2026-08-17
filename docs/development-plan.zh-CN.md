@@ -467,6 +467,15 @@ open/存档写，不影响无关 Session 的 ready 和 open。生产解决方案
 binding 测试；Application SessionLifecycle 13 项、Infrastructure SessionLifecycle/WorkerLease 88
 项、Worker ProcessIsolation 18 项、API 集成 22 项在 Linux dev Docker 中通过。
 
+2026-08-17 心跳误杀修复：合法 heartbeat 进入 API 后先与 watchdog 线性化，并在 SQLite 续租处理
+期间抑制同一 lease 窗口的超时判定；续租完成后从完成时刻重新计算完整判活窗口。持久化永久卡住
+仍受 `lease duration + Worker shutdown timeout` 总上界约束。新增 WorkerLifecycle 回归测试，覆盖
+SQLite busy timeout 与 Worker lease 同为 5 秒时不误发 SIGKILL，以及持久化卡死仍有界终止。
+
+2026-08-17 parent-death 误杀修复：Worker Manager 现使用贯穿其生命周期的专用 OS 启动线程创建
+Worker，避免 Linux `PR_SET_PDEATHSIG` 与可回收线程池线程生命周期耦合；新增“发起启动的临时线程
+退出后 Worker 仍存活”的确定性 ProcessIsolation 回归测试。
+
 ### P1-06 — 幂等 Session 创建、开启与关闭纵切（DONE）
 
 需求映射：SESS-001、SESS-005～008、SESS-011/012、AC-001、AC-003、AC-006/007。
@@ -718,6 +727,15 @@ operation/message union、OpenAPI/realtime/capability 生成与 drift check、Ra
 连接和 renderer 测试；`scripts/test-session-ui-e2e.sh --no-build` 在工作区隔离 DataRoot 中通过
 Chromium desktop、mobile Chromium、mobile WebKit 三端真实 create→open→Snapshot→input→close→save
 download→reopen 纵切。完整七场景发布矩阵、Firefox/WebKit desktop 和视觉阈值继续由 P1-15 扩展验收。
+
+实施记录（2026-08-16）：按实际游玩反馈收敛控制台视觉层为黑暗等宽终端布局，顶部仅保留离开/关闭和紧凑连接状态；移除控制台侧栏与大尺寸选项卡片。前端按当前 `ButtonNode.generation`、prompt 类型和允许 source 禁用旧帧选项，并让画布命中区域只在当前 pointer prompt 开放；`enterKey` 与普通输入行改为右侧紧凑回车控件。新增当前帧按钮、回车输入和现有前端回归测试，未改变 realtime/IPC 协议。
+
+实施记录（2026-08-16）：开发环境的 API/Worker 改为直接运行显式构建的 DLL，并清理 dotnet watch、
+Hot Reload 和诊断端口环境，保持 API 直接管理 Worker 的父子生命周期契约。
+
+实施记录（2026-08-16）：确认浏览器 WebSocket 断开只影响实时订阅，不调用 Session close 或 Worker stop。
+修复客户端把服务端 `heartbeat_timeout`（当前沿用 close code `1008`）误判为认证失效的问题；心跳超时现
+在保留 Session 订阅状态的前提下进入退避重连，并补充实时连接回归测试。
 
 ### P1-12 — 基本管理、诊断与就绪检查（TODO）
 

@@ -44,6 +44,17 @@ public sealed class ConsoleNodeValidationTests
     }
 
     [Fact]
+    public void EmptyButtonValuesRemainValidEmueraInput()
+    {
+        var button = new ButtonNode("Unchanged", string.Empty);
+        var store = new ConsoleStateStore();
+
+        store.Apply(new AppendNodesOperation([button]));
+
+        Assert.Equal(string.Empty, Assert.IsType<ButtonNode>(Assert.Single(store.Snapshot.VisibleNodes)).Value);
+    }
+
+    [Fact]
     public void StoreDefensivelyCopiesAppendCollections()
     {
         var nodes = new List<ConsoleNode> { new TextNode("before") };

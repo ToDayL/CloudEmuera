@@ -38,4 +38,22 @@ describe("ScrollbackRenderer", () => {
     fireEvent.click(button);
     expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 200, behavior: "smooth" });
   });
+
+  it("only enables choice buttons from the current runtime generation", () => {
+    const onInput = vi.fn();
+    const choiceLine = (id: string, generation: number, value: string): RealtimeLine => ({
+      lineId: id,
+      nodes: [{ type: "button", children: [{ type: "text", text: value, style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], value, tooltip: null, enabled: true, generation }],
+      alignment: "left",
+      temporary: false,
+    });
+    render(<ScrollbackRenderer lines={[choiceLine("old", 1, "old"), choiceLine("current", 2, "current")]} currentPrompt={{ promptId: "p2", inputType: "integer", promptText: null, defaultValue: null, constraints: { type: "integer" }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["button"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null }} assets={assets} onInput={onInput} />);
+    const buttons = screen.getAllByRole("button");
+    expect(buttons[0]).toBeDisabled();
+    expect(buttons[1]).toBeEnabled();
+    fireEvent.click(buttons[0]);
+    fireEvent.click(buttons[1]);
+    expect(onInput).toHaveBeenCalledTimes(1);
+    expect(onInput).toHaveBeenCalledWith({ value: "current", source: "BUTTON" });
+  });
 });

@@ -138,6 +138,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
     private readonly ISessionRuntimeStore? runtimeStore;
     private readonly TimeProvider timeProvider;
     private readonly ILogger logger;
+    private readonly WorkerProcessLauncher processLauncher;
     private readonly object sync = new();
     private readonly Dictionary<string, ApiWorkerSession> sessions = new(StringComparer.Ordinal);
     private int disposed;
@@ -154,6 +155,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         this.runtimeStore = runtimeStore;
         this.timeProvider = timeProvider ?? TimeProvider.System;
         logger = loggerFactory.CreateLogger<WorkerManager>();
+        processLauncher = new WorkerProcessLauncher();
     }
 
     public string ControlPlaneInstanceId => options.ControlPlaneInstanceId;
@@ -485,11 +487,19 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 await connection.Session.PublishAsync(message).ConfigureAwait(false);
             return;
         }
-        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.Heartbeat && runtimeStore is not null)
+        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.Heartbeat)
         {
+            DateTimeOffset heartbeatObservedAt = timeProvider.GetUtcNow();
+            if (!connection.Session.TryBeginHeartbeatProcessing(heartbeatObservedAt))
+            {
+                connection.Session.LogLifecycle("heartbeat_rejected", "heartbeat_timeout_claimed", LogLevel.Warning);
+                connection.Cancel();
+                return;
+            }
+
             try
             {
-                if (connection.Session.RuntimePersistenceReady)
+                if (runtimeStore is not null && connection.Session.RuntimePersistenceReady)
                 {
                     SessionRuntimeWriteResult heartbeatResult = await runtimeStore.RecordHeartbeatAsync(
                         connection.Session.RuntimeBinding,
@@ -499,7 +509,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                             message.Heartbeat.WaitingForInput,
                             string.IsNullOrEmpty(message.Heartbeat.CurrentPromptId) ? null : message.Heartbeat.CurrentPromptId,
                             message.Heartbeat.ResidentMemoryBytes,
-                            timeProvider.GetUtcNow()),
+                            heartbeatObservedAt),
                         options.LeaseDuration).ConfigureAwait(false);
                     if (!heartbeatResult.Applied || heartbeatResult.Binding is null)
                     {
@@ -516,9 +526,15 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 connection.Cancel();
                 return;
             }
+            finally
+            {
+                // Heartbeat persistence uses the same SQLite busy timeout as
+                // other API writes. Give the Worker a fresh liveness window
+                // after that bounded write instead of allowing the watchdog
+                // to race the write at LeaseDuration.
+                connection.Session.CompleteHeartbeatProcessing(timeProvider.GetUtcNow());
+            }
         }
-        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.Heartbeat)
-            connection.Session.MarkHeartbeatReceived(timeProvider.GetUtcNow());
         switch (message.PayloadCase)
         {
             case WorkerEnvelope.PayloadOneofCase.RuntimeCompleted:
@@ -575,18 +591,25 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         if (Interlocked.Exchange(ref disposed, 1) != 0)
             return;
         BeginDraining();
-        ApiWorkerSession[] workers = Workers.ToArray();
-        foreach (ApiWorkerSession worker in workers)
+        try
         {
-            try
+            ApiWorkerSession[] workers = Workers.ToArray();
+            foreach (ApiWorkerSession worker in workers)
             {
-                await worker.StopAsync(options.WorkerShutdownTimeout).ConfigureAwait(false);
+                try
+                {
+                    await worker.StopAsync(options.WorkerShutdownTimeout).ConfigureAwait(false);
+                }
+                catch
+                {
+                    await worker.TerminateProcessAsync(options.WorkerShutdownTimeout, "manager-dispose", CancellationToken.None).ConfigureAwait(false);
+                }
+                await worker.DisposeAsync().ConfigureAwait(false);
             }
-            catch
-            {
-                await worker.TerminateProcessAsync(options.WorkerShutdownTimeout, "manager-dispose", CancellationToken.None).ConfigureAwait(false);
-            }
-            await worker.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            processLauncher.Dispose();
         }
     }
 
@@ -601,12 +624,11 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        WorkerProcessEnvironment.RemoveHostOrchestratorVariables(startInfo);
         startInfo.ArgumentList.Add(options.WorkerAssemblyPath);
         startInfo.ArgumentList.Add("--bootstrap-file");
         startInfo.ArgumentList.Add(bootstrapPath);
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        if (!process.Start())
-            throw new InvalidOperationException("The Worker process could not be started.");
+        Process process = processLauncher.Start(startInfo);
         _ = session.CaptureProcessOutputAsync(process.StandardOutput, "stdout");
         _ = session.CaptureProcessOutputAsync(process.StandardError, "stderr");
         return process;
@@ -661,11 +683,14 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     private string bootstrapToken = string.Empty;
     private bool registered;
     private long lastHeartbeatUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+    private long heartbeatProcessingStartedUtcTicks;
     private long lastDisplaySequence;
     private int connectionCount;
     private int disposed;
     private int runtimePersistenceReady;
     private int gracefulTerminationObserved;
+    private int heartbeatProcessingCount;
+    private bool heartbeatTimeoutClaimed;
 
     private sealed class PendingInput(
         SessionInputCommand command,
@@ -1056,10 +1081,11 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             processExit.TrySetResult(value.ExitCode);
         value.Exited += (_, _) =>
         {
-            processExit.TrySetResult(value.ExitCode);
+            int exitCode = value.ExitCode;
+            processExit.TrySetResult(exitCode);
             if (!IsRegistered)
                 registration.TrySetException(new InvalidOperationException("The Worker exited before registration."));
-            LogLifecycle("worker_process_exited", value.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            LogLifecycle("worker_process_exited", exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
         };
     }
 
@@ -1113,8 +1139,67 @@ public sealed class ApiWorkerSession : IAsyncDisposable
 
     internal void MarkGracefulTerminationObserved() => Interlocked.Exchange(ref gracefulTerminationObserved, 1);
 
-    internal void MarkHeartbeatReceived(DateTimeOffset observedAt) =>
-        Interlocked.Exchange(ref lastHeartbeatUtcTicks, observedAt.UtcTicks);
+    internal void MarkHeartbeatReceived(DateTimeOffset observedAt)
+    {
+        lock (sync)
+            lastHeartbeatUtcTicks = Math.Max(lastHeartbeatUtcTicks, observedAt.UtcTicks);
+    }
+
+    internal bool TryBeginHeartbeatProcessing(DateTimeOffset observedAt)
+    {
+        lock (sync)
+        {
+            if (heartbeatTimeoutClaimed || Volatile.Read(ref disposed) != 0)
+                return false;
+
+            lastHeartbeatUtcTicks = Math.Max(lastHeartbeatUtcTicks, observedAt.UtcTicks);
+            if (heartbeatProcessingCount++ == 0)
+                heartbeatProcessingStartedUtcTicks = observedAt.UtcTicks;
+            return true;
+        }
+    }
+
+    internal void CompleteHeartbeatProcessing(DateTimeOffset completedAt)
+    {
+        lock (sync)
+        {
+            if (heartbeatProcessingCount <= 0)
+                throw new InvalidOperationException("No Worker heartbeat is being processed.");
+
+            heartbeatProcessingCount--;
+            lastHeartbeatUtcTicks = Math.Max(lastHeartbeatUtcTicks, completedAt.UtcTicks);
+            if (heartbeatProcessingCount == 0)
+                heartbeatProcessingStartedUtcTicks = 0;
+        }
+    }
+
+    internal bool TryClaimHeartbeatTimeout(
+        DateTimeOffset observedAt,
+        TimeSpan leaseDuration,
+        TimeSpan persistenceGrace)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(leaseDuration, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(persistenceGrace, TimeSpan.Zero);
+        lock (sync)
+        {
+            if (heartbeatTimeoutClaimed)
+                return true;
+
+            DateTimeOffset lastHeartbeat = new(lastHeartbeatUtcTicks, TimeSpan.Zero);
+            if (observedAt - lastHeartbeat < leaseDuration)
+                return false;
+
+            if (heartbeatProcessingCount > 0)
+            {
+                DateTimeOffset processingStarted = new(heartbeatProcessingStartedUtcTicks, TimeSpan.Zero);
+                if (observedAt - processingStarted < leaseDuration + persistenceGrace)
+                    return false;
+            }
+
+            heartbeatTimeoutClaimed = true;
+            return true;
+        }
+    }
 
     internal async Task CaptureProcessOutputAsync(StreamReader reader, string channel)
     {
@@ -1635,7 +1720,10 @@ internal sealed class WorkerManagerHostedService(
                     continue;
                 }
 
-                if (!await ProcessIdentityProbe.TerminateExactAsync(lease.ProcessIdentity, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false))
+                if (!await ProcessIdentityProbe.TerminateExactAsync(
+                    lease.ProcessIdentity,
+                    TimeSpan.FromSeconds(5),
+                    cancellationToken).ConfigureAwait(false))
                 {
                     AmbiguousLeaseLog(logger, lease.Binding.SessionId, lease.Binding.WorkerId, "exact_process_exit_unconfirmed", null);
                     continue;
@@ -1778,7 +1866,8 @@ internal sealed class WorkerManagerHostedService(
                 diagnostics = diagnostics[^1_800..];
             worker.LogLifecycle(
                 "worker_process_exit_observed",
-                $"exit={exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)};ready={worker.ReadyConfirmed};graceful={worker.GracefulTerminationObserved};diagnostics={diagnostics}",
+                $"exit={exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
+                $"ready={worker.ReadyConfirmed};graceful={worker.GracefulTerminationObserved};diagnostics={diagnostics}",
                 exitCode == 0 ? LogLevel.Information : LogLevel.Warning);
 
             // A zero exit code is not sufficient: when the UDS control stream
@@ -1819,7 +1908,10 @@ internal sealed class WorkerManagerHostedService(
             if (!worker.ReadyConfirmed)
                 continue;
 
-            if (timeProvider.GetUtcNow() - worker.LastHeartbeatAt >= managerOptions.LeaseDuration)
+            if (worker.TryClaimHeartbeatTimeout(
+                timeProvider.GetUtcNow(),
+                managerOptions.LeaseDuration,
+                managerOptions.WorkerShutdownTimeout))
                 return;
         }
     }

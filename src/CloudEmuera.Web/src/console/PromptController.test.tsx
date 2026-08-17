@@ -43,6 +43,14 @@ describe("PromptController", () => {
     expect(onInput).not.toHaveBeenCalled();
   });
 
+  it("renders an inline enter control for a prompt without choices", () => {
+    const onInput = vi.fn();
+    render(<PromptController prompt={prompt("enterKey")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+    expect(screen.queryByRole("textbox", { name: "游戏输入" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "按回车继续" }));
+    expect(onInput).toHaveBeenCalledWith(expect.objectContaining({ source: "BUTTON", value: "默认值" }));
+  });
+
   it("sends a keyboard metadata object when a text form is submitted", () => {
     const onInput = vi.fn();
     render(<PromptController prompt={prompt("text")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);

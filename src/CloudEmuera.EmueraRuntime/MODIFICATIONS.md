@@ -202,3 +202,24 @@ requirements/ADR references, and verification commands.
 - Verification: `ChineseConfigMappingTests` covers all supported translated
   labels, while the existing localized save-layout/runtime round-trip tests
   verify that `UseSaveFolder` still controls the native `sav/` layout.
+
+## 2026-08-16 — Headless implicit buttons and East-Asian string conversion
+
+- Modified upstream files:
+  - `Upstream/Emuera/Runtime/Script/Statements/Function/Creator.Method.cs`
+    routes headless `TOHALF`/`TOFULL` through the portable Unicode converter.
+  - `Upstream/Emuera/Runtime/Script/Statements/ExpressionMediator.cs` routes
+    headless hiragana/katakana conversion through the same portable boundary.
+  Desktop builds retain `Microsoft.VisualBasic.Strings.StrConv` unchanged.
+- Headless glue changes:
+  - `UpstreamHeadless/HeadlessEmueraConsole.cs` applies the pinned upstream
+    `ButtonStringCreator` when ordinary printed lines are flushed, preserving
+    implicit numeric choices such as `[1000]` as structured buttons.
+  - `UpstreamHeadless/HeadlessStringConverter.cs` implements deterministic
+    fullwidth/halfwidth ASCII, space, kana, and hiragana/katakana conversion
+    because Windows NLS-backed `StrConv` throws on Linux.
+- Verification:
+  `OrdinaryPrintLinesPreserveUpstreamImplicitNumericButtons`,
+  `PrintButtonAllowsEmptyStringSubmissionValue`, and
+  `EastAsianWidthConversionWorksWithoutWindowsStrConv` exercise the real
+  pinned interpreter through the headless host.

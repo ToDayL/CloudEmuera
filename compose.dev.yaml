@@ -12,13 +12,12 @@ services:
     image: cloudemuera/dotnet-dev:${CLOUDEMUERA_UID:-1000}-${CLOUDEMUERA_GID:-1000}
     user: "${CLOUDEMUERA_UID:-1000}:${CLOUDEMUERA_GID:-1000}"
     working_dir: /workspace
+    # Run the built API directly. A dotnet CLI host (especially dotnet watch)
+    # must not remain above the API/Worker tree and reap a live Worker during
+    # development rebuilds.
     command:
       - dotnet
-      - watch
-      - --project
-      - src/CloudEmuera.Api/CloudEmuera.Api.csproj
-      - run
-      - --no-launch-profile
+      - /workspace/src/CloudEmuera.Api/bin/Debug/net10.0/CloudEmuera.Api.dll
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://0.0.0.0:28647

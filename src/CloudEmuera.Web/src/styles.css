@@ -499,3 +499,231 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ---- Compact dark terminal presentation ---- */
+.realtime-console {
+  color-scheme: dark;
+  color: #d8e2d7;
+  background: #080a09;
+}
+.realtime-console .console-header {
+  min-height: 52px;
+  padding: 7px clamp(12px, 3vw, 28px);
+  border-color: #273128;
+  color: #d8e2d7;
+  background: #101410;
+}
+.realtime-console .console-title { gap: 12px; }
+.realtime-console .console-leave {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  color: #9eafa0;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.realtime-console .console-leave:hover { color: #d8e8d8; }
+.realtime-console .console-title h1 {
+  color: #edf5eb;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.realtime-console .console-title p {
+  margin-top: 2px;
+  color: #748174;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+}
+.realtime-console .console-controls { gap: 10px; flex-wrap: nowrap; }
+.realtime-console .connection-chip {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid #2e3a30;
+  border-radius: 2px;
+  color: #9eae9e;
+  background: #151b16;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  font-weight: 400;
+}
+.realtime-console .connection-chip .online,
+.realtime-console .connection-chip .offline { box-shadow: none; }
+.realtime-console .connection-chip .online { background: #73d092; }
+.realtime-console .connection-chip .offline { background: #c89b4f; }
+.realtime-console .danger-text {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid #603a35;
+  border-radius: 2px;
+  color: #e69a88;
+  background: transparent;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-weight: 400;
+}
+.realtime-console .danger-text:hover:not(:disabled) { border-color: #a95d4e; color: #ffc2b2; background: #2b1715; }
+.realtime-console .console-layout { display: block; min-height: calc(100vh - 52px); background: #080a09; }
+.realtime-console .console-aside { display: none; }
+.realtime-console .realtime-game-console {
+  min-height: calc(100vh - 52px);
+  padding: 15px clamp(10px, 3vw, 28px) 96px;
+  background: #080a09;
+}
+.realtime-console .canvas-renderer {
+  border-color: #263227;
+  background: #050706;
+  box-shadow: none;
+}
+.realtime-console .scrollback-shell,
+.realtime-console .scrollback,
+.realtime-console .console-truncation,
+.realtime-console .console-receipt {
+  width: min(960px, 100%);
+}
+.realtime-console .scrollback {
+  min-height: 0;
+  padding: 8px 4px;
+  border: 0;
+  color: #d8e2d7;
+  background: #080a09;
+  box-shadow: none;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", "Noto Sans Mono CJK SC", monospace;
+}
+.realtime-console .console-line {
+  min-height: 1.45em;
+  font-size: clamp(12px, 1.35vw, 15px);
+  line-height: 1.5;
+}
+.realtime-console .console-choice {
+  display: inline;
+  min-height: 0;
+  margin: 0 2px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 2px;
+  color: #8bd6a2;
+  background: transparent;
+  font: inherit;
+  font-weight: 500;
+  line-height: inherit;
+  vertical-align: baseline;
+  box-shadow: none;
+}
+.realtime-console .console-choice:hover:not(:disabled),
+.realtime-console .console-choice:focus-visible:not(:disabled) {
+  color: #e7ffe9;
+  background: #23402b;
+  outline: none;
+}
+.realtime-console .console-choice.is-stale,
+.realtime-console .console-choice:disabled { color: #536057; background: transparent; opacity: .55; }
+.realtime-console .scrollback-latest {
+  min-height: 28px;
+  margin: -38px auto 10px;
+  padding: 0 9px;
+  border: 1px solid #3f6649;
+  border-radius: 2px;
+  color: #c9e5cd;
+  background: #17241a;
+  box-shadow: none;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-weight: 400;
+}
+.realtime-console .prompt-controller {
+  width: min(960px, 100%);
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid #304334;
+  border-radius: 2px;
+  color: #d8e2d7;
+  background: #111712;
+  box-shadow: none;
+}
+.realtime-console .prompt-heading { min-height: 30px; }
+.realtime-console .prompt-heading p {
+  color: #aebfae;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-weight: 400;
+}
+.realtime-console .prompt-heading p::before { margin-right: 6px; color: #70c888; content: ">"; }
+.realtime-console .prompt-heading-actions { display: flex; align-items: center; gap: 8px; }
+.realtime-console .prompt-controller form { gap: 6px; margin-top: 5px; }
+.realtime-console .prompt-controller input {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #374a3a;
+  border-radius: 2px;
+  color: #e1f0df;
+  background: #080b09;
+  box-shadow: none;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+.realtime-console .prompt-controller input:focus { border-color: #68ae7d; box-shadow: 0 0 0 2px rgb(104 174 125 / 18%); }
+.realtime-console .prompt-enter-button {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #4b7655;
+  border-radius: 2px;
+  color: #c4e9ca;
+  background: #183020;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 16px;
+  line-height: 1;
+}
+.realtime-console .prompt-enter-button:hover:not(:disabled),
+.realtime-console .prompt-enter-button:focus-visible:not(:disabled) { border-color: #8ed49b; color: #fff; background: #275234; outline: none; }
+.realtime-console .prompt-enter-button:disabled { color: #66736a; border-color: #35443a; background: #151b16; }
+.realtime-console .prompt-any-key { min-height: 30px; margin-top: 5px; padding: 0 9px; border: 1px solid #3d5942; border-radius: 2px; color: #b9d5bd; background: #142119; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 10px; }
+.realtime-console .deadline-clock { color: #9dcc9e; font-size: 10px; }
+.realtime-console .deadline-clock.expired { color: #e6a08e; }
+.realtime-console .prompt-timeout-message { color: #b9a76e; }
+.realtime-console .input-hint { color: #748174; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 10px; }
+.realtime-console .reconnect-banner,
+.realtime-console .error-banner {
+  border-color: #394b3d;
+  color: #c8ddc9;
+  background: #172219;
+}
+.realtime-console .reconnect-banner small,
+.realtime-console .error-banner small { color: #91aa95; }
+.realtime-console .console-receipt { border-color: #365640; color: #a9d4ae; background: #142319; }
+.realtime-console .console-truncation,
+.realtime-console .console-compat-warning { border-color: #665832; color: #d8c88e; background: #272318; }
+.realtime-console .console-compat-warning small { color: #b6a873; }
+.realtime-console .console-empty,
+.realtime-console .console-loading { color: #93a394; }
+.realtime-console .console-fatal { border-color: #70433b; color: #edb4a7; background: #281715; }
+.realtime-console .console-fatal small { color: #c58b81; }
+.realtime-console .sound-toggle { min-height: 28px; margin-top: 8px; padding: 0 9px; border-color: #53613b; border-radius: 2px; color: #d6d29d; background: #202619; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+
+@media (max-width: 760px) {
+  .realtime-console .console-header { min-height: 46px; padding: 6px 9px; }
+  .realtime-console .console-title { min-width: 0; gap: 8px; }
+  .realtime-console .console-leave { min-height: 26px; font-size: 10px; }
+  .realtime-console .console-title h1 { overflow: hidden; max-width: 38vw; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .realtime-console .console-title p { overflow: hidden; max-width: 38vw; text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
+  .realtime-console .console-controls { gap: 5px; }
+  .realtime-console .connection-chip { max-width: 30vw; min-height: 24px; overflow: hidden; padding: 0 5px; text-overflow: ellipsis; white-space: nowrap; }
+  .realtime-console .danger-text { min-height: 26px; padding: 0 7px; font-size: 9px; }
+  .realtime-console .console-layout,
+  .realtime-console .realtime-game-console { min-height: calc(100dvh - 46px); }
+  .realtime-console .realtime-game-console { padding: 9px 8px 88px; }
+  .realtime-console .scrollback { padding: 6px 1px; }
+  .realtime-console .console-line { font-size: 12px; }
+  .realtime-console .prompt-controller { padding: 7px 8px; }
+  .realtime-console .prompt-controller form { align-items: center; flex-direction: row; }
+  .realtime-console .prompt-heading p { max-width: 70vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .realtime-console .prompt-enter-button { width: 32px; min-width: 32px; height: 32px; min-height: 32px; flex-basis: 32px; }
+}

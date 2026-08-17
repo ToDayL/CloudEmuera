@@ -4572,9 +4572,19 @@ internal static partial class FunctionMethodCreator
 				case StrFormType.Lower:
 					return str.ToLower();
 				case StrFormType.Half:
+#if CLOUDEMUERA_HEADLESS
+					// CloudEmuera modification: VisualBasic StrConv relies on Windows
+					// NLS for width conversion and is unsupported on Linux.
+					return HeadlessStringConverter.ToNarrow(str);
+#else
 					return Microsoft.VisualBasic.Strings.StrConv(str, Microsoft.VisualBasic.VbStrConv.Narrow, Config.Language);
+#endif
 				case StrFormType.Full:
+#if CLOUDEMUERA_HEADLESS
+					return HeadlessStringConverter.ToWide(str);
+#else
 					return Microsoft.VisualBasic.Strings.StrConv(str, Microsoft.VisualBasic.VbStrConv.Wide, Config.Language);
+#endif
 			}
 			return "";
 		}

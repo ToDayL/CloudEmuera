@@ -68,13 +68,6 @@ public sealed class ButtonNode : ConsoleNode
             nameof(value),
             ConsoleContractLimits.Default.MaxButtonValueLength,
             ConsoleContractViolationReason.ButtonValueTooLong);
-        if (value.Length == 0)
-        {
-            throw new ConsoleContractException(
-                ConsoleContractViolationReason.EmptyValue,
-                "A button value is required.",
-                nameof(value));
-        }
 
         if (tooltip is not null)
         {
@@ -318,10 +311,6 @@ internal static class ConsoleNodeValidation
                     nameof(ButtonNode.Value),
                     limits.MaxButtonValueLength,
                     ConsoleContractViolationReason.ButtonValueTooLong);
-                if (button.Value.Length == 0)
-                {
-                    throw new ConsoleContractException(ConsoleContractViolationReason.EmptyValue, "A button value is required.");
-                }
 
                 if (button.Generation < 0)
                     throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Button generation cannot be negative.");

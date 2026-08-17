@@ -66,13 +66,23 @@ internal sealed class ExpressionMediator
 		if (!(forceHiragana | forceKatakana | halftoFull))
 			return str;
 		if (forceKatakana)
+#if CLOUDEMUERA_HEADLESS
+			// CloudEmuera modification: replace Windows-only VisualBasic StrConv
+			// kana conversion in the Linux headless build.
+			return HeadlessStringConverter.ToKatakana(str);
+#else
 			return Strings.StrConv(str, VbStrConv.Katakana, 0x0411);
+#endif
 		else if (forceHiragana)
 		{
+#if CLOUDEMUERA_HEADLESS
+			return HeadlessStringConverter.ToHiragana(str, halftoFull);
+#else
 			if (halftoFull)
 				return Strings.StrConv(str, VbStrConv.Hiragana | VbStrConv.Wide, 0x0411);
 			else
 				return Strings.StrConv(str, VbStrConv.Hiragana, 0x0411);
+#endif
 		}
 		return str;
 	}

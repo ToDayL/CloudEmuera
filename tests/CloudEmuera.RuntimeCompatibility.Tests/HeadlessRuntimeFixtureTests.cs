@@ -5,6 +5,7 @@ using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.UI.Game.Image;
 using System.Drawing;
+using System.Text;
 using static MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
 using Xunit;
 
@@ -693,6 +694,68 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task PrintButtonAllowsEmptyStringSubmissionValue()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTBUTTON \"UNCHANGED\", \"\"\nPRINTL\nINPUTS\nPRINTFORML VALUE=[%RESULTS%]\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ButtonNode button = Assert.Single(fixture.Console.Snapshot.VisibleNodes.OfType<ButtonNode>());
+        Assert.Equal(string.Empty, button.Value);
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitInput(new ConsoleInputCommand(
+                prompt.PromptId,
+                "empty-button-message",
+                button.Value,
+                ConsoleInputSource.Button)).Kind);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
+        Assert.Contains("VALUE=[]", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task OrdinaryPrintLinesPreserveUpstreamImplicitNumericButtons()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTFORML [1000] - YES  [1001] - NAME  [1002] - BASE\n" +
+            "PRINTL [1003] - TALENT  [1004] - ABILITY\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        ButtonNode[] buttons = fixture.Console.Snapshot.VisibleNodes.OfType<ButtonNode>().ToArray();
+        Assert.Equal(["1000", "1001", "1002", "1003", "1004"], buttons.Select(button => button.Value));
+        Assert.All(buttons, button => Assert.NotEmpty(button.Children));
+        Assert.Contains("[1000] - YES", string.Concat(buttons.SelectMany(button => button.Children).Cast<TextNode>().Select(node => node.Text)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task EastAsianWidthConversionWorksWithoutWindowsStrConv()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nTOHALF \"１２３ＡＢＣ　ガ\"\nPRINTFORML HALF=%RESULTS%\n" +
+            "TOFULL \"123 ABC ｶﾞ\"\nPRINTFORML FULL=%RESULTS%\nQUIT\n",
+            erbCodePage: 932);
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("HALF=123ABC ｶﾞ", transcript, StringComparison.Ordinal);
+        Assert.Contains("FULL=１２３　ＡＢＣ　ガ", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task PrintedAssignmentTextIsNotReportedAsRuntimeVariable()
     {
         using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nPRINTL SCORE=3\nQUIT\n");
@@ -936,7 +999,8 @@ public sealed class HeadlessRuntimeFixtureTests
             RuntimeSaveLayout saveLayout = RuntimeSaveLayout.Root,
             string? configuration = null,
             string? saveDeclarations = null,
-            Action<string>? configureGame = null)
+            Action<string>? configureGame = null,
+            int? erbCodePage = null)
         {
             string root = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-bridge", Guid.NewGuid().ToString("N"));
             string game = Path.Combine(root, "game");
@@ -947,7 +1011,15 @@ public sealed class HeadlessRuntimeFixtureTests
             Directory.CreateDirectory(Path.Combine(game, "resources"));
             Directory.CreateDirectory(workspace);
             File.WriteAllText(Path.Combine(game, "CSV", "GAMEBASE.CSV"), "title,bridge-test\n");
-            File.WriteAllText(Path.Combine(game, "ERB", "START.ERB"), erb);
+            if (erbCodePage is int codePage)
+            {
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                File.WriteAllText(Path.Combine(game, "ERB", "START.ERB"), erb, Encoding.GetEncoding(codePage));
+            }
+            else
+            {
+                File.WriteAllText(Path.Combine(game, "ERB", "START.ERB"), erb);
+            }
             if (saveDeclarations is not null)
             {
                 File.WriteAllText(Path.Combine(game, "ERB", "SAVE.ERH"), saveDeclarations);

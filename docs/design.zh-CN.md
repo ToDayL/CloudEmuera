@@ -301,6 +301,9 @@ owner、单链接和 `0700` 父目录后，才通过受保护父目录句柄 `un
 
 API 正常停止时先停止接入和新输入，再对 Worker 执行有界优雅停止，超时后强制终止。API 异常
 退出时，Worker 在控制通道断开后立即开始有界退出；parent-death signal 或专属进程组提供兜底。
+Linux `PR_SET_PDEATHSIG` 绑定的是创建子进程的具体线程而不只是进程：启用该兜底时，所有 Worker
+必须由贯穿 Worker Manager 生命周期的专用 OS 线程创建，禁止从可回收的 .NET ThreadPool 线程
+直接 `Process.Start`，否则线程池收缩会被内核误判为父线程死亡并向健康 Worker 发送 SIGKILL。
 控制面停止中断的活动 Session 进入 `CRASHED` 而不是伪装成用户关闭的 `CLOSED`；新 API 在无法
 证明某个旧 Worker 已退出时阻止对应 Session 的 open 和存档写，不把缺少额外内核隔离能力作为全局
 readiness 失败条件。
@@ -817,6 +820,11 @@ Worker 以配置间隔发送单调时钟产生的心跳，其中包含当前序�
 收到后更新有界内存视图，并按较低频率用短事务批量持久化，避免每次心跳写 SQLite。MVP 不要求
 采集 CPU、RSS、FD、磁盘或输出速率时序指标。
 
+合法 heartbeat 的接收必须先与进程 watchdog 线性化；SQLite 续租已开始但尚未完成时，watchdog
+不得仅因原 lease 窗口到达而误杀 Worker。续租处理完成后重新给予完整判活窗口；若持久化永久
+卡住，则在额外的有界 persistence grace 后仍进入超时回收。这样数据库 busy timeout 不会与相同
+长度的 Worker lease 在边界上竞争，同时不会把持久化故障变成无限存活。
+
 只有 API Worker Manager 可以根据子进程退出或心跳截止时间判定 `CRASHED`。判定时必须再次检查
 `controlPlaneInstanceId + sessionId + workerId + epoch + stateVersion`，防止旧 Worker 或迟到回调
 把新 Worker 标记为崩溃。
@@ -1249,6 +1257,8 @@ pending clientMessageId → result
 ```
 
 渲染器只接收已验证的内部节点。按键和按钮最终都生成同一种 `session.input` 消息；发送后保持待定状态，直到收到确定结果。重连时不凭本地 DOM 推断权威状态，而是用服务端完整快照替换本地显示树。
+
+游戏控制台采用全屏黑暗的类终端布局：顶部只保留离开、关闭等生命周期操作与紧凑连接状态，游戏输出使用受约束的等宽滚动区，不再在右侧放置会挤压排版的操作面板。浏览器从当前快照中已发布的 `ButtonNode.generation` 推导当前选项帧；只有同时属于当前 generation、当前 prompt 类型允许且 `enabled` 的按钮可触发，旧帧按钮保留为不可用的历史输出。画布命中区域同样只在当前 `primitivePointerKey` prompt 存在且允许 pointer source 时开放，最终仍由 Worker 的 prompt/epoch 校验裁决。`enterKey` 或普通无选项输入在等待行右侧提供紧凑回车控件；它只使用当前 prompt 允许的 `BUTTON` 或回车 `KEYBOARD` source，不为 `waitOnly` 伪造输入。
 
 移动端需处理软键盘造成的 visual viewport 改变、安全区域、触摸目标尺寸和自动滚动；自动滚动仅在用户已接近底部时发生，避免打断查看历史。所有按钮可通过键盘聚焦，颜色不是唯一状态提示，图片具有可用的替代文本或装饰标识。
 

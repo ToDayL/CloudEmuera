@@ -14,6 +14,53 @@ namespace CloudEmuera.Worker.IntegrationTests;
 [Trait("Category", "ProcessIsolation")]
 public sealed class WorkerProcessIsolationTests
 {
+    [Fact]
+    public async Task WorkerSurvivesTheCallingThreadExitingAfterLaunch()
+    {
+        await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location));
+        var launched = new TaskCompletionSource<ApiWorkerSession>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var caller = new Thread(() =>
+        {
+            try
+            {
+                launched.TrySetResult(manager.LaunchWorkerAsync(new WorkerLaunchRequest(
+                        new WorkerBinding("sess_parent_thread", "wrk_parent_thread", 1),
+                        fixture.SessionRoot,
+                        "v18-compatible",
+                        RuntimeSaveLayout.Root,
+                        fixture.Manifest.ManifestDigest))
+                    .GetAwaiter()
+                    .GetResult());
+            }
+            catch (Exception exception)
+            {
+                launched.TrySetException(exception);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "short-lived Worker launch caller"
+        };
+
+        caller.Start();
+        ApiWorkerSession session = await launched.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.True(caller.Join(TimeSpan.FromSeconds(5)));
+
+        // PR_SET_PDEATHSIG is tied to the native thread that forked the child.
+        // If Process.Start ran on caller, its exit above would SIGKILL Worker.
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        Assert.False(
+            session.HasExited,
+            $"exitCode={session.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "running"}{Environment.NewLine}{session.ProcessDiagnostics}");
+
+        await session.SendStartRuntimeAsync(TimeSpan.FromSeconds(15));
+        await session.WaitForAsync(
+            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
+            TimeSpan.FromSeconds(15));
+    }
+
     [Theory]
     [InlineData("v18-core", "v18-compatible", RuntimeSaveLayout.Root, "7")]
     [InlineData("em-ee-core", "em-ee-current", RuntimeSaveLayout.SavDirectory, "4")]

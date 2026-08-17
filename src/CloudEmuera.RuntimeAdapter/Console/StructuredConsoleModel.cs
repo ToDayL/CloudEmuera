@@ -351,8 +351,6 @@ public sealed class HitRegion
     {
         ConsoleContractValidation.ValidateIdentifier(regionId, nameof(regionId), ConsoleContractLimits.Default.MaxHitRegionIdLength);
         ConsoleContractValidation.ValidateText(inputValue, nameof(inputValue), ConsoleContractLimits.Default.MaxButtonValueLength, ConsoleContractViolationReason.ButtonValueTooLong);
-        if (inputValue.Length == 0)
-            throw new ConsoleContractException(ConsoleContractViolationReason.EmptyValue, "A hit region input value is required.");
         if (tooltip is not null)
             ConsoleContractValidation.ValidateText(tooltip, nameof(tooltip), ConsoleContractLimits.Default.MaxTooltipLength, ConsoleContractViolationReason.TooltipTooLong);
         RegionId = regionId;
