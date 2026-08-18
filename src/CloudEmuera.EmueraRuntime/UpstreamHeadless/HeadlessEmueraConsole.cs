@@ -436,8 +436,15 @@ internal sealed class EmueraConsole
     {
         isTimeOut = false;
         FlushPendingLine();
+        ConsoleInputType inputType = anykey ? ConsoleInputType.AnyKey : ConsoleInputType.EnterKey;
+        // Match upstream EmueraConsole.ReadAnyKey: a wait emitted by
+        // EVENTCOMEND suppresses Process' fallback post-command wait.
+        if (GlobalStatic.Process is not null)
+            GlobalStatic.Process.NeedWaitToEventComEnd = false;
+        if (RuntimeDebugTrace.Current is not null)
+            RuntimeDebugTrace.RecordErbWait(GlobalStatic.Process?.GetRunningPosition(), inputType, stopMesskip);
         adapter.Read(new ConsolePrompt(
-            anykey ? ConsoleInputType.AnyKey : ConsoleInputType.EnterKey,
+            inputType,
             stopMessageSkip: stopMesskip,
             allowedSources: ConsoleInputSource.All), cancellationToken);
     }
@@ -981,7 +988,10 @@ internal sealed class EmueraConsole
     private void EmitStructured(ConsoleOperation operation)
     {
         if (adapter is StructuredGameConsole structured)
-            structured.EmitTransaction(new ConsoleTransaction([operation]));
+        {
+            SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction([operation]));
+            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+        }
         else
             adapter.Emit(operation);
     }

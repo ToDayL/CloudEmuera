@@ -17,6 +17,30 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-18 — Opt-in ERB/structured-output trace
+
+- Modified upstream file: `Upstream/Emuera/Runtime/Script/Statements/ExpressionMediator.cs`.
+  Under the existing `CLOUDEMUERA_HEADLESS` build symbol it reports the current
+  ERB source position, print instruction, rendered text and wait-for-input flag
+  to the headless diagnostic bridge immediately before normal output processing.
+  Desktop builds retain upstream behavior; headless Workers remain unchanged
+  unless the explicit trace flag is enabled.
+- Headless glue: `RuntimeDebugTrace` is disabled by default and is enabled only
+  by `CLOUDEMUERA_RUNTIME_DEBUG_TRACE=1` or `true`, including in Production.
+  It appends JSON Lines to the owning Session directory's
+  `metadata/runtime-debug.jsonl` (outside game `root/`), recording `erb_output`,
+  `erb_wait` (including standalone `WAIT`) and every resulting structured
+  console operation with sequence, prompt and bounded Node summaries. It never
+  records submitted input values.
+- Scope: opt-in diagnosis for PLAY-001/PLAY-004 and the eraTW consecutive
+  empty-input investigation.
+- Behavioral parity: `HeadlessEmueraConsole.ReadAnyKey` now clears
+  `Process.NeedWaitToEventComEnd`, matching upstream `EmueraConsole.ReadAnyKey`.
+  Without this, eraTW's `EVENTCOMEND.ERB:487` `TWAIT 100,0` opened its own
+  wait but the upstream process added a second fallback empty wait afterwards.
+- Verification: RuntimeBridge tests exercise PRINT/PRINTW output and assert the
+  trace file is created only when the explicit environment flag is enabled.
+
 ## 2026-08-18 — Linux resource path composition in AppContents
 
 - Modified upstream file: `Upstream/Emuera/UI/Game/Image/AppContents.cs`.

@@ -46,6 +46,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly CancellationToken cancellationToken;
     private readonly Func<string, RuntimeSpriteDefinition> imageResolver;
     private readonly Action runtimeGateAcquired;
+    private RuntimeDebugTrace debugTrace;
     private EmueraConsole console;
     private Process process;
     private bool ownsGate;
@@ -103,6 +104,8 @@ public sealed class UpstreamRuntimeSession : IDisposable
 
         JSONConfig.Data = new JSONConfigData();
         HeadlessAudioBridge.Configure(audioPort, cancellationToken);
+        debugTrace = RuntimeDebugTrace.CreateWhenEnabled(paths.SessionRoot);
+        debugTrace?.Activate();
         Preload.Clear();
         await Preload.Load(MinorShift.Emuera.Program.ErbDir, cancellationToken).ConfigureAwait(false);
         await Preload.Load(MinorShift.Emuera.Program.CsvDir, cancellationToken).ConfigureAwait(false);
@@ -168,6 +171,8 @@ public sealed class UpstreamRuntimeSession : IDisposable
         }
         finally
         {
+            debugTrace?.Dispose();
+            debugTrace = null;
             if (ownsGate)
             {
                 ownsGate = false;
