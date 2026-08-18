@@ -1,6 +1,7 @@
+import { createRef } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { PromptController } from "./PromptController";
+import { PromptController, type PromptControllerHandle } from "./PromptController";
 import type { Prompt } from "../realtime/protocol";
 
 function prompt(inputType: Prompt["inputType"]): Prompt {
@@ -73,6 +74,26 @@ describe("PromptController", () => {
     const input = screen.getByRole("textbox", { name: "游戏输入" });
     fireEvent.change(input, { target: { value: "" } });
     fireEvent.submit(input.closest("form")!);
+    expect(onInput).not.toHaveBeenCalled();
+  });
+
+  it("submits an empty keyboard Enter for a blank console-surface click", () => {
+    const onInput = vi.fn();
+    const controller = createRef<PromptControllerHandle>();
+    render(<PromptController ref={controller} prompt={{ ...prompt("text"), defaultValue: null }} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+    controller.current?.submitBlankEnter();
+    expect(onInput).toHaveBeenCalledWith({ source: "KEYBOARD", value: "", key: { keyCode: 13, control: false, alt: false, shift: false } });
+  });
+
+  it("does not submit a blank Enter when the input already has a value or keyboard is disallowed", () => {
+    const onInput = vi.fn();
+    const controller = createRef<PromptControllerHandle>();
+    const { rerender } = render(<PromptController ref={controller} prompt={prompt("text")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+    controller.current?.submitBlankEnter();
+    expect(onInput).not.toHaveBeenCalled();
+
+    rerender(<PromptController ref={controller} prompt={{ ...prompt("text"), defaultValue: null, allowedSources: ["button"] }} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+    controller.current?.submitBlankEnter();
     expect(onInput).not.toHaveBeenCalled();
   });
 

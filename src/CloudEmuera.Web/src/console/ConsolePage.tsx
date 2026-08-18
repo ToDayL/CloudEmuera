@@ -7,7 +7,7 @@ import { presentationManifestUrl, AssetResolver, type PresentationManifest } fro
 import { CanvasRenderer } from "./CanvasRenderer";
 import { DeadlineClock } from "./DeadlineClock";
 import { MediaController } from "./media";
-import { PromptController } from "./PromptController";
+import { PromptController, type PromptControllerHandle } from "./PromptController";
 import { ScrollbackRenderer, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { getRealtimeConnectionManager, type ConnectionPhase } from "../realtime/connection";
 import { createSessionStoreState, type SessionStoreState } from "../realtime/sessionStore";
@@ -35,6 +35,7 @@ export function ConsolePage() {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const session = useSession(sessionId);
   const gameConsoleRef = useRef<HTMLElement>(null);
+  const promptControllerRef = useRef<PromptControllerHandle>(null);
   const endedSessionRef = useRef<string | null>(null);
   const manifest = useQuery({
     queryKey: ["presentation-manifest", sessionId],
@@ -113,6 +114,10 @@ export function ConsolePage() {
     if (!clientMessageId) setCloseError("当前实时连接尚未就绪，输入没有发送。请等待连接恢复后重试。");
   }, [manager, scrollToBottom, sessionId, stream.consoleState]);
   const reportRendererError = useCallback((message: string) => setRendererError(message), []);
+  const handleConsoleSurfaceClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (!isBlankConsoleSurfaceTarget(event.target)) return;
+    promptControllerRef.current?.submitBlankEnter();
+  }, []);
 
   const close = async () => {
     if (!sessionId || !session.data || closing) return;
@@ -141,7 +146,7 @@ export function ConsolePage() {
       <button className="danger-text" aria-label="关闭 Session" onClick={() => void close()} disabled={closing || session.data.state !== "RUNNING"}>{closing ? "正在关闭…" : "关闭"}</button>
     </div>
     <div className="console-layout">
-      <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台">
+      <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台" onClick={handleConsoleSurfaceClick}>
         <h1 className="sr-only">{session.data.name}</h1>
         <p className="sr-only">Session 状态：<span>{sessionStateLabel(session.data.state)}</span></p>
         {(!networkOnline || (connectionPhase !== "ready" && connectionPhase !== "disconnected")) && <div className="reconnect-banner" role="status" aria-live="polite"><span className="mini-spinner"/><p><strong>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</strong><small>{networkOnline ? "游戏仍在服务器上运行；浏览器连接恢复后会按 epoch 和序号重新同步。" : "浏览器离线只影响当前显示；Session 和 Worker 不会被关闭。"}</small></p></div>}
@@ -155,10 +160,14 @@ export function ConsolePage() {
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
       </main>
       <div className="console-input-dock">
-        <PromptController prompt={state?.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>
+        <PromptController ref={promptControllerRef} prompt={state?.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>
       </div>
     </div>
   </div>;
+}
+
+export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && !target.closest("button, a, input, select, textarea, [role=\"button\"]");
 }
 
 function presentationManifestUrlPath(sessionId: string): string {

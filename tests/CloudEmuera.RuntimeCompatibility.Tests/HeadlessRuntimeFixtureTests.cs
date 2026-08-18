@@ -178,6 +178,144 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task PrintFormWWaitsForEnterKeyInsideTheEncounterChain()
+    {
+        // PLAY-002/COMP-007: PRINTFORMW is print + newline + wait-for-any-key
+        // (upstream ExpressionMediator.OutputToConsole calls ReadAnyKey), so
+        // the eraTW room-encounter kojo "魅魔瞥了一眼…就马上转了回去" is followed
+        // by an EnterKey prompt; the movement command then ends and the next
+        // INPUT (menu) opens a separate Integer prompt. The original Emuera
+        // requires the same sequence of key presses.
+        string erb =
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML 里好像有魅魔\n" +
+            "PRINTBUTTON \"[打声招呼后继续移动]\", 0\n" +
+            "PRINTBUTTON \"[无视]\", 1\n" +
+            "PRINTBUTTON \"[停下来]\", 2\n" +
+            "$INPUT_LOOP\n" +
+            "INPUT\n" +
+            "IF RESULT < 0 || RESULT > 2\n" +
+            "    CLEARLINE 1\n" +
+            "    GOTO INPUT_LOOP\n" +
+            "ENDIF\n" +
+            "IF RESULT == 2\n" +
+            "    PRINTFORMW 魅魔瞥了一眼MASTER就马上转了回去\n" +
+            "    PRINTFORML\n" +
+            "ELSEIF RESULT == 1\n" +
+            "    PRINTFORMW 魅魔坦率地打了招呼\n" +
+            "ELSE\n" +
+            "    PRINTFORMW 魅魔无视了MASTER\n" +
+            "ENDIF\n" +
+            "PRINTFORML 1回移動したよ\n" +
+            "INPUT\n" +
+            "PRINTFORML MENU-DONE\n" +
+            "QUIT\n";
+        using var fixture = RuntimeHostFixture.Create(
+            erb,
+            configureGame: game => File.WriteAllText(
+                Path.Combine(game, "ERB", "START.ERB"),
+                erb,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)));
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        StructuredGameConsole console = fixture.Console;
+        var prompts = new List<ConsoleInputType>();
+
+        // 1) ASK_M choice INPUT (Integer); an empty value is rejected.
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt askM = console.CurrentPrompt!;
+        Assert.Equal(ConsoleInputType.Integer, askM.InputType);
+        prompts.Add(askM.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.InvalidFormat,
+            console.SubmitInput(new ConsoleInputCommand(askM.PromptId, "empty", string.Empty)).Kind);
+        Assert.Equal(askM.PromptId, console.CurrentPrompt!.PromptId);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            console.SubmitInput(new ConsoleInputCommand(askM.PromptId, "choice", "2")).Kind);
+
+        // 2) The kojo PRINTFORMW opens a wait-for-any-key (EnterKey) prompt.
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt printFormW = console.CurrentPrompt!;
+        Assert.Equal(ConsoleInputType.EnterKey, printFormW.InputType);
+        prompts.Add(printFormW.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            console.SubmitInput(new ConsoleInputCommand(printFormW.PromptId, "continue", string.Empty)).Kind);
+
+        // 3) The movement command ends and the next INPUT (menu) opens.
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt menu = console.CurrentPrompt!;
+        Assert.Equal(ConsoleInputType.Integer, menu.InputType);
+        prompts.Add(menu.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            console.SubmitInput(new ConsoleInputCommand(menu.PromptId, "menu", "7")).Kind);
+
+        Assert.True(SpinWait.SpinUntil(() => run.IsCompleted, TimeSpan.FromSeconds(2)));
+        EmueraRuntimeResult finalResult = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, finalResult.Status);
+        Assert.Contains(
+            "魅魔瞥了一眼",
+            RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "MENU-DONE",
+            RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+        Assert.Equal(
+            new[] { ConsoleInputType.Integer, ConsoleInputType.EnterKey, ConsoleInputType.Integer },
+            prompts);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task TwoPlainInputsOpenExactlyTwoPrompts()
+    {
+        // Control: without a PRINTFORMW the same shape opens exactly two
+        // prompts, confirming the extra EnterKey prompt is PRINTFORMW's own
+        // upstream wait-for-any-key semantics and not a duplicated INPUT.
+        string erb =
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML A\n" +
+            "INPUT\n" +
+            "PRINTFORML B\n" +
+            "INPUT\n" +
+            "PRINTFORML DONE\n" +
+            "QUIT\n";
+        using var fixture = RuntimeHostFixture.Create(
+            erb,
+            configureGame: game => File.WriteAllText(
+                Path.Combine(game, "ERB", "START.ERB"),
+                erb,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)));
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        StructuredGameConsole console = fixture.Console;
+        var prompts = new List<ConsoleInputType>();
+        for (int i = 0; i < 4 && !run.IsCompleted; i++)
+        {
+            Assert.True(SpinWait.SpinUntil(() => run.IsCompleted || console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+            if (run.IsCompleted)
+                break;
+            ConsolePrompt current = console.CurrentPrompt!;
+            prompts.Add(current.InputType);
+            Assert.Equal(
+                ConsoleInputResultKind.Accepted,
+                console.SubmitInput(new ConsoleInputCommand(current.PromptId, $"driver-{i}", "7")).Kind);
+            SpinWait.SpinUntil(() => run.IsCompleted || console.CurrentPrompt?.PromptId != current.PromptId, TimeSpan.FromMilliseconds(300));
+        }
+        Assert.True(SpinWait.SpinUntil(() => run.IsCompleted, TimeSpan.FromSeconds(2)));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
+        Assert.Equal(2, prompts.Count);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task StaticSpriteCsvClipsLegacyRectangleWhilePreservingDestinationSize()
     {
         string sourceImage = Path.Combine(
