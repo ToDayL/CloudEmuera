@@ -520,9 +520,27 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                     connection.Session.UpdateRuntimeBinding(heartbeatResult.Binding);
                 }
             }
-            catch (Exception exception) when (exception is ArgumentException or DbUpdateException or SqliteException or IOException or UnauthorizedAccessException)
+            catch (ArgumentException exception)
             {
-                connection.Session.LogLifecycle("heartbeat_persist_failed", "database_unavailable", LogLevel.Error);
+                // A heartbeat the durable store cannot accept (for example
+                // WaitingForInput=true with an empty CurrentPromptId) is a
+                // payload defect, not a database outage. Reject this sample
+                // and keep the control stream alive: the next heartbeat renews
+                // the lease, and a persistently broken Worker still falls to
+                // the heartbeat-timeout watchdog instead of being torn down by
+                // one transient inconsistency.
+                connection.Session.LogLifecycle(
+                    "heartbeat_rejected",
+                    $"invalid_heartbeat_payload={SanitizeRuntimeDiagnostic(exception.Message)}",
+                    LogLevel.Warning);
+                return;
+            }
+            catch (Exception exception) when (exception is DbUpdateException or SqliteException or IOException or UnauthorizedAccessException)
+            {
+                connection.Session.LogLifecycle(
+                    "heartbeat_persist_failed",
+                    $"database_unavailable={SanitizeRuntimeDiagnostic(exception.Message)}",
+                    LogLevel.Error);
                 connection.Cancel();
                 return;
             }

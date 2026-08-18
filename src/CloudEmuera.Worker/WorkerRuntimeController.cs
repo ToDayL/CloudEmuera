@@ -645,6 +645,13 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         {
             await Task.Delay(bootstrap.HeartbeatIntervalMilliseconds, cancellationToken).ConfigureAwait(false);
             StructuredGameConsole? gameConsole = console;
+            long outputSequence = gameConsole?.StateStore.CurrentSequence ?? 0;
+            // Sample the prompt exactly once. Reading CurrentPrompt again for
+            // each field allowed a prompt transition between reads to emit
+            // WaitingForInput=true with an empty CurrentPromptId (or the
+            // inverse), which the API durable store rejects as an invalid
+            // heartbeat payload.
+            CloudEmuera.RuntimeAdapter.ConsolePrompt? currentPrompt = gameConsole?.CurrentPrompt;
             await connection.SendControlAsync(new WorkerEnvelope
             {
                 ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
@@ -654,27 +661,37 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 WorkerEpoch = binding.WorkerEpoch,
                 ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
                 CapabilitySetDigest = bootstrap.CapabilitySetDigest,
-                Heartbeat = new WorkerHeartbeat
-                {
-                    MonotonicTimestampTicks = Stopwatch.GetTimestamp(),
-                    OutputSequence = gameConsole?.StateStore.CurrentSequence ?? 0,
-                    WaitingForInput = gameConsole?.CurrentPrompt is not null,
-                    ResidentMemoryBytes = Environment.WorkingSet,
-                    CurrentPromptId = gameConsole?.CurrentPrompt?.PromptId ?? string.Empty,
-                    PromptTiming = gameConsole?.CurrentPrompt is { } prompt
-                        ? new PromptTiming
-                        {
-                            OpenedAtUnixMilliseconds = prompt.OpenedAtUnixMilliseconds,
-                            DeadlineUnixMilliseconds = prompt.DeadlineUnixMilliseconds,
-                            ServerNowUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                            RemainingMilliseconds = prompt.HasDeadline
-                                ? Math.Max(0, prompt.DeadlineUnixMilliseconds - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
-                                : 0
-                        }
-                        : null
-                }
+                Heartbeat = CreateHeartbeat(outputSequence, currentPrompt)
             }, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Builds a heartbeat whose WaitingForInput, CurrentPromptId and
+    /// PromptTiming all describe the same prompt snapshot, so the API store
+    /// never sees a self-contradictory payload.
+    /// </summary>
+    internal static WorkerHeartbeat CreateHeartbeat(long outputSequence, CloudEmuera.RuntimeAdapter.ConsolePrompt? currentPrompt)
+    {
+        return new WorkerHeartbeat
+        {
+            MonotonicTimestampTicks = Stopwatch.GetTimestamp(),
+            OutputSequence = outputSequence,
+            WaitingForInput = currentPrompt is not null,
+            ResidentMemoryBytes = Environment.WorkingSet,
+            CurrentPromptId = currentPrompt?.PromptId ?? string.Empty,
+            PromptTiming = currentPrompt is { } prompt
+                ? new PromptTiming
+                {
+                    OpenedAtUnixMilliseconds = prompt.OpenedAtUnixMilliseconds,
+                    DeadlineUnixMilliseconds = prompt.DeadlineUnixMilliseconds,
+                    ServerNowUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    RemainingMilliseconds = prompt.HasDeadline
+                        ? Math.Max(0, prompt.DeadlineUnixMilliseconds - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+                        : 0
+                }
+                : null
+        };
     }
 
     private async Task SendRuntimeResultAsync(EmueraRuntimeResult result)
