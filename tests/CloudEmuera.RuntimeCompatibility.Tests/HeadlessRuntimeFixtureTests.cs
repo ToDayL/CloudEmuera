@@ -1088,7 +1088,43 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public void HeadlessErrorsAreEmittedButWarningsStayOutOfTheConsoleTranscript()
+    public async Task DynamicComAbleCallbackWithArgumentRemainsCallableAndWarningStaysOutOfConsole()
+    {
+        // GAME-007/COMP-002: real games dynamically invoke @COM_ABLE<n>(ARG)
+        // through TRYCCALLFORM. The compatibility warning must not poison the
+        // label state or appear in the player-visible console transcript.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "TRYCCALLFORM COM_ABLE{1}(42)\n" +
+            "CATCH\n" +
+            "PRINTL CATCH-RAN\n" +
+            "ENDCATCH\n" +
+            "PRINTFORML CALLBACK-RETURN={RESULT}\n" +
+            "QUIT\n" +
+            "@COM_ABLE1(ARG)\n" +
+            "PRINTFORML CALLBACK-ARG={ARG}\n" +
+            "RETURN 1\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+        Assert.Contains(initialized.Diagnostics, diagnostic =>
+            diagnostic.Code == "runtime_warning" &&
+            diagnostic.Message.Contains("COM_ABLE1", StringComparison.Ordinal));
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("CALLBACK-ARG=42", transcript, StringComparison.Ordinal);
+        Assert.Contains("CALLBACK-RETURN=1", transcript, StringComparison.Ordinal);
+        Assert.DoesNotContain("CATCH-RAN", transcript, StringComparison.Ordinal);
+        Assert.DoesNotContain("COM_ABLE1", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HeadlessErrorsReachTheConsoleOnlyAfterFatalTransition()
     {
         var console = new StructuredGameConsole();
         var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
@@ -1100,6 +1136,12 @@ public sealed class HeadlessRuntimeFixtureTests
 
         string transcript = RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes);
         Assert.DoesNotContain("脚本警告", transcript, StringComparison.Ordinal);
+        Assert.DoesNotContain("脚本错误", transcript, StringComparison.Ordinal);
+        Assert.DoesNotContain("错误详情", transcript, StringComparison.Ordinal);
+
+        headless.ThrowError(playSound: false);
+
+        transcript = RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes);
         Assert.Contains("⚠ 脚本错误", transcript, StringComparison.Ordinal);
         Assert.Contains("⚠ 错误详情", transcript, StringComparison.Ordinal);
         Assert.Contains(headless.RuntimeWarnings, warning => warning.Contains("脚本警告", StringComparison.Ordinal));

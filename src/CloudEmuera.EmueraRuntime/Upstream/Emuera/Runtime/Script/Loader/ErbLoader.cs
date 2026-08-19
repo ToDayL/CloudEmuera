@@ -584,7 +584,12 @@ internal sealed class ErbLoader
 		if (!wc.EOL)
 		{
 			if (label.IsSystem)
-				ParserMediator.Warn(string.Format(trerror.SystemFuncHasArg.Text, label.LabelName), label, 2, true, false);
+			{
+				// CloudEmuera modification: COM/COM_ABLE/ABLUP callbacks with
+				// parameters remain callable. Keep the upstream compatibility
+				// warning without marking the function label as invalid.
+				ParserMediator.Warn(string.Format(trerror.SystemFuncHasArg.Text, label.LabelName), label, 2, false, false);
+			}
 			SymbolWord symbol = wc.Current as SymbolWord;
 			wc.ShiftNext();
 			if (symbol == null)

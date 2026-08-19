@@ -17,6 +17,23 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-19 — Callable COM_ABLE callback parameters
+
+- Modified upstream file: `Upstream/Emuera/Runtime/Script/Loader/ErbLoader.cs`.
+  The parser identified `COM<n>`, `COM_ABLE<n>` and `ABLUP<n>` labels as system
+  functions, then marked a non-event label with declared parameters as invalid
+  even though its adjacent upstream comment requires the warning level to be
+  reduced and the error cleared. A dynamic `TRYCCALLFORM COM_ABLE{n}(ARG)` then
+  failed during argument conversion and terminated the Worker. Non-event labels
+  now retain the compatibility warning while accepting and storing their declared
+  arguments; event-system labels remain fatal.
+- Scope: ADR-0011, GAME-007 and COMP-002 compatibility for real era game
+  command callbacks. The warning remains a bounded `runtime_warning` diagnostic
+  and is not written to the player console.
+- Verification: `HeadlessRuntimeFixtureTests.DynamicComAbleCallbackWithArgumentRemainsCallableAndWarningStaysOutOfConsole`
+  runs the real pinned interpreter through dynamic `TRYCCALLFORM`; dev-Docker
+  RuntimeBridge and full RuntimeCompatibility test suites pass.
+
 ## 2026-08-18 — Opt-in ERB/structured-output trace
 
 - Modified upstream file: `Upstream/Emuera/Runtime/Script/Statements/ExpressionMediator.cs`.

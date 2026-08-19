@@ -598,6 +598,13 @@ Shift-JIS 固定宽度填充和 `PRINTL/NewLine` 行边界；`RefreshStrings` �
 的按钮数量、字段宽度、无额外换行语义和不可编码 Unicode 标签回退；RuntimeCompatibility 全量 47/47、ConsoleContract 56/56
 通过。
 
+2026-08-19 兼容性修复：固定上游加载器不再把带参数的非事件 `@COM<n>`、`@COM_ABLE<n>` 和
+`@ABLUP<n>` 回调标签登记为无效；保留 `runtime_warning` 兼容性诊断并继续解析 `ARG`，使真实
+`TRYCCALLFORM COM_ABLE{n}(ARG)` 可调用且不会让 Worker 以 `runtime_script_failed` 退出。Headless
+Console 同时改为缓冲普通错误诊断，只有解释器进入 Fatal 状态后才将其写入玩家 Console，warning
+始终只出现在诊断报告。新增真实解释器和 Fatal-only 输出回归测试，映射 ADR-0011、GAME-007、
+COMP-002。
+
 ### P1-08 — 完整 Snapshot 重连与有界输出（DONE）
 
 需求映射：SESS-004、PLAY-002、PLAY-004～006、PLAY-010/012、AC-002/012、ADR-0017。

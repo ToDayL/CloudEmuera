@@ -57,6 +57,7 @@ internal sealed class EmueraConsole
     private readonly List<string> runtimeWarnings = [];
     private readonly List<string> runtimeSystemMessages = [];
     private readonly List<string> runtimeDebugMessages = [];
+    private readonly List<string> pendingDiagnosticLines = [];
     private bool outputEnabled;
 
     private sealed record PendingBufferedLine(
@@ -158,18 +159,18 @@ internal sealed class EmueraConsole
     // Upstream status/progress output (for example the DEBUG-only elapsed-time
     // reports) must not be treated as script diagnostics. Warnings are recorded
     // separately from errors so the headless session only gates activation on
-    // real errors. Warnings remain compatibility diagnostics and are not
-    // written into the player's console transcript.
+    // real errors. Neither warnings nor recoverable errors are written into the
+    // player's console transcript; fatal error reporting flushes its diagnostics.
     public void PrintSystemLine(string value) => RecordSystemMessage(value);
     public void PrintError(string value)
     {
         RecordMessage(value);
-        EmitDiagnosticLine(value);
+        QueueDiagnosticLine(value);
     }
     public void PrintWarning(string value, ScriptPosition? position, int level) =>
         RecordWarning(FormatDiagnostic(value, position));
     public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) =>
-        RecordMessageAndDisplay(FormatDiagnostic(value, position));
+        RecordMessageAndQueue(FormatDiagnostic(value, position));
     public void PrintTemporaryLine(string value) => EmitLine(value, temporary: true);
     public void PrintPlain(string value) => EmitText(value);
     public void PrintPlainWithSingleLineFix(string value) => EmitLine(value);
@@ -454,11 +455,13 @@ internal sealed class EmueraConsole
     public void ThrowError(bool playSound)
     {
         hasFatalError = true;
+        FlushFatalDiagnosticLines();
         Quit();
     }
     public void ThrowTitleError(bool error)
     {
         hasFatalError = true;
+        FlushFatalDiagnosticLines();
         Quit();
     }
     public void Await(int milliseconds)
@@ -1109,10 +1112,10 @@ internal sealed class EmueraConsole
             runtimeMessages.Add(value.Trim());
     }
 
-    private void RecordMessageAndDisplay(string value)
+    private void RecordMessageAndQueue(string value)
     {
         RecordMessage(value);
-        EmitDiagnosticLine(value);
+        QueueDiagnosticLine(value);
     }
 
     private void RecordWarning(string value)
@@ -1121,10 +1124,32 @@ internal sealed class EmueraConsole
             runtimeWarnings.Add(value.Trim());
     }
 
+    private void QueueDiagnosticLine(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        string diagnostic = value.Trim();
+        if (hasFatalError)
+        {
+            EmitDiagnosticLine(diagnostic);
+            return;
+        }
+
+        pendingDiagnosticLines.Add(diagnostic);
+    }
+
+    private void FlushFatalDiagnosticLines()
+    {
+        foreach (string diagnostic in pendingDiagnosticLines)
+            EmitDiagnosticLine(diagnostic);
+        pendingDiagnosticLines.Clear();
+    }
+
     private void EmitDiagnosticLine(string value)
     {
-        if (outputEnabled && !string.IsNullOrWhiteSpace(value))
-            EmitLine($"⚠ {value.Trim()}");
+        if (outputEnabled)
+            EmitLine($"⚠ {value}");
     }
 
     private void RecordSystemMessage(string value)
