@@ -438,15 +438,47 @@ public sealed partial class SqliteSessionApplicationService(
     {
         await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
         CloudEmueraDbContext db = scope.ServiceProvider.GetRequiredService<CloudEmueraDbContext>();
-        bool hasPendingCreate = await db.SessionCreationOperations.AsNoTracking()
-            .AnyAsync(row => row.Status != SessionCreationOperationStatus.Committed && row.Status != SessionCreationOperationStatus.Failed, cancellationToken)
+        // A periodic pass can overlap a normal request started by this API.
+        // Its durable record is intentionally still IN_PROGRESS while the
+        // Worker is starting, so it must not make the whole control plane
+        // fail readiness. Only records without a live in-process operation
+        // are evidence of an orphaned operation after restart.
+        string[] pendingCreateIds = await db.SessionCreationOperations.AsNoTracking()
+            .Where(row => row.Status != SessionCreationOperationStatus.Committed && row.Status != SessionCreationOperationStatus.Failed)
+            .Select(row => row.Id)
+            .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
-        bool hasPendingCommand = await db.IdempotencyRecords.AsNoTracking()
-            .AnyAsync(row => row.Status == IdempotencyRecordStatus.InProgress &&
-                (row.Scope == CreateScope || row.Scope == OpenScope || row.Scope == CloseScope || row.Scope == DeleteScope), cancellationToken)
+        bool hasPendingCreate = pendingCreateIds.Any(operationId => !IsCreateOperationActive(operationId));
+        var pendingCommands = await db.IdempotencyRecords.AsNoTracking()
+            .Where(row => row.Status == IdempotencyRecordStatus.InProgress &&
+                (row.Scope == OpenScope || row.Scope == CloseScope || row.Scope == DeleteScope) &&
+                row.ResourceId != null)
+            .Select(row => new { row.ActorUserId, row.Scope, row.IdempotencyKey, row.ResourceId })
+            .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+        bool hasPendingCommand = pendingCommands.Any(row => !IsCommandOperationActive(row.ActorUserId, row.Scope, row.IdempotencyKey, row.ResourceId!));
         if (hasPendingCreate || hasPendingCommand)
             throw new InvalidOperationException("Durable Session recovery is not complete.");
+    }
+
+    private bool IsCreateOperationActive(string operationId) =>
+        createOperations.TryGetValue(operationId, out Lazy<Task<SessionCommandResult>>? operation) &&
+        operation.IsValueCreated && !operation.Value.IsCompleted;
+
+    private bool IsCommandOperationActive(string actorUserId, string scope, string idempotencyKey, string resourceId)
+    {
+        if (scope == OpenScope || scope == CloseScope)
+        {
+            bool open = scope == OpenScope;
+            Task<SessionCommandResult>? operation = FindLifecycleTask(resourceId, open);
+            return operation is not null && !operation.IsCompleted;
+        }
+
+        if (scope == DeleteScope)
+            return deleteOperations.TryGetValue($"{actorUserId}\u001f{idempotencyKey}", out Lazy<Task<SessionDeleteResult>>? operation) &&
+                operation.IsValueCreated && !operation.Value.IsCompleted;
+
+        return false;
     }
 
     private async Task<SessionCommandResult> ExecuteLifecycleAsync(
