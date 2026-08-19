@@ -10,7 +10,7 @@ public sealed class ApiWorkerOpenOptionsFactory(
     WorkerManagerOptions options,
     TimeProvider timeProvider) : IWorkerOpenOptionsFactory
 {
-    public SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0)
+    public SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0, SessionTextMetrics? textMetrics = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         string workerId = $"wrk_{Guid.CreateVersion7():N}";
@@ -23,6 +23,7 @@ public sealed class ApiWorkerOpenOptionsFactory(
             $"uds/{workerId}",
             options.LeaseDuration,
             timeProvider.GetUtcNow(),
-            browserWidth);
+            browserWidth,
+            textMetrics);
     }
 }

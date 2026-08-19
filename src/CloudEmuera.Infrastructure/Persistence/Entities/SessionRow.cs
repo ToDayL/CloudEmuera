@@ -24,6 +24,10 @@ public sealed class SessionRow
 
     public string Name { get; set; } = string.Empty;
 
+    public int FontSize { get; set; } = 18;
+
+    public int LineHeight { get; set; } = 19;
+
     public SessionState State { get; set; }
 
     public int StateVersion { get; set; }

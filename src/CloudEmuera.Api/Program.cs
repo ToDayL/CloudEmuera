@@ -595,7 +595,7 @@ sessions.MapPost("", async (HttpContext context, CreateSessionRequest? request, 
     if (!ApiIdentity.TryIdempotencyKey(idempotencyKey, out string key)) return ApiIdentity.Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
     try
     {
-        SessionCommandResult result = await service.CreateAsync(actor, new CreateSessionCommand(request.GameId, request.Name, key), context.RequestAborted).ConfigureAwait(false);
+        SessionCommandResult result = await service.CreateAsync(actor, new CreateSessionCommand(request.GameId, request.Name, key, request.FontSize, request.LineHeight), context.RequestAborted).ConfigureAwait(false);
         return ApiIdentity.SessionCommand(context, result);
     }
     catch (SessionApplicationException exception)
@@ -639,6 +639,17 @@ sessions.MapGet("", async (string? gameId, string? state, string? cursor, int? l
   .Produces<ApiError>(StatusCodes.Status400BadRequest)
   .Produces<ApiError>(StatusCodes.Status401Unauthorized)
   .Produces<ApiError>(StatusCodes.Status429TooManyRequests);
+
+sessions.MapPut("/{sessionId}/configuration", async (string sessionId, HttpContext context, UpdateSessionConfigurationRequest? request, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, IAntiforgery antiforgery, ISessionApplicationService service, SessionCommandReadiness readiness) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    if (!readiness.IsReady) return ApiIdentity.Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", 503);
+    if (request is null) return ApiIdentity.Error(SessionErrorCodes.ValidationFailed, "请求体无效。", 400);
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
+    if (!ApiIdentity.TryIdempotencyKey(idempotencyKey, out string key)) return ApiIdentity.Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
+    try { return ApiIdentity.SessionCommand(context, await service.UpdateConfigurationAsync(actor, new SessionConfigurationCommand(sessionId, request.Name, request.FontSize, request.LineHeight, key), context.RequestAborted).ConfigureAwait(false)); }
+    catch (SessionApplicationException exception) { return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode); }
+}).RequireRateLimiting("session-write");
 
 sessions.MapGet("/{sessionId}", async (string sessionId, HttpContext context, ISessionApplicationService service) =>
 {
@@ -972,6 +983,8 @@ internal static class ApiIdentity
         value.SourceContentDigest,
         value.SourceContentRevision,
         value.RuntimeVersion,
+        value.FontSize,
+        value.LineHeight,
         value.State.ToString().ToUpperInvariant(),
         value.StateVersion,
         value.WorkerEpoch,
@@ -1034,13 +1047,16 @@ internal static class ApiIdentity
         if (GameActor(context) is not CurrentActor actor) return GameActorError(context);
         if (!readiness.IsReady) return Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", StatusCodes.Status503ServiceUnavailable);
         int browserWidth = 0;
+        SessionTextMetrics? textMetrics = null;
         if (body.ValueKind != JsonValueKind.Object)
             return Error(SessionErrorCodes.ValidationFailed, "生命周期请求体必须是 JSON 对象。", 400);
         foreach (JsonProperty property in body.EnumerateObject())
         {
-            if (!string.Equals(property.Name, "browserWidth", StringComparison.Ordinal) ||
-                property.Value.ValueKind != JsonValueKind.Number ||
-                !property.Value.TryGetInt32(out browserWidth) || browserWidth is < 240 or > 16_384)
+            if (string.Equals(property.Name, "browserWidth", StringComparison.Ordinal) && property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out browserWidth) && browserWidth is >= 240 and <= 16_384)
+                continue;
+            if (string.Equals(property.Name, "textMetrics", StringComparison.Ordinal) && property.Value.ValueKind == JsonValueKind.Object && property.Value.TryGetProperty("halfWidthPx", out JsonElement half) && property.Value.TryGetProperty("fullWidthPx", out JsonElement full) && half.TryGetDouble(out double halfWidth) && full.TryGetDouble(out double fullWidth) && double.IsFinite(halfWidth) && double.IsFinite(fullWidth) && halfWidth > 0 && halfWidth <= 128 && fullWidth >= halfWidth && fullWidth <= 256)
+            { textMetrics = new SessionTextMetrics(halfWidth, fullWidth); continue; }
+            else
                 return Error(SessionErrorCodes.ValidationFailed, "启动宽度必须是 240 到 16384 之间的 CSS 像素。", 400);
         }
         if (body.EnumerateObject().Any() && !body.TryGetProperty("browserWidth", out _))
@@ -1053,7 +1069,7 @@ internal static class ApiIdentity
             return Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
         try
         {
-            SessionCommandResult result = await operation(actor, new SessionLifecycleCommand(sessionId, key, browserWidth), context.RequestAborted).ConfigureAwait(false);
+            SessionCommandResult result = await operation(actor, new SessionLifecycleCommand(sessionId, key, browserWidth, textMetrics), context.RequestAborted).ConfigureAwait(false);
             return SessionCommand(context, result);
         }
         catch (SessionApplicationException exception)

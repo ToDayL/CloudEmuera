@@ -159,7 +159,7 @@ export function ConsolePage() {
     </div>
     <div className="console-layout">
       <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台">
-        <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, screenWidth)} onClick={handleConsoleSurfaceClick}>
+        <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, screenWidth, session.data.fontSize, session.data.lineHeight)} onClick={handleConsoleSurfaceClick}>
         <h1 className="sr-only">{session.data.name}</h1>
         <p className="sr-only">Session 状态：<span>{sessionStateLabel(session.data.state)}</span></p>
         {(!networkOnline || (connectionPhase !== "ready" && connectionPhase !== "disconnected")) && <div className="reconnect-banner" role="status" aria-live="polite"><span className="mini-spinner"/><p><strong>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</strong><small>{networkOnline ? "游戏仍在服务器上运行；浏览器连接恢复后会按 epoch 和序号重新同步。" : "浏览器离线只影响当前显示；Session 和 Worker 不会被关闭。"}</small></p></div>}
@@ -184,11 +184,13 @@ export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean
   return target instanceof Element && !target.closest("button, a, input, select, textarea, [role=\"button\"]");
 }
 
-export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, screenWidth?: number): CSSProperties {
+export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, screenWidth?: number, fontSize?: number, lineHeight?: number): CSSProperties {
   const width = effectiveConsoleWidth(viewportWidth, screenWidth);
   return {
     ...(background ? { backgroundColor: colorToCss(background) } : {}),
     ...(width > 0 ? { width: `${width}px`, maxWidth: "100%" } : {}),
+    ...(fontSize && fontSize > 0 ? { "--runtime-font-size": `${fontSize}px` } : {}),
+    ...(lineHeight && lineHeight > 0 ? { "--runtime-line-height": `${lineHeight}px` } : {}),
   };
 }
 

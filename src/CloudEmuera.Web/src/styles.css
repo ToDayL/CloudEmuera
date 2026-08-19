@@ -218,6 +218,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .narrow-page { max-width: 780px !important; }
 .form-panel { display: grid; gap: 20px; padding: 28px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
 .form-panel > label, .login-form > label { display: grid; gap: 8px; color: #4d514a; font-size: 11px; font-weight: 700; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.form-grid > label { display: grid; gap: 8px; color: #4d514a; font-size: 11px; font-weight: 700; }
 .form-panel input, .form-panel select, .login-form input, .setting-row select { width: 100%; height: 43px; padding: 0 12px; border: 1px solid #d8d8d0; border-radius: 8px; outline: 0; color: var(--ink); background: #fcfbf8; font-size: 12px; }
 .form-panel input:focus, .form-panel select:focus, .login-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(232 104 60 / 10%); }
 .form-explain { padding: 15px; border-radius: 10px; color: #536e62; background: #edf5f1; }
@@ -651,9 +653,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", "Noto Sans Mono CJK SC", monospace;
 }
 .realtime-console .console-line {
-  min-height: 1.45em;
-  font-size: clamp(12px, 1.35vw, 15px);
-  line-height: 1.5;
+  min-height: var(--runtime-line-height, 16px);
+  font-size: var(--runtime-font-size, 16px);
+  line-height: var(--runtime-line-height, 16px);
 }
 .realtime-console .console-choice {
   display: inline;
@@ -791,7 +793,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .realtime-console .realtime-game-console { padding: 48px 8px 20px; }
   .realtime-console .console-input-dock { padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); }
   .realtime-console .scrollback { padding: 6px 1px; }
-  .realtime-console .console-line { font-size: 12px; }
+  .realtime-console .console-line { font-size: var(--runtime-font-size, 16px); }
   .realtime-console .prompt-controller { padding: 7px 8px; }
   .realtime-console .prompt-controller form { align-items: center; flex-direction: row; }
   .realtime-console .prompt-heading p { max-width: 70vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

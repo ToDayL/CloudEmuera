@@ -366,7 +366,11 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 bootstrap.RuntimeExecutionTimeoutMilliseconds < 0
                     ? Timeout.InfiniteTimeSpan
                     : TimeSpan.FromMilliseconds(bootstrap.RuntimeExecutionTimeoutMilliseconds),
-                browserWidth: bootstrap.BrowserWidth));
+                browserWidth: bootstrap.BrowserWidth,
+                fontSize: bootstrap.FontSize,
+                lineHeight: bootstrap.LineHeight,
+                halfWidthPx: bootstrap.HalfWidthPx,
+                fullWidthPx: bootstrap.FullWidthPx));
             runtimeCancellation = new CancellationTokenSource();
             console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
 

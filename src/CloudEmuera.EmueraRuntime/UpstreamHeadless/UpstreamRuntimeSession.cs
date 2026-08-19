@@ -47,6 +47,10 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly Func<string, RuntimeSpriteDefinition> imageResolver;
     private readonly Action runtimeGateAcquired;
     private readonly int browserWidth;
+    private readonly int fontSize;
+    private readonly int lineHeight;
+    private readonly double halfWidthPx;
+    private readonly double fullWidthPx;
     private RuntimeDebugTrace debugTrace;
     private EmueraConsole console;
     private Process process;
@@ -60,7 +64,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         CancellationToken cancellationToken,
         Func<string, RuntimeSpriteDefinition> imageResolver,
         Action runtimeGateAcquired = null,
-        int browserWidth = 0)
+        int browserWidth = 0, int fontSize = 16, int lineHeight = 16, double halfWidthPx = 0, double fullWidthPx = 0)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -71,6 +75,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         if (browserWidth < 0 || browserWidth > 16_384)
             throw new ArgumentOutOfRangeException(nameof(browserWidth));
         this.browserWidth = browserWidth;
+        this.fontSize = fontSize; this.lineHeight = lineHeight; this.halfWidthPx = halfWidthPx; this.fullWidthPx = fullWidthPx;
     }
 
     public async Task<bool> InitializeAsync(RuntimePaths paths)
@@ -99,13 +104,14 @@ public sealed class UpstreamRuntimeSession : IDisposable
         ConfigData.ResetHeadless();
         ConfigData.Instance.LoadConfig();
         AConfigItem windowWidth = ConfigData.Instance.GetConfigItem(ConfigCode.WindowX);
+        AConfigItem configuredFontSize = ConfigData.Instance.GetConfigItem(ConfigCode.FontSize);
+        AConfigItem configuredLineHeight = ConfigData.Instance.GetConfigItem(ConfigCode.LineHeight);
         int configuredWidth = windowWidth.GetValue<int>();
         int effectiveWidth = browserWidth > 0 ? Math.Min(configuredWidth, browserWidth) : configuredWidth;
-        if (effectiveWidth != configuredWidth)
-        {
-            windowWidth.SetValue(effectiveWidth);
-            Config.SetConfig(ConfigData.Instance);
-        }
+        windowWidth.SetValue(effectiveWidth);
+        configuredFontSize.SetValue(fontSize);
+        configuredLineHeight.SetValue(lineHeight);
+        Config.SetConfig(ConfigData.Instance);
         cancellationToken.ThrowIfCancellationRequested();
         RuntimeSaveLayout actualLayout = Config.UseSaveFolder
             ? RuntimeSaveLayout.SavDirectory
@@ -124,7 +130,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         await Preload.Load(MinorShift.Emuera.Program.ErbDir, cancellationToken).ConfigureAwait(false);
         await Preload.Load(MinorShift.Emuera.Program.CsvDir, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        console = new EmueraConsole(adapter, clock, cancellationToken, imageResolver, Config.WindowX, Config.WindowY);
+        console = new EmueraConsole(adapter, clock, cancellationToken, imageResolver, Config.WindowX, Config.WindowY, halfWidthPx, fullWidthPx);
         process = new Process(console);
         process.SetHeadlessCancellationToken(cancellationToken);
         MinorShift.Emuera.GlobalStatic.Process = process;

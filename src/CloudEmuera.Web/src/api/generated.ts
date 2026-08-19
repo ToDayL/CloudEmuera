@@ -22,6 +22,8 @@ export interface SessionResponseDto {
   sourceContentDigest: string;
   sourceContentRevision: number;
   runtimeVersion: string;
+  fontSize: number;
+  lineHeight: number;
   state: SessionStateDto;
   stateVersion: number;
   workerEpoch: number;

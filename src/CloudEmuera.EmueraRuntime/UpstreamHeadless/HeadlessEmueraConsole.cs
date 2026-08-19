@@ -32,6 +32,8 @@ internal sealed class EmueraConsole
     private readonly Func<string, RuntimeSpriteDefinition> imageResolver;
     private readonly int viewportWidth;
     private readonly int viewportHeight;
+    private readonly double halfWidthPx;
+    private readonly double fullWidthPx;
     private string barString = "-";
     private bool isRunning = true;
     private bool hasFatalError;
@@ -72,7 +74,7 @@ internal sealed class EmueraConsole
         CancellationToken cancellationToken,
         Func<string, RuntimeSpriteDefinition> imageResolver = null,
         int viewportWidth = 800,
-        int viewportHeight = 600)
+        int viewportHeight = 600, double halfWidthPx = 0, double fullWidthPx = 0)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -82,6 +84,8 @@ internal sealed class EmueraConsole
             throw new ArgumentOutOfRangeException(nameof(viewportWidth), "The logical headless viewport is outside its limit.");
         this.viewportWidth = viewportWidth;
         this.viewportHeight = viewportHeight;
+        this.halfWidthPx = halfWidthPx;
+        this.fullWidthPx = fullWidthPx;
         stringStyle = new StringStyle(Config.ForeColor, FontStyle.Regular, string.Empty);
         GlobalStatic.Console = this;
     }
@@ -535,12 +539,12 @@ internal sealed class EmueraConsole
         while (width < target)
         {
             builder.Append(value);
-            width = BarDisplayWidth(builder, fontSize);
+            width = BarDisplayWidth(builder, fontSize, halfWidthPx, fullWidthPx);
         }
         while (width > target && builder.Length > 0)
         {
             builder.Length--;
-            width = BarDisplayWidth(builder, fontSize);
+            width = BarDisplayWidth(builder, fontSize, halfWidthPx, fullWidthPx);
         }
         return builder.ToString();
     }
@@ -780,11 +784,11 @@ internal sealed class EmueraConsole
         stringStyle = previous;
     }
 
-    private static int BarDisplayWidth(System.Text.StringBuilder builder, int fontSize)
+    private static int BarDisplayWidth(System.Text.StringBuilder builder, int fontSize, double halfWidthPx, double fullWidthPx)
     {
         int width = 0;
         for (int index = 0; index < builder.Length; index++)
-            width += IsWideBarCharacter(builder[index]) ? fontSize : Math.Max(1, fontSize / 2);
+            width += (int)Math.Ceiling(IsWideBarCharacter(builder[index]) && fullWidthPx > 0 ? fullWidthPx : !IsWideBarCharacter(builder[index]) && halfWidthPx > 0 ? halfWidthPx : IsWideBarCharacter(builder[index]) ? fontSize : Math.Max(1, fontSize / 2));
         return width;
     }
 
@@ -1071,6 +1075,8 @@ internal sealed class EmueraConsole
             null,
             decorations,
             string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname,
+            Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize),
+            Math.Max(MinorShift.Emuera.Runtime.Config.Config.FontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight),
             buttonColor: ToConsoleColor(stringStyle.ButtonColor));
     }
 
@@ -1078,7 +1084,11 @@ internal sealed class EmueraConsole
         windowTitle,
         viewportWidth,
         viewportHeight,
-        defaultBackground: ToConsoleColor(bgColor));
+        defaultBackground: ToConsoleColor(bgColor),
+        defaultFont: new ConsoleFontSpec(
+            string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname,
+            Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize),
+            Math.Max(MinorShift.Emuera.Runtime.Config.Config.FontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight)));
 
     private ConsoleContractLimits HtmlContractLimits => adapter is StructuredGameConsole structured
         ? structured.StateStore.Options.ContractLimits

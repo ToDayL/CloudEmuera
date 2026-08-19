@@ -1560,6 +1560,12 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("game_id");
 
+                    b.Property<int>("FontSize")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(18)
+                        .HasColumnName("font_size");
+
                     b.Property<long>("LastActivityAt")
                         .HasColumnType("INTEGER")
                         .HasColumnName("last_activity_at");
@@ -1569,6 +1575,12 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(0L)
                         .HasColumnName("last_output_sequence");
+
+                    b.Property<int>("LineHeight")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(19)
+                        .HasColumnName("line_height");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1676,6 +1688,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_sessions_id", "substr(id, 1, 5) = 'sess_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_sessions_name", "length(name) BETWEEN 1 AND 200 AND instr(name, char(0)) = 0");
+
 
                             t.HasCheckConstraint("ck_sessions_owner_id", "substr(owner_user_id, 1, 4) = 'usr_' AND length(owner_user_id) BETWEEN 5 AND 64 AND instr(owner_user_id, char(0)) = 0");
 

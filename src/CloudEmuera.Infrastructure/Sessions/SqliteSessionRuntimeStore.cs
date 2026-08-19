@@ -143,7 +143,7 @@ public sealed class SqliteSessionRuntimeStore(
             session.GameId,
             session.SourceContentRevision,
             session.SourceContentDigest);
-        return SessionRuntimeAcquireResult.Success(new SessionRuntimeLease(binding, session.OwnerUserId, session.State, now, lease.ExpiresAt));
+        return SessionRuntimeAcquireResult.Success(new SessionRuntimeLease(binding, session.OwnerUserId, session.State, now, lease.ExpiresAt, session.FontSize, session.LineHeight));
         }
     }
 
@@ -424,7 +424,7 @@ public sealed class SqliteSessionRuntimeStore(
             session.GameId,
             session.SourceContentRevision,
             session.SourceContentDigest);
-        return new SessionRuntimeLease(binding, session.OwnerUserId, session.State, lease.AcquiredAt, lease.ExpiresAt);
+        return new SessionRuntimeLease(binding, session.OwnerUserId, session.State, lease.AcquiredAt, lease.ExpiresAt, session.FontSize, session.LineHeight);
     }
 
     public async Task<bool> ReconcileAsync(

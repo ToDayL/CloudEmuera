@@ -24,7 +24,7 @@ public sealed record EmueraRuntimeOptions
         TimeSpan initializationDeadline,
         TimeSpan runDeadline,
         Action<EmueraRuntimeDiagnostic>? diagnosticSink = null,
-        int browserWidth = 0)
+        int browserWidth = 0, int fontSize = 18, int lineHeight = 19, double halfWidthPx = 0, double fullWidthPx = 0)
     {
         Paths = paths ?? throw new ArgumentNullException(nameof(paths));
         Console = console ?? throw new ArgumentNullException(nameof(console));
@@ -46,6 +46,9 @@ public sealed record EmueraRuntimeOptions
         if (browserWidth < 0 || browserWidth > 16_384)
             throw new ArgumentOutOfRangeException(nameof(browserWidth));
         BrowserWidth = browserWidth;
+        if (fontSize is < 8 or > 72 || lineHeight < fontSize || lineHeight > 128 || !double.IsFinite(halfWidthPx) || !double.IsFinite(fullWidthPx) || halfWidthPx < 0 || fullWidthPx < 0)
+            throw new ArgumentOutOfRangeException(nameof(fontSize));
+        FontSize = fontSize; LineHeight = lineHeight; HalfWidthPx = halfWidthPx; FullWidthPx = fullWidthPx;
     }
 
     public RuntimePaths Paths { get; }
@@ -59,6 +62,10 @@ public sealed record EmueraRuntimeOptions
     public TimeSpan RunDeadline { get; }
     public Action<EmueraRuntimeDiagnostic>? DiagnosticSink { get; }
     public int BrowserWidth { get; }
+    public int FontSize { get; }
+    public int LineHeight { get; }
+    public double HalfWidthPx { get; }
+    public double FullWidthPx { get; }
     internal Action? UpstreamGateAcquired { get; init; }
 
     private static void ValidateDeadline(TimeSpan value, string parameterName)

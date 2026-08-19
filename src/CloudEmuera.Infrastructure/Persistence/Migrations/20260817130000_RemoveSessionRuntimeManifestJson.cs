@@ -14,6 +14,7 @@ public partial class RemoveSessionRuntimeManifestJson : Migration
     {
         modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(CloudEmueraDbContext).Assembly);
+        modelBuilder.Entity<SessionRow>().Ignore(row => row.FontSize).Ignore(row => row.LineHeight);
     }
 
     protected override void Up(MigrationBuilder migrationBuilder)

@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { FormEvent, useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api";
 import { formatDateTime, listGames, shortDigest } from "../games";
-import { closeSession, createSession, deleteSession, openSession, useSessionList, waitForSession, waitForSessionDeletion, type SessionState, type SessionView } from "./api";
+import { closeSession, createSession, deleteSession, openSession, updateSessionConfiguration, useSession, useSessionList, waitForSession, waitForSessionDeletion, type SessionState, type SessionView } from "./api";
 
 function stateLabel(state: SessionState): string {
   return ({ CREATING: "创建中", STARTING: "启动中", RUNNING: "运行中", STOPPING: "停止中", CLOSED: "已关闭", CRASHED: "已崩溃" } as Record<SessionState, string>)[state];
@@ -82,7 +82,7 @@ function SessionRow({ session, busy, onLifecycle, onDelete }: { session: Session
     <div className="session-main"><div><h2>{session.name}</h2><p>{session.game.name} <span>·</span> {shortDigest(session.sourceContentDigest)}</p></div><div className="session-badges"><span className={`status-pill ${session.state.toLowerCase()}`}><i/>{stateLabel(session.state)}</span>{session.waitingForInput && session.state === "RUNNING" && <span className="tag waiting">◷ 等待输入</span>}</div></div>
     <div className="session-meta"><span>最后活动</span><strong>{formatDateTime(session.lastActivityAt)}</strong></div>
     <div className="session-meta"><span>创建时间</span><strong>{formatDateTime(session.createdAt)}</strong></div>
-    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? "启动中…" : "继续游戏"}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>继续游戏</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>关闭</button>}{canOpen && <button className="text-button danger" onClick={onDelete} disabled={busy}>删除</button>}<Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>存档</Link></div>
+    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? "启动中…" : "继续游戏"}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>继续游戏</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>关闭</button>}{canOpen && <button className="text-button danger" onClick={onDelete} disabled={busy}>删除</button>}<Link className="text-button" to={`/sessions/${session.id}/configuration`}>配置</Link><Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>存档</Link></div>
   </article>;
 }
 
@@ -94,6 +94,8 @@ export function NewSessionPage() {
   const availableGames = (games.data ?? []).filter(game => game.status === "ACTIVE" && game.hasCurrentContent);
   const [gameId, setGameId] = useState(requestedGame && availableGames.some(game => game.id === requestedGame) ? requestedGame : "");
   const [name, setName] = useState("");
+  const [fontSize, setFontSize] = useState(18);
+  const [lineHeight, setLineHeight] = useState(19);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,7 +109,7 @@ export function NewSessionPage() {
     if (!selected) { setError("请选择一个有当前内容的可运行游戏。"); return; }
     setPending(true); setError(null);
     try {
-      const created = await createSession(selected.id, name.trim() || `${selected.name} · 新旅程`);
+      const created = await createSession(selected.id, name.trim() || `${selected.name} · 新旅程`, fontSize, lineHeight);
       const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]));
       const opened = await openSession(ready.id);
       const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING"]));
@@ -118,8 +120,23 @@ export function NewSessionPage() {
 
   return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">NEW SESSION</p><h1>创建 Session</h1><p>每个 Session 都拥有独立、持久的游戏目录与原生存档。</p></div></header>
     {games.isError && <div className="error-banner" role="alert"><strong>无法读取游戏库</strong><small>{errorMessage(games.error)}</small></div>}
-    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：周目三 · 新旅程" maxLength={120} required /></label><label><span>游戏</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">请选择游戏</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? "（已禁用）" : !game.hasCurrentContent ? "（无当前内容）" : ""}</option>)}</select></label><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || games.isPending || !selected}>{pending ? <><span className="mini-spinner"/>正在创建并启动…</> : "创建并开始"}</button></div></form>
+    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：周目三 · 新旅程" maxLength={120} required /></label><label><span>游戏</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">请选择游戏</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? "（已禁用）" : !game.hasCurrentContent ? "（无当前内容）" : ""}</option>)}</select></label><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || games.isPending || !selected}>{pending ? <><span className="mini-spinner"/>正在创建并启动…</> : "创建并开始"}</button></div></form>
   </div>;
+}
+
+function SessionDisplayFields({ fontSize, lineHeight, setFontSize, setLineHeight }: { fontSize: number; lineHeight: number; setFontSize: (value: number) => void; setLineHeight: (value: number) => void }) {
+  return <div className="form-grid"><label><span>字号（px）</span><input type="number" min={8} max={72} value={fontSize} onChange={event => setFontSize(Number(event.target.value))}/></label><label><span>行高（px）</span><input type="number" min={8} max={128} value={lineHeight} onChange={event => setLineHeight(Number(event.target.value))}/></label></div>;
+}
+
+export function SessionConfigurationPage() {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
+  const session = useSession(sessionId);
+  const [name, setName] = useState(""); const [fontSize, setFontSize] = useState(18); const [lineHeight, setLineHeight] = useState(19); const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { if (session.data) { setName(session.data.name); setFontSize(session.data.fontSize); setLineHeight(session.data.lineHeight); } }, [session.data]);
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!sessionId) return; setPending(true); setError(null); try { await updateSessionConfiguration(sessionId, name, fontSize, lineHeight); navigate("/sessions"); } catch (cause) { setError(errorMessage(cause)); } finally { setPending(false); } };
+  if (session.isPending || !session.data) return <div className="narrow-page">正在读取 Session…</div>;
+  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">SESSION SETTINGS</p><h1>Session 配置</h1><p>游戏固定为 {session.data.game.name}；运行中的 Session 需要先关闭才能修改。</p></div></header><form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} required/></label><label><span>游戏</span><input value={session.data.game.name} disabled/></label><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}>{pending ? "保存中…" : "保存配置"}</button></div></form></div>;
 }
 
 export function sessionGameGlyph(session: SessionView): string { return session.game.name.slice(0, 1); }

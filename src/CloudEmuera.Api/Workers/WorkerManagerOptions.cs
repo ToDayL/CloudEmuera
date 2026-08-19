@@ -105,7 +105,7 @@ public sealed record WorkerLaunchRequest
         CloudEmuera.RuntimeAdapter.RuntimeSaveLayout saveLayout,
         string sessionRootManifestDigest = "",
         long initialOutputSequence = 0,
-        int browserWidth = 0)
+        int browserWidth = 0, int fontSize = 18, int lineHeight = 19, double halfWidthPx = 0, double fullWidthPx = 0)
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));
         SessionRoot = Path.GetFullPath(sessionRoot ?? throw new ArgumentNullException(nameof(sessionRoot)));
@@ -121,6 +121,9 @@ public sealed record WorkerLaunchRequest
         if (browserWidth < 0 || browserWidth > 16_384)
             throw new ArgumentOutOfRangeException(nameof(browserWidth));
         BrowserWidth = browserWidth;
+        if (fontSize is < 8 or > 72 || lineHeight < fontSize || lineHeight > 128 || halfWidthPx < 0 || fullWidthPx < 0 || halfWidthPx > 128 || fullWidthPx > 256)
+            throw new ArgumentOutOfRangeException(nameof(fontSize));
+        FontSize = fontSize; LineHeight = lineHeight; HalfWidthPx = halfWidthPx; FullWidthPx = fullWidthPx;
     }
 
     public WorkerBinding Binding { get; }
@@ -136,4 +139,8 @@ public sealed record WorkerLaunchRequest
     public long InitialOutputSequence { get; }
 
     public int BrowserWidth { get; }
+    public int FontSize { get; }
+    public int LineHeight { get; }
+    public double HalfWidthPx { get; }
+    public double FullWidthPx { get; }
 }

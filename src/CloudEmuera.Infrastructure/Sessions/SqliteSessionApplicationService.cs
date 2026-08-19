@@ -58,13 +58,14 @@ public sealed partial class SqliteSessionApplicationService(
         ArgumentNullException.ThrowIfNull(command);
         string name = NormalizeName(command.Name);
         ValidateIdempotencyKey(command.IdempotencyKey);
-        string digest = SessionIdempotency.Digest(actor.UserId, CreateScope, "sessions", new { gameId = command.GameId, name });
+        ValidateTextLayout(command.FontSize, command.LineHeight);
+        string digest = SessionIdempotency.Digest(actor.UserId, CreateScope, "sessions", new { gameId = command.GameId, name, command.FontSize, command.LineHeight });
 
         CreatePreparation preparation;
         try
         {
             await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
-            preparation = await PrepareCreateAsync(scope.ServiceProvider, actor, command.GameId, name, command.IdempotencyKey, digest, cancellationToken).ConfigureAwait(false);
+            preparation = await PrepareCreateAsync(scope.ServiceProvider, actor, command.GameId, name, command.FontSize, command.LineHeight, command.IdempotencyKey, digest, cancellationToken).ConfigureAwait(false);
         }
         catch (SessionApplicationException)
         {
@@ -207,6 +208,23 @@ public sealed partial class SqliteSessionApplicationService(
         SessionLifecycleCommand command,
         CancellationToken cancellationToken = default) =>
         ExecuteLifecycleCommandAsync(actor, command, open: false, cancellationToken);
+
+    public async Task<SessionCommandResult> UpdateConfigurationAsync(CurrentActor actor, SessionConfigurationCommand command, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor); ArgumentNullException.ThrowIfNull(command);
+        ValidateSessionId(command.SessionId); ValidateIdempotencyKey(command.IdempotencyKey);
+        string name = NormalizeName(command.Name); ValidateTextLayout(command.FontSize, command.LineHeight);
+        await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
+        CloudEmueraDbContext db = scope.ServiceProvider.GetRequiredService<CloudEmueraDbContext>();
+        await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, cancellationToken).ConfigureAwait(false);
+        SessionRow? session = await db.Sessions.Include(row => row.Game).SingleOrDefaultAsync(row => row.Id == command.SessionId && row.OwnerUserId == actor.UserId, cancellationToken).ConfigureAwait(false);
+        if (session is null) throw new SessionApplicationException(SessionErrorCodes.SessionNotFound, "Session 不存在。", 404);
+        if (session.State is not (SessionState.Closed or SessionState.Crashed)) throw new SessionApplicationException(SessionErrorCodes.SessionNotReady, "只能在 Session 停止后修改显示配置。", 409);
+        session.Name = name; session.FontSize = command.FontSize; session.LineHeight = command.LineHeight;
+        session.StateVersion = checked(session.StateVersion + 1); session.LastActivityAt = timeProvider.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new SessionCommandResult(ToView(new SessionProjection(session.Id, session.Name, session.GameId, session.Game!.Name, session.SourceContentDigest, session.SourceContentRevision, session.RuntimeVersion, session.FontSize, session.LineHeight, session.State, session.StateVersion, session.WorkerEpoch, session.WaitingForInput, session.CreatedAt, session.StartedAt, session.LastActivityAt, session.ClosedAt, session.CloseReason)), 200, false, false);
+    }
 
     public async Task<SessionDeleteResult> DeleteAsync(
         CurrentActor actor,
@@ -503,7 +521,7 @@ public sealed partial class SqliteSessionApplicationService(
 
             if (open)
             {
-                await lifecycle.OpenAsync(command.SessionId, command.BrowserWidth, CancellationToken.None).ConfigureAwait(false);
+                await lifecycle.OpenAsync(command.SessionId, command.BrowserWidth, command.TextMetrics, CancellationToken.None).ConfigureAwait(false);
             }
             else
             {
@@ -621,7 +639,7 @@ public sealed partial class SqliteSessionApplicationService(
         IServiceProvider services,
         CurrentActor actor,
         string gameId,
-        string name,
+        string name, int fontSize, int lineHeight,
         string key,
         string digest,
         CancellationToken cancellationToken)
@@ -705,6 +723,8 @@ public sealed partial class SqliteSessionApplicationService(
             RuntimeVersion = RuntimeBaseline.CloudEmueraIntegrationVersion,
             SessionRootPath = $"sessions/{sessionId}/root",
             Name = name,
+            FontSize = fontSize,
+            LineHeight = lineHeight,
             State = SessionState.Creating,
             StateVersion = 0,
             WorkerEpoch = 0,
@@ -966,6 +986,8 @@ public sealed partial class SqliteSessionApplicationService(
             session.SourceContentDigest,
             session.SourceContentRevision,
             session.RuntimeVersion,
+            session.FontSize,
+            session.LineHeight,
             session.State,
             session.StateVersion,
             session.WorkerEpoch,
@@ -1019,6 +1041,8 @@ public sealed partial class SqliteSessionApplicationService(
             session.SourceContentDigest,
             session.SourceContentRevision,
             session.RuntimeVersion,
+            session.FontSize,
+            session.LineHeight,
             session.State,
             session.StateVersion,
             session.WorkerEpoch,
@@ -1439,6 +1463,8 @@ public sealed partial class SqliteSessionApplicationService(
         row.SourceContentDigest,
         row.SourceContentRevision,
         row.RuntimeVersion,
+        row.FontSize,
+        row.LineHeight,
         row.State,
         row.StateVersion,
         row.WorkerEpoch,
@@ -1457,6 +1483,8 @@ public sealed partial class SqliteSessionApplicationService(
         row.SourceContentDigest,
         row.SourceContentRevision,
         row.RuntimeVersion,
+        row.FontSize,
+        row.LineHeight,
         row.State,
         row.StateVersion,
         row.WorkerEpoch,
@@ -1469,7 +1497,7 @@ public sealed partial class SqliteSessionApplicationService(
 
     private static SessionView ToView(SessionProjection row) => new(
         1, row.Id, row.Name, new SessionGameSummary(row.GameId, row.GameName), row.SourceContentDigest,
-        row.SourceContentRevision, row.RuntimeVersion, row.State, row.StateVersion, row.WorkerEpoch,
+        row.SourceContentRevision, row.RuntimeVersion, row.FontSize, row.LineHeight, row.State, row.StateVersion, row.WorkerEpoch,
         row.WaitingForInput, row.CreatedAt, row.StartedAt, row.LastActivityAt, row.ClosedAt, row.CloseReason);
 
     private static SessionCommandResult ConvertExisting(CreatePreparation preparation)
@@ -1925,6 +1953,12 @@ public sealed partial class SqliteSessionApplicationService(
         return normalized;
     }
 
+    private static void ValidateTextLayout(int fontSize, int lineHeight)
+    {
+        if (fontSize is < 8 or > 72 || lineHeight < fontSize || lineHeight > 128)
+            throw new SessionApplicationException(SessionErrorCodes.ValidationFailed, "字号必须为 8～72px，行高必须不小于字号且不超过 128px。", 400);
+    }
+
     private static void ValidateIdempotencyKey(string key)
     {
         if (string.IsNullOrWhiteSpace(key) || key.Length > PersistenceLimits.IdempotencyKeyMaxLength || key.Any(char.IsControl))
@@ -2012,6 +2046,8 @@ public sealed partial class SqliteSessionApplicationService(
         string SourceContentDigest,
         long SourceContentRevision,
         string RuntimeVersion,
+        int FontSize,
+        int LineHeight,
         SessionState State,
         int StateVersion,
         long WorkerEpoch,

@@ -40,6 +40,8 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
         builder.Property(row => row.RuntimeVersion).HasColumnName("runtime_version").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.RuntimeVersionMaxLength).IsRequired();
         builder.Property(row => row.SessionRootPath).HasColumnName("session_root_path").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.PathMaxLength).IsRequired();
         builder.Property(row => row.Name).HasColumnName("name").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.NameMaxLength).IsRequired();
+        builder.Property(row => row.FontSize).HasColumnName("font_size").HasColumnType("INTEGER").HasDefaultValue(18).IsRequired();
+        builder.Property(row => row.LineHeight).HasColumnName("line_height").HasColumnType("INTEGER").HasDefaultValue(19).IsRequired();
         builder.Property(row => row.State).HasColumnName("state").HasColumnType("TEXT").HasConversion(SqliteValueConverters.CreateEnumConverter<SessionState>(), SqliteValueConverters.CreateEnumComparer<SessionState>()).IsRequired();
         builder.Property(row => row.StateVersion).HasColumnName("state_version").HasColumnType("INTEGER").HasDefaultValue(0).IsRequired();
         builder.Property(row => row.WorkerEpoch).HasColumnName("worker_epoch").HasColumnType("INTEGER").HasDefaultValue(0).IsRequired();

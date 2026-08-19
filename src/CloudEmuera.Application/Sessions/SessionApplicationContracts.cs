@@ -45,9 +45,13 @@ public sealed class SessionApplicationException(
     public bool PersistFailure { get; } = persistFailure;
 }
 
-public sealed record CreateSessionCommand(string GameId, string Name, string IdempotencyKey);
+public sealed record CreateSessionCommand(string GameId, string Name, string IdempotencyKey, int FontSize = 18, int LineHeight = 19);
 
-public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey, int BrowserWidth = 0);
+public sealed record SessionTextMetrics(double HalfWidthPx, double FullWidthPx);
+
+public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey, int BrowserWidth = 0, SessionTextMetrics? TextMetrics = null);
+
+public sealed record SessionConfigurationCommand(string SessionId, string Name, int FontSize, int LineHeight, string IdempotencyKey);
 
 public sealed record SessionDeleteCommand(string SessionId, string IdempotencyKey);
 
@@ -67,6 +71,8 @@ public sealed record SessionView(
     string SourceContentDigest,
     long SourceContentRevision,
     string RuntimeVersion,
+    int FontSize,
+    int LineHeight,
     SessionState State,
     int StateVersion,
     long WorkerEpoch,
@@ -127,6 +133,11 @@ public interface ISessionApplicationService
         SessionLifecycleCommand command,
         CancellationToken cancellationToken = default);
 
+    Task<SessionCommandResult> UpdateConfigurationAsync(
+        CurrentActor actor,
+        SessionConfigurationCommand command,
+        CancellationToken cancellationToken = default);
+
     Task<SessionDeleteResult> DeleteAsync(
         CurrentActor actor,
         SessionDeleteCommand command,
@@ -153,15 +164,17 @@ public interface ICurrentWorkerRouter
 
 public interface IWorkerOpenOptionsFactory
 {
-    SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0);
+    SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0, SessionTextMetrics? textMetrics = null);
 }
 
 public interface ISessionLifecycleExecutor
 {
+    Task<SessionRuntimeOpenResult> OpenAsync(string sessionId, int browserWidth, CancellationToken cancellationToken = default);
     Task<SessionRuntimeOpenResult> OpenAsync(
         string sessionId,
         int browserWidth,
-        CancellationToken cancellationToken = default);
+        SessionTextMetrics? textMetrics,
+        CancellationToken cancellationToken = default) => OpenAsync(sessionId, browserWidth, cancellationToken);
 
     Task<SessionRuntimeCloseResult> CloseAsync(
         string sessionId,
@@ -184,11 +197,15 @@ public sealed class SessionLifecycleExecutor(
 
     public Task<SessionRuntimeOpenResult> OpenAsync(
         string sessionId,
-        CancellationToken cancellationToken = default) => OpenAsync(sessionId, 0, cancellationToken);
+        CancellationToken cancellationToken = default) => OpenAsync(sessionId, 0, null, cancellationToken);
+
+    public Task<SessionRuntimeOpenResult> OpenAsync(string sessionId, int browserWidth, CancellationToken cancellationToken = default) =>
+        OpenAsync(sessionId, browserWidth, null, cancellationToken);
 
     public async Task<SessionRuntimeOpenResult> OpenAsync(
         string sessionId,
         int browserWidth,
+        SessionTextMetrics? textMetrics,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
@@ -199,7 +216,7 @@ public sealed class SessionLifecycleExecutor(
             // continue even if the HTTP request disconnects.  The service uses
             // WaitAsync for the HTTP budget and calls this operation with a
             // non-request token after its durable begin record is committed.
-            return await coordinator.OpenAsync(optionsFactory.Create(sessionId, browserWidth), cancellationToken).ConfigureAwait(false);
+            return await coordinator.OpenAsync(optionsFactory.Create(sessionId, browserWidth, textMetrics), cancellationToken).ConfigureAwait(false);
         }
         finally
         {

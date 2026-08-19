@@ -42,7 +42,7 @@ import {
 } from "./games";
 import { ConsolePage as RealtimeConsolePage } from "./console/ConsolePage";
 import { SavesPage as NativeSavesPage } from "./saves/SavesPage";
-import { NewSessionPage as RealNewSessionPage, SessionsPage as RealSessionsPage } from "./sessions/pages";
+import { NewSessionPage as RealNewSessionPage, SessionConfigurationPage as RealSessionConfigurationPage, SessionsPage as RealSessionsPage } from "./sessions/pages";
 
 type IconName =
   | "archive"
@@ -726,6 +726,7 @@ function AppRoutes() {
       <Route path="/games/:gameId" element={<GameDetailPage/>}/>
       <Route path="/sessions" element={<RealSessionsPage/>}/>
       <Route path="/sessions/new" element={<RealNewSessionPage/>}/>
+      <Route path="/sessions/:sessionId/configuration" element={<RealSessionConfigurationPage/>}/>
       <Route path="/sessions/:sessionId/saves" element={<NativeSavesPage/>}/>
       <Route path="/sessions/:sessionId" element={<RealtimeConsolePage/>}/>
       <Route path="/saves" element={<NativeSavesPage/>}/>

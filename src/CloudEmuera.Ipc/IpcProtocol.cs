@@ -139,6 +139,10 @@ public sealed record WorkerBootstrapDocument
     public long InitialOutputSequence { get; init; }
 
     public int BrowserWidth { get; init; }
+    public int FontSize { get; init; } = 18;
+    public int LineHeight { get; init; } = 19;
+    public double HalfWidthPx { get; init; }
+    public double FullWidthPx { get; init; }
 
     public int SaveLayout { get; init; }
 
@@ -170,7 +174,7 @@ public sealed record WorkerBootstrapDocument
         IpcValidator.ValidateAbsolutePath(SessionRoot, nameof(SessionRoot));
         IpcValidator.ValidateAbsolutePath(ControlSocketPath, nameof(ControlSocketPath));
         IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
-        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384)
+        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384 || FontSize is < 8 or > 72 || LineHeight < FontSize || LineHeight > 128 || !double.IsFinite(HalfWidthPx) || !double.IsFinite(FullWidthPx) || HalfWidthPx < 0 || FullWidthPx < 0 || HalfWidthPx > 128 || FullWidthPx > 256)
         {
             throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
         }
