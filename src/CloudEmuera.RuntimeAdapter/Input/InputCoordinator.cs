@@ -169,6 +169,13 @@ public sealed class InputCoordinator
                 return result;
             }
 
+            if (currentPrompt.InputType == ConsoleInputType.WaitOnly)
+            {
+                result = ConsoleInputResult.InvalidFormat(command, ConsoleInputFailureReason.SourceNotAllowed);
+                AddReceipt(command, result);
+                return result;
+            }
+
             string value = currentPrompt.OneInput && command.Value.Length > 1
                 ? command.Value[..1]
                 : command.Value;

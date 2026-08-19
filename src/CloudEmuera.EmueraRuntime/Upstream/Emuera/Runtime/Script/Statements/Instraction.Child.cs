@@ -791,7 +791,15 @@ internal sealed partial class FunctionIdentifier
 
 		public override void DoInstruction(ExpressionMediator exm, InstructionLine func, ProcessState state)
 		{
+			// CloudEmuera modification: desktop ReadAnyKey only stages a
+			// request, which WaitInput immediately replaces below. The headless
+			// adapter blocks in ReadAnyKey, so retain its EVENTCOMEND side effect
+			// without publishing that intermediate prompt.
+			#if CLOUDEMUERA_HEADLESS
+			exm.Console.SuppressEventComEndWait();
+			#else
 			exm.Console.ReadAnyKey();
+			#endif
 			SpSwapCharaArgument arg = (SpSwapCharaArgument)func.Argument;
 			long time = arg.X.GetIntValue(exm);
 			long flag = arg.Y.GetIntValue(exm);

@@ -450,6 +450,16 @@ internal sealed class EmueraConsole
             allowedSources: ConsoleInputSource.All), cancellationToken);
     }
 
+    /// <summary>
+    /// Preserves the non-blocking state mutation performed by the desktop
+    /// ReadAnyKey path when TWAIT replaces it with a timed request immediately.
+    /// </summary>
+    public void SuppressEventComEndWait()
+    {
+        if (GlobalStatic.Process is not null)
+            GlobalStatic.Process.NeedWaitToEventComEnd = false;
+    }
+
     public void Quit() => isRunning = false;
     public void ForceQuit() => Quit();
     public void ThrowError(bool playSound)

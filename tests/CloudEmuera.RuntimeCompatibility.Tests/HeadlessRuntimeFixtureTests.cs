@@ -1019,6 +1019,74 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Fact]
+    [Trait("Category", "TimedInput")]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public async Task TwaitAcceptingInputUsesOneTimedEnterKeyPrompt()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL BEFORE-TWAIT\n" +
+            "TWAIT 500, 0\n" +
+            "PRINTL AFTER-TWAIT\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt prompt = fixture.Console.CurrentPrompt!;
+        Assert.Equal(ConsoleInputType.EnterKey, prompt.InputType);
+        Assert.Equal(TimeSpan.FromMilliseconds(500), prompt.Timeout.GetValueOrDefault());
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitInput(new ConsoleInputCommand(prompt.PromptId, "twait-input", string.Empty)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Equal(
+            "BEFORE-TWAIT\nAFTER-TWAIT",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes));
+        Assert.Single(
+            fixture.Console.StateStore.TransactionHistory.SelectMany(item => item.Transaction.Operations)
+                .OfType<OpenPromptOperation>());
+    }
+
+    [Fact]
+    [Trait("Category", "TimedInput")]
+    [Trait("Category", "EmueraFeatureMatrix")]
+    public async Task TwaitForcedWaitRejectsInputUntilItsDeadline()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "TWAIT 50, 1\n" +
+            "PRINTFORML FORCED-TWAIT-DONE ISTIMEOUT={ISTIMEOUT}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt prompt = fixture.Console.CurrentPrompt!;
+        Assert.Equal(ConsoleInputType.WaitOnly, prompt.InputType);
+        Assert.Equal(TimeSpan.FromMilliseconds(50), prompt.Timeout.GetValueOrDefault());
+        Assert.Equal(
+            ConsoleInputResultKind.InvalidFormat,
+            fixture.Console.SubmitInput(new ConsoleInputCommand(prompt.PromptId, "twait-forced", string.Empty)).Kind);
+        Assert.Equal(prompt.PromptId, fixture.Console.CurrentPrompt!.PromptId);
+
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.True(fixture.Console.IsTimeOut);
+        Assert.Contains(
+            "FORCED-TWAIT-DONE ISTIMEOUT=1",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+        Assert.Single(
+            fixture.Console.StateStore.TransactionHistory.SelectMany(item => item.Transaction.Operations)
+                .OfType<OpenPromptOperation>());
+    }
+
+    [Fact]
     [Trait("Category", "RuntimeBridge")]
     [Trait("Category", "EmueraFeatureMatrix")]
     public async Task RichConsoleFixtureRunsThroughPinnedInterpreterAndPublishesAllDrawableKinds()

@@ -17,6 +17,22 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-19 — Preserve TWAIT's single effective request in headless mode
+
+- Modified upstream file: `Upstream/Emuera/Runtime/Script/Statements/Instraction.Child.cs`.
+  Desktop Emuera first stages `ReadAnyKey` and then immediately overwrites it
+  with TWAIT's timed `InputRequest`. The synchronous headless `ReadAnyKey`
+  would incorrectly block and publish that intermediate prompt. Under
+  `CLOUDEMUERA_HEADLESS`, TWAIT now retains only the original
+  `NeedWaitToEventComEnd = false` side effect before opening its final timed
+  request; desktop compilation remains unchanged.
+- Headless glue: `UpstreamHeadless/HeadlessEmueraConsole.cs` exposes the
+  narrow side-effect method. `InputCoordinator` rejects client input for a
+  `WaitOnly` prompt so force-wait cannot finish early through a forged request.
+- Scope: official TWAIT semantics and ADR-0018/P1-07 timed input contract.
+- Verification: RuntimeCompatibility TWAIT regression tests and RuntimeAdapter
+  WaitOnly rejection test in the dev Docker environment.
+
 ## 2026-08-19 — Callable COM_ABLE callback parameters
 
 - Modified upstream file: `Upstream/Emuera/Runtime/Script/Loader/ErbLoader.cs`.

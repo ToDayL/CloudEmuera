@@ -23,6 +23,19 @@ public sealed class InputCoordinatorTests
     }
 
     [Fact]
+    public void WaitOnlyRejectsClientInputAndRemainsOpen()
+    {
+        var coordinator = new InputCoordinator();
+        coordinator.OpenPrompt(new ConsolePrompt("p1", ConsoleInputType.WaitOnly));
+
+        ConsoleInputResult result = coordinator.Submit(new ConsoleInputCommand("p1", "m1", string.Empty));
+
+        Assert.Equal(ConsoleInputResultKind.InvalidFormat, result.Kind);
+        Assert.Equal(ConsoleInputFailureReason.SourceNotAllowed, result.FailureReason);
+        Assert.Equal("p1", coordinator.CurrentPrompt!.PromptId);
+    }
+
+    [Fact]
     public void DuplicateAndConflictResultsAreDeterministic()
     {
         var coordinator = new InputCoordinator();
