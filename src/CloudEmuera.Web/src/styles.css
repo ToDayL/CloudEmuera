@@ -452,7 +452,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .console-choice { display: inline-flex; min-height: 44px; align-items: center; margin: 3px; padding: 5px 9px; border: 1px solid #d7b8a8; border-radius: 6px; color: #9b482e; background: #fff7f2; font-weight: 700; }.console-choice:hover:not(:disabled) { border-color: var(--accent); background: #fce9df; }.console-choice:disabled { cursor: not-allowed; }
 .console-choice:hover:not(:disabled) .console-text.has-button-color, .console-choice:focus-visible:not(:disabled) .console-text.has-button-color { color: var(--console-button-color) !important; }.console-choice:hover:not(:disabled) .console-shape.is-selectable:not(.is-space) rect, .console-choice:hover:not(:disabled) .console-shape.is-selectable:not(.is-space) ellipse, .console-choice:hover:not(:disabled) .console-shape.is-selectable:not(.is-space) polygon, .console-choice:focus-visible:not(:disabled) .console-shape.is-selectable:not(.is-space) rect, .console-choice:focus-visible:not(:disabled) .console-shape.is-selectable:not(.is-space) ellipse, .console-choice:focus-visible:not(:disabled) .console-shape.is-selectable:not(.is-space) polygon { fill: var(--console-button-color) !important; }.console-choice:hover:not(:disabled) .console-shape.is-selectable:not(.is-space) line, .console-choice:focus-visible:not(:disabled) .console-shape.is-selectable:not(.is-space) line { stroke: var(--console-button-color) !important; }
 .console-image, .console-sprite { max-width: 100%; vertical-align: middle; object-fit: contain; }.console-shape { display: inline-block; vertical-align: middle; }.console-emuera-div { display: block; }.console-inline-asset { max-width: 1.4em; max-height: 1.4em; vertical-align: middle; }.console-html-island { display: inline-block; }.console-missing-asset { display: inline-block; padding: 2px 4px; color: #9b3e31; background: #f8e6e1; font-size: .75em; }
-.console-truncation { width: min(800px, 100%); margin: 14px auto; padding: 8px 12px; border: 1px solid #8a7648; border-radius: 6px; color: #e7d7a6; background: #3a3322; font-size: 11px; }.console-receipt { width: min(800px, 100%); margin: 12px auto 0; padding: 7px 11px; border: 1px solid #46624d; border-radius: 6px; color: #b9d6bd; background: #24372a; font-size: 10px; }
+.console-receipt { width: min(800px, 100%); margin: 12px auto 0; padding: 7px 11px; border: 1px solid #46624d; border-radius: 6px; color: #b9d6bd; background: #24372a; font-size: 10px; }
 .console-empty, .console-loading, .console-error { display: grid; min-height: 60vh; place-items: center; align-content: center; gap: 12px; padding: 28px; text-align: center; }.console-error { color: #242921; }.console-error h1 { margin: 0; font-family: "Noto Serif SC", serif; }.console-error p { margin: 0; color: var(--muted); font-size: 12px; }.console-fatal { margin: 16px auto 0; width: min(800px, calc(100% - 32px)); padding: 14px 16px; border: 1px solid #9a4c3d; border-radius: 8px; color: #f1c2b4; background: #3d231f; }.console-fatal strong, .console-fatal p, .console-fatal small { display: block; }.console-fatal strong { font-size: 12px; }.console-fatal p { margin: 5px 0 0; font-size: 11px; }.console-fatal small { margin-top: 5px; color: #d69d90; font-size: 10px; }.console-compat-warning { display: grid; width: min(800px, calc(100% - 32px)); gap: 4px; margin: 12px auto 0; padding: 9px 12px; border: 1px solid #8a7648; border-radius: 6px; color: #eadca7; background: #3a3322; font-size: 10px; }.console-compat-warning small { color: #cdbc8e; }
 .realtime-console .console-aside { border-color: #30352f; color: #e5e8df; background: #1a1e19; }.realtime-console .aside-title { color: #778078; }.realtime-console .console-aside dt { color: #838b80; }.realtime-console .console-aside dd { color: #e1e4dc; }.realtime-console .console-aside .aside-block > a, .realtime-console .console-aside .aside-block > button { color: #cfd5c8; }.realtime-console .console-aside .aside-block > a:hover, .realtime-console .console-aside .aside-block > button:hover { background: #293029; }.realtime-console .aside-note { border-color: #384439; color: #cdbb83; background: #2c2c21; }
 .prompt-controller { width: min(800px, 100%); margin: 18px auto 0; padding: 14px 16px; border: 1px solid #d4b29f; border-radius: 9px; color: #30352d; background: #fff8f3; }.prompt-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.prompt-heading p { margin: 0; font-size: 13px; font-weight: 700; }.prompt-controller form { display: flex; gap: 8px; margin-top: 10px; }.prompt-controller input { min-width: 0; flex: 1; height: 40px; padding: 0 10px; border: 1px solid #d8d0c6; border-radius: 7px; outline: 0; background: #fff; }.prompt-controller input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(232 104 60 / 12%); }.prompt-controller .primary-button { min-height: 40px; }.prompt-any-key { width: 100%; margin-top: 10px; }.prompt-timeout-message { display: block; margin-top: 8px; color: #8c6a36; font-size: 10px; }.deadline-clock { color: #9b482e; font-family: monospace; font-size: 12px; font-weight: 700; }.deadline-clock.expired { color: #9b3e31; font-size: 10px; }
@@ -604,14 +604,24 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .realtime-console .console-aside { display: none; }
 .realtime-console .realtime-game-console {
   flex: 1 1 auto;
+  align-self: stretch;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: auto;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 56px clamp(10px, 3vw, 28px) 24px;
+  padding: 56px 0 24px;
   background: #080a09;
+}
+.realtime-console .realtime-console-stage {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  margin: 0 auto;
 }
 .realtime-console .console-input-dock {
   flex: 0 0 auto;
@@ -621,22 +631,22 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   background: #101410;
 }
 .realtime-console .canvas-renderer {
+  width: 100%;
   border-color: #263227;
-  background: #050706;
+  background: transparent;
   box-shadow: none;
 }
 .realtime-console .scrollback-shell,
 .realtime-console .scrollback,
-.realtime-console .console-truncation,
 .realtime-console .console-receipt {
-  width: min(960px, 100%);
+  width: 100%;
 }
 .realtime-console .scrollback {
   min-height: 0;
-  padding: 8px 4px;
+  padding: 8px 0;
   border: 0;
   color: #d8e2d7;
-  background: #080a09;
+  background: transparent;
   box-shadow: none;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", "Noto Sans Mono CJK SC", monospace;
 }
@@ -756,7 +766,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .realtime-console .reconnect-banner small,
 .realtime-console .error-banner small { color: #91aa95; }
 .realtime-console .console-receipt { border-color: #365640; color: #a9d4ae; background: #142319; }
-.realtime-console .console-truncation,
 .realtime-console .console-compat-warning { border-color: #665832; color: #d8c88e; background: #272318; }
 .realtime-console .console-compat-warning small { color: #b6a873; }
 .realtime-console .console-empty,

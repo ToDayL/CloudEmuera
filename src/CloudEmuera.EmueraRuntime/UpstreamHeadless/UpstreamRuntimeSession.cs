@@ -46,6 +46,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly CancellationToken cancellationToken;
     private readonly Func<string, RuntimeSpriteDefinition> imageResolver;
     private readonly Action runtimeGateAcquired;
+    private readonly int browserWidth;
     private RuntimeDebugTrace debugTrace;
     private EmueraConsole console;
     private Process process;
@@ -58,7 +59,8 @@ public sealed class UpstreamRuntimeSession : IDisposable
         IRuntimeAudioPort audioPort,
         CancellationToken cancellationToken,
         Func<string, RuntimeSpriteDefinition> imageResolver,
-        Action runtimeGateAcquired = null)
+        Action runtimeGateAcquired = null,
+        int browserWidth = 0)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -66,6 +68,9 @@ public sealed class UpstreamRuntimeSession : IDisposable
         this.cancellationToken = cancellationToken;
         this.imageResolver = imageResolver;
         this.runtimeGateAcquired = runtimeGateAcquired;
+        if (browserWidth < 0 || browserWidth > 16_384)
+            throw new ArgumentOutOfRangeException(nameof(browserWidth));
+        this.browserWidth = browserWidth;
     }
 
     public async Task<bool> InitializeAsync(RuntimePaths paths)
@@ -93,6 +98,14 @@ public sealed class UpstreamRuntimeSession : IDisposable
         MinorShift.Emuera.GlobalStatic.Reset();
         ConfigData.ResetHeadless();
         ConfigData.Instance.LoadConfig();
+        AConfigItem windowWidth = ConfigData.Instance.GetConfigItem(ConfigCode.WindowX);
+        int configuredWidth = windowWidth.GetValue<int>();
+        int effectiveWidth = browserWidth > 0 ? Math.Min(configuredWidth, browserWidth) : configuredWidth;
+        if (effectiveWidth != configuredWidth)
+        {
+            windowWidth.SetValue(effectiveWidth);
+            Config.SetConfig(ConfigData.Instance);
+        }
         cancellationToken.ThrowIfCancellationRequested();
         RuntimeSaveLayout actualLayout = Config.UseSaveFolder
             ? RuntimeSaveLayout.SavDirectory
@@ -106,11 +119,12 @@ public sealed class UpstreamRuntimeSession : IDisposable
         HeadlessAudioBridge.Configure(audioPort, cancellationToken);
         debugTrace = RuntimeDebugTrace.CreateWhenEnabled(paths.SessionRoot);
         debugTrace?.Activate();
+        debugTrace?.RecordRuntimeWidth(configuredWidth, browserWidth, Config.WindowX, Config.DrawableWidth);
         Preload.Clear();
         await Preload.Load(MinorShift.Emuera.Program.ErbDir, cancellationToken).ConfigureAwait(false);
         await Preload.Load(MinorShift.Emuera.Program.CsvDir, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        console = new EmueraConsole(adapter, clock, cancellationToken, imageResolver);
+        console = new EmueraConsole(adapter, clock, cancellationToken, imageResolver, Config.WindowX, Config.WindowY);
         process = new Process(console);
         process.SetHeadlessCancellationToken(cancellationToken);
         MinorShift.Emuera.GlobalStatic.Process = process;

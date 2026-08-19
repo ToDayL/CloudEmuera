@@ -281,7 +281,7 @@ public sealed partial class SqliteSessionApplicationService(
         ValidateSessionId(command.SessionId);
         ValidateIdempotencyKey(command.IdempotencyKey);
         string scope = open ? OpenScope : CloseScope;
-        string digest = SessionIdempotency.Digest(actor.UserId, scope, command.SessionId, new { sessionId = command.SessionId });
+        string digest = SessionIdempotency.Digest(actor.UserId, scope, command.SessionId, new { sessionId = command.SessionId, browserWidth = open ? command.BrowserWidth : 0 });
         PersistentIdempotencyRecord record = await idempotency.BeginAsync(
             actor.UserId,
             scope,
@@ -503,7 +503,7 @@ public sealed partial class SqliteSessionApplicationService(
 
             if (open)
             {
-                await lifecycle.OpenAsync(command.SessionId, CancellationToken.None).ConfigureAwait(false);
+                await lifecycle.OpenAsync(command.SessionId, command.BrowserWidth, CancellationToken.None).ConfigureAwait(false);
             }
             else
             {

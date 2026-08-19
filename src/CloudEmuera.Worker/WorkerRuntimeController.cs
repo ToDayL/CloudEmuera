@@ -351,6 +351,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             RuntimeSaveLayout saveLayout = await ValidateSessionRootAsync().ConfigureAwait(false);
             RuntimePaths paths = RuntimePaths.ForExistingSessionRoot(bootstrap.SessionRoot, saveLayout);
             paths.ValidateSessionRoot();
+            WorkerLifecycleLog.WriteRuntimeWidth(logger, binding, bootstrap.BrowserWidth);
             var fileSystem = new LocalRuntimeFileSystem(paths);
             console = new StructuredGameConsole();
             host = EmueraRuntimeHost.Create(new EmueraRuntimeOptions(
@@ -364,7 +365,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 TimeSpan.FromMilliseconds(bootstrap.RuntimeInitializationTimeoutMilliseconds),
                 bootstrap.RuntimeExecutionTimeoutMilliseconds < 0
                     ? Timeout.InfiniteTimeSpan
-                    : TimeSpan.FromMilliseconds(bootstrap.RuntimeExecutionTimeoutMilliseconds)));
+                    : TimeSpan.FromMilliseconds(bootstrap.RuntimeExecutionTimeoutMilliseconds),
+                browserWidth: bootstrap.BrowserWidth));
             runtimeCancellation = new CancellationTokenSource();
             console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
 

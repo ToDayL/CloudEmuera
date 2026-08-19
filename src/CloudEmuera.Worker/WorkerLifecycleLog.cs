@@ -23,6 +23,12 @@ internal static class WorkerLifecycleLog
             new EventId(1003, "WorkerLifecycleError"),
             "worker_event={WorkerEvent} sessionId={SessionId} workerId={WorkerId} workerEpoch={WorkerEpoch} reason={Reason}");
 
+    private static readonly Action<ILogger, string, string, ulong, int, Exception?> RuntimeWidth =
+        LoggerMessage.Define<string, string, ulong, int>(
+            LogLevel.Information,
+            new EventId(1004, "WorkerRuntimeWidth"),
+            "worker_event=runtime_width_received sessionId={SessionId} workerId={WorkerId} workerEpoch={WorkerEpoch} browserWidth={BrowserWidth}");
+
     public static void Write(
         ILogger logger,
         WorkerBinding binding,
@@ -38,4 +44,7 @@ internal static class WorkerLifecycleLog
         };
         log(logger, eventName, binding.SessionId, binding.WorkerId, binding.WorkerEpoch, reason, null);
     }
+
+    public static void WriteRuntimeWidth(ILogger logger, WorkerBinding binding, int browserWidth) =>
+        RuntimeWidth(logger, binding.SessionId, binding.WorkerId, binding.WorkerEpoch, browserWidth, null);
 }

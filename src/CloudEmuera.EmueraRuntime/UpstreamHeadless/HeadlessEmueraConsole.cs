@@ -93,7 +93,7 @@ internal sealed class EmueraConsole
     {
         outputEnabled = true;
         if (adapter is StructuredGameConsole)
-            EmitStructured(ConsoleOperation.SetWindow(new WindowMetadata(windowTitle, viewportWidth, viewportHeight)));
+            EmitStructured(ConsoleOperation.SetWindow(CurrentWindowMetadata()));
     }
     public bool Enabled => isRunning;
     public bool IsActive => isRunning;
@@ -488,12 +488,17 @@ internal sealed class EmueraConsole
         stringStyle.ColorChanged = color != Config.ForeColor;
     }
     public void SetFont(string fontName) => stringStyle.Fontname = fontName;
-    public void SetBgColor(Color color) => bgColor = color;
+    public void SetBgColor(Color color)
+    {
+        bgColor = color;
+        if (outputEnabled && adapter is StructuredGameConsole)
+            EmitStructured(ConsoleOperation.SetWindow(CurrentWindowMetadata()));
+    }
     public void SetWindowTitle(string value)
     {
         windowTitle = value ?? string.Empty;
         if (outputEnabled)
-            EmitStructured(ConsoleOperation.SetWindow(new WindowMetadata(windowTitle, viewportWidth, viewportHeight)));
+            EmitStructured(ConsoleOperation.SetWindow(CurrentWindowMetadata()));
     }
     public string GetWindowTitle() => windowTitle;
     public void UpdateGeneration() => generation++;
@@ -1063,11 +1068,17 @@ internal sealed class EmueraConsole
         if ((stringStyle.FontStyle & FontStyle.Strikeout) != 0) decorations |= ConsoleFontStyle.Strike;
         return new ConsoleTextStyle(
             ToConsoleColor(stringStyle.Color),
-            ToConsoleColor(bgColor),
+            null,
             decorations,
             string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname,
             buttonColor: ToConsoleColor(stringStyle.ButtonColor));
     }
+
+    private WindowMetadata CurrentWindowMetadata() => new(
+        windowTitle,
+        viewportWidth,
+        viewportHeight,
+        defaultBackground: ToConsoleColor(bgColor));
 
     private ConsoleContractLimits HtmlContractLimits => adapter is StructuredGameConsole structured
         ? structured.StateStore.Options.ContractLimits

@@ -104,7 +104,8 @@ public sealed record WorkerLaunchRequest
         string compatibilityProfile,
         CloudEmuera.RuntimeAdapter.RuntimeSaveLayout saveLayout,
         string sessionRootManifestDigest = "",
-        long initialOutputSequence = 0)
+        long initialOutputSequence = 0,
+        int browserWidth = 0)
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));
         SessionRoot = Path.GetFullPath(sessionRoot ?? throw new ArgumentNullException(nameof(sessionRoot)));
@@ -117,6 +118,9 @@ public sealed record WorkerLaunchRequest
         SaveLayout = saveLayout;
         SessionRootManifestDigest = sessionRootManifestDigest ?? string.Empty;
         InitialOutputSequence = initialOutputSequence;
+        if (browserWidth < 0 || browserWidth > 16_384)
+            throw new ArgumentOutOfRangeException(nameof(browserWidth));
+        BrowserWidth = browserWidth;
     }
 
     public WorkerBinding Binding { get; }
@@ -130,4 +134,6 @@ public sealed record WorkerLaunchRequest
     public string SessionRootManifestDigest { get; }
 
     public long InitialOutputSequence { get; }
+
+    public int BrowserWidth { get; }
 }

@@ -47,7 +47,7 @@ public sealed class SessionApplicationException(
 
 public sealed record CreateSessionCommand(string GameId, string Name, string IdempotencyKey);
 
-public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey);
+public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey, int BrowserWidth = 0);
 
 public sealed record SessionDeleteCommand(string SessionId, string IdempotencyKey);
 
@@ -153,13 +153,14 @@ public interface ICurrentWorkerRouter
 
 public interface IWorkerOpenOptionsFactory
 {
-    SessionRuntimeOpenOptions Create(string sessionId);
+    SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0);
 }
 
 public interface ISessionLifecycleExecutor
 {
     Task<SessionRuntimeOpenResult> OpenAsync(
         string sessionId,
+        int browserWidth,
         CancellationToken cancellationToken = default);
 
     Task<SessionRuntimeCloseResult> CloseAsync(
@@ -181,8 +182,13 @@ public sealed class SessionLifecycleExecutor(
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SessionGate> gates = new(StringComparer.Ordinal);
 
+    public Task<SessionRuntimeOpenResult> OpenAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default) => OpenAsync(sessionId, 0, cancellationToken);
+
     public async Task<SessionRuntimeOpenResult> OpenAsync(
         string sessionId,
+        int browserWidth,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
@@ -193,7 +199,7 @@ public sealed class SessionLifecycleExecutor(
             // continue even if the HTTP request disconnects.  The service uses
             // WaitAsync for the HTTP budget and calls this operation with a
             // non-request token after its durable begin record is committed.
-            return await coordinator.OpenAsync(optionsFactory.Create(sessionId), cancellationToken).ConfigureAwait(false);
+            return await coordinator.OpenAsync(optionsFactory.Create(sessionId, browserWidth), cancellationToken).ConfigureAwait(false);
         }
         finally
         {

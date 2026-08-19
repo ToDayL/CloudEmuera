@@ -48,6 +48,18 @@ internal sealed class RuntimeDebugTrace : IDisposable
 
     internal void Activate() => Current = this;
 
+    internal void RecordRuntimeWidth(int configuredWidth, int browserWidth, int effectiveWidth, int drawableWidth)
+    {
+        Write(new
+        {
+            eventType = "runtime_width",
+            configuredWidth,
+            browserWidth,
+            effectiveWidth,
+            drawableWidth
+        });
+    }
+
     internal static void RecordErbOutput(ScriptPosition? position, string instruction, string text, bool waitForInput)
     {
         Current?.Write(new

@@ -316,7 +316,8 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 spec.SessionRoot.CompatibilityProfile,
                 (RuntimeSaveLayout)spec.SessionRoot.SaveLayout,
                 spec.SessionRoot.ManifestDigest,
-                spec.Binding.InitialOutputSequence),
+                spec.Binding.InitialOutputSequence,
+                spec.BrowserWidth),
             spec.Binding,
             waitForRegistration: false,
             cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -368,10 +369,14 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             SaveLayout = (int)request.SaveLayout,
             SessionRootManifestDigest = request.SessionRootManifestDigest,
             InitialOutputSequence = request.InitialOutputSequence,
+            BrowserWidth = request.BrowserWidth,
         };
         session.SetBootstrapToken(bootstrap.BootstrapToken);
         WorkerBootstrapDocument bootstrapToWrite = options.BootstrapTransformForTest?.Invoke(bootstrap) ?? bootstrap;
         WorkerBootstrapFile.Write(bootstrapPath, bootstrapToWrite);
+        session.LogLifecycle(
+            "worker_launch_width",
+            $"browserWidth={request.BrowserWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
 
         try
         {

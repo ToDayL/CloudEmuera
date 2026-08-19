@@ -20,6 +20,8 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
 }) {
   const [hoveredRasterId, setHoveredRasterId] = useState<string | null>(null);
 
+  if (!hasCanvasContent(scene, backgroundLayers)) return null;
+
   const updateRasterHover = (event: React.PointerEvent<HTMLDivElement>) => {
     const root = event.currentTarget.getBoundingClientRect();
     if (root.width <= 0 || root.height <= 0) return;
@@ -58,6 +60,10 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
       }}>{region.tooltip ?? "交互区域"}</button>)}
     </div>
   </div>;
+}
+
+export function hasCanvasContent(scene: CanvasScene, backgroundLayers: readonly BackgroundLayer[]): boolean {
+  return backgroundLayers.length > 0 || scene.drawables.length > 0 || scene.hitRegions.length > 0;
 }
 
 export function orderCanvasDrawables(drawables: readonly RealtimeDrawable[]): RealtimeDrawable[] {

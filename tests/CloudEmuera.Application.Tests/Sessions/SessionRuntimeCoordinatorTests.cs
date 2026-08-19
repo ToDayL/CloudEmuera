@@ -28,6 +28,21 @@ public sealed class SessionRuntimeCoordinatorTests
     }
 
     [Fact]
+    public async Task OpenPassesBrowserWidthToEveryNewWorker()
+    {
+        var trace = new List<string>();
+        RecordingStore store = new(trace);
+        RecordingRootInspector inspector = new(trace);
+        RecordingWorkerControl workerControl = new(trace);
+        SessionRuntimeCoordinator coordinator = new(store, workerControl, inspector, TimeProvider.System);
+
+        await coordinator.OpenAsync(CreateOpenOptions(browserWidth: 390));
+
+        Assert.NotNull(workerControl.LaunchSpec);
+        Assert.Equal(390, workerControl.LaunchSpec!.BrowserWidth);
+    }
+
+    [Fact]
     public async Task OpenReadyFailureKillsWorkerAndCompletesCrashedLease()
     {
         var trace = new List<string>();
@@ -114,7 +129,7 @@ public sealed class SessionRuntimeCoordinatorTests
         Assert.DoesNotContain("complete", trace);
     }
 
-    private static SessionRuntimeOpenOptions CreateOpenOptions() => new(
+    private static SessionRuntimeOpenOptions CreateOpenOptions(int browserWidth = 0) => new(
         "sess_coordinator",
         "ctl_coordinator",
         "wrk_coordinator",
@@ -122,7 +137,8 @@ public sealed class SessionRuntimeCoordinatorTests
         2,
         "uds/wrk_coordinator",
         TimeSpan.FromSeconds(30),
-        DateTimeOffset.UtcNow);
+        DateTimeOffset.UtcNow,
+        browserWidth);
 
     private sealed class RecordingStore(List<string> trace) : ISessionRuntimeStore
     {
@@ -246,6 +262,7 @@ public sealed class SessionRuntimeCoordinatorTests
     private sealed class RecordingWorkerControl(List<string> trace) : ISessionWorkerControl
     {
         public RecordingProcess Process { get; } = new(trace);
+        public WorkerLaunchSpec? LaunchSpec { get; private set; }
         public Exception? ReadyException { get; init; }
         public Exception? StartException { get; init; }
 
@@ -254,6 +271,7 @@ public sealed class SessionRuntimeCoordinatorTests
             CancellationToken cancellationToken = default)
         {
             trace.Add("start");
+            LaunchSpec = spec;
             if (StartException is not null)
                 return Task.FromException<IWorkerProcessHandle>(StartException);
             Process.ReadyException = ReadyException;

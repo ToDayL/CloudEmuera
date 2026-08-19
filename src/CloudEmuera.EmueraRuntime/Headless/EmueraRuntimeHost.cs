@@ -317,7 +317,8 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                         sprite.DestinationHeight,
                         sprite.AnimationFrames)
                     : null,
-                options.UpstreamGateAcquired);
+                options.UpstreamGateAcquired,
+                options.BrowserWidth);
             bool initialized = session.InitializeAsync(options.Paths).GetAwaiter().GetResult();
             cancellationToken.ThrowIfCancellationRequested();
             if (!initialized)

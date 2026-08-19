@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backgroundStyle, orderCanvasDrawables, orderHitRegions, topmostRasterAtPoint } from "./CanvasRenderer";
+import { backgroundStyle, hasCanvasContent, orderCanvasDrawables, orderHitRegions, topmostRasterAtPoint } from "./CanvasRenderer";
 import { render } from "@testing-library/react";
 import { ShapeSvg } from "./ScrollbackRenderer";
 import type { RealtimeDrawable } from "../realtime/protocol";
@@ -7,6 +7,12 @@ import type { RealtimeDrawable } from "../realtime/protocol";
 const bounds = { x: 0, y: 0, width: 10, height: 10 };
 
 describe("CanvasRenderer scene ordering", () => {
+  it("does not treat an empty scene as a visible canvas", () => {
+    expect(hasCanvasContent({ drawables: [], hitRegions: [] }, [])).toBe(false);
+    expect(hasCanvasContent({ drawables: [], hitRegions: [] }, [{ layerId: "bg", assetId: "asset", depth: 0, mode: "center", opacity: 1 }])).toBe(true);
+    expect(hasCanvasContent({ drawables: [{ type: "shape", drawableId: "shape", bounds, zIndex: 0, opacity: 1, shape: "space", points: [], fill: null, stroke: null }], hitRegions: [] }, [])).toBe(true);
+  });
+
   it("uses one stable zIndex plus drawableId order across canvas and DOM drawables", () => {
     const drawables: RealtimeDrawable[] = [
       { type: "htmlIsland", drawableId: "html", bounds, zIndex: 5, opacity: 1, root: { type: "text", text: "safe" } },

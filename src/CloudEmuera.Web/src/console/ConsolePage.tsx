@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, apiRequest } from "../api";
 import { closeSession, useSession, waitForSession, type SessionState } from "../sessions/api";
@@ -8,8 +8,10 @@ import { CanvasRenderer } from "./CanvasRenderer";
 import { DeadlineClock } from "./DeadlineClock";
 import { MediaController } from "./media";
 import { PromptController, type PromptControllerHandle } from "./PromptController";
+import { colorToCss } from "./SafeHtmlRenderer";
 import { ScrollbackRenderer, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { getRealtimeConnectionManager, type ConnectionPhase } from "../realtime/connection";
+import type { RealtimeColor } from "../realtime/protocol";
 import { createSessionStoreState, type SessionStoreState } from "../realtime/sessionStore";
 
 function connectionLabel(phase: ConnectionPhase): string {
@@ -33,6 +35,7 @@ export function ConsolePage() {
   const [rendererError, setRendererError] = useState<string | null>(null);
   const [fontLoadFailed, setFontLoadFailed] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [screenWidth, setScreenWidth] = useState(() => typeof window === "undefined" ? 0 : window.innerWidth);
   const session = useSession(sessionId);
   const gameConsoleRef = useRef<HTMLElement>(null);
   const promptControllerRef = useRef<PromptControllerHandle>(null);
@@ -44,6 +47,15 @@ export function ConsolePage() {
     staleTime: 60_000,
     retry: 1,
   });
+  useEffect(() => {
+    const update = () => setScreenWidth(window.innerWidth);
+    window.addEventListener("resize", update);
+    window.visualViewport?.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.visualViewport?.removeEventListener("resize", update);
+    };
+  }, []);
   const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", manifest.data), [manifest.data, sessionId]);
   const media = useRef<MediaController | null>(null);
 
@@ -146,7 +158,8 @@ export function ConsolePage() {
       <button className="danger-text" aria-label="关闭 Session" onClick={() => void close()} disabled={closing || session.data.state !== "RUNNING"}>{closing ? "正在关闭…" : "关闭"}</button>
     </div>
     <div className="console-layout">
-      <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台" onClick={handleConsoleSurfaceClick}>
+      <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台">
+        <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, screenWidth)} onClick={handleConsoleSurfaceClick}>
         <h1 className="sr-only">{session.data.name}</h1>
         <p className="sr-only">Session 状态：<span>{sessionStateLabel(session.data.state)}</span></p>
         {(!networkOnline || (connectionPhase !== "ready" && connectionPhase !== "disconnected")) && <div className="reconnect-banner" role="status" aria-live="polite"><span className="mini-spinner"/><p><strong>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</strong><small>{networkOnline ? "游戏仍在服务器上运行；浏览器连接恢复后会按 epoch 和序号重新同步。" : "浏览器离线只影响当前显示；Session 和 Worker 不会被关闭。"}</small></p></div>}
@@ -156,8 +169,9 @@ export function ConsolePage() {
         {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
         {(assets.diagnostics().length > 0 || fontLoadFailed) && <div className="console-compat-warning" role="status"><strong>字体兼容提示</strong><small>{[...assets.diagnostics(), ...(fontLoadFailed ? ["FONT_LOAD_FAILED"] : [])].map(fontDiagnosticLabel).join("；")}</small></div>}
-        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} currentPrompt={state.currentPrompt} interactive={state.currentPrompt?.inputType === "primitivePointerKey" && state.currentPrompt.allowedSources.includes("pointer")} /><ScrollbackRenderer lines={state.scrollback} currentPrompt={state.currentPrompt} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${stream.workerEpoch ?? "none"}:${stream.sequence}`} />{state.truncation.wasTruncated && <p className="console-truncation" role="status">输出过长，已省略 {state.truncation.droppedLineCount} 行和 {state.truncation.droppedNodeCount} 个节点。</p>}</> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
+        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} currentPrompt={state.currentPrompt} interactive={state.currentPrompt?.inputType === "primitivePointerKey" && state.currentPrompt.allowedSources.includes("pointer")} /><ScrollbackRenderer lines={state.scrollback} currentPrompt={state.currentPrompt} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${stream.workerEpoch ?? "none"}:${stream.sequence}`} /></> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
+        </div>
       </main>
       <div className="console-input-dock">
         <PromptController ref={promptControllerRef} prompt={state?.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>
@@ -168,6 +182,20 @@ export function ConsolePage() {
 
 export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean {
   return target instanceof Element && !target.closest("button, a, input, select, textarea, [role=\"button\"]");
+}
+
+export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, screenWidth?: number): CSSProperties {
+  const width = effectiveConsoleWidth(viewportWidth, screenWidth);
+  return {
+    ...(background ? { backgroundColor: colorToCss(background) } : {}),
+    ...(width > 0 ? { width: `${width}px`, maxWidth: "100%" } : {}),
+  };
+}
+
+export function effectiveConsoleWidth(runtimeWidth?: number, screenWidth?: number): number {
+  if (!runtimeWidth || runtimeWidth <= 0) return 0;
+  if (!screenWidth || screenWidth <= 0) return runtimeWidth;
+  return Math.min(runtimeWidth, screenWidth);
 }
 
 function presentationManifestUrlPath(sessionId: string): string {

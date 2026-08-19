@@ -754,7 +754,7 @@ sessions.MapGet("/{sessionId}/assets/{assetId}", async (string sessionId, string
 
 sessions.MapPost("/{sessionId}:open", async (string sessionId, HttpContext context, JsonElement body, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, IAntiforgery antiforgery, ISessionApplicationService service, SessionCommandReadiness readiness) =>
 {
-    return await ApiIdentity.ExecuteSessionLifecycleAsync(context, sessionId, body, idempotencyKey, antiforgery, readiness, service.OpenAsync).ConfigureAwait(false);
+    return await ApiIdentity.ExecuteSessionLifecycleAsync(context, sessionId, body, idempotencyKey, antiforgery, readiness, service.OpenAsync, requireBrowserWidth: true).ConfigureAwait(false);
 }).RequireRateLimiting("session-write")
   .Accepts<JsonElement>("application/json")
   .Produces<SessionResponse>(StatusCodes.Status200OK)
@@ -1028,19 +1028,32 @@ internal static class ApiIdentity
         string? idempotencyKey,
         IAntiforgery antiforgery,
         SessionCommandReadiness readiness,
-        Func<CurrentActor, SessionLifecycleCommand, CancellationToken, Task<SessionCommandResult>> operation)
+        Func<CurrentActor, SessionLifecycleCommand, CancellationToken, Task<SessionCommandResult>> operation,
+        bool requireBrowserWidth = false)
     {
         if (GameActor(context) is not CurrentActor actor) return GameActorError(context);
         if (!readiness.IsReady) return Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", StatusCodes.Status503ServiceUnavailable);
-        if (body.ValueKind != JsonValueKind.Object || body.EnumerateObject().Any())
-            return Error(SessionErrorCodes.ValidationFailed, "生命周期请求体必须是空 JSON 对象。", 400);
+        int browserWidth = 0;
+        if (body.ValueKind != JsonValueKind.Object)
+            return Error(SessionErrorCodes.ValidationFailed, "生命周期请求体必须是 JSON 对象。", 400);
+        foreach (JsonProperty property in body.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, "browserWidth", StringComparison.Ordinal) ||
+                property.Value.ValueKind != JsonValueKind.Number ||
+                !property.Value.TryGetInt32(out browserWidth) || browserWidth is < 240 or > 16_384)
+                return Error(SessionErrorCodes.ValidationFailed, "启动宽度必须是 240 到 16384 之间的 CSS 像素。", 400);
+        }
+        if (body.EnumerateObject().Any() && !body.TryGetProperty("browserWidth", out _))
+            return Error(SessionErrorCodes.ValidationFailed, "生命周期请求体字段无效。", 400);
+        if (requireBrowserWidth && browserWidth == 0)
+            return Error(SessionErrorCodes.ValidationFailed, "启动 Session 必须提供浏览器宽度。", 400);
         if (!await ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false))
             return Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
         if (!TryIdempotencyKey(idempotencyKey, out string key))
             return Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
         try
         {
-            SessionCommandResult result = await operation(actor, new SessionLifecycleCommand(sessionId, key), context.RequestAborted).ConfigureAwait(false);
+            SessionCommandResult result = await operation(actor, new SessionLifecycleCommand(sessionId, key, browserWidth), context.RequestAborted).ConfigureAwait(false);
             return SessionCommand(context, result);
         }
         catch (SessionApplicationException exception)

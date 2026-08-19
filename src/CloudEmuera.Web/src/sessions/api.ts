@@ -49,12 +49,12 @@ export async function createSession(gameId: string, name: string, idempotencyKey
   })).value;
 }
 
-export async function openSession(sessionId: string, idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
-  return lifecycleRequest(sessionId, "open", idempotencyKey);
+export async function openSession(sessionId: string, browserWidth = typeof window === "undefined" ? 0 : Math.round(window.innerWidth), idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
+  return lifecycleRequest(sessionId, "open", browserWidth, idempotencyKey);
 }
 
 export async function closeSession(sessionId: string, idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
-  return lifecycleRequest(sessionId, "close", idempotencyKey);
+  return lifecycleRequest(sessionId, "close", 0, idempotencyKey);
 }
 
 export async function deleteSession(sessionId: string, idempotencyKey = newIdempotencyKey()): Promise<{ pending: boolean }> {
@@ -88,12 +88,12 @@ export async function waitForSessionDeletion(
   throw new Error("Session 删除在限定时间内没有完成。");
 }
 
-async function lifecycleRequest(sessionId: string, operation: "open" | "close", idempotencyKey: string): Promise<SessionView> {
+async function lifecycleRequest(sessionId: string, operation: "open" | "close", browserWidth: number, idempotencyKey: string): Promise<SessionView> {
   const token = await getCsrfToken();
   return (await apiRequestWithMeta<SessionView>(`/sessions/${encodeURIComponent(sessionId)}:${operation}`, {
     method: "POST",
     headers: jsonMutationHeaders(token, idempotencyKey),
-    body: "{}",
+    body: operation === "open" ? JSON.stringify({ browserWidth }) : "{}",
   })).value;
 }
 

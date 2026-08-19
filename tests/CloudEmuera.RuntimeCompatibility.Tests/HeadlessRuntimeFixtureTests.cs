@@ -37,6 +37,24 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void SetBgColorPublishesWindowBackgroundInsteadOfTextBackground()
+    {
+        // PLAY-002: SETBGCOLOR changes the whole Emuera console surface, not
+        // the background rectangle of each text run.
+        var adapter = new StructuredGameConsole();
+        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        headless.SetBgColor(Color.FromArgb(0x12, 0x34, 0x56));
+        headless.Print("TEXT");
+        headless.NewLine();
+
+        Assert.Equal(new RuntimeConsoleColor(0x12, 0x34, 0x56), adapter.Snapshot.WindowMetadata.DefaultBackground);
+        TextNode text = Assert.IsType<TextNode>(Assert.Single(Assert.Single(adapter.Snapshot.Scrollback).Nodes));
+        Assert.Null(text.Style.Background);
+    }
+
+    [Fact]
     [Trait("Category", "EmueraFeatureMatrix")]
     public async Task DynamicGraphicsRunsThroughPinnedInterpreterAndPublishesScene()
     {
@@ -692,6 +710,19 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.False(projected.Contains(' ', StringComparison.Ordinal));
         Assert.All(projected, character => Assert.Equal('*', character));
         Assert.True(projected.Length > 40, "DRAWLINE must produce a full-width bar, not a single glyph.");
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task BrowserWidthCapsTheConfiguredWindowWidthAfterConfigLoading()
+    {
+        // PLAY-009/COMP-007: the Worker chooses the effective runtime width
+        // when it starts; loading emuera.config must not overwrite that cap.
+        using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(browserWidth: 390);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(390, fixture.Console.Snapshot.WindowMetadata.ViewportWidth);
     }
 
     [Fact]
@@ -1988,20 +2019,23 @@ public sealed class HeadlessRuntimeFixtureTests
             IRuntimeClock? runtimeClock = null,
             TimeSpan? initializationDeadline = null,
             TimeSpan? runDeadline = null,
-            Action? upstreamGateAcquired = null)
+            Action? upstreamGateAcquired = null,
+            int browserWidth = 0)
             => CreateHost(
                 Console,
                 runtimeClock,
                 initializationDeadline,
                 runDeadline,
-                upstreamGateAcquired);
+                upstreamGateAcquired,
+                browserWidth);
 
         public EmueraRuntimeHost CreateHost(
             StructuredGameConsole console,
             IRuntimeClock? runtimeClock = null,
             TimeSpan? initializationDeadline = null,
             TimeSpan? runDeadline = null,
-            Action? upstreamGateAcquired = null)
+            Action? upstreamGateAcquired = null,
+            int browserWidth = 0)
         {
             var fileSystem = new LocalRuntimeFileSystem(Paths);
             var options = new EmueraRuntimeOptions(
@@ -2013,7 +2047,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 AudioPort,
                 EmueraCompatibilityProfiles.V18Compatible,
                 initializationDeadline ?? TimeSpan.FromSeconds(5),
-                runDeadline ?? TimeSpan.FromSeconds(5));
+                runDeadline ?? TimeSpan.FromSeconds(5),
+                browserWidth: browserWidth);
             return EmueraRuntimeHost.Create(options with { UpstreamGateAcquired = upstreamGateAcquired });
         }
 

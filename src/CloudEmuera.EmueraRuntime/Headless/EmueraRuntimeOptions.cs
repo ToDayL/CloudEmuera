@@ -23,7 +23,8 @@ public sealed record EmueraRuntimeOptions
         string compatibilityProfile,
         TimeSpan initializationDeadline,
         TimeSpan runDeadline,
-        Action<EmueraRuntimeDiagnostic>? diagnosticSink = null)
+        Action<EmueraRuntimeDiagnostic>? diagnosticSink = null,
+        int browserWidth = 0)
     {
         Paths = paths ?? throw new ArgumentNullException(nameof(paths));
         Console = console ?? throw new ArgumentNullException(nameof(console));
@@ -42,6 +43,9 @@ public sealed record EmueraRuntimeOptions
         InitializationDeadline = initializationDeadline;
         RunDeadline = runDeadline;
         DiagnosticSink = diagnosticSink;
+        if (browserWidth < 0 || browserWidth > 16_384)
+            throw new ArgumentOutOfRangeException(nameof(browserWidth));
+        BrowserWidth = browserWidth;
     }
 
     public RuntimePaths Paths { get; }
@@ -54,6 +58,7 @@ public sealed record EmueraRuntimeOptions
     public TimeSpan InitializationDeadline { get; }
     public TimeSpan RunDeadline { get; }
     public Action<EmueraRuntimeDiagnostic>? DiagnosticSink { get; }
+    public int BrowserWidth { get; }
     internal Action? UpstreamGateAcquired { get; init; }
 
     private static void ValidateDeadline(TimeSpan value, string parameterName)

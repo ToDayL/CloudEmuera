@@ -52,7 +52,8 @@ public sealed record SessionRuntimeOpenOptions(
     int ProtocolVersion,
     string IpcEndpoint,
     TimeSpan LeaseDuration,
-    DateTimeOffset Now);
+    DateTimeOffset Now,
+    int BrowserWidth = 0);
 
 public sealed record SessionRuntimeBinding(
     string SessionId,
@@ -157,7 +158,8 @@ public sealed record WorkerLaunchSpec(
     TimeSpan RuntimeInitializationTimeout,
     TimeSpan RuntimeExecutionTimeout,
     long ExpectedParentProcessId,
-    string ControlSocketPath);
+    string ControlSocketPath,
+    int BrowserWidth = 0);
 
 public interface ISessionRuntimeStore
 {
@@ -306,7 +308,8 @@ public sealed class SessionRuntimeCoordinator(
                     TimeSpan.FromSeconds(30),
                     Timeout.InfiniteTimeSpan,
                     Environment.ProcessId,
-                    string.Empty),
+                    string.Empty,
+                    options.BrowserWidth),
                 operationCancellationToken).ConfigureAwait(false);
             SessionRuntimeWriteResult identityResult = await store.RecordProcessIdentityAsync(
                 binding,

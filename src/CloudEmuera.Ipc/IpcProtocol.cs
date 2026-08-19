@@ -138,6 +138,8 @@ public sealed record WorkerBootstrapDocument
 
     public long InitialOutputSequence { get; init; }
 
+    public int BrowserWidth { get; init; }
+
     public int SaveLayout { get; init; }
 
     public string SessionRootManifestDigest { get; init; } = string.Empty;
@@ -168,7 +170,7 @@ public sealed record WorkerBootstrapDocument
         IpcValidator.ValidateAbsolutePath(SessionRoot, nameof(SessionRoot));
         IpcValidator.ValidateAbsolutePath(ControlSocketPath, nameof(ControlSocketPath));
         IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
-        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0)
+        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384)
         {
             throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
         }

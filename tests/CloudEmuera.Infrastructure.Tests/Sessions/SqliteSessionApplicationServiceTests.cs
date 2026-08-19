@@ -189,7 +189,7 @@ public sealed class SqliteSessionApplicationServiceTests
 
     private sealed class NoopLifecycleExecutor : ISessionLifecycleExecutor
     {
-        public Task<SessionRuntimeOpenResult> OpenAsync(string sessionId, CancellationToken cancellationToken = default) =>
+        public Task<SessionRuntimeOpenResult> OpenAsync(string sessionId, int browserWidth, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
         public Task<SessionRuntimeCloseResult> CloseAsync(string sessionId, string reasonCode = "requested", CancellationToken cancellationToken = default) =>
