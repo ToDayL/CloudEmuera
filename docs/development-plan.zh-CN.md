@@ -255,6 +255,24 @@ Worker 继续运行的目标。P1-05 将复用实现迁入 API，并按
 RuntimeCompatibility 27、Worker 18、Web 13）；`./scripts/verify-dev-user.sh`、
 `./scripts/verify-third-party.sh` 和 `git diff --check` 通过。
 
+### P1-S02 — 当前输入槽与 Realtime/IPC 协议升级（TODO）
+
+需求映射：SESS-002/004/006/007、PLAY-007/008/011、AC-002/005。关联决策：
+[`ADR-0025`](adr/0025-current-input-slot-realtime-v2.md)，替代 P1-09 中浏览器提交 `promptId` 的已实施细节。
+
+详细方案：[`tasks/P1-S02-current-input-slot-realtime-v2-plan.zh-CN.md`](tasks/P1-S02-current-input-slot-realtime-v2-plan.zh-CN.md)。
+
+交付物：唯一支持的 WebSocket v2 和 IPC v4；浏览器把无目标输入意图投递给当前 Runtime 输入槽；当前
+Worker 内以 `clientMessageId` 和无 prompt fingerprint 幂等；30ms `TINPUT/TINPUTS` 重绘期间仍遵循固定上游
+“事件到达时交给当前 WaitInput”的语义。不得同时保留 v1/v3 或把无活动输入排队给未来 prompt。
+
+验证：RuntimeAdapter 竞态和 receipt 测试、真实 30ms `TINPUT` 兼容性 fixture、IPC/Realtime schema 与
+Kestrel+UDS 集成、Web reducer/断线重试和双客户端竞争测试，以及 dev Docker 中完整 `./scripts/check.sh`。
+
+通过条件：旧 Snapshot 的输入到达新活跃 prompt 时可按当前约束被处理；两次 prompt 之间的输入稳定返回
+`NO_ACTIVE_PROMPT` 且重试不会被后续 prompt 接受；旧 epoch 和停止态仍被 fence；v1 子协议、带 `promptId`
+的输入与 v3 Worker 均 fail closed；SQLite 不新增输入 receipt 或 current-prompt 正确性依赖。
+
 ### P1-01 — SQLite 首版 schema 与迁移（DONE）
 
 需求映射：核心领域模型、GAME-004/008/010、SESS-002/005/007/010、SAVE-005/015、
@@ -642,10 +660,13 @@ docker compose -f compose.dev.yaml run --rm api \
 
 需求映射：AUTH-005、SESS-004、PLAY-006～008、PLAY-011、AC-002/005。
 
+历史说明：本任务完成的 Snapshot、实时鉴权、连接预算、输出背压和 Session command gate 保留；浏览器提交
+`promptId`、Realtime v1 及 IPC v3 输入语义已由 P1-S02/ADR-0025 取代，当前实现不得沿用本节的旧输入字段。
+
 详细方案：[`tasks/P1-09-websocket-reconnect-input-deduplication-plan.zh-CN.md`](tasks/P1-09-websocket-reconnect-input-deduplication-plan.zh-CN.md)。
 
-交付物：版本化 WebSocket envelope、鉴权握手、完整快照恢复、当前 Worker 内有界
-`promptId/clientMessageId` 去重和多客户端首个有效输入规则。不实现 ack 历史补发、持久输入去重或
+交付物：版本化 WebSocket envelope、鉴权握手、完整快照恢复、当前 Worker 内有界输入去重和多客户端首个
+有效输入规则。不实现 ack 历史补发、持久输入去重或
 控制流断开即退出的收敛由 P1-S01 完成。
 
 验证：

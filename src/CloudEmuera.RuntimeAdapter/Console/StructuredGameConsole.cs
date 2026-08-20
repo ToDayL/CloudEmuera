@@ -110,24 +110,22 @@ public sealed class StructuredGameConsole : IGameConsole
         }
     }
 
-    /// <summary>Submits client input without invoking the runtime thread.</summary>
-    public ConsoleInputResult SubmitInput(ConsoleInputCommand command)
+    /// <summary>Submits client input to the current input slot without invoking the runtime thread.</summary>
+    public ConsoleInputResult SubmitCurrentInput(ConsoleInputAttempt attempt)
     {
-        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(attempt);
         lock (sync)
         {
-            ConsoleInputResult result = InputCoordinator.Submit(command);
+            ConsoleInputResult result = InputCoordinator.SubmitCurrent(attempt);
             if (result.Kind == ConsoleInputResultKind.Accepted)
             {
                 isTimeOut = false;
-                CloseStatePromptIfCurrent(command.PromptId, ConsolePromptCloseReason.InputAccepted);
+                CloseStatePromptIfCurrent(result.ResolvedPromptId!, ConsolePromptCloseReason.InputAccepted);
             }
 
             return result;
         }
     }
-
-    public ConsoleInputResult Submit(ConsoleInputCommand command) => SubmitInput(command);
 
     public ConsoleResumeResult ReadSince(long lastSequence) => StateStore.ReadSince(lastSequence);
 

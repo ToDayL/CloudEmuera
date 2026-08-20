@@ -110,7 +110,7 @@ internal static class RuntimeScenarioRunner
                     errors,
                     ref assertions);
                 string input = ReadScenarioInput(Path.Combine(fixtureRoot, "scenario.json"));
-                ConsoleInputResult submitted = console.SubmitInput(new ConsoleInputCommand(prompt.PromptId, $"compat-{fixtureId}", input));
+                ConsoleInputResult submitted = console.SubmitCurrentInput(new ConsoleInputAttempt($"compat-{fixtureId}", input));
                 Check(submitted.Kind == ConsoleInputResultKind.Accepted, "Scenario input was not accepted.", errors, ref assertions);
             }
 
@@ -242,7 +242,7 @@ internal static class RuntimeScenarioRunner
                 if (prompt is not null)
                 {
                     Check(
-                        consoleA.SubmitInput(new ConsoleInputCommand(prompt.PromptId, $"save-{fixtureId}", scenario.SaveInput)).Kind ==
+                        consoleA.SubmitCurrentInput(new ConsoleInputAttempt($"save-{fixtureId}", scenario.SaveInput)).Kind ==
                         ConsoleInputResultKind.Accepted,
                         "Save input was not accepted.",
                         errors,
@@ -300,7 +300,7 @@ internal static class RuntimeScenarioRunner
                 if (prompt is not null)
                 {
                     Check(
-                        consoleB.SubmitInput(new ConsoleInputCommand(prompt.PromptId, $"load-{fixtureId}", scenario.LoadInput)).Kind ==
+                        consoleB.SubmitCurrentInput(new ConsoleInputAttempt($"load-{fixtureId}", scenario.LoadInput)).Kind ==
                         ConsoleInputResultKind.Accepted,
                         "Load input was not accepted.",
                         errors,

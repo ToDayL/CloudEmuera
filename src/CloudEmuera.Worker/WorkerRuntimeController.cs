@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V3;
+using CloudEmuera.Ipc.V4;
 using CloudEmuera.Realtime;
 using CloudEmuera.RuntimeAdapter;
 using R = CloudEmuera.RuntimeAdapter;
@@ -226,7 +226,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 inputResult = new WorkerInputResult(
                     InputResultKind.InvalidCommand,
                     IpcReasonCodes.WorkerStopping,
-                    string.Empty);
+                    string.Empty,
+                    null);
                 goto send;
             }
         }
@@ -236,7 +237,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             inputResult = new WorkerInputResult(
                 InputResultKind.InvalidCommand,
                 IpcReasonCodes.DeadlineExceeded,
-                string.Empty);
+                string.Empty,
+                null);
             goto send;
         }
 
@@ -245,7 +247,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             inputResult = new WorkerInputResult(
                 InputResultKind.NoActivePrompt,
                 "no_active_prompt",
-                string.Empty);
+                string.Empty,
+                null);
             goto send;
         }
 
@@ -265,25 +268,26 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                     envelope.SubmitInput.Key.Alt,
                     envelope.SubmitInput.Key.Shift)
                 : null;
-            var command = new ConsoleInputCommand(
-                envelope.SubmitInput.PromptId,
+            var attempt = new ConsoleInputAttempt(
                 envelope.SubmitInput.ClientMessageId,
                 envelope.SubmitInput.Value,
                 (ConsoleInputSource)(int)envelope.SubmitInput.Source,
                 pointer,
                 key);
-            ConsoleInputResult result = console.SubmitInput(command);
+            ConsoleInputResult result = console.SubmitCurrentInput(attempt);
             inputResult = new WorkerInputResult(
                 ToProto(result.Kind),
                 result.ReasonCode ?? result.Kind.ToString(),
-                result.Value ?? string.Empty);
+                result.Value ?? string.Empty,
+                result.ResolvedPromptId);
         }
         catch (ConsoleContractException exception)
         {
             inputResult = new WorkerInputResult(
                 InputResultKind.InvalidCommand,
                 exception.ReasonCode,
-                string.Empty);
+                string.Empty,
+                null);
         }
 
     send:
@@ -299,7 +303,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             CapabilitySetDigest = bootstrap.CapabilitySetDigest,
             InputResult = new InputResult
             {
-                PromptId = envelope.SubmitInput.PromptId,
                 ClientMessageId = envelope.SubmitInput.ClientMessageId,
                 Kind = inputResult.Kind,
                 ReasonCode = inputResult.ReasonCode,
@@ -307,6 +310,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 HasNormalizedValue = inputResult.Value.Length != 0
             }
         };
+        if (inputResult.ResolvedPromptId is not null)
+            response.InputResult.ResolvedPromptId = inputResult.ResolvedPromptId;
         await connection.SendControlAsync(response, cancellationToken).ConfigureAwait(false);
         LogLifecycle("input_result", inputResult.ReasonCode);
     }
@@ -944,7 +949,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     {
         ConsoleInputResultKind.Accepted => InputResultKind.Accepted,
         ConsoleInputResultKind.Duplicate => InputResultKind.Duplicate,
-        ConsoleInputResultKind.StalePrompt => InputResultKind.StalePrompt,
         ConsoleInputResultKind.NoActivePrompt => InputResultKind.NoActivePrompt,
         ConsoleInputResultKind.InvalidFormat => InputResultKind.InvalidFormat,
         ConsoleInputResultKind.MessageConflict => InputResultKind.Conflict,
@@ -954,7 +958,11 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         _ => InputResultKind.InvalidCommand
     };
 
-    private sealed record WorkerInputResult(InputResultKind Kind, string ReasonCode, string Value);
+    private sealed record WorkerInputResult(
+        InputResultKind Kind,
+        string ReasonCode,
+        string Value,
+        string? ResolvedPromptId);
 
     private sealed record StartReceipt
     {

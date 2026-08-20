@@ -16,12 +16,11 @@ public sealed class StructuredGameConsoleInputTests
         Task runtime = Task.Run(() => input = console.Read(new ConsolePrompt(ConsoleInputType.Integer, "Number")));
 
         Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
-        string promptId = console.CurrentPrompt!.PromptId;
-        ConsoleInputResult result = console.SubmitInput(new ConsoleInputCommand(promptId, "client-1", "7"));
+        ConsoleInputResult result = console.SubmitCurrentInput(new ConsoleInputAttempt("client-1", "7"));
         await runtime;
 
         Assert.Equal(ConsoleInputResultKind.Accepted, result.Kind);
-        Assert.Equal("generated", promptId);
+        Assert.Equal("generated", result.ResolvedPromptId);
         Assert.Equal("7", input!.Value);
         Assert.Null(console.CurrentPrompt);
     }
@@ -60,7 +59,7 @@ public sealed class StructuredGameConsoleInputTests
     }
 
     [Fact]
-    public async Task TimeoutThenLateInputIsRejectedAsStale()
+    public async Task TimeoutThenLateInputIsRejectedAsNoActivePrompt()
     {
         var clock = new ManualRuntimeClock();
         var console = new StructuredGameConsole(clock);
@@ -71,15 +70,15 @@ public sealed class StructuredGameConsoleInputTests
                 timeout: TimeSpan.FromSeconds(5))));
 
         Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
-        string promptId = console.CurrentPrompt!.PromptId;
         Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(10)));
         clock.Advance(TimeSpan.FromSeconds(5));
         Assert.True(SpinWait.SpinUntil(() => console.InputCoordinator.CurrentPrompt is null, TimeSpan.FromSeconds(10)));
 
-        ConsoleInputResult late = console.SubmitInput(new ConsoleInputCommand(promptId, "late", "too-late"));
+        ConsoleInputResult late = console.SubmitCurrentInput(new ConsoleInputAttempt("late", "too-late"));
 
         await Assert.ThrowsAsync<ConsolePromptTimeoutException>(async () => await runtime);
-        Assert.Equal(ConsoleInputResultKind.StalePrompt, late.Kind);
+        Assert.Equal(ConsoleInputResultKind.NoActivePrompt, late.Kind);
+        Assert.Null(late.ResolvedPromptId);
         Assert.Null(console.CurrentPrompt);
     }
 
@@ -95,7 +94,6 @@ public sealed class StructuredGameConsoleInputTests
                 cancellation.Token));
 
         Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
-        string promptId = console.CurrentPrompt!.PromptId;
         Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(10)));
 
         var barrier = new Barrier(4);
@@ -103,7 +101,7 @@ public sealed class StructuredGameConsoleInputTests
         Task inputTask = Task.Run(() =>
         {
             barrier.SignalAndWait();
-            inputResult = console.SubmitInput(new ConsoleInputCommand(promptId, "winner", "ok"));
+            inputResult = console.SubmitCurrentInput(new ConsoleInputAttempt("winner", "ok"));
         });
         Task cancellationTask = Task.Run(() =>
         {
@@ -136,7 +134,7 @@ public sealed class StructuredGameConsoleInputTests
             new[]
             {
                 ConsoleInputResultKind.Accepted,
-                ConsoleInputResultKind.StalePrompt
+                ConsoleInputResultKind.NoActivePrompt
             });
         Assert.Null(console.CurrentPrompt);
     }

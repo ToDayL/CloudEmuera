@@ -4,7 +4,6 @@ public enum ConsoleInputResultKind
 {
     Accepted,
     Duplicate,
-    StalePrompt,
     InvalidFormat,
     NoActivePrompt,
     MessageConflict,
@@ -17,16 +16,18 @@ public sealed record ConsoleInputResult
 {
     public ConsoleInputResult(
         ConsoleInputResultKind kind,
-        string promptId,
+        string? resolvedPromptId,
         string? clientMessageId,
         GameConsoleInput? input = null,
         ConsoleInputResult? originalResult = null,
         ConsoleInputFailureReason failureReason = ConsoleInputFailureReason.None)
     {
-        ArgumentNullException.ThrowIfNull(promptId);
-        if (promptId.Length > ConsoleContractLimits.Default.MaxPromptIdLength)
+        if (resolvedPromptId is not null)
         {
-            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "The prompt id is too long.");
+            ConsoleContractValidation.ValidateIdentifier(
+                resolvedPromptId,
+                nameof(resolvedPromptId),
+                ConsoleContractLimits.Default.MaxPromptIdLength);
         }
 
         if (clientMessageId is not null && clientMessageId.Length > ConsoleContractLimits.Default.MaxClientMessageIdLength)
@@ -35,7 +36,7 @@ public sealed record ConsoleInputResult
         }
 
         Kind = kind;
-        PromptId = promptId;
+        ResolvedPromptId = resolvedPromptId;
         ClientMessageId = clientMessageId;
         Input = input;
         OriginalResult = originalResult;
@@ -46,7 +47,8 @@ public sealed record ConsoleInputResult
 
     public ConsoleInputResultKind Status => Kind;
 
-    public string PromptId { get; }
+    /// <summary>The prompt actually inspected by the current-slot submission, if any.</summary>
+    public string? ResolvedPromptId { get; }
 
     public string? ClientMessageId { get; }
 
@@ -62,26 +64,23 @@ public sealed record ConsoleInputResult
 
     public bool IsAccepted => Kind == ConsoleInputResultKind.Accepted;
 
-    public static ConsoleInputResult Accepted(ConsoleInputCommand command, GameConsoleInput input) =>
-        new(ConsoleInputResultKind.Accepted, command.PromptId, command.ClientMessageId, input);
+    public static ConsoleInputResult Accepted(ConsoleInputAttempt attempt, GameConsoleInput input) =>
+        new(ConsoleInputResultKind.Accepted, input.PromptId, attempt.ClientMessageId, input);
 
-    public static ConsoleInputResult Duplicate(ConsoleInputCommand command, ConsoleInputResult original) =>
-        new(ConsoleInputResultKind.Duplicate, command.PromptId, command.ClientMessageId, original.Input, original, original.FailureReason);
+    public static ConsoleInputResult Duplicate(ConsoleInputAttempt attempt, ConsoleInputResult original) =>
+        new(ConsoleInputResultKind.Duplicate, original.ResolvedPromptId, attempt.ClientMessageId, original.Input, original, original.FailureReason);
 
-    public static ConsoleInputResult Conflict(ConsoleInputCommand command) =>
-        new(ConsoleInputResultKind.MessageConflict, command.PromptId, command.ClientMessageId);
+    public static ConsoleInputResult Conflict(ConsoleInputAttempt attempt) =>
+        new(ConsoleInputResultKind.MessageConflict, null, attempt.ClientMessageId);
 
-    public static ConsoleInputResult InvalidFormat(ConsoleInputCommand command, ConsoleInputFailureReason reason) =>
-        new(ConsoleInputResultKind.InvalidFormat, command.PromptId, command.ClientMessageId, failureReason: reason);
+    public static ConsoleInputResult InvalidFormat(ConsoleInputAttempt attempt, string resolvedPromptId, ConsoleInputFailureReason reason) =>
+        new(ConsoleInputResultKind.InvalidFormat, resolvedPromptId, attempt.ClientMessageId, failureReason: reason);
 
-    public static ConsoleInputResult Stale(ConsoleInputCommand command) =>
-        new(ConsoleInputResultKind.StalePrompt, command.PromptId, command.ClientMessageId);
+    public static ConsoleInputResult NoActive(ConsoleInputAttempt attempt) =>
+        new(ConsoleInputResultKind.NoActivePrompt, null, attempt.ClientMessageId);
 
-    public static ConsoleInputResult NoActive(ConsoleInputCommand command) =>
-        new(ConsoleInputResultKind.NoActivePrompt, command.PromptId, command.ClientMessageId);
-
-    public static ConsoleInputResult InvalidCommand(ConsoleInputCommand command, ConsoleInputFailureReason reason) =>
-        new(ConsoleInputResultKind.InvalidCommand, command.PromptId, command.ClientMessageId, failureReason: reason);
+    public static ConsoleInputResult InvalidCommand(ConsoleInputAttempt attempt, ConsoleInputFailureReason reason) =>
+        new(ConsoleInputResultKind.InvalidCommand, null, attempt.ClientMessageId, failureReason: reason);
 
     internal static ConsoleInputResult Cancelled(ConsolePrompt prompt) =>
         new(ConsoleInputResultKind.Cancelled, prompt.PromptId, clientMessageId: null);

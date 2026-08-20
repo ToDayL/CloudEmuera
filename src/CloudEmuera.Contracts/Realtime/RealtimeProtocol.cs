@@ -7,12 +7,12 @@ namespace CloudEmuera.Contracts.Realtime;
 /// <summary>
 /// Constants and closed client message contracts for the browser realtime
 /// protocol.  Display payloads remain the transport-neutral P1-08 contracts;
-/// this file only freezes the v1 envelope and browser commands around them.
+/// this file only freezes the v2 envelope and browser commands around them.
 /// </summary>
 public static class RealtimeProtocol
 {
-    public const int Version = 1;
-    public const string Subprotocol = "cloudemuera.realtime.v1";
+    public const int Version = 2;
+    public const string Subprotocol = "cloudemuera.realtime.v2";
     public const string PayloadSchemaVersion = "p1-11";
     public const int DefaultClientJsonMaxDepth = 32;
     public const int DefaultClientMessageMaxBytes = 64 * 1024;
@@ -54,7 +54,6 @@ public sealed record RealtimeKeyPayload(
     [property: JsonRequired] bool Shift);
 
 public sealed record RealtimeInputPayload(
-    string PromptId,
     string ClientMessageId,
     string Source,
     string Value,
@@ -309,7 +308,6 @@ public static class RealtimeProtocolParser
                 RequireSessionEnvelope(envelope, "session.input");
                 if (envelope.WorkerEpoch is null)
                     throw Invalid("missing_worker_epoch", "session.input requires workerEpoch.");
-                ValidateIdentifier(input.Value.PromptId, "payload.promptId");
                 ValidateIdentifier(input.Value.ClientMessageId, "payload.clientMessageId");
                 if (input.Value.Value is null || input.Value.Value.Length > RealtimeProtocol.MaxInputValueLength)
                     throw Invalid("invalid_payload", "The input value is invalid.");
@@ -463,10 +461,10 @@ public sealed record PingPayload(string Nonce, long ServerNowUnixMilliseconds);
 public sealed record StreamEndedPayload(string ReasonCode);
 
 public sealed record InputResultPayload(
-    string PromptId,
     string ClientMessageId,
     string Status,
     string ReasonCode,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ResolvedPromptId = null,
     string? NormalizedValue = null);
 
 public sealed record ProtocolErrorPayload(string Code, string Message);
@@ -485,6 +483,7 @@ public sealed record RealtimeServerEnvelope(
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     GenerationMode = JsonSourceGenerationMode.Default,
     NumberHandling = JsonNumberHandling.Strict)]
 [JsonSerializable(typeof(RealtimeClientHelloPayload))]

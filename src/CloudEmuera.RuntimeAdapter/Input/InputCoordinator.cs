@@ -125,79 +125,73 @@ public sealed class InputCoordinator
         }
     }
 
-    public ConsoleInputResult Submit(ConsoleInputCommand command)
+    /// <summary>
+    /// Submits an input intention to the prompt that is active when this call
+    /// acquires the coordinator lock. No inactive attempt is queued for a
+    /// later prompt.
+    /// </summary>
+    public ConsoleInputResult SubmitCurrent(ConsoleInputAttempt attempt)
     {
-        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(attempt);
 
         lock (sync)
         {
-            if (receipts.TryGetValue(command.ClientMessageId, out Receipt? receipt))
+            if (receipts.TryGetValue(attempt.ClientMessageId, out Receipt? receipt))
             {
-                return receipt.PromptId == command.PromptId && receipt.Fingerprint == command.Fingerprint
-                    ? ConsoleInputResult.Duplicate(command, receipt.Result)
-                    : ConsoleInputResult.Conflict(command);
+                return receipt.Fingerprint == attempt.Fingerprint
+                    ? ConsoleInputResult.Duplicate(attempt, receipt.Result)
+                    : ConsoleInputResult.Conflict(attempt);
             }
 
             ConsoleInputResult result;
-            if (!ValidateCommand(command, out ConsoleInputFailureReason commandFailure))
+            if (!ValidateAttempt(attempt, out ConsoleInputFailureReason commandFailure))
             {
-                result = ConsoleInputResult.InvalidCommand(command, commandFailure);
-                AddReceipt(command, result);
+                result = ConsoleInputResult.InvalidCommand(attempt, commandFailure);
+                AddReceipt(attempt, result);
                 return result;
             }
 
             if (currentPrompt is null)
             {
-                result = completedPromptIds.Contains(command.PromptId)
-                    ? ConsoleInputResult.Stale(command)
-                    : ConsoleInputResult.NoActive(command);
-                AddReceipt(command, result);
+                result = ConsoleInputResult.NoActive(attempt);
+                AddReceipt(attempt, result);
                 return result;
             }
 
-            if (!string.Equals(currentPrompt.PromptId, command.PromptId, StringComparison.Ordinal))
+            if ((currentPrompt.AllowedSources & attempt.Source) != attempt.Source)
             {
-                result = ConsoleInputResult.Stale(command);
-                AddReceipt(command, result);
-                return result;
-            }
-
-            if ((currentPrompt.AllowedSources & command.Source) != command.Source)
-            {
-                result = ConsoleInputResult.InvalidFormat(command, ConsoleInputFailureReason.SourceNotAllowed);
-                AddReceipt(command, result);
+                result = ConsoleInputResult.InvalidFormat(attempt, currentPrompt.PromptId, ConsoleInputFailureReason.SourceNotAllowed);
+                AddReceipt(attempt, result);
                 return result;
             }
 
             if (currentPrompt.InputType == ConsoleInputType.WaitOnly)
             {
-                result = ConsoleInputResult.InvalidFormat(command, ConsoleInputFailureReason.SourceNotAllowed);
-                AddReceipt(command, result);
+                result = ConsoleInputResult.InvalidFormat(attempt, currentPrompt.PromptId, ConsoleInputFailureReason.SourceNotAllowed);
+                AddReceipt(attempt, result);
                 return result;
             }
 
-            string value = currentPrompt.OneInput && command.Value.Length > 1
-                ? command.Value[..1]
-                : command.Value;
+            string value = currentPrompt.OneInput && attempt.Value.Length > 1
+                ? attempt.Value[..1]
+                : attempt.Value;
             if (!currentPrompt.Constraints.TryValidate(value, limits, out ConsoleInputFailureReason valueFailure))
             {
-                result = ConsoleInputResult.InvalidFormat(command, valueFailure);
-                AddReceipt(command, result);
+                result = ConsoleInputResult.InvalidFormat(attempt, currentPrompt.PromptId, valueFailure);
+                AddReceipt(attempt, result);
                 return result;
             }
 
             ConsolePrompt prompt = currentPrompt;
             var input = new GameConsoleInput(prompt.PromptId, prompt.InputType, value);
-            result = ConsoleInputResult.Accepted(command, input);
+            result = ConsoleInputResult.Accepted(attempt, input);
             currentPrompt = null;
             MarkPromptCompleted(prompt.PromptId);
-            AddReceipt(command, result);
+            AddReceipt(attempt, result);
             CompleteWaiter(prompt.PromptId, result);
             return result;
         }
     }
-
-    public ConsoleInputResult SubmitInput(ConsoleInputCommand command) => Submit(command);
 
     public void Open(ConsolePrompt prompt) => OpenPrompt(prompt);
 
@@ -387,15 +381,14 @@ public sealed class InputCoordinator
         }
     }
 
-    private bool ValidateCommand(ConsoleInputCommand command, out ConsoleInputFailureReason failureReason)
+    private bool ValidateAttempt(ConsoleInputAttempt attempt, out ConsoleInputFailureReason failureReason)
     {
         try
         {
-            ConsoleContractValidation.ValidateIdentifier(command.PromptId, nameof(command.PromptId), limits.MaxPromptIdLength);
-            ConsoleContractValidation.ValidateIdentifier(command.ClientMessageId, nameof(command.ClientMessageId), limits.MaxClientMessageIdLength);
+            ConsoleContractValidation.ValidateIdentifier(attempt.ClientMessageId, nameof(attempt.ClientMessageId), limits.MaxClientMessageIdLength);
             ConsoleContractValidation.ValidateText(
-                command.Value,
-                nameof(command.Value),
+                attempt.Value,
+                nameof(attempt.Value),
                 limits.MaxInputValueLength,
                 ConsoleContractViolationReason.InputValueTooLong,
                 allowControlCharacters: true);
@@ -414,10 +407,10 @@ public sealed class InputCoordinator
         }
     }
 
-    private void AddReceipt(ConsoleInputCommand command, ConsoleInputResult result)
+    private void AddReceipt(ConsoleInputAttempt attempt, ConsoleInputResult result)
     {
-        receipts[command.ClientMessageId] = new Receipt(command.PromptId, command.Fingerprint, result);
-        receiptOrder.Enqueue(command.ClientMessageId);
+        receipts[attempt.ClientMessageId] = new Receipt(attempt.Fingerprint, result);
+        receiptOrder.Enqueue(attempt.ClientMessageId);
         while (receipts.Count > maxReceiptCount)
         {
             string oldestId = receiptOrder.Dequeue();
@@ -439,7 +432,7 @@ public sealed class InputCoordinator
         }
     }
 
-    private sealed record Receipt(string PromptId, string Fingerprint, ConsoleInputResult Result);
+    private sealed record Receipt(string Fingerprint, ConsoleInputResult Result);
 
     private sealed class PromptWaitState(ConsolePrompt prompt, long? startTimestamp)
     {

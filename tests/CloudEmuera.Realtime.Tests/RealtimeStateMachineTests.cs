@@ -13,7 +13,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.RuntimeAdapter;
-using W = CloudEmuera.Ipc.V3;
+using W = CloudEmuera.Ipc.V4;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -31,7 +31,7 @@ namespace CloudEmuera.Realtime.Tests;
 [Trait("Category", "SessionLifecycle")]
 public sealed class RealtimeStateMachineTests
 {
-    private static readonly int[] SupportedProtocolVersions = [1];
+    private static readonly int[] SupportedProtocolVersions = [2];
 
     [Fact]
     public void KestrelPortResolutionHonorsConfiguredUrlsAndExplicitPort()
@@ -285,10 +285,10 @@ public sealed class RealtimeStateMachineTests
         session.SetBootstrapPath(Path.Combine(options.BootstrapDirectory, "realtime-test.json"));
 
         Task<SessionInputResult> first = await session.QueueInputAsync(
-            new SessionInputCommand("sess_input", 1, "prompt_1", "client_1", "one", SessionInputSource.Keyboard),
+            new SessionInputCommand("sess_input", 1, "client_1", "one", SessionInputSource.Keyboard),
             TimeSpan.FromSeconds(5));
         SessionInputResult overflow = await (await session.QueueInputAsync(
-            new SessionInputCommand("sess_input", 1, "prompt_1", "client_2", "two", SessionInputSource.Keyboard),
+            new SessionInputCommand("sess_input", 1, "client_2", "two", SessionInputSource.Keyboard),
             TimeSpan.FromSeconds(5)));
 
         Assert.Equal(SessionInputResultCodes.InputBackpressure, overflow.Status);
@@ -300,7 +300,6 @@ public sealed class RealtimeStateMachineTests
             WorkerEpoch = 1,
             InputResult = new W.InputResult
             {
-                PromptId = "prompt_1",
                 ClientMessageId = "client_1",
                 Kind = W.InputResultKind.Accepted,
                 ReasonCode = "accepted",
@@ -315,7 +314,7 @@ public sealed class RealtimeStateMachineTests
 
     private static string ClientHello(string messageId) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 1,
+        protocolVersion = 2,
         type = "client.hello",
         messageId,
         payload = new
@@ -328,7 +327,7 @@ public sealed class RealtimeStateMachineTests
 
     private static string Resume(string messageId, string sessionId) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 1,
+        protocolVersion = 2,
         type = "session.resume",
         messageId,
         sessionId,
@@ -337,14 +336,13 @@ public sealed class RealtimeStateMachineTests
 
     private static string Input(string messageId, string sessionId, ulong workerEpoch) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 1,
+        protocolVersion = 2,
         type = "session.input",
         messageId,
         sessionId,
         workerEpoch,
         payload = new
         {
-            promptId = "prompt_1",
             clientMessageId = "client_1",
             source = "KEYBOARD",
             value = "7",
@@ -407,7 +405,7 @@ public sealed class RealtimeStateMachineTests
                 ? SessionInputResultCodes.Accepted
                 : SessionInputResultCodes.SessionNotAcceptingInput;
             return Task.FromResult(new RealtimeInputDispatch(Task.FromResult(new SessionInputResult(
-                command.PromptId,
+                null,
                 command.ClientMessageId,
                 status,
                 status,
@@ -425,7 +423,7 @@ public sealed class RealtimeStateMachineTests
 
         public Task<RealtimeInputDispatch> BeginInputAsync(SessionInputCommand command, TimeSpan timeout, CancellationToken cancellationToken = default) =>
             Task.FromResult(new RealtimeInputDispatch(Task.FromResult(new SessionInputResult(
-                command.PromptId,
+                null,
                 command.ClientMessageId,
                 SessionInputResultCodes.Accepted,
                 SessionInputResultCodes.Accepted,

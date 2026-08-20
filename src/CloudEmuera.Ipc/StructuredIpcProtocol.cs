@@ -1,24 +1,24 @@
 using System.Security.Cryptography;
 using System.Text;
-using CloudEmuera.Ipc.V3;
-using ProtoConsoleColor = CloudEmuera.Ipc.V3.ConsoleColor;
+using CloudEmuera.Ipc.V4;
+using ProtoConsoleColor = CloudEmuera.Ipc.V4.ConsoleColor;
 
 namespace CloudEmuera.Ipc;
 
 /// <summary>Versioned constants for the lossless structured Worker protocol.</summary>
 public static class StructuredIpcProtocol
 {
-    public const uint CurrentVersion = 3;
+    public const uint CurrentVersion = 4;
     public const string CapabilityMatrixVersion = "p1-07";
     public const string UpstreamCommit = "2175f8a629257efb08214e093704b3a3d3d06d05";
 
     public static string CapabilitySetDigest { get; } = Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v3")))
+        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v4")))
         .ToLowerInvariant();
 }
 
 /// <summary>
-/// Builds and checks the v3 bootstrap handshake.  Registration carries the
+/// Builds and checks the v4 bootstrap handshake. Registration carries the
 /// same capability digest in the envelope and payload so a peer cannot
 /// silently downgrade by dropping the new contract metadata.
 /// </summary>
@@ -553,7 +553,8 @@ public static class StructuredIpcValidator
     private static bool ValidatePoint(Point? point) => point is not null && point.X >= -1_000_000 && point.X <= 1_000_000 && point.Y >= -1_000_000 && point.Y <= 1_000_000;
 
     private static IpcValidationResult ValidateInputResult(InputResult value) =>
-        IsIdentifier(value.PromptId) && IsIdentifier(value.ClientMessageId) && value.Kind != InputResultKind.Unspecified &&
+        (!value.HasResolvedPromptId || IsIdentifier(value.ResolvedPromptId)) &&
+        IsIdentifier(value.ClientMessageId) && value.Kind != InputResultKind.Unspecified &&
         (!value.HasNormalizedValue || value.NormalizedValue.Length <= StructuredIpcLimits.MaxInputLength)
             ? IpcValidationResult.Valid()
             : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
@@ -586,7 +587,7 @@ public static class StructuredIpcValidator
             : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
 
     private static IpcValidationResult ValidateSubmitInput(SubmitInput value) =>
-        IsIdentifier(value.PromptId) && IsIdentifier(value.ClientMessageId) && value.Value.Length <= StructuredIpcLimits.MaxInputLength &&
+        IsIdentifier(value.ClientMessageId) && value.Value.Length <= StructuredIpcLimits.MaxInputLength &&
         value.Source != InputSource.Unspecified && value.DeadlineUnixMilliseconds > 0 &&
         (value.PayloadCase == SubmitInput.PayloadOneofCase.None ||
          value.PayloadCase == SubmitInput.PayloadOneofCase.Pointer && value.Pointer.Position is not null && ValidatePoint(value.Pointer.Position) && value.Pointer.Button is >= 0 and <= 16 ||

@@ -61,7 +61,6 @@ public static class IpcReasonCodes
     public const string InvalidToken = "invalid_token";
     public const string OutputResumeGap = "output_resume_gap";
     public const string RuntimeVersionMismatch = "runtime_version_mismatch";
-    public const string StalePrompt = "stale_prompt";
     public const string UnsupportedMessage = "unsupported_message";
     public const string UnsupportedProtocolVersion = "unsupported_protocol_version";
     public const string WorkerStopping = "worker_stopping";

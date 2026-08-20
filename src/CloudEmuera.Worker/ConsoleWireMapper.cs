@@ -231,7 +231,6 @@ public static class ConsoleWireMapper
     {
         CloudEmuera.RuntimeAdapter.ConsoleInputResultKind.Accepted => InputResultKind.InputResultAccepted,
         CloudEmuera.RuntimeAdapter.ConsoleInputResultKind.Duplicate => InputResultKind.InputResultDuplicate,
-        CloudEmuera.RuntimeAdapter.ConsoleInputResultKind.StalePrompt => InputResultKind.InputResultStalePrompt,
         CloudEmuera.RuntimeAdapter.ConsoleInputResultKind.NoActivePrompt => InputResultKind.InputResultNoActivePrompt,
         CloudEmuera.RuntimeAdapter.ConsoleInputResultKind.InvalidCommand => InputResultKind.InputResultInvalidCommand,
         CloudEmuera.RuntimeAdapter.ConsoleInputResultKind.InvalidFormat => InputResultKind.InputResultInvalidFormat,

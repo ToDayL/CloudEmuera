@@ -43,14 +43,14 @@ describe("RealtimeConnectionManager", () => {
     socket.open();
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(JSON.parse(socket.sent[0]).type).toBe("client.hello");
-    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 2, type: "server.hello", messageId: "hello", payload: { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
     expect(JSON.parse(socket.sent[1]).type).toBe("session.resume");
-    socket.message({ protocolVersion: 1, type: "session.resume.result", messageId: "resume", sessionId: "s1", payload: { status: "ACCEPTED", workerEpoch: 3, reasonCode: null } });
-    socket.message({ protocolVersion: 1, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: state } });
+    socket.message({ protocolVersion: 2, type: "session.resume.result", messageId: "resume", sessionId: "s1", payload: { status: "ACCEPTED", workerEpoch: 3, reasonCode: null } });
+    socket.message({ protocolVersion: 2, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: state } });
     expect(manager.getSessionState("s1")?.phase).toBe("snapshot_ready");
-    socket.message({ protocolVersion: 1, type: "display.batch", messageId: "batch", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, firstSequence: 1, lastSequence: 1, transactions: [{ sequence: 1, operations: [{ type: "appendNodes", nodes: [{ type: "text", text: "hello", style: { decorations: [], fontFamily: "game-default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }] }] }] } });
+    socket.message({ protocolVersion: 2, type: "display.batch", messageId: "batch", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, firstSequence: 1, lastSequence: 1, transactions: [{ sequence: 1, operations: [{ type: "appendNodes", nodes: [{ type: "text", text: "hello", style: { decorations: [], fontFamily: "game-default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }] }] }] } });
     expect(manager.getSessionState("s1")?.sequence).toBe(1);
-    socket.message({ protocolVersion: 1, type: "display.batch", messageId: "gap", sessionId: "s1", workerEpoch: 3, sequence: 3, payload: { workerEpoch: 3, firstSequence: 3, lastSequence: 3, transactions: [{ sequence: 3, operations: [{ type: "clearConsole" }] }] } });
+    socket.message({ protocolVersion: 2, type: "display.batch", messageId: "gap", sessionId: "s1", workerEpoch: 3, sequence: 3, payload: { workerEpoch: 3, firstSequence: 3, lastSequence: 3, transactions: [{ sequence: 3, operations: [{ type: "clearConsole" }] }] } });
     expect(manager.getSessionState("s1")?.phase).toBe("resyncing");
     expect(updates).toContain("live");
     manager.dispose();
@@ -63,9 +63,9 @@ describe("RealtimeConnectionManager", () => {
     const manager = new RealtimeConnectionManager();
     manager.subscribe("s1", () => undefined);
     const socket = FakeWebSocket.instances[0]; socket.open();
-    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
-    socket.message({ protocolVersion: 1, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: { ...state, currentPrompt: { promptId: "p1", inputType: "text", promptText: "Answer", defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: Date.now(), deadlineUnixMilliseconds: Date.now() + 10_000, timeoutMilliseconds: 10_000 } }, } });
-    const clientMessageId = manager.sendInput("s1", { promptId: "p1", source: "KEYBOARD", value: "answer", pointer: null, key: null });
+    socket.message({ protocolVersion: 2, type: "server.hello", messageId: "hello", payload: { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 2, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: { ...state, currentPrompt: { promptId: "p1", inputType: "text", promptText: "Answer", defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: Date.now(), deadlineUnixMilliseconds: Date.now() + 10_000, timeoutMilliseconds: 10_000 } }, } });
+    const clientMessageId = manager.sendInput("s1", { source: "KEYBOARD", value: "answer", pointer: null, key: null });
     expect(clientMessageId).toBeTruthy();
     socket.close(1006, "network");
     expect(manager.getSessionState("s1")?.pendingInput?.status).toBe("unknown");
@@ -98,8 +98,8 @@ describe("RealtimeConnectionManager", () => {
     manager.subscribe("s1", () => undefined);
     const socket = FakeWebSocket.instances[0];
     socket.open();
-    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
-    socket.message({ protocolVersion: 1, type: "session.stream.ended", messageId: "ended", sessionId: "s1", workerEpoch: 3, payload: { reasonCode: "runtime_completed" } });
+    socket.message({ protocolVersion: 2, type: "server.hello", messageId: "hello", payload: { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 2, type: "session.stream.ended", messageId: "ended", sessionId: "s1", workerEpoch: 3, payload: { reasonCode: "runtime_completed" } });
     expect(manager.getSessionState("s1")?.phase).toBe("ended");
     manager.dispose();
     vi.unstubAllGlobals();
@@ -112,12 +112,12 @@ describe("RealtimeConnectionManager", () => {
     manager.subscribe("s1", () => undefined);
     const socket = FakeWebSocket.instances[0];
     socket.open();
-    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
-    socket.message({ protocolVersion: 1, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: state } });
-    socket.message({ protocolVersion: 1, type: "resync.required", messageId: "resync", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, observedSequence: 1, reason: "snapshot-replaced" } });
+    socket.message({ protocolVersion: 2, type: "server.hello", messageId: "hello", payload: { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 2, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: state } });
+    socket.message({ protocolVersion: 2, type: "resync.required", messageId: "resync", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, observedSequence: 1, reason: "snapshot-replaced" } });
     expect(manager.getSessionState("s1")?.phase).toBe("resyncing");
     expect(socket.sent.filter(value => JSON.parse(value).type === "session.unsubscribe")).toHaveLength(0);
-    socket.message({ protocolVersion: 1, type: "session.snapshot", messageId: "replacement", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, snapshotSequence: 1, consoleState: state } });
+    socket.message({ protocolVersion: 2, type: "session.snapshot", messageId: "replacement", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, snapshotSequence: 1, consoleState: state } });
     expect(manager.getSessionState("s1")?.phase).toBe("snapshot_ready");
     manager.dispose();
     vi.unstubAllGlobals();
@@ -130,9 +130,9 @@ describe("RealtimeConnectionManager", () => {
     manager.subscribe("s1", () => undefined);
     const socket = FakeWebSocket.instances[0];
     socket.open();
-    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
-    socket.message({ protocolVersion: 1, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: state } });
-    socket.message({ protocolVersion: 1, type: "session.stream.ended", messageId: "ended", sessionId: "s1", workerEpoch: 3, payload: { reasonCode: "unsubscribed" } });
+    socket.message({ protocolVersion: 2, type: "server.hello", messageId: "hello", payload: { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 2, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, consoleState: state } });
+    socket.message({ protocolVersion: 2, type: "session.stream.ended", messageId: "ended", sessionId: "s1", workerEpoch: 3, payload: { reasonCode: "unsubscribed" } });
     expect(manager.getSessionState("s1")?.phase).toBe("snapshot_ready");
     manager.dispose();
     vi.unstubAllGlobals();
@@ -145,7 +145,7 @@ describe("RealtimeConnectionManager", () => {
     manager.subscribe("s1", () => undefined);
     const socket = FakeWebSocket.instances[0];
     socket.open();
-    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: "sha256:capability-mismatch" } });
+    socket.message({ protocolVersion: 2, type: "server.hello", messageId: "hello", payload: { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: "sha256:capability-mismatch" } });
     expect(manager.status).toBe("incompatible");
     expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
     manager.dispose();
@@ -160,8 +160,8 @@ describe("RealtimeConnectionManager", () => {
     manager.subscribe("s1", () => undefined);
     const socket = FakeWebSocket.instances[0];
     socket.open();
-    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
-    socket.message({ protocolVersion: 1, type: "session.resume.result", messageId: "resume-1", sessionId: "s1", payload: { status: "SNAPSHOT_NOT_READY", workerEpoch: null, reasonCode: "snapshot_pending" } });
+    socket.message({ protocolVersion: 2, type: "server.hello", messageId: "hello", payload: { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 2, type: "session.resume.result", messageId: "resume-1", sessionId: "s1", payload: { status: "SNAPSHOT_NOT_READY", workerEpoch: null, reasonCode: "snapshot_pending" } });
     expect(socket.sent.filter(value => JSON.parse(value).type === "session.resume")).toHaveLength(1);
     vi.advanceTimersByTime(200);
     expect(socket.sent.filter(value => JSON.parse(value).type === "session.resume")).toHaveLength(2);
@@ -178,7 +178,7 @@ describe("RealtimeConnectionManager", () => {
     manager.subscribe("s1", () => undefined);
     const socket = FakeWebSocket.instances[0];
     socket.open();
-    socket.message({ protocolVersion: 1, type: "server.hello", messageId: "hello", payload: { protocolVersion: 1, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 1_000, heartbeatTimeoutMilliseconds: 1_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 2, type: "server.hello", messageId: "hello", payload: { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 1_000, heartbeatTimeoutMilliseconds: 1_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
     // The server sends its first ping after the advertised interval. The
     // client must not use only the pong deadline from server.hello, or it
     // will close before the first ping arrives.

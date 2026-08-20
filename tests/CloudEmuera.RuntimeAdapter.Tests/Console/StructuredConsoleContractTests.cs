@@ -202,9 +202,7 @@ public sealed class StructuredTimedInputContractTests
 
         Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
         string promptId = console.CurrentPrompt!.PromptId;
-        ConsoleInputResult accepted = console.SubmitInput(new ConsoleInputCommand(
-            promptId,
-            "client-one",
+        ConsoleInputResult accepted = console.SubmitCurrentInput(new ConsoleInputAttempt("client-one",
             "abcd",
             ConsoleInputSource.Keyboard,
             key: new ConsoleKeyPayload(65)));

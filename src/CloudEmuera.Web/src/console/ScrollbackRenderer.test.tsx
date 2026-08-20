@@ -58,7 +58,7 @@ describe("ScrollbackRenderer", () => {
     expect(document.querySelectorAll(".console-line")).toHaveLength(1);
   });
 
-  it("only enables choice buttons from the current runtime generation", () => {
+  it("submits enabled choice buttons from old display frames to the current input slot", () => {
     const onInput = vi.fn();
     const choiceLine = (id: string, generation: number, value: string): RealtimeLine => ({
       lineId: id,
@@ -66,13 +66,14 @@ describe("ScrollbackRenderer", () => {
       alignment: "left",
       temporary: false,
     });
-    render(<ScrollbackRenderer lines={[choiceLine("old", 1, "old"), choiceLine("current", 2, "current")]} currentPrompt={{ promptId: "p2", inputType: "integer", promptText: null, defaultValue: null, constraints: { type: "integer" }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["button"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null }} assets={assets} onInput={onInput} />);
+    render(<ScrollbackRenderer lines={[choiceLine("old", 1, "old"), choiceLine("current", 2, "current")]} assets={assets} onInput={onInput} />);
     const buttons = screen.getAllByRole("button");
-    expect(buttons[0]).toBeDisabled();
+    expect(buttons[0]).toBeEnabled();
     expect(buttons[1]).toBeEnabled();
     fireEvent.click(buttons[0]);
     fireEvent.click(buttons[1]);
-    expect(onInput).toHaveBeenCalledTimes(1);
+    expect(onInput).toHaveBeenCalledTimes(2);
+    expect(onInput).toHaveBeenNthCalledWith(1, { value: "old", source: "BUTTON" });
     expect(onInput).toHaveBeenCalledWith({ value: "current", source: "BUTTON" });
   });
 
@@ -83,7 +84,7 @@ describe("ScrollbackRenderer", () => {
       alignment: "left",
       temporary: false,
     };
-    render(<ScrollbackRenderer lines={[choiceLine]} currentPrompt={{ promptId: "p1", inputType: "integer", promptText: null, defaultValue: null, constraints: { type: "integer" }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["button"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null }} assets={assets} onInput={() => undefined} />);
+    render(<ScrollbackRenderer lines={[choiceLine]} assets={assets} onInput={() => undefined} />);
 
     const button = screen.getByRole("button", { name: "ACTION" });
     expect(button.textContent).toBe("ACTION");
@@ -173,7 +174,7 @@ describe("ScrollbackRenderer", () => {
     ]);
   });
 
-  it("renders structured upstream island nodes and enables nested current-generation buttons", () => {
+  it("renders structured upstream island nodes and enables nested buttons", () => {
     const button = {
       type: "button" as const,
       children: [{ type: "text" as const, text: "Island Go", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }],
@@ -188,7 +189,7 @@ describe("ScrollbackRenderer", () => {
       alignment: "left",
       temporary: false,
     };
-    render(<ScrollbackRenderer lines={[structuredLine]} currentPrompt={{ promptId: "p-island", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 32 }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["button"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null }} assets={assets} onInput={() => undefined} />);
+    render(<ScrollbackRenderer lines={[structuredLine]} assets={assets} onInput={() => undefined} />);
     expect(screen.getByRole("button", { name: "Island Go" })).toBeEnabled();
   });
 });

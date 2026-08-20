@@ -60,7 +60,8 @@ Redis、消息队列、Kubernetes、同进程多 Session 或多主机调度。
    改变既有 SessionRoot，库内容与 Session 不共享可写 inode。
 6. 必须兼容根目录存档与 `sav/` 两种 Emuera 原生布局，不定义替代存档格式。
 7. Worker 只输出结构化、可校验的 Console 事件，不把任意游戏 HTML 直接交给浏览器。
-8. 输出使用单调递增 sequence；输入使用 `promptId + clientMessageId`，重复输入不得执行两次。
+8. 输出使用单调递增 sequence；浏览器输入使用 `workerEpoch + clientMessageId`，由 Worker 在当前输入槽
+   线性化处理；重复输入不得执行两次。
 9. 授权检查必须位于服务端的每个资源操作边界，不能依赖前端隐藏入口。
 10. 上传和文件操作必须防御路径穿越、绝对路径、符号链接逃逸、Unicode/大小写碰撞、压缩炸弹和 TOCTOU。
 11. Session、WorkerLease、epoch 和配额正确性不能只依赖 API 进程内临时状态；API 退出时 Worker

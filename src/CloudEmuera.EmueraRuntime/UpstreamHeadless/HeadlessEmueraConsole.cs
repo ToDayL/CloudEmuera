@@ -206,7 +206,8 @@ internal sealed class EmueraConsole
     public void PrintFlush(bool force) => FlushPendingLine(force);
     // Upstream RefreshStrings only repaints already committed display lines;
     // it must not turn a partial PRINT/PRINTC buffer into a logical line.
-    public void RefreshStrings(bool forcePaint) { }
+    // It is nevertheless the visibility boundary for a deferred CLEARLINE.
+    public void RefreshStrings(bool forcePaint) => FlushDeferredReplacementDelete();
     public void ClearText()
     {
         FlushPendingLine();

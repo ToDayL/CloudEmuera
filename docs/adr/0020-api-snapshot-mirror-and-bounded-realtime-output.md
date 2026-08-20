@@ -97,8 +97,9 @@ P1-09 的 WebSocket endpoint 用策略错误关闭该连接；不关闭 Worker�
 P1-08 在 `CloudEmuera.Contracts` 定义完整 Snapshot、transaction batch 和 `resync-required` 的
 transport-neutral DTO、显式 JSON 字段名及 source-generated serializer context，并用 golden JSON
 冻结所有 P1-07 节点。P1-08 的帧流以带 reason 的完整替换 Snapshot 表达重同步，`RealtimeResyncRequired`
-DTO 保留给 P1-09 的 WebSocket v1 envelope 使用，运行时不产生独立 resync payload。P1-09 再加入
-WebSocket v1 envelope、鉴权握手、ping/pong 和输入回执；不得在 P1-09 重新定义显示状态或背压算法。
+DTO 保留给 P1-09 的 WebSocket envelope 使用，运行时不产生独立 resync payload。P1-09 再加入
+WebSocket envelope、鉴权握手、ping/pong 和输入回执；不得在 P1-09 重新定义显示状态或背压算法。
+替代说明（2026-08-20）：当前 envelope 版本和输入回执语义以 ADR-0025 的 Realtime v2 为准。
 
 ## 备选方案
 

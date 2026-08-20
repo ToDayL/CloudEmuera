@@ -61,7 +61,7 @@ public sealed class ConsoleConcurrencyAndBoundsTests
             string promptId = $"p{index}";
             coordinator.OpenPrompt(new ConsolePrompt(promptId, ConsoleInputType.Text));
             Assert.Equal(ConsoleInputResultKind.Accepted,
-                coordinator.Submit(new ConsoleInputCommand(promptId, $"m{index}", "ok")).Kind);
+                coordinator.SubmitCurrent(new ConsoleInputAttempt($"m{index}", "ok")).Kind);
         }
 
         Assert.True(coordinator.ReceiptCount <= options.MaxInputReceiptCount);

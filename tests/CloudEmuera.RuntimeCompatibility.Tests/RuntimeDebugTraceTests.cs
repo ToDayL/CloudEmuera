@@ -126,8 +126,8 @@ public sealed class RuntimeDebugTraceTests
             Assert.True(SpinWait.SpinUntil(() => adapter.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
             Assert.False(process.NeedWaitToEventComEnd);
             ConsolePrompt prompt = adapter.CurrentPrompt!;
-            Assert.Equal(ConsoleInputResultKind.Accepted, adapter.SubmitInput(
-                new ConsoleInputCommand(prompt.PromptId, "event-command-end", string.Empty)).Kind);
+            Assert.Equal(ConsoleInputResultKind.Accepted, adapter.SubmitCurrentInput(
+                new ConsoleInputAttempt("event-command-end", string.Empty)).Kind);
             await wait.WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally

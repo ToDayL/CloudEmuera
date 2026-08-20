@@ -28,21 +28,21 @@ public sealed class StructuredGameConsoleBoundsTests
 
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            console.SubmitInput(new ConsoleInputCommand("p1", "m1", "ok")).Kind);
+            console.SubmitCurrentInput(new ConsoleInputAttempt("m1", "ok")).Kind);
         console.Emit(new OpenPromptOperation(new ConsolePrompt(ConsoleInputType.Text)));
         Assert.Equal("p2", console.CurrentPrompt!.PromptId);
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            console.SubmitInput(new ConsoleInputCommand("p2", "m2", "ok")).Kind);
+            console.SubmitCurrentInput(new ConsoleInputAttempt("m2", "ok")).Kind);
         console.Emit(new OpenPromptOperation(new ConsolePrompt(ConsoleInputType.Text)));
         Assert.Equal("p3", console.CurrentPrompt!.PromptId);
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            console.SubmitInput(new ConsoleInputCommand("p3", "m3", "ok")).Kind);
+            console.SubmitCurrentInput(new ConsoleInputAttempt("m3", "ok")).Kind);
     }
 
     [Fact]
-    public void EvictedOldPromptIdCannotBeReusedOrAcceptLateInput()
+    public void CurrentSlotAcceptsInputRegardlessOfAnEarlierPromptIdentity()
     {
         var options = new ConsoleHistoryOptions { MaxInputReceiptCount = 2 };
         var console = new StructuredGameConsole(
@@ -57,7 +57,7 @@ public sealed class StructuredGameConsoleBoundsTests
             Assert.Equal($"p{index}", promptId);
             Assert.Equal(
                 ConsoleInputResultKind.Accepted,
-                console.SubmitInput(new ConsoleInputCommand(promptId, $"message-{index}", "ok")).Kind);
+                console.SubmitCurrentInput(new ConsoleInputAttempt($"message-{index}", "ok")).Kind);
         }
 
         Assert.Equal(options.MaxInputReceiptCount, console.InputCoordinator.ReceiptCount);
@@ -67,12 +67,10 @@ public sealed class StructuredGameConsoleBoundsTests
 
         console.Emit(new OpenPromptOperation(new ConsolePrompt(ConsoleInputType.Text)));
         Assert.Equal("p4", console.CurrentPrompt!.PromptId);
-        ConsoleInputResult late = console.SubmitInput(new ConsoleInputCommand("p1", "late-p1", "old"));
+        ConsoleInputResult current = console.SubmitCurrentInput(new ConsoleInputAttempt("late-p1", "old"));
 
-        Assert.Equal(ConsoleInputResultKind.StalePrompt, late.Kind);
-        Assert.Equal(
-            ConsoleInputResultKind.Accepted,
-            console.SubmitInput(new ConsoleInputCommand("p4", "message-4", "ok")).Kind);
+        Assert.Equal(ConsoleInputResultKind.Accepted, current.Kind);
+        Assert.Equal("p4", current.ResolvedPromptId);
     }
 
     [Fact]
@@ -99,7 +97,7 @@ public sealed class StructuredGameConsoleBoundsTests
             string promptId = console.CurrentPrompt!.PromptId;
             Assert.Equal(
                 ConsoleInputResultKind.Accepted,
-                console.SubmitInput(new ConsoleInputCommand(promptId, $"message-{index}", "ok")).Kind);
+                console.SubmitCurrentInput(new ConsoleInputAttempt($"message-{index}", "ok")).Kind);
 
             Assert.True(console.StateStore.History.Count <= options.MaxDeltaCount);
             Assert.True(console.StateStore.Snapshot.VisibleNodeCount <= options.MaxVisibleNodes);

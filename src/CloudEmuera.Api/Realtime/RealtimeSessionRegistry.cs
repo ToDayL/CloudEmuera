@@ -45,7 +45,7 @@ public static class RealtimeSessionResults
         SessionInputCommand command,
         string status,
         string? reasonCode = null) =>
-        new(command.PromptId, command.ClientMessageId, status, reasonCode ?? status);
+        new(null, command.ClientMessageId, status, reasonCode ?? status);
 
     public static SessionInputResult WorkerUnavailable(SessionInputCommand command) =>
         Error(command, SessionInputResultCodes.WorkerUnavailable);

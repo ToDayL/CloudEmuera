@@ -5,7 +5,6 @@ import { ApiError, apiRequest } from "../api";
 import { closeSession, useSession, waitForSession, type SessionState } from "../sessions/api";
 import { presentationManifestUrl, AssetResolver, type PresentationManifest } from "./AssetResolver";
 import { CanvasRenderer } from "./CanvasRenderer";
-import { DeadlineClock } from "./DeadlineClock";
 import { MediaController } from "./media";
 import { PromptController, type PromptControllerHandle } from "./PromptController";
 import { colorToCss } from "./SafeHtmlRenderer";
@@ -40,7 +39,6 @@ export function ConsolePage() {
   const session = useSession(sessionId);
   const gameConsoleRef = useRef<HTMLElement>(null);
   const promptControllerRef = useRef<PromptControllerHandle>(null);
-  const currentPromptIdRef = useRef<string | null>(null);
   const endedSessionRef = useRef<string | null>(null);
   const manifest = useQuery({
     queryKey: ["presentation-manifest", sessionId],
@@ -120,17 +118,9 @@ export function ConsolePage() {
   }, []);
 
   const input = useCallback((event: ConsoleInputEvent) => {
-    if (!sessionId || !stream.consoleState?.currentPrompt) return;
-    const prompt = stream.consoleState.currentPrompt;
-    if (!isCurrentPromptEvent(prompt.promptId, currentPromptIdRef.current)) return;
-    const allowedSource = event.source === "KEYBOARD" ? "keyboard" : event.source === "BUTTON" ? "button" : "pointer";
-    if (prompt.inputType === "waitOnly" || !prompt.allowedSources.includes(allowedSource)) return;
-    if (event.source === "BUTTON" && !["enterKey", "integer", "text", "anyValue", "integerButton", "textButton"].includes(prompt.inputType)) return;
-    if (event.source === "POINTER" && prompt.inputType !== "primitivePointerKey") return;
-    if (prompt.inputType === "anyKey" && event.source !== "KEYBOARD") return;
-    if (prompt.inputType === "primitivePointerKey" && event.source === "BUTTON") return;
+    if (!sessionId) return;
     scrollToBottom();
-    const clientMessageId = manager.sendInput(sessionId, { promptId: prompt.promptId, source: event.source, value: event.value, pointer: event.pointer ?? null, key: event.key ?? null });
+    const clientMessageId = manager.sendInput(sessionId, { source: event.source, value: event.value, pointer: event.pointer ?? null, key: event.key ?? null });
     if (!clientMessageId) setCloseError("当前实时连接尚未就绪，输入没有发送。请等待连接恢复后重试。");
   }, [manager, scrollToBottom, sessionId, stream.consoleState]);
   const reportRendererError = useCallback((message: string) => setRendererError(message), []);
@@ -156,7 +146,6 @@ export function ConsolePage() {
   if (session.isError || !session.data) return <div className="console-error" role="alert"><h1>Session 不可用</h1><p>{session.error instanceof Error ? session.error.message : "资源不存在或你没有访问权限。"}</p><Link className="secondary-button" to="/sessions">返回 Session</Link></div>;
 
   const state = stream.consoleState;
-  currentPromptIdRef.current = state?.currentPrompt?.promptId ?? null;
   const terminalSession = session.data.state === "CLOSED" || session.data.state === "CRASHED";
   const fatal = stream.fatalRenderError ?? rendererError ?? (manifest.isError ? "Presentation manifest 无法加载，已停止渲染资源。" : null);
   return <div className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
@@ -177,7 +166,7 @@ export function ConsolePage() {
         {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
         {(assets.diagnostics().length > 0 || fontLoadFailed) && <div className="console-compat-warning" role="status"><strong>字体兼容提示</strong><small>{[...assets.diagnostics(), ...(fontLoadFailed ? ["FONT_LOAD_FAILED"] : [])].map(fontDiagnosticLabel).join("；")}</small></div>}
-        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} currentPrompt={state.currentPrompt} interactive={state.currentPrompt?.inputType === "primitivePointerKey" && state.currentPrompt.allowedSources.includes("pointer")} /><ScrollbackRenderer lines={state.scrollback} currentPrompt={state.currentPrompt} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${stream.workerEpoch ?? "none"}:${stream.sequence}`} /></> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
+        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${stream.workerEpoch ?? "none"}:${stream.sequence}`} /></> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
         </div>
       </main>
@@ -190,10 +179,6 @@ export function ConsolePage() {
 
 export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean {
   return target instanceof Element && !target.closest("button, a, input, select, textarea, [role=\"button\"]");
-}
-
-export function isCurrentPromptEvent(promptId: string, currentPromptId: string | null): boolean {
-  return promptId.length > 0 && promptId === currentPromptId;
 }
 
 export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, screenWidth?: number, fontSize?: number, lineHeight?: number): CSSProperties {
@@ -235,7 +220,7 @@ function presentationManifestUrlPath(sessionId: string): string {
 }
 
 function inputReceiptLabel(status: string): string {
-  return ({ ACCEPTED: "已接受", DUPLICATE: "已处理（重复消息）", CONFLICT: "冲突：其他设备已回答", STALE_PROMPT: "已失效：提示已变化", NO_ACTIVE_PROMPT: "已失效：当前没有提示", INVALID_FORMAT: "格式无效", INVALID_COMMAND: "命令无效", CANCELLED: "已取消", TIMED_OUT: "已超时", SESSION_NOT_ACCEPTING_INPUT: "Session 当前不接受输入", STALE_EPOCH: "Worker 已更换", SESSION_NOT_RUNNING: "Session 未运行", INPUT_BACKPRESSURE: "服务繁忙，可使用相同 ID 重试", WORKER_UNAVAILABLE: "Worker 暂不可用，可使用相同 ID 重试", FORBIDDEN: "没有输入权限" } as Record<string, string>)[status] ?? "服务端返回了未分类回执";
+  return ({ ACCEPTED: "已接受", DUPLICATE: "已处理（重复消息）", CONFLICT: "冲突：其他设备已回答", NO_ACTIVE_PROMPT: "已失效：当前没有提示", INVALID_FORMAT: "格式无效", INVALID_COMMAND: "命令无效", CANCELLED: "已取消", TIMED_OUT: "已超时", SESSION_NOT_ACCEPTING_INPUT: "Session 当前不接受输入", STALE_EPOCH: "Worker 已更换", SESSION_NOT_RUNNING: "Session 未运行", INPUT_BACKPRESSURE: "服务繁忙，可使用相同 ID 重试", WORKER_UNAVAILABLE: "Worker 暂不可用，可使用相同 ID 重试", FORBIDDEN: "没有输入权限" } as Record<string, string>)[status] ?? "服务端返回了未分类回执";
 }
 
 function emptyConsoleLabel(phase: SessionStoreState["phase"]): string {

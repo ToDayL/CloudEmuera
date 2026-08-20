@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { consoleSurfaceStyle, consoleViewportStyle, effectiveConsoleWidth, isBlankConsoleSurfaceTarget, isCurrentPromptEvent } from "./ConsolePage";
+import { consoleSurfaceStyle, consoleViewportStyle, effectiveConsoleWidth, isBlankConsoleSurfaceTarget } from "./ConsolePage";
 
 describe("console surface click filtering", () => {
   it("accepts non-control output areas and ignores buttons and form controls", () => {
@@ -29,14 +29,6 @@ describe("console surface background", () => {
     expect(consoleSurfaceStyle(null, 640, 390)).toEqual({ width: "390px", maxWidth: "100%" });
     expect(effectiveConsoleWidth(1000, 390)).toBe(390);
     expect(effectiveConsoleWidth(390, 1024)).toBe(390);
-  });
-});
-
-describe("console prompt event fencing", () => {
-  it("rejects events captured from a previous animated prompt", () => {
-    expect(isCurrentPromptEvent("prompt-new", "prompt-new")).toBe(true);
-    expect(isCurrentPromptEvent("prompt-old", "prompt-new")).toBe(false);
-    expect(isCurrentPromptEvent("prompt-old", null)).toBe(false);
   });
 });
 

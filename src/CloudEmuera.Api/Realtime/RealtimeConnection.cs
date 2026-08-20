@@ -205,7 +205,7 @@ public sealed class RealtimeConnection
             throw new RealtimeProtocolException("hello_required", "The first realtime message must be client.hello.", 1002);
         RememberMessageId(hello.Envelope.MessageId);
         if (!clientHello.Value.SupportedProtocolVersions.Contains(RealtimeProtocol.Version))
-            throw new RealtimeProtocolException("unsupported_protocol_version", "The client does not support realtime protocol v1.", 1002);
+            throw new RealtimeProtocolException("unsupported_protocol_version", "The client does not support realtime protocol v2.", 1002);
         return hello;
     }
 
@@ -403,7 +403,7 @@ public sealed class RealtimeConnection
                     parsed.Envelope.MessageId,
                     parsed.Envelope.SessionId!,
                     parsed.Envelope.WorkerEpoch!.Value,
-                    new SessionInputResult(payload.PromptId, payload.ClientMessageId, SessionInputResultCodes.InputBackpressure, SessionInputResultCodes.InputBackpressure));
+                    new SessionInputResult(null, payload.ClientMessageId, SessionInputResultCodes.InputBackpressure, SessionInputResultCodes.InputBackpressure));
                 return;
             }
             pendingInputs++;
@@ -443,7 +443,7 @@ public sealed class RealtimeConnection
                         parsed.Envelope.MessageId,
                         sessionId,
                         workerEpoch,
-                        new SessionInputResult(payload.PromptId, payload.ClientMessageId, SessionInputResultCodes.Forbidden, SessionInputResultCodes.Forbidden));
+                        new SessionInputResult(null, payload.ClientMessageId, SessionInputResultCodes.Forbidden, SessionInputResultCodes.Forbidden));
                 }
                 return;
             }
@@ -469,7 +469,7 @@ public sealed class RealtimeConnection
                 parsed.Envelope.MessageId,
                 sessionId,
                 workerEpoch,
-                new SessionInputResult(payload.PromptId, payload.ClientMessageId, SessionInputResultCodes.WorkerUnavailable, SessionInputResultCodes.WorkerUnavailable));
+                new SessionInputResult(null, payload.ClientMessageId, SessionInputResultCodes.WorkerUnavailable, SessionInputResultCodes.WorkerUnavailable));
         }
     }
 
@@ -515,7 +515,6 @@ public sealed class RealtimeConnection
         return new SessionInputCommand(
             sessionId,
             workerEpoch,
-            payload.PromptId,
             payload.ClientMessageId,
             payload.Value,
             source,
@@ -547,10 +546,10 @@ public sealed class RealtimeConnection
             "session.input.result",
             NewMessageId(),
             new InputResultPayload(
-                result.PromptId,
                 result.ClientMessageId,
                 ToPublicStatus(result.Status),
                 result.ReasonCode,
+                result.ResolvedPromptId,
                 result.NormalizedValue),
             correlationId,
             sessionId,
@@ -817,12 +816,9 @@ public sealed class RealtimeConnection
         SessionInputResultCodes.Accepted => "ACCEPTED",
         SessionInputResultCodes.Duplicate => "DUPLICATE",
         SessionInputResultCodes.Conflict => "CONFLICT",
-        SessionInputResultCodes.StalePrompt => "STALE_PROMPT",
         SessionInputResultCodes.NoActivePrompt => "NO_ACTIVE_PROMPT",
         SessionInputResultCodes.InvalidFormat => "INVALID_FORMAT",
         SessionInputResultCodes.InvalidCommand => "INVALID_COMMAND",
-        SessionInputResultCodes.Cancelled => "CANCELLED",
-        SessionInputResultCodes.TimedOut => "TIMED_OUT",
         SessionInputResultCodes.SessionNotAcceptingInput => "SESSION_NOT_ACCEPTING_INPUT",
         SessionInputResultCodes.StaleEpoch => "STALE_EPOCH",
         SessionInputResultCodes.SessionNotRunning => "SESSION_NOT_RUNNING",

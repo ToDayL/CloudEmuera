@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const schemaPath = path.join(root, "src/CloudEmuera.Contracts/Realtime/realtime-v1.schema.json");
+const schemaPath = path.join(root, "src/CloudEmuera.Contracts/Realtime/realtime-v2.schema.json");
 const outputPath = path.join(root, "src/CloudEmuera.Web/src/realtime/generated.ts");
 
 const refTypes = {
@@ -143,7 +143,7 @@ export function generateRealtimeTypes(schema) {
   }
 
   const lines = [
-    "/* GENERATED CONTRACT SNAPSHOT — source: realtime-v1.schema.json. */",
+    "/* GENERATED CONTRACT SNAPSHOT — source: realtime-v2.schema.json. */",
     `export const REALTIME_SCHEMA_ID = ${JSON.stringify(schema.$id)} as const;`,
     `export const REALTIME_PROTOCOL_VERSION = ${JSON.stringify(protocolVersion)} as const;`,
     `export const REALTIME_PAYLOAD_SCHEMA_VERSION = ${JSON.stringify(payloadSchemaVersion)} as const;`,
@@ -174,7 +174,7 @@ export function generateRealtimeTypes(schema) {
     `export type InputType = ${typeScriptType(defs.prompt.properties.inputType, defs)};`,
     "",
     "export interface RealtimeEnvelope<TType extends string, TPayload> {",
-    "  protocolVersion: 1;",
+    "  protocolVersion: 2;",
     "  type: TType;",
     "  messageId: string;",
     "  correlationId?: string;",

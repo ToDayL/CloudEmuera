@@ -1,0 +1,1 @@
+{"protocolVersion":2,"type":"client.hello","messageId":"msg_01KHELLO","payload":{"supportedProtocolVersions":[2],"capabilityDigest":"sha256:runtime-v4","supportedCapabilities":["structured-console-v4"]},"unknownOptionalField":"ignored"}

@@ -3,9 +3,9 @@
 日期：2026-08-12
 固定上游：`2175f8a629257efb08214e093704b3a3d3d06d05`
 Runtime integration：`headless-p0.5.1`
-结构化 IPC：`cloudemuera.ipc.v3` / protocol `3`
+结构化 IPC：`cloudemuera.ipc.v4` / protocol `4`
 能力矩阵：`p1-07`
-能力集合摘要：`57cd67c6b3eaa0a3dcb47ac793a5df543157b2cdebd51dc775bd7ac2c0e29985`
+能力集合摘要：`7f0003c99e6f86f383b6cb018a894338bead34c502ab9a71a87d8eb2e9e2c86e`
 
 本报告描述固定上游与 CloudEmuera headless adapter 之间的入口级边界。机器可读的完整记录在
 [`docs/runtime-capabilities.json`](runtime-capabilities.json)，结构由

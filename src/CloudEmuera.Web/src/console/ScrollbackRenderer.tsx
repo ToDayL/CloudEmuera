@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties,
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
-import type { Prompt, RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode } from "../realtime/protocol";
+import type { RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode } from "../realtime/protocol";
 
 export interface ConsoleInputEvent {
   value: string;
@@ -11,10 +11,9 @@ export interface ConsoleInputEvent {
   key?: { keyCode: number; control: boolean; alt: boolean; shift: boolean };
 }
 
-export function ScrollbackRenderer({ lines, currentPrompt, assets, onInput, onRenderError, scrollContainerRef, scrollVersion }: { lines: RealtimeLine[]; currentPrompt?: Prompt | null; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void; scrollContainerRef?: RefObject<HTMLElement | null>; scrollVersion?: string | number }) {
+export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion }: { lines: RealtimeLine[]; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void; scrollContainerRef?: RefObject<HTMLElement | null>; scrollVersion?: string | number }) {
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
-  const currentButtonGeneration = latestButtonGeneration(lines);
   const displayLines = trimTrailingEmptyLines(lines);
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     const container = scrollContainerRef?.current;
@@ -45,7 +44,7 @@ export function ScrollbackRenderer({ lines, currentPrompt, assets, onInput, onRe
   return <div className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
       {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} key={line.lineId}>
-        {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} onInput={onInput} onRenderError={onRenderError} />)}
+        {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
       </div>)}
     </div>
     {!atLatest && <button className="scrollback-latest" type="button" onClick={scrollToLatest}>↓ 回到最新</button>}
@@ -103,21 +102,20 @@ function sliceTextNodes(children: readonly Extract<RealtimeNode, { type: "text" 
   return result;
 }
 
-export function NodeRenderer({ node, currentPrompt, currentButtonGeneration, assets, onInput, onRenderError }: { node: RealtimeNode; currentPrompt?: Prompt | null; currentButtonGeneration: number; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }): ReactNode {
+export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: RealtimeNode; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }): ReactNode {
   switch (node.type) {
     case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{node.text}</span>;
     case "lineBreak": return <br />;
     case "button": {
       if (!node.enabled && node.value.length === 0) {
-        return <span className="console-nonbutton" style={positionStyle(node.positionX)} title={node.tooltip ?? undefined}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</span>;
+        return <span className="console-nonbutton" style={positionStyle(node.positionX)} title={node.tooltip ?? undefined}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</span>;
       }
-      const isCurrentFrame = isCurrentFrameButton(node, currentPrompt, currentButtonGeneration);
       const parts = splitButtonLabel(node.children);
-      const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
+      const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
       const buttonStyle: CSSProperties = interactivePositionStyle(node.positionX);
       return <Fragment>
         {renderChildren(parts.leading, "leading")}
-        <button className={`console-choice ${isCurrentFrame ? "" : "is-stale"}`} style={buttonStyle} type="button" disabled={!isCurrentFrame} title={node.tooltip ?? (!isCurrentFrame && node.enabled ? "上一帧选项已失效" : undefined)} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>
+        <button className="console-choice" style={buttonStyle} type="button" disabled={!node.enabled} title={node.tooltip ?? undefined} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>
           <span className="console-choice-label">{renderChildren(parts.label, "label")}</span>
         </button>
         {renderChildren(parts.trailing, "trailing")}
@@ -130,9 +128,9 @@ export function NodeRenderer({ node, currentPrompt, currentButtonGeneration, ass
     }
     case "sprite": return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(node.destination)}><SpriteCanvas sprite={node} assets={assets} alt={node.altText ?? "游戏精灵"} className="console-sprite" width={node.destination.width} height={node.destination.height} style={inlineSpriteStyle(node.destination)} onRenderError={onRenderError} /></span>;
     case "shape": return <ShapeSvg shape={node.shape} bounds={node.bounds} points={node.points} fill={node.fill} stroke={node.stroke} buttonColor={node.buttonColor} />;
-    case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</div>;
+    case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</div>;
     case "htmlIsland": return node.nodes
-      ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)
+      ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)
       : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
 }
@@ -147,31 +145,6 @@ function interactivePositionStyle(positionX: number | null | undefined): CSSProp
   return positionX === null || positionX === undefined
     ? {}
     : { position: "relative", left: `${positionX}px` };
-}
-
-function isCurrentFrameButton(node: Extract<RealtimeNode, { type: "button" }>, prompt: Prompt | null | undefined, currentGeneration: number): boolean {
-  if (!node.enabled || !prompt || !prompt.allowedSources.includes("button")) return false;
-  if (!["enterKey", "integer", "text", "anyValue", "integerButton", "textButton"].includes(prompt.inputType)) return false;
-  return node.generation === currentGeneration;
-}
-
-function latestButtonGeneration(lines: readonly RealtimeLine[]): number {
-  let generation = 0;
-  for (const line of lines) {
-    generation = Math.max(generation, latestNodeButtonGeneration(line.nodes));
-  }
-  return generation;
-}
-
-function latestNodeButtonGeneration(nodes: readonly RealtimeNode[]): number {
-  let generation = 0;
-  for (const node of nodes) {
-    if (node.type === "button") generation = Math.max(generation, node.generation, latestNodeButtonGeneration(node.children));
-    else if (node.type === "div" || node.type === "htmlIsland") {
-      generation = Math.max(generation, latestNodeButtonGeneration(node.type === "div" ? node.children : node.nodes ?? []));
-    }
-  }
-  return generation;
 }
 
 function AssetImage({ assetId, alt, assets, className, width, height }: { assetId: string; alt: string; assets: AssetResolver; className: string; width?: number; height?: number }) {

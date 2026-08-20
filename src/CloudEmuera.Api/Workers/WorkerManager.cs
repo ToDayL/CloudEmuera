@@ -8,7 +8,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V3;
+using CloudEmuera.Ipc.V4;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Grpc.AspNetCore.Server;
@@ -863,7 +863,6 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         {
             SubmitInput input = new()
             {
-                PromptId = command.PromptId,
                 ClientMessageId = command.ClientMessageId,
                 Value = command.Value,
                 Source = (InputSource)(int)command.Source,
@@ -954,7 +953,6 @@ public sealed class ApiWorkerSession : IAsyncDisposable
                 !string.Equals(message.SessionId, Binding.SessionId, StringComparison.Ordinal) ||
                 !string.Equals(message.WorkerId, Binding.WorkerId, StringComparison.Ordinal) ||
                 message.WorkerEpoch != Binding.WorkerEpoch ||
-                !string.Equals(message.InputResult.PromptId, pending.Command.PromptId, StringComparison.Ordinal) ||
                 !string.Equals(message.InputResult.ClientMessageId, pending.Command.ClientMessageId, StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref unknownInputResultCount);
@@ -962,7 +960,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             }
 
             result = new SessionInputResult(
-                message.InputResult.PromptId,
+                message.InputResult.HasResolvedPromptId ? message.InputResult.ResolvedPromptId : null,
                 message.InputResult.ClientMessageId,
                 MapInputResultStatus(message.InputResult.Kind),
                 NormalizeReasonCode(message.InputResult.ReasonCode, message.InputResult.Kind),
@@ -978,7 +976,6 @@ public sealed class ApiWorkerSession : IAsyncDisposable
 
     /// <summary>Compatibility helper retained for the existing Worker smoke tests.</summary>
     public async Task SendInputAsync(
-        string promptId,
         string clientMessageId,
         string value,
         CancellationToken cancellationToken = default)
@@ -987,7 +984,6 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             new SessionInputCommand(
                 Binding.SessionId,
                 Binding.WorkerEpoch,
-                promptId,
                 clientMessageId,
                 value,
                 SessionInputSource.Keyboard),
@@ -1008,7 +1004,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
 
     private static long EstimateInputBytes(SessionInputCommand command)
     {
-        long value = checked(128L + (long)command.SessionId.Length * 2 + command.PromptId.Length * 2 +
+        long value = checked(128L + (long)command.SessionId.Length * 2 +
             command.ClientMessageId.Length * 2 + command.Value.Length * 2);
         if (command.PointerData is not null) value += 32;
         if (command.Key is not null) value += 32;
@@ -1020,7 +1016,6 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         InputResultKind.Accepted => SessionInputResultCodes.Accepted,
         InputResultKind.Duplicate => SessionInputResultCodes.Duplicate,
         InputResultKind.Conflict => SessionInputResultCodes.Conflict,
-        InputResultKind.StalePrompt => SessionInputResultCodes.StalePrompt,
         InputResultKind.NoActivePrompt => SessionInputResultCodes.NoActivePrompt,
         InputResultKind.InvalidFormat => SessionInputResultCodes.InvalidFormat,
         InputResultKind.InvalidCommand => SessionInputResultCodes.InvalidCommand,

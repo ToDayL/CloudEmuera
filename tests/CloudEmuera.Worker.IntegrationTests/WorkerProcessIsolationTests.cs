@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V3;
+using CloudEmuera.Ipc.V4;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;
@@ -112,17 +112,18 @@ public sealed class WorkerProcessIsolationTests
         Assert.Equal(RealtimeFrameKind.Snapshot, firstDisplay.Kind);
         string promptId = await WaitForPromptIdAsync(session);
 
-        await session.SendInputAsync(promptId, $"client_{fixtureId}", input);
+        await session.SendInputAsync($"client_{fixtureId}", input);
         WorkerEnvelope accepted = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
                 value.InputResult.Kind == InputResultKind.Accepted,
             TimeSpan.FromSeconds(5));
-        Assert.Equal(promptId, accepted.InputResult.PromptId);
+        Assert.True(accepted.InputResult.HasResolvedPromptId);
+        Assert.Equal(promptId, accepted.InputResult.ResolvedPromptId);
         Assert.Equal(input, accepted.InputResult.NormalizedValue);
 
         // The same client message is submitted before the runtime has a chance
         // to expose another prompt. InputCoordinator must make this a no-op.
-        await session.SendInputAsync(promptId, $"client_{fixtureId}", input);
+        await session.SendInputAsync($"client_{fixtureId}", input);
         WorkerEnvelope duplicate = await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
                 value.InputResult.Kind == InputResultKind.Duplicate,
@@ -279,7 +280,7 @@ public sealed class WorkerProcessIsolationTests
         Assert.False(
             session.HasExited,
             $"exitCode={session.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "running"}{Environment.NewLine}{session.ProcessDiagnostics}");
-        await session.SendInputAsync(promptId, "client_control_exit", "7");
+        await session.SendInputAsync("client_control_exit", "7");
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
                 value.InputResult.Kind == InputResultKind.Accepted,
@@ -319,7 +320,6 @@ public sealed class WorkerProcessIsolationTests
                 CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
                 SubmitInput = new SubmitInput
             {
-                PromptId = promptId,
                 ClientMessageId = "wrong_binding_client",
                 Value = "7",
                 Source = InputSource.Keyboard,
@@ -372,7 +372,7 @@ public sealed class WorkerProcessIsolationTests
             TimeSpan.FromSeconds(15));
         string promptId = await WaitForPromptIdAsync(session);
 
-        await session.SendInputAsync(promptId, "client_logging", secretInput);
+        await session.SendInputAsync("client_logging", secretInput);
         await session.WaitForAsync(
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult,
             TimeSpan.FromSeconds(5));
@@ -412,11 +412,11 @@ public sealed class WorkerProcessIsolationTests
             await Task.WhenAll(
                 first.WaitForAsync(value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready, TimeSpan.FromSeconds(15)),
                 second.WaitForAsync(value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready, TimeSpan.FromSeconds(15)));
-            string firstPrompt = await WaitForPromptIdAsync(first);
-            string secondPrompt = await WaitForPromptIdAsync(second);
+            await WaitForPromptIdAsync(first);
+            await WaitForPromptIdAsync(second);
             await Task.WhenAll(
-                CompleteSessionAsync(first, firstPrompt, "one"),
-                CompleteSessionAsync(second, secondPrompt, "two"));
+                CompleteSessionAsync(first, "one"),
+                CompleteSessionAsync(second, "two"));
 
             Assert.True(first.OutputHub.CurrentSnapshot?.SnapshotSequence > 0);
             Assert.True(second.OutputHub.CurrentSnapshot?.SnapshotSequence > 0);
@@ -431,10 +431,9 @@ public sealed class WorkerProcessIsolationTests
 
     private static async Task CompleteSessionAsync(
         ApiWorkerSession session,
-        string promptId,
         string value)
     {
-        await session.SendInputAsync(promptId, $"client_{value}", value == "one" ? "1" : "2");
+        await session.SendInputAsync($"client_{value}", value == "one" ? "1" : "2");
         await session.WaitForAsync(
             eventValue => eventValue.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult &&
                 eventValue.InputResult.Kind == InputResultKind.Accepted,

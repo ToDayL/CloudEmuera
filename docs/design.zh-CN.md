@@ -40,7 +40,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | 事项 | MVP 暂定方案 | 可替换边界 |
 | --- | --- | --- |
 | 身份认证 | 本地账户、email-only 登录、可撤销 HttpOnly Cookie Session；未初始化实例从 `.env` 原子 bootstrap 首个管理员 | `IIdentityProvider` 可替换为单一 OIDC Provider；bootstrap 完成后永久忽略首次配置且不开放注册 |
-| 多客户端输入 | 同一 `promptId` 的第一个有效输入生效 | 后续可在 Realtime Gateway 前增加控制权租约 |
+| 多客户端输入 | 到达当前输入槽的第一个有效输入生效 | 后续可在 Realtime Gateway 前增加控制权租约 |
 | Session 空闲 | 断连不自动关闭，持续占用实例级活动 Worker 名额 | 管理员策略只能通过显式配置启用 |
 | 存档删除 | 无活动 Worker 时显式确认后直接删除 | 历史恢复由 SessionRoot 外部备份提供 |
 | HTML/媒体兼容 | 固定上游中浏览器可安全表达的能力全部结构化支持；宿主禁止能力 fail closed | 能力由运行时清单和机器可校验兼容性矩阵声明 |
@@ -71,10 +71,10 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | 服务端语言与运行时 | C# / .NET | .NET 10 LTS，使用当前安全补丁 | 与 Emuera Runtime 同语言，可直接复用解释器并共享领域/协议类型；LTS 支持至 2028-11-14 |
 | Web/API | ASP.NET Core Minimal APIs + Kestrel | 10.x | 原生支持 WebSocket、认证授权、限流、健康检查、静态文件和 OpenAPI；单进程即可服务 API 与 SPA |
 | 身份认证 | ASP.NET Core Identity + Cookie Authentication + Data Protection | 10.x | MVP 复用成熟的用户、密码、角色和安全戳能力；Data Protection key ring 持久化到 `/data`，保留替换为 OIDC 的认证端口 |
-| API 描述 | ASP.NET Core OpenAPI + 仓库内 JSON Schema | 10.x / schema v1 | HTTP 契约由 OpenAPI 生成；WebSocket 负载用 JSON Schema 单独校验和生成 TypeScript 类型 |
-| 浏览器实时通信 | ASP.NET Core 原生 WebSocket | RFC 6455，应用协议 v1 | CloudEmuera 需要自定义 epoch、sequence、完整 snapshot 替换和背压语义；不采用 SignalR 的 Hub/RPC 抽象 |
-| WebSocket 编码 | UTF-8 JSON + `System.Text.Json` source generation | 应用协议 v1 | 易调试、浏览器零额外解码依赖；达到性能瓶颈后才通过新协议版本评估 MessagePack |
-| 进程间通信 | gRPC 双向流 + Protocol Buffers over Unix Domain Socket | IPC 协议 v1 | 强类型、代码生成、截止时间和流式通信成熟；UDS 不暴露容器网络端口 |
+| API 描述 | ASP.NET Core OpenAPI + 仓库内 JSON Schema | 10.x / schema v2 | HTTP 契约由 OpenAPI 生成；WebSocket 负载用 JSON Schema 单独校验和生成 TypeScript 类型 |
+| 浏览器实时通信 | ASP.NET Core 原生 WebSocket | RFC 6455，应用协议 v2 | CloudEmuera 需要自定义 epoch、sequence、完整 snapshot 替换和背压语义；不采用 SignalR 的 Hub/RPC 抽象 |
+| WebSocket 编码 | UTF-8 JSON + `System.Text.Json` source generation | 应用协议 v2 | 易调试、浏览器零额外解码依赖；达到性能瓶颈后才通过新协议版本评估 MessagePack |
+| 进程间通信 | gRPC 双向流 + Protocol Buffers over Unix Domain Socket | 结构化 IPC 协议 v4 | 强类型、代码生成、截止时间和流式通信成熟；UDS 不暴露容器网络端口 |
 | 元数据数据库 | SQLite | 3.x，随运行镜像锁定 | 符合单容器和本地备份要求，无外部服务；使用 WAL、外键和 busy timeout |
 | 数据访问 | EF Core SQLite Provider；关键 CAS 使用参数化原生 SQL | EF Core 10.x | 普通 CRUD、关系和迁移成本低；状态机、实例级容量检查和 epoch 更新用显式 SQL 保证条件更新可审查 |
 | 数据库迁移 | 独立 `CloudEmuera.Migrator` 控制台程序 | 与应用同版本 | 容器初始化阶段执行并持有独占迁移锁；API 和 Worker 不在运行时自动迁移 |
@@ -905,8 +905,8 @@ Realtime Gateway 对一个 Session 执行以下恢复：
 1. 验证 WebSocket 身份和 Session 权限；
 2. 从 API 为当前 Worker epoch 维护的不可变镜像读取 `Snapshot(N)`，其中包含当前 prompt；
 3. 先注册有界连接队列并再次比较当前 epoch/sequence；若 Hub 尚未取得首个 Snapshot，则订阅保持等待，
-   首个 Worker display batch 到达后发送快照；若已经前进则直接标记需要重新同步。对旧 peer 返回的
-   `SNAPSHOT_NOT_READY` 仍按短退避重新 resume；
+   首个 Worker display batch 到达后发送快照；若已经前进则直接标记需要重新同步。当前 v2 客户端对
+   `SNAPSHOT_NOT_READY` 按短退避重新 resume；
 4. Gateway 发送 Snapshot，客户端以其完整替换本地显示树；
 5. Gateway 从序号大于 `N` 的下一批实时事件开始转发；
 6. 若读取与转发衔接期间检测到序号缺口或连接队列溢出，放弃待发增量并读取较新的完整 Snapshot。
@@ -926,13 +926,16 @@ MVP 不接受 `lastSequence` 作为历史补发承诺，也不维护 ack 驱动�
 
 ### 8.5 输入一致性
 
-Worker 在生成输入请求时创建不可重复的 `promptId`。输入命令必须带：
+Worker 在生成内部输入请求时创建不可重复的 `promptId`，但浏览器不回传它。Realtime v2 输入命令必须带：
 
 ```text
-sessionId, workerEpoch, promptId, clientMessageId, value
+sessionId, workerEpoch, clientMessageId, source, value, pointer?, key?
 ```
 
-处理顺序：鉴权 → Session 状态 → epoch → 输入格式 → 去重键 → 当前 prompt → 原子抢占 prompt。Worker 在一个串行化输入协调器内完成最后三步，并缓存该 `clientMessageId` 的确定结果。
+处理顺序：鉴权 → Session 状态 → epoch → Session command gate → IPC correlation → Worker receipt 去重 →
+当前 prompt → 格式校验 → 原子抢占 prompt。Worker 的 `InputCoordinator` 在一把锁内完成最后五步，并缓存该
+`clientMessageId` 的首次确定结果。没有当前 prompt 时返回并缓存 `NO_ACTIVE_PROMPT`，立即丢弃；绝不将
+输入排队给未来 prompt。回执返回可空 `resolvedPromptId`，它是实际处理的 Runtime prompt，不是请求身份。
 
 可能结果：
 
@@ -940,14 +943,15 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 | --- | --- |
 | ACCEPTED | 本消息首次赢得当前 prompt |
 | DUPLICATE | 同一消息已处理，附原结果 |
-| STALE_PROMPT | prompt 已过期或已被其他客户端回答 |
+| NO_ACTIVE_PROMPT | 输入到达时没有当前 Runtime prompt；已丢弃，不会投递给后续 prompt |
 | INVALID_FORMAT | 值不符合 prompt 约束 |
 | SESSION_NOT_ACCEPTING_INPUT | Session 正在停止或不是活动状态 |
 | STALE_EPOCH | 客户端连接的是旧 Worker |
 | FORBIDDEN | 当前用户没有控制权限 |
 
-去重缓存只采用当前 Worker 内的有界内存 LRU，不写入 Session metadata，也不跨 Worker 重启保留。
-即使缓存淘汰，已经完成的 prompt 也会因 `promptId` 不再当前而拒绝再次执行。
+去重缓存只采用当前 Worker 内的有界内存 LRU，不写入 Session metadata，也不跨 Worker 重启保留。fingerprint
+包含 value、source、pointer 和 key，不包含内部 promptId；因此同一输入意图的网络重试不能因 TINPUT 刷新
+而再次执行。缓存淘汰后旧 `clientMessageId` 不再享受重复保护，客户端不得复用它。
 
 ### 8.6 WebSocket 消息封装
 
@@ -955,7 +959,7 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 
 ```json
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "type": "display.batch",
   "messageId": "msg_...",
   "sessionId": "sess_...",
@@ -971,13 +975,11 @@ sessionId, workerEpoch, promptId, clientMessageId, value
 客户端 `messageId` 在一个连接内使用最近 4096 个 ID 的有界重复检测窗口；窗口淘汰后的旧 ID 不提供永久重放
 保护，客户端仍必须在整个连接生命周期内不复用已发送 ID。
 
-P1-09 已按 [`ADR-0021`](adr/0021-freeze-realtime-websocket-v1.md) 冻结正式边界：入口为
-`GET /api/v1/realtime`，协商 `cloudemuera.realtime.v1`，每次 `session.resume` 都重新捕获当前
-`(workerEpoch, snapshotSequence)` 并先发送完整 `session.snapshot`；不接受 `lastSequence` 历史补发，
-`resync.required` 与替换 Snapshot 由单 writer 作为一个 work group 发送。`session.input` 必须带
-`workerEpoch + promptId + clientMessageId`，浏览器不得发送 `SYSTEM`，API 通过共享
-`ISessionCommandGate` 和持久 binding 校验后使用 IPC correlation 等待 Worker 回执；prompt、格式、去重和
-timeout 仍由 Worker 决定。连接、订阅、接收消息、控制队列、pending input 和最终 envelope 都受数量/字节
+依据 [`ADR-0025`](adr/0025-current-input-slot-realtime-v2.md)，Realtime v2 是唯一支持的当前协议：协商
+`cloudemuera.realtime.v2`，envelope 为 `protocolVersion=2`，其 Snapshot/resync、鉴权、连接预算和 Session
+command gate 行为沿用 P1-09 已实现的基础。v2 的 `session.input` 必须带 `workerEpoch + clientMessageId`，
+不带 `promptId`；API 完成 persistent binding 检查后以 IPC v4 correlation 等待 Worker 回执。v1 子协议和
+带 `promptId` 的 input 必须拒绝，不能被解释或改写。连接、订阅、接收消息、控制队列、pending input 和最终 envelope 都受数量/字节
 双上限，连接断开不改变 Session 或 Worker 生命周期。
 
 ## 9. HTTP API 设计
@@ -1037,8 +1039,9 @@ Worker 使用一次性启动令牌注册，令牌绑定 Session、Worker、epoch
 
 禁止把 UDS 暴露到容器端口或共享宿主目录。对敏感命令同时验证对端身份和消息字段，不把“能连接 socket”视为完整授权。
 
-P0-06 的具体契约位于 [`src/CloudEmuera.Ipc/Protos/worker.proto`](../src/CloudEmuera.Ipc/Protos/worker.proto)，
-当前 `protocolVersion=1`。注册同时校验 IPC 版本、`RuntimeBaseline.CloudEmueraIntegrationVersion`
+P0-06 的历史基础契约位于 [`src/CloudEmuera.Ipc/Protos/worker.proto`](../src/CloudEmuera.Ipc/Protos/worker.proto)，
+其中 `protocolVersion=1`。运行期结构化 Worker 契约由 [`ADR-0025`](adr/0025-current-input-slot-realtime-v2.md)
+规定为 IPC v4；注册同时校验 IPC 版本、`RuntimeBaseline.CloudEmueraIntegrationVersion`
 和固定 upstream commit；API Worker Manager 以 256-bit bootstrap token 和完整 binding 校验 Worker，
 Worker 通过 `SocketsHttpHandler.ConnectCallback` 只连接 UDS，不提供 TCP fallback。bootstrap
 目录/文件权限为 `0700`/`0600`，文件拒绝链接、特殊文件、异常 hardlink 和非当前服务账户所有者。
@@ -1346,7 +1349,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 | --- | --- | --- |
 | AC-001/004/014 | 独立 Worker、SessionRoot、授权 | 双用户双 Session 隔离测试 |
 | AC-002/003 | 有界快照、API 生命周期绑定、持久 SessionRoot | 断网、API 重启和同 Session 重开测试 |
-| AC-005 | promptId/clientMessageId | 重复与并发输入测试 |
+| AC-005 | clientMessageId/current input slot | 重复与并发输入测试 |
 | AC-006/007 | 关闭流程、心跳、崩溃判定和可重开状态 | 超时关闭、kill Worker、同 Session 重开 |
 | AC-008/009 | 双兼容测试集、运行时清单 | 基准游戏回归 |
 | AC-010 | 安全解包与路径访问 | 恶意归档语料库 |
@@ -1403,7 +1406,8 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 13. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
 14. `ADR-0018`：Emuera 完整结构化交互状态、能力矩阵、计时语义和 IPC major 升级（P1-07 首个切片）。
 15. `ADR-0020`：API 快照镜像、订阅竞态和逐连接有界输出（P1-08，已接受）。
-16. `ADR-0021`：Realtime WebSocket v1、快照恢复与输入回执边界（P1-09，已接受）。
+16. `ADR-0021`：Realtime WebSocket v1、快照恢复与输入回执边界（P1-09；输入部分已被 ADR-0025 取代）。
+17. `ADR-0025`：浏览器输入投递到当前 Runtime 输入槽（P1-S02，待实施）。
 
 ## 20. 设计完成定义
 

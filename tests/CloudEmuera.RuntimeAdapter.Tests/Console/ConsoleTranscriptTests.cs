@@ -29,7 +29,7 @@ public sealed class ConsoleTranscriptTests
         console.Emit(new AppendNodesOperation([new ButtonNode("Continue", "continue")]));
         console.Emit(new OpenPromptOperation(new ConsolePrompt(ConsoleInputType.Integer)));
         string assignedPromptId = console.CurrentPrompt!.PromptId;
-        ConsoleInputResult result = console.SubmitInput(new ConsoleInputCommand(assignedPromptId, "fixed-client", input));
+        ConsoleInputResult result = console.SubmitCurrentInput(new ConsoleInputAttempt("fixed-client", input));
         console.Emit(new AppendNodesOperation([new TextNode(after)]));
 
         Assert.Equal(ConsoleInputResultKind.Accepted, result.Kind);

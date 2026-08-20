@@ -16,7 +16,7 @@ public static class RuntimeBaseline
     public const string UpstreamCommit = "2175f8a629257efb08214e093704b3a3d3d06d05";
     public const string CloudEmueraIntegrationVersion = "headless-p0.5.1";
     public const string CompatibilityProfile = "v18-compatible";
-    public const int StructuredIpcProtocolVersion = 3;
+    public const int StructuredIpcProtocolVersion = 4;
     public const string CapabilityMatrixVersion = "p1-07";
-    public const string CapabilitySetDigest = "57cd67c6b3eaa0a3dcb47ac793a5df543157b2cdebd51dc775bd7ac2c0e29985";
+    public const string CapabilitySetDigest = "7f0003c99e6f86f383b6cb018a894338bead34c502ab9a71a87d8eb2e9e2c86e";
 }

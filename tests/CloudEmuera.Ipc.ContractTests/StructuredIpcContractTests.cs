@@ -1,6 +1,7 @@
 using Google.Protobuf;
+using Google.Protobuf.Reflection;
 using CloudEmuera.Ipc;
-using W = CloudEmuera.Ipc.V3;
+using W = CloudEmuera.Ipc.V4;
 using Xunit;
 
 namespace CloudEmuera.Ipc.ContractTests;
@@ -9,6 +10,40 @@ namespace CloudEmuera.Ipc.ContractTests;
 public sealed class StructuredIpcContractTests
 {
     private static readonly WorkerBinding Binding = new("sess_structured", "wrk_structured", 9);
+
+    [Fact]
+    public void V4InputDescriptorReservesPromptFieldAndUsesOptionalResolvedPromptPresence()
+    {
+        MessageDescriptor submitInput = W.StructuredWorkerReflection.Descriptor.MessageTypes.Single(message => message.Name == "SubmitInput");
+        MessageDescriptor inputResult = W.StructuredWorkerReflection.Descriptor.MessageTypes.Single(message => message.Name == "InputResult");
+
+        Assert.Null(submitInput.FindFieldByNumber(1));
+        AssertReservedField(submitInput, 1);
+        Assert.Null(inputResult.FindFieldByNumber(1));
+        AssertReservedField(inputResult, 1);
+
+        var withoutResolvedPrompt = new W.InputResult
+        {
+            ClientMessageId = "client-1",
+            Kind = W.InputResultKind.NoActivePrompt,
+            ReasonCode = "no_active_prompt",
+        };
+        W.InputResult parsedWithoutResolvedPrompt = W.InputResult.Parser.ParseFrom(withoutResolvedPrompt.ToByteArray());
+        Assert.False(parsedWithoutResolvedPrompt.HasResolvedPromptId);
+
+        var withResolvedPrompt = withoutResolvedPrompt.Clone();
+        withResolvedPrompt.ResolvedPromptId = "prompt-1";
+        W.InputResult parsedWithResolvedPrompt = W.InputResult.Parser.ParseFrom(withResolvedPrompt.ToByteArray());
+        Assert.True(parsedWithResolvedPrompt.HasResolvedPromptId);
+        Assert.Equal("prompt-1", parsedWithResolvedPrompt.ResolvedPromptId);
+    }
+
+    private static void AssertReservedField(MessageDescriptor message, int fieldNumber)
+    {
+        FileDescriptorProto file = FileDescriptorProto.Parser.ParseFrom(message.File.SerializedData);
+        DescriptorProto descriptor = file.MessageType.Single(candidate => candidate.Name == message.Name);
+        Assert.Contains(descriptor.ReservedRange, range => range.Start <= fieldNumber && range.End > fieldNumber);
+    }
 
     [Fact]
     public void RegistrationHandshakeCarriesProtocolAndCapabilityDigest()

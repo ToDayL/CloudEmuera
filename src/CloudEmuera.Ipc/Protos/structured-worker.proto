@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-option csharp_namespace = "CloudEmuera.Ipc.V3";
+option csharp_namespace = "CloudEmuera.Ipc.V4";
 
-package cloudemuera.ipc.v3;
+package cloudemuera.ipc.v4;
 
 service WorkerControl {
   rpc Connect(stream WorkerEnvelope) returns (stream WorkerCommandEnvelope);
@@ -67,12 +67,13 @@ message DisplayBatch {
 }
 
 message InputResult {
-  string prompt_id = 1;
+  reserved 1; // v3 prompt_id
   string client_message_id = 2;
   InputResultKind kind = 3;
   string reason_code = 4;
   string normalized_value = 5;
   bool has_normalized_value = 6;
+  optional string resolved_prompt_id = 7;
 }
 
 message RuntimeCompleted {
@@ -131,7 +132,7 @@ message StartRuntime {
 }
 
 message SubmitInput {
-  string prompt_id = 1;
+  reserved 1; // v3 prompt_id
   string client_message_id = 2;
   string value = 3;
   InputSource source = 4;
@@ -431,7 +432,7 @@ enum InputType {
 }
 enum InputSource { INPUT_SOURCE_UNSPECIFIED = 0; INPUT_SOURCE_KEYBOARD = 1; INPUT_SOURCE_BUTTON = 2; INPUT_SOURCE_POINTER = 4; INPUT_SOURCE_SYSTEM = 8; }
 enum TimeoutAction { TIMEOUT_ACTION_UNSPECIFIED = 0; TIMEOUT_ACTION_RETURN_DEFAULT = 1; TIMEOUT_ACTION_CONTINUE_WITHOUT_VALUE = 2; TIMEOUT_ACTION_CANCEL_RUNTIME = 3; }
-enum InputResultKind { INPUT_RESULT_KIND_UNSPECIFIED = 0; INPUT_RESULT_KIND_ACCEPTED = 1; INPUT_RESULT_KIND_DUPLICATE = 2; INPUT_RESULT_KIND_STALE_PROMPT = 3; INPUT_RESULT_KIND_NO_ACTIVE_PROMPT = 4; INPUT_RESULT_KIND_INVALID_COMMAND = 5; INPUT_RESULT_KIND_INVALID_FORMAT = 6; INPUT_RESULT_KIND_CONFLICT = 7; INPUT_RESULT_KIND_CANCELLED = 8; INPUT_RESULT_KIND_TIMED_OUT = 9; }
+enum InputResultKind { INPUT_RESULT_KIND_UNSPECIFIED = 0; INPUT_RESULT_KIND_ACCEPTED = 1; INPUT_RESULT_KIND_DUPLICATE = 2; reserved 3; INPUT_RESULT_KIND_NO_ACTIVE_PROMPT = 4; INPUT_RESULT_KIND_INVALID_COMMAND = 5; INPUT_RESULT_KIND_INVALID_FORMAT = 6; INPUT_RESULT_KIND_CONFLICT = 7; INPUT_RESULT_KIND_CANCELLED = 8; INPUT_RESULT_KIND_TIMED_OUT = 9; }
 enum PromptCloseReason { PROMPT_CLOSE_REASON_UNSPECIFIED = 0; PROMPT_CLOSE_REASON_COMPLETED = 1; PROMPT_CLOSE_REASON_INPUT_ACCEPTED = 2; PROMPT_CLOSE_REASON_CANCELLED = 3; PROMPT_CLOSE_REASON_TIMED_OUT = 4; PROMPT_CLOSE_REASON_EXPLICIT = 5; }
 enum LineAlignment { LINE_ALIGNMENT_UNSPECIFIED = 0; LINE_ALIGNMENT_LEFT = 1; LINE_ALIGNMENT_CENTER = 2; LINE_ALIGNMENT_RIGHT = 3; }
 enum BackgroundMode { BACKGROUND_MODE_UNSPECIFIED = 0; BACKGROUND_MODE_STRETCH = 1; BACKGROUND_MODE_CONTAIN = 2; BACKGROUND_MODE_COVER = 3; BACKGROUND_MODE_CENTER = 4; BACKGROUND_MODE_REPEAT = 5; }

@@ -3,8 +3,8 @@
   "matrixVersion": "p1-07",
   "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
   "runtimeIntegrationVersion": "headless-p0.5.1",
-  "protocolVersion": 3,
-  "capabilitySetDigest": "57cd67c6b3eaa0a3dcb47ac793a5df543157b2cdebd51dc775bd7ac2c0e29985",
+  "protocolVersion": 4,
+  "capabilitySetDigest": "7f0003c99e6f86f383b6cb018a894338bead34c502ab9a71a87d8eb2e9e2c86e",
   "capabilities": [
     {
       "capabilityId": "console.text-lines",
@@ -146,11 +146,11 @@
       "category": "input",
       "classification": "Supported",
       "reasonCode": "CLOSED_INPUT_VOCABULARY",
-      "adapterTypes": ["ConsolePrompt", "ConsoleInputCommand", "InputCoordinator", "ConsolePointerPayload", "ConsoleKeyPayload"],
+      "adapterTypes": ["ConsolePrompt", "ConsoleInputAttempt", "InputCoordinator", "ConsolePointerPayload", "ConsoleKeyPayload"],
       "ipcTypes": ["ConsolePrompt", "SubmitInput", "PointerPayload", "KeyPayload", "InputResult"],
       "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip", "timed-input"],
       "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredIpcContractTests.RichDisplayTransactionRoundTripsWithoutFlattening"],
-      "securityNotes": ["Input is scoped to promptId/clientMessageId, source allowlists and bounded values; duplicate messages are idempotent."]
+      "securityNotes": ["Input attempts use clientMessageId receipts, source allowlists and bounded values; the Worker resolves the current prompt under its input lock and duplicate messages are idempotent."]
     },
     {
       "capabilityId": "input.timing-timeout",

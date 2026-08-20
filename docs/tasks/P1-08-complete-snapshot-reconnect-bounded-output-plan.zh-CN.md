@@ -174,7 +174,7 @@ RealtimeResyncRequired(workerEpoch, observedSequence, reason)
 ```
 
 P1-08 帧流以带 reason 的完整替换 Snapshot 表达重同步；`RealtimeResyncRequired` DTO 保留给 P1-09 的
-WebSocket v1 envelope，不在 P1-08 运行期产生独立 payload。
+WebSocket envelope，不在 P1-08 运行期产生独立 payload。当前协议版本由 P1-S02/ADR-0025 规定为 v2。
 
 要求：
 

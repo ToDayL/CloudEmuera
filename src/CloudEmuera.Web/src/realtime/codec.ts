@@ -50,7 +50,7 @@ export function decodeRealtimeMessage(input: string | ArrayBuffer): RealtimeServ
   catch { throw new RealtimeDecodeError("invalid_json", "实时消息不是有效 JSON。"); }
   const envelope = object(value, "invalid_envelope");
   ensureKeys(envelope, ["protocolVersion", "type", "messageId", "correlationId", "sessionId", "workerEpoch", "sequence", "payload"], "envelope");
-  if (integer(envelope.protocolVersion, "protocolVersion") !== 1)
+  if (integer(envelope.protocolVersion, "protocolVersion") !== 2)
     throw new RealtimeDecodeError("unsupported_protocol_version", "实时协议版本不兼容。");
   const type = string(envelope.type, "type");
   const messageId = string(envelope.messageId, "messageId");
@@ -60,7 +60,7 @@ export function decodeRealtimeMessage(input: string | ArrayBuffer): RealtimeServ
   if (envelope.workerEpoch !== undefined && positiveInteger(envelope.workerEpoch, "workerEpoch") === 0) throw new RealtimeDecodeError("invalid_envelope", "workerEpoch 无效。");
   if (envelope.sequence !== undefined && integer(envelope.sequence, "sequence") < 0) throw new RealtimeDecodeError("invalid_envelope", "sequence 无效。");
   const payload = object(envelope.payload, "missing_payload");
-  const base = { protocolVersion: 1 as const, type, messageId, ...(envelope.correlationId === undefined ? {} : { correlationId: string(envelope.correlationId, "correlationId") }), ...(envelope.sessionId === undefined ? {} : { sessionId: string(envelope.sessionId, "sessionId") }), ...(envelope.workerEpoch === undefined ? {} : { workerEpoch: positiveInteger(envelope.workerEpoch, "workerEpoch") }), ...(envelope.sequence === undefined ? {} : { sequence: integer(envelope.sequence, "sequence") }) };
+  const base = { protocolVersion: 2 as const, type, messageId, ...(envelope.correlationId === undefined ? {} : { correlationId: string(envelope.correlationId, "correlationId") }), ...(envelope.sessionId === undefined ? {} : { sessionId: string(envelope.sessionId, "sessionId") }), ...(envelope.workerEpoch === undefined ? {} : { workerEpoch: positiveInteger(envelope.workerEpoch, "workerEpoch") }), ...(envelope.sequence === undefined ? {} : { sequence: integer(envelope.sequence, "sequence") }) };
 
   switch (type) {
     case "server.hello": return { ...base, type, payload: decodeServerHello(payload) } as RealtimeServerMessage;
@@ -84,12 +84,12 @@ function requireSession<T extends { sessionId?: string }>(value: T): T & { sessi
 function decodeServerHello(value: JsonObject) {
   ensureKeys(value, ["protocolVersion", "payloadSchemaVersion", "connectionId", "serverNowUnixMilliseconds", "heartbeatIntervalMilliseconds", "heartbeatTimeoutMilliseconds", "maxSubscriptionsPerConnection", "maxPendingInputsPerConnection", "serverMessageMaxBytes", "capabilityDigest"], "server.hello");
   const protocolVersion = positiveInteger(value.protocolVersion, "protocolVersion");
-  if (protocolVersion !== 1) throw new RealtimeDecodeError("unsupported_protocol_version", "服务端协议版本不兼容。");
+  if (protocolVersion !== 2) throw new RealtimeDecodeError("unsupported_protocol_version", "服务端协议版本不兼容。");
   const payloadSchemaVersion = string(value.payloadSchemaVersion, "payloadSchemaVersion");
   if (payloadSchemaVersion !== REALTIME_PAYLOAD_SCHEMA_VERSION)
     throw new RealtimeDecodeError("unsupported_payload_schema_version", "实时消息内容版本不兼容。");
   return {
-    protocolVersion: 1 as const,
+    protocolVersion: 2 as const,
     payloadSchemaVersion,
     connectionId: checkedIdentifier(value.connectionId, "connectionId"),
     serverNowUnixMilliseconds: finiteNumber(value.serverNowUnixMilliseconds, "serverNowUnixMilliseconds"),
@@ -139,11 +139,11 @@ function decodeResync(value: JsonObject) {
 }
 
 function decodeInputResult(value: JsonObject) {
-  ensureKeys(value, ["promptId", "clientMessageId", "status", "reasonCode", "normalizedValue"], "session.input.result");
+  ensureKeys(value, ["clientMessageId", "status", "reasonCode", "resolvedPromptId", "normalizedValue"], "session.input.result");
   const status = string(value.status, "status");
-  const statuses = ["ACCEPTED", "DUPLICATE", "CONFLICT", "STALE_PROMPT", "NO_ACTIVE_PROMPT", "INVALID_FORMAT", "INVALID_COMMAND", "CANCELLED", "TIMED_OUT", "SESSION_NOT_ACCEPTING_INPUT", "STALE_EPOCH", "SESSION_NOT_RUNNING", "INPUT_BACKPRESSURE", "WORKER_UNAVAILABLE", "FORBIDDEN"];
+  const statuses = ["ACCEPTED", "DUPLICATE", "CONFLICT", "NO_ACTIVE_PROMPT", "INVALID_FORMAT", "INVALID_COMMAND", "SESSION_NOT_ACCEPTING_INPUT", "STALE_EPOCH", "SESSION_NOT_RUNNING", "INPUT_BACKPRESSURE", "WORKER_UNAVAILABLE", "FORBIDDEN"];
   if (!statuses.includes(status)) throw new RealtimeDecodeError("invalid_payload", "输入回执状态无效。");
-  return { promptId: checkedIdentifier(value.promptId, "promptId"), clientMessageId: checkedIdentifier(value.clientMessageId, "clientMessageId"), status, reasonCode: string(value.reasonCode, "reasonCode"), normalizedValue: value.normalizedValue === null || value.normalizedValue === undefined ? value.normalizedValue : string(value.normalizedValue, "normalizedValue") };
+  return { clientMessageId: checkedIdentifier(value.clientMessageId, "clientMessageId"), status, reasonCode: string(value.reasonCode, "reasonCode"), resolvedPromptId: value.resolvedPromptId === null ? null : checkedIdentifier(value.resolvedPromptId, "resolvedPromptId"), normalizedValue: value.normalizedValue === null || value.normalizedValue === undefined ? value.normalizedValue : string(value.normalizedValue, "normalizedValue") };
 }
 
 function decodeConsoleState(value: JsonValue): ConsoleState {

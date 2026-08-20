@@ -1,6 +1,6 @@
 using System.Text.Json;
 using CloudEmuera.Contracts.Realtime;
-using CloudEmuera.Ipc.V3;
+using CloudEmuera.Ipc.V4;
 using R = CloudEmuera.RuntimeAdapter;
 using RuntimeMapper = CloudEmuera.Realtime.StructuredConsoleWireMapper;
 

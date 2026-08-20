@@ -12,11 +12,11 @@ public sealed class InputCoordinatorTests
         var coordinator = new InputCoordinator();
         coordinator.OpenPrompt(new ConsolePrompt("p1", ConsoleInputType.Integer));
 
-        ConsoleInputResult invalid = coordinator.Submit(new ConsoleInputCommand("p1", "m1", "not-an-int"));
+        ConsoleInputResult invalid = coordinator.SubmitCurrent(new ConsoleInputAttempt("m1", "not-an-int"));
         Assert.Equal(ConsoleInputResultKind.InvalidFormat, invalid.Kind);
         Assert.NotNull(coordinator.CurrentPrompt);
 
-        ConsoleInputResult accepted = coordinator.Submit(new ConsoleInputCommand("p1", "m2", "42"));
+        ConsoleInputResult accepted = coordinator.SubmitCurrent(new ConsoleInputAttempt("m2", "42"));
         Assert.Equal(ConsoleInputResultKind.Accepted, accepted.Kind);
         Assert.Equal("42", accepted.Input!.Value);
         Assert.Null(coordinator.CurrentPrompt);
@@ -28,7 +28,7 @@ public sealed class InputCoordinatorTests
         var coordinator = new InputCoordinator();
         coordinator.OpenPrompt(new ConsolePrompt("p1", ConsoleInputType.WaitOnly));
 
-        ConsoleInputResult result = coordinator.Submit(new ConsoleInputCommand("p1", "m1", string.Empty));
+        ConsoleInputResult result = coordinator.SubmitCurrent(new ConsoleInputAttempt("m1", string.Empty));
 
         Assert.Equal(ConsoleInputResultKind.InvalidFormat, result.Kind);
         Assert.Equal(ConsoleInputFailureReason.SourceNotAllowed, result.FailureReason);
@@ -40,11 +40,11 @@ public sealed class InputCoordinatorTests
     {
         var coordinator = new InputCoordinator();
         coordinator.OpenPrompt(new ConsolePrompt("p1", ConsoleInputType.Text));
-        var command = new ConsoleInputCommand("p1", "m1", "hello");
+        var command = new ConsoleInputAttempt("m1", "hello");
 
-        ConsoleInputResult accepted = coordinator.Submit(command);
-        ConsoleInputResult duplicate = coordinator.Submit(command);
-        ConsoleInputResult conflict = coordinator.Submit(new ConsoleInputCommand("p1", "m1", "different"));
+        ConsoleInputResult accepted = coordinator.SubmitCurrent(command);
+        ConsoleInputResult duplicate = coordinator.SubmitCurrent(command);
+        ConsoleInputResult conflict = coordinator.SubmitCurrent(new ConsoleInputAttempt("m1", "different"));
 
         Assert.Equal(ConsoleInputResultKind.Accepted, accepted.Kind);
         Assert.Equal(ConsoleInputResultKind.Duplicate, duplicate.Kind);
@@ -65,12 +65,12 @@ public sealed class InputCoordinatorTests
         Task one = Task.Run(() =>
         {
             barrier.SignalAndWait();
-            first = coordinator.Submit(new ConsoleInputCommand("p1", "m1", "one"));
+            first = coordinator.SubmitCurrent(new ConsoleInputAttempt("m1", "one"));
         });
         Task two = Task.Run(() =>
         {
             barrier.SignalAndWait();
-            second = coordinator.Submit(new ConsoleInputCommand("p1", "m2", "two"));
+            second = coordinator.SubmitCurrent(new ConsoleInputAttempt("m2", "two"));
         });
         barrier.SignalAndWait();
         await Task.WhenAll(one, two);
@@ -79,7 +79,7 @@ public sealed class InputCoordinatorTests
             new[] { first, second }.Count(result => result!.Kind == ConsoleInputResultKind.Accepted) == 1,
             $"first={first?.Kind}, second={second?.Kind}");
         Assert.True(
-            new[] { first, second }.Count(result => result!.Kind == ConsoleInputResultKind.StalePrompt) == 1,
+            new[] { first, second }.Count(result => result!.Kind == ConsoleInputResultKind.NoActivePrompt) == 1,
             $"first={first?.Kind}, second={second?.Kind}");
     }
 
@@ -97,12 +97,30 @@ public sealed class InputCoordinatorTests
         var coordinator = new InputCoordinator(options);
         coordinator.OpenPrompt(new ConsolePrompt("p1", ConsoleInputType.Text));
 
-        ConsoleInputResult result = coordinator.Submit(new ConsoleInputCommand("p1", "m-too-long", "ok"));
+        ConsoleInputResult result = coordinator.SubmitCurrent(new ConsoleInputAttempt("m-too-long", "ok"));
 
         Assert.Equal(ConsoleInputResultKind.InvalidCommand, result.Kind);
         Assert.Equal(ConsoleInputFailureReason.InvalidIdentifier, result.FailureReason);
         Assert.Equal("InvalidIdentifier", result.ReasonCode);
         Assert.NotNull(coordinator.CurrentPrompt);
+    }
+
+    [Fact]
+    [Trait("Category", "InputDeduplication")]
+    public void NoActiveReceiptIsNeverReplayedToAPromptOpenedLater()
+    {
+        var coordinator = new InputCoordinator();
+        var attempt = new ConsoleInputAttempt("empty-slot", "late-value");
+
+        ConsoleInputResult noActive = coordinator.SubmitCurrent(attempt);
+        coordinator.OpenPrompt(new ConsolePrompt("p1", ConsoleInputType.Text));
+        ConsoleInputResult duplicate = coordinator.SubmitCurrent(attempt);
+
+        Assert.Equal(ConsoleInputResultKind.NoActivePrompt, noActive.Kind);
+        Assert.Null(noActive.ResolvedPromptId);
+        Assert.Equal(ConsoleInputResultKind.Duplicate, duplicate.Kind);
+        Assert.Equal(ConsoleInputResultKind.NoActivePrompt, duplicate.OriginalResult!.Kind);
+        Assert.Equal("p1", coordinator.CurrentPrompt!.PromptId);
     }
 
     [Fact]
@@ -117,12 +135,12 @@ public sealed class InputCoordinatorTests
         Task invalidTask = Task.Run(() =>
         {
             barrier.SignalAndWait();
-            invalid = coordinator.Submit(new ConsoleInputCommand("p1", "invalid", "too-long"));
+            invalid = coordinator.SubmitCurrent(new ConsoleInputAttempt("invalid", "too-long"));
         });
         Task validTask = Task.Run(() =>
         {
             barrier.SignalAndWait();
-            valid = coordinator.Submit(new ConsoleInputCommand("p1", "valid", "ok"));
+            valid = coordinator.SubmitCurrent(new ConsoleInputAttempt("valid", "ok"));
         });
         barrier.SignalAndWait();
         await Task.WhenAll(invalidTask, validTask);
@@ -133,7 +151,7 @@ public sealed class InputCoordinatorTests
             new[]
             {
                 ConsoleInputResultKind.InvalidFormat,
-                ConsoleInputResultKind.StalePrompt
+                ConsoleInputResultKind.NoActivePrompt
             });
         if (invalid.Kind == ConsoleInputResultKind.InvalidFormat)
         {

@@ -81,7 +81,7 @@ export class RealtimeConnectionManager {
     if (!subscription || epoch === null || epoch === undefined || this.phase !== "ready") return null;
     const clientMessageId = input.clientMessageId ?? newClientMessageId();
     const payload: InputPayload = { ...input, clientMessageId };
-    subscription.state = createPendingInput(subscription.state, { promptId: payload.promptId, workerEpoch: epoch, clientMessageId, value: payload.value, source: payload.source, pointer: payload.pointer ?? null, key: payload.key ?? null });
+    subscription.state = createPendingInput(subscription.state, { workerEpoch: epoch, clientMessageId, value: payload.value, source: payload.source, pointer: payload.pointer ?? null, key: payload.key ?? null });
     notify(subscription);
     this.send("session.input", payload, sessionId, epoch);
     return clientMessageId;
@@ -91,7 +91,7 @@ export class RealtimeConnectionManager {
     const subscription = this.subscriptions.get(sessionId);
     const pending = subscription?.state.pendingInput;
     if (!subscription || !pending || pending.status !== "unknown" || this.phase !== "ready") return false;
-    this.send("session.input", { promptId: pending.promptId, clientMessageId: pending.clientMessageId, source: pending.source, value: pending.value, pointer: pending.pointer ?? null, key: pending.key ?? null }, sessionId, pending.workerEpoch);
+    this.send("session.input", { clientMessageId: pending.clientMessageId, source: pending.source, value: pending.value, pointer: pending.pointer ?? null, key: pending.key ?? null }, sessionId, pending.workerEpoch);
     subscription.state = { ...subscription.state, pendingInput: { ...pending, status: "pending" } };
     notify(subscription);
     return true;
@@ -113,7 +113,7 @@ export class RealtimeConnectionManager {
     socket.addEventListener("open", () => {
       if (this.socket !== socket) return;
       this.setPhase("hello_pending");
-      this.send("client.hello", { supportedProtocolVersions: [1], capabilityDigest: CAPABILITY_DIGEST, supportedCapabilities: [...SUPPORTED_CAPABILITIES] });
+      this.send("client.hello", { supportedProtocolVersions: [2], capabilityDigest: CAPABILITY_DIGEST, supportedCapabilities: [...SUPPORTED_CAPABILITIES] });
     });
     socket.addEventListener("message", event => { if (this.socket === socket) this.handleMessage(event.data); });
     socket.addEventListener("error", () => { /* close is the reconnect boundary */ });
@@ -227,7 +227,7 @@ export class RealtimeConnectionManager {
 
   private send(type: string, payload: object, sessionId?: string, workerEpoch?: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
-    const message = { protocolVersion: 1, type, messageId: newMessageId(), ...(sessionId ? { sessionId } : {}), ...(workerEpoch ? { workerEpoch } : {}), payload };
+    const message = { protocolVersion: 2, type, messageId: newMessageId(), ...(sessionId ? { sessionId } : {}), ...(workerEpoch ? { workerEpoch } : {}), payload };
     this.socket.send(JSON.stringify(message));
   }
 

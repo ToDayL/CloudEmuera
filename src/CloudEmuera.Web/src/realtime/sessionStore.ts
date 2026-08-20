@@ -4,7 +4,6 @@ import { applyTransactions, ConsoleReductionError, createEmptyConsoleState } fro
 export type SessionPhase = "idle" | "resuming" | "snapshot_ready" | "live" | "resyncing" | "ended" | "forbidden" | "error";
 export type PendingInputStatus = "pending" | "unknown" | "accepted" | "duplicate" | "rejected" | "stale";
 export interface PendingInput {
-  promptId: string;
   workerEpoch: number;
   clientMessageId: string;
   value: string;
@@ -45,7 +44,7 @@ export function replaceSnapshot(state: SessionStoreState, envelope: { sessionId?
     sequence: payload.snapshotSequence,
     consoleState: payload.consoleState,
     phase: "snapshot_ready",
-    pendingInput: epochChanged ? null : settlePendingForPrompt(state.pendingInput, payload.consoleState.currentPrompt?.promptId ?? null),
+    pendingInput: epochChanged ? null : state.pendingInput,
     lastReceipt: null,
     fatalRenderError: null,
   };
@@ -69,7 +68,7 @@ export function applyBatch(state: SessionStoreState, envelope: { sessionId?: str
   try {
     const reduced = applyTransactions(state.consoleState, payload.transactions, state.sequence);
     if (reduced.sequence !== payload.lastSequence) throw new ConsoleReductionError("sequence_mismatch", "批次末序号不一致。");
-    return { ...state, consoleState: reduced.state, sequence: reduced.sequence, phase: "live", pendingInput: settlePendingForPrompt(state.pendingInput, reduced.state.currentPrompt?.promptId ?? null) };
+    return { ...state, consoleState: reduced.state, sequence: reduced.sequence, phase: "live" };
   } catch {
     return { ...state, phase: "resyncing" };
   }
@@ -85,7 +84,7 @@ export function markForbidden(state: SessionStoreState): SessionStoreState {
 }
 
 export function createPendingInput(state: SessionStoreState, input: Omit<PendingInput, "fingerprint" | "status">): SessionStoreState {
-  const fingerprint = `${input.promptId}\u0000${input.workerEpoch}\u0000${input.source}\u0000${input.value}`;
+  const fingerprint = `${input.workerEpoch}\u0000${input.source}\u0000${input.value}`;
   return { ...state, pendingInput: { ...input, fingerprint, status: "pending" } };
 }
 
@@ -93,11 +92,14 @@ export function markInputUnknown(state: SessionStoreState): SessionStoreState {
   return state.pendingInput ? { ...state, pendingInput: { ...state.pendingInput, status: "unknown" } } : state;
 }
 
-export function applyInputReceipt(state: SessionStoreState, receipt: InputResultPayload): SessionStoreState {
+export function applyInputReceipt(state: SessionStoreState, envelope: { workerEpoch?: number }, receipt: InputResultPayload): SessionStoreState {
   const pending = state.pendingInput;
-  if (!pending || pending.clientMessageId !== receipt.clientMessageId || pending.promptId !== receipt.promptId) return { ...state, lastReceipt: receipt };
+  // A receipt is meaningful only for the exact Worker epoch that accepted the
+  // browser attempt. A delayed old-epoch receipt must not mutate a replacement
+  // session view or its pending input.
+  if (!pending || pending.workerEpoch !== envelope.workerEpoch || pending.clientMessageId !== receipt.clientMessageId) return state;
   const accepted = receipt.status === "ACCEPTED" || receipt.status === "DUPLICATE";
-  const stale = receipt.status === "STALE_PROMPT" || receipt.status === "NO_ACTIVE_PROMPT" || receipt.status === "STALE_EPOCH";
+  const stale = receipt.status === "NO_ACTIVE_PROMPT" || receipt.status === "STALE_EPOCH";
   return { ...state, pendingInput: { ...pending, status: accepted ? receipt.status === "ACCEPTED" ? "accepted" : "duplicate" : stale ? "stale" : "rejected", receipt }, lastReceipt: receipt };
 }
 
@@ -105,17 +107,12 @@ export function handleServerMessage(state: SessionStoreState, message: RealtimeS
   switch (message.type) {
     case "session.snapshot": return replaceSnapshot(state, message, message.payload);
     case "display.batch": return applyBatch(state, message, message.payload);
-    case "session.input.result": return applyInputReceipt(state, message.payload);
+    case "session.input.result": return applyInputReceipt(state, message, message.payload);
     case "resync.required": return markResync(state, message.payload.reason);
     case "session.stream.ended": return markEnded(state);
     case "protocol.error": return message.payload.code === "AUTHENTICATION_EXPIRED" ? markForbidden(state) : { ...state, phase: "error", fatalRenderError: message.payload.message };
     default: return state;
   }
-}
-
-function settlePendingForPrompt(pending: PendingInput | null, promptId: string | null): PendingInput | null {
-  if (!pending) return null;
-  return pending.promptId === promptId ? pending : { ...pending, status: "stale" };
 }
 
 function assertSession(state: SessionStoreState, sessionId?: string): void {

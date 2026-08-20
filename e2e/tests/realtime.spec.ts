@@ -47,19 +47,19 @@ test("authenticated browser can complete the realtime v1 hello handshake", async
   const hello = await page.evaluate(() => new Promise<{ type: string; protocolVersion: number }>((resolve, reject) => {
     const socket = new WebSocket(
       `${window.location.origin.replace(/^http/, "ws")}/api/v1/realtime`,
-      "cloudemuera.realtime.v1");
+      "cloudemuera.realtime.v2");
     const timeout = window.setTimeout(() => {
       socket.close();
       reject(new Error("realtime hello timed out"));
     }, 10_000);
 
     socket.onopen = () => socket.send(JSON.stringify({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "client.hello",
       messageId: "msg_e2e_realtime_hello",
       payload: {
-        supportedProtocolVersions: [1],
-          capabilityDigest: "57cd67c6b3eaa0a3dcb47ac793a5df543157b2cdebd51dc775bd7ac2c0e29985",
+        supportedProtocolVersions: [2],
+          capabilityDigest: "7f0003c99e6f86f383b6cb018a894338bead34c502ab9a71a87d8eb2e9e2c86e",
         supportedCapabilities: [],
       },
     }));
@@ -76,5 +76,5 @@ test("authenticated browser can complete the realtime v1 hello handshake", async
     };
   }));
 
-  expect(hello).toMatchObject({ type: "server.hello", protocolVersion: 1 });
+  expect(hello).toMatchObject({ type: "server.hello", protocolVersion: 2 });
 });

@@ -1,8 +1,12 @@
 # ADR-0021：冻结 Realtime WebSocket v1 与输入回执边界
 
-状态：Accepted
+状态：输入协议部分已被 ADR-0025 取代
 
 日期：2026-08-14
+
+替代说明（2026-08-20）：本 ADR 的 Snapshot、鉴权、连接预算和 Session command gate 决定继续有效；
+浏览器提交 `promptId`、Realtime v1 和 IPC v3 的输入回执边界已由 ADR-0025 的当前输入槽、Realtime v2 与
+IPC v4 取代。不得将以下历史输入细节作为当前实现规范。
 
 关联：AUTH-001/002/003/005、SESS-003/004/006/007/010/011、PLAY-004～008、PLAY-010～012、
 OPS-002/004、SEC-004/006/009、NFR-001/007/008/010/013、AC-002/005/006/012、ADR-0003、

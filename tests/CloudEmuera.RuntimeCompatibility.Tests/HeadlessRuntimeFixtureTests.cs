@@ -248,11 +248,11 @@ public sealed class HeadlessRuntimeFixtureTests
         prompts.Add(askM.InputType);
         Assert.Equal(
             ConsoleInputResultKind.InvalidFormat,
-            console.SubmitInput(new ConsoleInputCommand(askM.PromptId, "empty", string.Empty)).Kind);
+            console.SubmitCurrentInput(new ConsoleInputAttempt("empty", string.Empty)).Kind);
         Assert.Equal(askM.PromptId, console.CurrentPrompt!.PromptId);
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            console.SubmitInput(new ConsoleInputCommand(askM.PromptId, "choice", "2")).Kind);
+            console.SubmitCurrentInput(new ConsoleInputAttempt("choice", "2")).Kind);
 
         // 2) The kojo PRINTFORMW opens a wait-for-any-key (EnterKey) prompt.
         Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
@@ -261,7 +261,7 @@ public sealed class HeadlessRuntimeFixtureTests
         prompts.Add(printFormW.InputType);
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            console.SubmitInput(new ConsoleInputCommand(printFormW.PromptId, "continue", string.Empty)).Kind);
+            console.SubmitCurrentInput(new ConsoleInputAttempt("continue", string.Empty)).Kind);
 
         // 3) The movement command ends and the next INPUT (menu) opens.
         Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
@@ -270,7 +270,7 @@ public sealed class HeadlessRuntimeFixtureTests
         prompts.Add(menu.InputType);
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            console.SubmitInput(new ConsoleInputCommand(menu.PromptId, "menu", "7")).Kind);
+            console.SubmitCurrentInput(new ConsoleInputAttempt("menu", "7")).Kind);
 
         Assert.True(SpinWait.SpinUntil(() => run.IsCompleted, TimeSpan.FromSeconds(2)));
         EmueraRuntimeResult finalResult = await run;
@@ -324,7 +324,7 @@ public sealed class HeadlessRuntimeFixtureTests
             prompts.Add(current.InputType);
             Assert.Equal(
                 ConsoleInputResultKind.Accepted,
-                console.SubmitInput(new ConsoleInputCommand(current.PromptId, $"driver-{i}", "7")).Kind);
+                console.SubmitCurrentInput(new ConsoleInputAttempt($"driver-{i}", "7")).Kind);
             SpinWait.SpinUntil(() => run.IsCompleted || console.CurrentPrompt?.PromptId != current.PromptId, TimeSpan.FromMilliseconds(300));
         }
         Assert.True(SpinWait.SpinUntil(() => run.IsCompleted, TimeSpan.FromSeconds(2)));
@@ -1074,6 +1074,7 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal("sha256-map", sprite.MappingAssetId?.Value);
 
         headless.deleteLine(1);
+        headless.RefreshStrings(false);
         Assert.Single(console.Snapshot.Scrollback);
         Assert.Equal("temporary", Assert.IsType<TextNode>(Assert.Single(console.Snapshot.Scrollback[0].Nodes)).Text);
     }
@@ -1196,7 +1197,7 @@ public sealed class HeadlessRuntimeFixtureTests
     [Fact]
     [Trait("Category", "TimedInput")]
     [Trait("Category", "RuntimeBridge")]
-    public async Task StaleInputAfterAnimatedClearlineDoesNotAbortRuntime()
+    public async Task CurrentSlotInputAfterAnimatedClearlineDoesNotAbortRuntime()
     {
         using var fixture = RuntimeHostFixture.Create(
             "@SYSTEM_TITLE\n" +
@@ -1218,8 +1219,8 @@ public sealed class HeadlessRuntimeFixtureTests
             TimeSpan.FromSeconds(2)));
 
         Assert.Equal(
-            ConsoleInputResultKind.StalePrompt,
-            fixture.Console.SubmitInput(new ConsoleInputCommand(stalePromptId, "late-animation-input", "1")).Kind);
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("late-animation-input", "1")).Kind);
 
         EmueraRuntimeResult result = await run;
         Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
@@ -1247,7 +1248,7 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(TimeSpan.FromMilliseconds(500), prompt.Timeout.GetValueOrDefault());
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            fixture.Console.SubmitInput(new ConsoleInputCommand(prompt.PromptId, "twait-input", string.Empty)).Kind);
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("twait-input", string.Empty)).Kind);
 
         EmueraRuntimeResult result = await run;
         Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
@@ -1279,7 +1280,7 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(TimeSpan.FromMilliseconds(50), prompt.Timeout.GetValueOrDefault());
         Assert.Equal(
             ConsoleInputResultKind.InvalidFormat,
-            fixture.Console.SubmitInput(new ConsoleInputCommand(prompt.PromptId, "twait-forced", string.Empty)).Kind);
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("twait-forced", string.Empty)).Kind);
         Assert.Equal(prompt.PromptId, fixture.Console.CurrentPrompt!.PromptId);
 
         EmueraRuntimeResult result = await run;
@@ -1326,8 +1327,8 @@ public sealed class HeadlessRuntimeFixtureTests
         Task<EmueraRuntimeResult> runtime = host.RunAsync();
         Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
         ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
-        Assert.Equal(ConsoleInputResultKind.Accepted, fixture.Console.SubmitInput(
-            new ConsoleInputCommand(prompt.PromptId, "rich-client", "7")).Kind);
+        Assert.Equal(ConsoleInputResultKind.Accepted, fixture.Console.SubmitCurrentInput(
+            new ConsoleInputAttempt("rich-client", "7")).Kind);
         EmueraRuntimeResult result = await runtime;
 
         Assert.True(
@@ -1762,7 +1763,7 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(ConsoleInputType.Text, prompt.InputType);
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            fixture.Console.SubmitInput(new ConsoleInputCommand(prompt.PromptId, "text-message", "001 text")).Kind);
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("text-message", "001 text")).Kind);
 
         Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
         Assert.Equal("TEXT=001 text", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes));
@@ -1830,9 +1831,7 @@ public sealed class HeadlessRuntimeFixtureTests
         ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
-            fixture.Console.SubmitInput(new ConsoleInputCommand(
-                prompt.PromptId,
-                "empty-button-message",
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("empty-button-message",
                 button.Value,
                 ConsoleInputSource.Button)).Kind);
 
@@ -2255,8 +2254,8 @@ public sealed class HeadlessRuntimeFixtureTests
         Task<EmueraRuntimeResult> run = host.RunAsync();
         Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
         ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(console.CurrentPrompt);
-        Assert.Equal(ConsoleInputResultKind.Accepted, console.SubmitInput(
-            new ConsoleInputCommand(prompt.PromptId, $"isolation-{input}", input)).Kind);
+        Assert.Equal(ConsoleInputResultKind.Accepted, console.SubmitCurrentInput(
+            new ConsoleInputAttempt($"isolation-{input}", input)).Kind);
         Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
         return RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes);
     }

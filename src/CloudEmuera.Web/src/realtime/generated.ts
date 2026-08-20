@@ -1,6 +1,6 @@
-/* GENERATED CONTRACT SNAPSHOT — source: realtime-v1.schema.json. */
-export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v1.schema.json" as const;
-export const REALTIME_PROTOCOL_VERSION = 1 as const;
+/* GENERATED CONTRACT SNAPSHOT — source: realtime-v2.schema.json. */
+export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v2.schema.json" as const;
+export const REALTIME_PROTOCOL_VERSION = 2 as const;
 export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-11" as const;
 export const REALTIME_MESSAGE_TYPES = ["client.hello","server.hello","connection.ping","connection.pong","session.resume","session.resume.result","session.unsubscribe","session.snapshot","display.batch","resync.required","session.stream.ended","session.input","session.input.result","protocol.error"] as const;
 
@@ -13,7 +13,7 @@ export interface ClientHelloPayload {
 }
 
 export interface ServerHelloPayload {
-  protocolVersion: 1;
+  protocolVersion: 2;
   payloadSchemaVersion: "p1-11";
   connectionId: string;
   serverNowUnixMilliseconds: number;
@@ -69,7 +69,6 @@ export interface StreamEndedPayload {
 }
 
 export interface InputPayload {
-  promptId: string;
   clientMessageId: string;
   source: "KEYBOARD" | "BUTTON" | "POINTER";
   value: string;
@@ -92,10 +91,10 @@ export interface InputKey {
 }
 
 export interface InputResultPayload {
-  promptId: string;
   clientMessageId: string;
-  status: "ACCEPTED" | "DUPLICATE" | "CONFLICT" | "STALE_PROMPT" | "NO_ACTIVE_PROMPT" | "INVALID_FORMAT" | "INVALID_COMMAND" | "CANCELLED" | "TIMED_OUT" | "SESSION_NOT_ACCEPTING_INPUT" | "STALE_EPOCH" | "SESSION_NOT_RUNNING" | "INPUT_BACKPRESSURE" | "WORKER_UNAVAILABLE" | "FORBIDDEN";
+  status: "ACCEPTED" | "DUPLICATE" | "CONFLICT" | "NO_ACTIVE_PROMPT" | "INVALID_FORMAT" | "INVALID_COMMAND" | "SESSION_NOT_ACCEPTING_INPUT" | "STALE_EPOCH" | "SESSION_NOT_RUNNING" | "INPUT_BACKPRESSURE" | "WORKER_UNAVAILABLE" | "FORBIDDEN";
   reasonCode: string;
+  resolvedPromptId: string | null;
   normalizedValue?: string | null;
 }
 
@@ -495,12 +494,12 @@ export type RealtimeOperation = AppendNodesOperation | ClearOperation | OpenProm
 
 export type InputSource = "KEYBOARD" | "BUTTON" | "POINTER";
 export type ResumeStatus = "ACCEPTED" | "CAPABILITY_MISMATCH" | "SESSION_NOT_FOUND" | "SESSION_NOT_RUNNING" | "SNAPSHOT_NOT_READY" | "SUBSCRIPTION_LIMIT_EXCEEDED";
-export type InputResultStatus = "ACCEPTED" | "DUPLICATE" | "CONFLICT" | "STALE_PROMPT" | "NO_ACTIVE_PROMPT" | "INVALID_FORMAT" | "INVALID_COMMAND" | "CANCELLED" | "TIMED_OUT" | "SESSION_NOT_ACCEPTING_INPUT" | "STALE_EPOCH" | "SESSION_NOT_RUNNING" | "INPUT_BACKPRESSURE" | "WORKER_UNAVAILABLE" | "FORBIDDEN";
+export type InputResultStatus = "ACCEPTED" | "DUPLICATE" | "CONFLICT" | "NO_ACTIVE_PROMPT" | "INVALID_FORMAT" | "INVALID_COMMAND" | "SESSION_NOT_ACCEPTING_INPUT" | "STALE_EPOCH" | "SESSION_NOT_RUNNING" | "INPUT_BACKPRESSURE" | "WORKER_UNAVAILABLE" | "FORBIDDEN";
 export type ShapeKind = "rectangle" | "ellipse" | "line" | "polygon" | "space";
 export type InputType = "enterKey" | "anyKey" | "integer" | "text" | "anyValue" | "integerButton" | "textButton" | "primitivePointerKey" | "waitOnly";
 
 export interface RealtimeEnvelope<TType extends string, TPayload> {
-  protocolVersion: 1;
+  protocolVersion: 2;
   type: TType;
   messageId: string;
   correlationId?: string;

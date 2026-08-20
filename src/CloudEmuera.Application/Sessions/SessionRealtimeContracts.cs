@@ -22,7 +22,6 @@ public sealed record SessionKeyInput(int KeyCode, bool Control, bool Alt, bool S
 public sealed record SessionInputCommand(
     string SessionId,
     ulong WorkerEpoch,
-    string PromptId,
     string ClientMessageId,
     string Value,
     SessionInputSource Source,
@@ -38,7 +37,6 @@ public static class SessionInputResultCodes
     public const string Accepted = "accepted";
     public const string Duplicate = "duplicate";
     public const string Conflict = "conflict";
-    public const string StalePrompt = "stale_prompt";
     public const string NoActivePrompt = "no_active_prompt";
     public const string InvalidFormat = "invalid_format";
     public const string InvalidCommand = "invalid_command";
@@ -53,7 +51,7 @@ public static class SessionInputResultCodes
 }
 
 public sealed record SessionInputResult(
-    string PromptId,
+    string? ResolvedPromptId,
     string ClientMessageId,
     string Status,
     string ReasonCode,

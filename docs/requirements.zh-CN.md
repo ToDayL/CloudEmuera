@@ -158,11 +158,11 @@ Session 1 ── 1 私有 SessionRoot
 - **PLAY-004**：每个输出事件必须包含 Session 内单调递增的 `sequence`。
 - **PLAY-005**：Worker 必须维护一个有界 ConsoleSnapshot；实时批次只需保留到已发送或被更新的快照替代，不要求保存可供历史补发的增量窗口。
 - **PLAY-006**：重连必须以当前 `(workerEpoch, snapshotSequence)` 的完整 ConsoleSnapshot 作为新基线，再接收后续实时批次；不要求按客户端 ack 补发历史增量。
-- **PLAY-007**：每个输入请求必须具有唯一 `promptId`，客户端输入必须包含唯一 `clientMessageId`。
-- **PLAY-008**：Worker 必须拒绝过期 `promptId` 和旧 epoch 输入，并在当前 Worker 的有界内存窗口内对重复 `clientMessageId` 返回原结果或明确重复响应；不要求跨 Worker 重启持久去重。
+- **PLAY-007**：Worker 为每个内部输入请求生成唯一 `promptId`，用于显示、超时和内部终态关联；客户端输入必须包含唯一 `clientMessageId` 和当前 `workerEpoch`，不得把内部 `promptId` 作为提交前置条件。
+- **PLAY-008**：Worker 必须在单一输入临界区把客户端输入尝试投递给到达时的当前内部 prompt；没有当前 prompt 时立即返回 `NO_ACTIVE_PROMPT` 并丢弃，不得缓存到未来 prompt。Worker 必须拒绝旧 epoch，并在当前 Worker 的有界内存窗口内对重复 `clientMessageId` 返回首次结果或对异值复用返回 `CONFLICT`；不要求跨 Worker 重启持久去重。
 - **PLAY-009**：桌面端必须支持键盘、鼠标和滚动；移动端必须支持触摸按钮、软键盘、视口变化和安全区域。
 - **PLAY-010**：显示历史必须有可配置上限。超过上限时应压缩为最新快照并丢弃不可见的早期增量，不能无限增长 Worker 内存。
-- **PLAY-011**：同一用户可以同时从多个客户端查看同一 Session；每个 `promptId` 只接受第一个有效输入，不提供独立的客户端控制权租约。
+- **PLAY-011**：同一用户可以同时从多个客户端查看同一 Session；每个当前 Runtime prompt 至多接受一个在线性化点先到的有效输入，不提供独立的客户端控制权租约。
 - **PLAY-012**：API 或浏览器消费速度不足时必须使用批处理、背压或快照降级，不能无限堆积消息。
 
 ### 6.5 存档管理
@@ -336,7 +336,7 @@ SessionRoot，不重新复制 Game current content，也不恢复崩溃前的解
 
 ```json
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "sessionId": "sess_123",
   "workerEpoch": 4,
   "sequence": 1052,
@@ -363,10 +363,10 @@ SessionRoot，不重新复制 Game current content，也不恢复崩溃前的解
 Worker/API 必须返回当前 epoch 下序号为 `N` 的完整 ConsoleSnapshot，并把它作为新的显示基线，再
 推送序号大于 `N` 的实时批次。MVP 不按 `lastSequence` 或 ack 补发断线期间的历史增量。
 
-P1-09 将该请求封装在 `GET /api/v1/realtime` 的原生 WebSocket v1 envelope 中，协商子协议
-`cloudemuera.realtime.v1`。每次 `session.resume` 都重新检查登录态、Session 授权和当前 Worker binding，
+当前协议将该请求封装在 `GET /api/v1/realtime` 的原生 WebSocket v2 envelope 中，协商子协议
+`cloudemuera.realtime.v2`。每次 `session.resume` 都重新检查登录态、Session 授权和当前 Worker binding，
 并以 `session.snapshot` 作为该连接该 epoch 的首个显示帧；Hub 尚未取得首个 Snapshot 时先保留有界订阅，
-待 Worker 首个 display batch 到达后发送；兼容旧 peer 的 `SNAPSHOT_NOT_READY`，客户端退避后重试；连接、订阅和 Snapshot 不写入 SQLite。协议接收
+待 Worker 首个 display batch 到达后发送；v2 客户端收到 `SNAPSHOT_NOT_READY` 后退避重试；连接、订阅和 Snapshot 不写入 SQLite。协议接收
 缓冲、控制队列、pending input、订阅数和最终 UTF-8 消息均有消息数/字节数硬上限，溢出只影响当前连接。
 
 ### 10.3 输入请求
@@ -376,19 +376,20 @@ P1-09 将该请求封装在 `GET /api/v1/realtime` 的原生 WebSocket v1 envelo
   "type": "session.input",
   "sessionId": "sess_123",
   "workerEpoch": 4,
-  "promptId": "prompt_88",
   "clientMessageId": "01JXYZ...",
   "value": "0"
 }
 ```
 
-服务器必须对输入返回接受、重复、过期提示、无控制权或非法格式中的一种确定结果。
+服务器必须对输入返回接受、重复、无当前输入槽、无控制权或非法格式中的一种确定结果。
 
-正式 v1 输入 envelope 必须同时携带 `workerEpoch`、`promptId`、`clientMessageId`、`source` 和 `value`；
-浏览器只能使用 `KEYBOARD`、`BUTTON`、`POINTER`，不得发送 Runtime 内部的 `SYSTEM`。同一 Worker 内
-相同 `clientMessageId` 和 payload 重试返回 `DUPLICATE` 及原规范化值，异值复用返回 `CONFLICT`；API
-不复制或持久化去重结果，Worker 仍是 prompt、格式、timeout 和首个有效输入的最终裁决者。输入与 close
-共享 Session command gate，`BeginStopping` 先线性化后不得把新输入写入 Worker。
+正式 v2 输入 envelope 必须同时携带 `workerEpoch`、`clientMessageId`、`source` 和 `value`，不得携带
+内部 `promptId`；浏览器只能使用 `KEYBOARD`、`BUTTON`、`POINTER`，不得发送 Runtime 内部的 `SYSTEM`。
+Worker 在收到时的单一输入临界区读取当前 prompt；没有 prompt 则返回 `NO_ACTIVE_PROMPT` 并立即丢弃。
+同一 Worker 内相同 `clientMessageId` 和 payload 重试返回首次结果及原规范化值，异值复用返回
+`CONFLICT`；API 不复制或持久化去重结果，Worker 仍是 prompt、格式、timeout 和首个有效输入的最终裁决者。
+输入与 close 共享 Session command gate，`BeginStopping` 先线性化后不得把新输入写入 Worker。v1 和带
+`promptId` 的旧输入不是受支持协议，必须拒绝而不能静默接受或改写。
 
 ## 11. 数据与存储设计
 
@@ -485,7 +486,7 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 | Worker 崩溃 | Session 标记 CRASHED；原样保留 SessionRoot；确认旧 Worker 退出后可重新开启同一 Session 并从原生存档继续，不承诺指令级恢复 |
 | Docker 容器或宿主机重启 | 活动 Worker 按故障处理；挂载数据目录中的 Game 内容、workspace 与 SessionRoot 保留，恢复后可重新开启同一 Session |
 | 挂载数据目录不可用 | 禁止新建 Session 和写入存档，并明确报告持久化故障 |
-| 客户端重复输入 | 通过 promptId 和 clientMessageId 去重 |
+| 客户端重复输入 | 通过当前 Worker 内的 clientMessageId 和无 prompt 的输入 fingerprint 去重 |
 | 旧 Worker 恢复连接 | 因 epoch 落后被 fencing，不能继续产生有效状态 |
 
 ## 15. MVP 验收场景

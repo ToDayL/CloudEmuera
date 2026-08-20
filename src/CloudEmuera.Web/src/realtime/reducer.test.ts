@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RealtimeLine, RealtimeNode, RealtimeOperation, RealtimeTransaction } from "./protocol";
 import { applyTransaction, applyTransactions, ConsoleReductionError, createEmptyConsoleState } from "./reducer";
-import { applyBatch, createPendingInput, createSessionStoreState, replaceSnapshot } from "./sessionStore";
+import { applyBatch, applyInputReceipt, createPendingInput, createSessionStoreState, replaceSnapshot } from "./sessionStore";
 import reducerFixture from "./fixtures/reducer-v1.json";
 
 const style = { decorations: [], fontFamily: "game-default", fontSize: 16, lineHeight: 20, foreground: null, background: null };
@@ -82,7 +82,7 @@ describe("realtime reducer", () => {
 
     let state = createSessionStoreState("s1");
     state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 0 }, { workerEpoch: 4, snapshotSequence: 0, consoleState: initial });
-    state = createPendingInput(state, { promptId: "p1", workerEpoch: 4, clientMessageId: "client-1", value: "yes", source: "KEYBOARD" });
+    state = createPendingInput(state, { workerEpoch: 4, clientMessageId: "client-1", value: "yes", source: "KEYBOARD" });
     state = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 2 }, { workerEpoch: 4, firstSequence: 1, lastSequence: 2, transactions: [transaction(1, [{ type: "appendNodes", nodes: [text("one")] }]), transaction(2, [{ type: "appendNodes", nodes: [text("two")] }])] });
     expect(state.sequence).toBe(2);
     const duplicate = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 2 }, { workerEpoch: 4, firstSequence: 1, lastSequence: 2, transactions: [transaction(1, [{ type: "appendNodes", nodes: [text("duplicate")] }]), transaction(2, [{ type: "appendNodes", nodes: [text("duplicate")] }])] });
@@ -107,5 +107,28 @@ describe("realtime reducer", () => {
     const overlapping = applyBatch(state, { sessionId: "s1", workerEpoch: 1, sequence: 3 }, { workerEpoch: 1, firstSequence: 2, lastSequence: 3, transactions: [transaction(2, [{ type: "appendNodes", nodes: [text("replayed")] }]), transaction(3, [{ type: "appendNodes", nodes: [text("three")] }])] });
     expect(overlapping.phase).toBe("resyncing");
     expect(overlapping.sequence).toBe(2);
+  });
+
+  it("keeps a pending input across prompt snapshots and settles it only by its exact epoch and client ID", () => {
+    const initial = createEmptyConsoleState();
+    let state = replaceSnapshot(createSessionStoreState("s1"), { sessionId: "s1", workerEpoch: 4, sequence: 0 }, {
+      workerEpoch: 4,
+      snapshotSequence: 0,
+      consoleState: { ...initial, currentPrompt: { promptId: "prompt-old", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null } },
+    });
+    state = createPendingInput(state, { workerEpoch: 4, clientMessageId: "client-1", value: "answer", source: "KEYBOARD" });
+    state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 1 }, {
+      workerEpoch: 4,
+      snapshotSequence: 1,
+      consoleState: { ...initial, currentPrompt: { promptId: "prompt-new", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null } },
+    });
+    expect(state.pendingInput?.status).toBe("pending");
+
+    const receipt = { clientMessageId: "client-1", status: "ACCEPTED" as const, reasonCode: "accepted", resolvedPromptId: "prompt-new", normalizedValue: "answer" };
+    expect(applyInputReceipt(state, { workerEpoch: 3 }, receipt)).toBe(state);
+
+    state = applyInputReceipt(state, { workerEpoch: 4 }, receipt);
+    expect(state.pendingInput?.status).toBe("accepted");
+    expect(state.pendingInput?.receipt?.resolvedPromptId).toBe("prompt-new");
   });
 });

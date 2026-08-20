@@ -1,26 +1,24 @@
 namespace CloudEmuera.RuntimeAdapter;
 
-/// <summary>Client input scoped to exactly one prompt.</summary>
+/// <summary>
+/// A client input intention submitted to whichever prompt owns the input slot
+/// when the Worker receives it.
+/// </summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1720", Justification = "Pointer payload is part of the stable structured input contract.")]
-public sealed class ConsoleInputCommand
+public sealed class ConsoleInputAttempt
 {
-    public ConsoleInputCommand(string promptId, string clientMessageId, string value)
-        : this(promptId, clientMessageId, value, ConsoleInputSource.Keyboard)
+    public ConsoleInputAttempt(string clientMessageId, string value)
+        : this(clientMessageId, value, ConsoleInputSource.Keyboard)
     {
     }
 
-    public ConsoleInputCommand(
-        string promptId,
+    public ConsoleInputAttempt(
         string clientMessageId,
         string value,
         ConsoleInputSource source,
         ConsolePointerPayload? pointer = null,
         ConsoleKeyPayload? key = null)
     {
-        ConsoleContractValidation.ValidateIdentifier(
-            promptId,
-            nameof(promptId),
-            ConsoleContractLimits.Default.MaxPromptIdLength);
         ConsoleContractValidation.ValidateIdentifier(
             clientMessageId,
             nameof(clientMessageId),
@@ -32,21 +30,19 @@ public sealed class ConsoleInputCommand
             ConsoleContractViolationReason.InputValueTooLong,
             allowControlCharacters: true);
 
-        PromptId = promptId;
-        ClientMessageId = clientMessageId;
-        Value = value;
         if (source is < ConsoleInputSource.None or > ConsoleInputSource.All || source == ConsoleInputSource.None)
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Input source is invalid.");
         if (pointer is not null && !source.HasFlag(ConsoleInputSource.Pointer))
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Pointer payload requires the pointer source.");
         if (key is not null && !source.HasFlag(ConsoleInputSource.Keyboard))
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Key payload requires the keyboard source.");
+
+        ClientMessageId = clientMessageId;
+        Value = value;
         Source = source;
         Pointer = pointer;
         Key = key;
     }
-
-    public string PromptId { get; }
 
     public string ClientMessageId { get; }
 
@@ -58,5 +54,18 @@ public sealed class ConsoleInputCommand
 
     public ConsoleKeyPayload? Key { get; }
 
-    public string Fingerprint => $"{PromptId.Length}:{PromptId}|{Value.Length}:{Value}|{Source}|{Pointer?.Position.X}:{Pointer?.Position.Y}:{Pointer?.Button}|{Key?.KeyCode}:{Key?.Control}:{Key?.Alt}:{Key?.Shift}";
+    /// <summary>
+    /// Stable length-delimited encoding for a single Worker epoch receipt.
+    /// Internal prompt identity intentionally never participates in it.
+    /// </summary>
+    public string Fingerprint =>
+        $"v:{Value.Length}:{Value}|s:{(int)Source}|p:{FormatPointer(Pointer)}|k:{FormatKey(Key)}";
+
+    private static string FormatPointer(ConsolePointerPayload? pointer) => pointer is null
+        ? "-"
+        : $"{pointer.Position.X}:{pointer.Position.Y}:{pointer.Button}:{pointer.Pressed}";
+
+    private static string FormatKey(ConsoleKeyPayload? key) => key is null
+        ? "-"
+        : $"{key.KeyCode}:{key.Control}:{key.Alt}:{key.Shift}";
 }
