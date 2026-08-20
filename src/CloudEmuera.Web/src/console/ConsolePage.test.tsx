@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { consoleSurfaceStyle, effectiveConsoleWidth, isBlankConsoleSurfaceTarget } from "./ConsolePage";
+import { consoleSurfaceStyle, consoleViewportStyle, effectiveConsoleWidth, isBlankConsoleSurfaceTarget, isCurrentPromptEvent } from "./ConsolePage";
 
 describe("console surface click filtering", () => {
   it("accepts non-control output areas and ignores buttons and form controls", () => {
@@ -29,5 +29,31 @@ describe("console surface background", () => {
     expect(consoleSurfaceStyle(null, 640, 390)).toEqual({ width: "390px", maxWidth: "100%" });
     expect(effectiveConsoleWidth(1000, 390)).toBe(390);
     expect(effectiveConsoleWidth(390, 1024)).toBe(390);
+  });
+});
+
+describe("console prompt event fencing", () => {
+  it("rejects events captured from a previous animated prompt", () => {
+    expect(isCurrentPromptEvent("prompt-new", "prompt-new")).toBe(true);
+    expect(isCurrentPromptEvent("prompt-old", "prompt-new")).toBe(false);
+    expect(isCurrentPromptEvent("prompt-old", null)).toBe(false);
+  });
+});
+
+describe("console visual viewport", () => {
+  it("uses the visible viewport dimensions after the soft keyboard resizes it", () => {
+    expect(consoleViewportStyle(612, 0)).toEqual({
+      "--console-visual-viewport-height": "612px",
+      "--console-visual-viewport-offset-top": "0px",
+    });
+    expect(consoleViewportStyle(612.4, 24.6)).toEqual({
+      "--console-visual-viewport-height": "612px",
+      "--console-visual-viewport-offset-top": "25px",
+    });
+  });
+
+  it("falls back to the dynamic viewport CSS unit when the browser reports no usable height", () => {
+    expect(consoleViewportStyle(0)).toEqual({});
+    expect(consoleViewportStyle(Number.NaN)).toEqual({});
   });
 });

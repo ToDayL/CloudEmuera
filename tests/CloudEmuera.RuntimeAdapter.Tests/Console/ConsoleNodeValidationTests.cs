@@ -48,6 +48,53 @@ public sealed class ConsoleNodeValidationTests
     }
 
     [Fact]
+    public void ButtonLabelsAllowTheDefaultLineBudgetButRejectLargerLabels()
+    {
+        // PLAY-002/PLAY-005: a button's flat label may contain one complete
+        // line budget of styled segments, while the aggregate output remains bounded.
+        ConsoleNode[] atLimit = Enumerable.Range(0, ConsoleContractLimits.Default.MaxButtonLabelNodeCount)
+            .Select(_ => (ConsoleNode)new TextNode("x"))
+            .ToArray();
+
+        var button = new ButtonNode(atLimit, "choice");
+
+        Assert.Equal(ConsoleContractLimits.Default.MaxButtonLabelNodeCount, button.Children.Count);
+        ConsoleContractException exception = Assert.Throws<ConsoleContractException>(() =>
+            new ButtonNode(atLimit.Append(new TextNode("x")), "choice"));
+        Assert.Equal(ConsoleContractViolationReason.TooManyButtonLabelNodes, exception.Reason);
+    }
+
+    [Fact]
+    public void ButtonValuesAndPresentationTextUseTheInputTextBudget()
+    {
+        // PLAY-002/PLAY-007: original Emuera accepts arbitrary string button
+        // values. The structured representation keeps a bounded value that is
+        // still large enough for every legal text input payload.
+        string atLimit = new('x', ConsoleContractLimits.Default.MaxInputValueLength);
+
+        var button = new ButtonNode([new TextNode("choice")], atLimit, tooltip: atLimit);
+        var image = new ImageNode("asset", altText: atLimit);
+
+        Assert.Equal(atLimit, button.Value);
+        Assert.Equal(atLimit, button.Tooltip);
+        Assert.Equal(atLimit, image.AltText);
+    }
+
+    [Fact]
+    public void NestedPresentationNodesUseTheIpcDepthBudget()
+    {
+        ConsoleNode withinLimit = CreateNestedDivs(ConsoleContractLimits.Default.MaxNodeDepth - 1);
+        ConsoleNode overLimit = CreateNestedDivs(ConsoleContractLimits.Default.MaxNodeDepth);
+
+        var store = new ConsoleStateStore();
+        store.Apply(new AppendNodesOperation([withinLimit]));
+
+        ConsoleContractException exception = Assert.Throws<ConsoleContractException>(() =>
+            store.Apply(new AppendNodesOperation([overLimit])));
+        Assert.Equal(ConsoleContractViolationReason.NodeTooDeep, exception.Reason);
+    }
+
+    [Fact]
     public void EmptyButtonValuesRemainValidEmueraInput()
     {
         var button = new ButtonNode("Unchanged", string.Empty);
@@ -70,5 +117,13 @@ public sealed class ConsoleNodeValidationTests
 
         var text = Assert.IsType<TextNode>(Assert.Single(store.Snapshot.VisibleNodes));
         Assert.Equal("before", text.Text);
+    }
+
+    private static ConsoleNode CreateNestedDivs(int count)
+    {
+        ConsoleNode node = new TextNode("x");
+        for (int index = 0; index < count; index++)
+            node = new DivNode([node], new ConsoleRect(0, 0, 1, 1));
+        return node;
     }
 }

@@ -410,80 +410,249 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                     continue;
                 string name = fields[0].Trim().ToUpperInvariant();
                 string filename = fields[1].Trim();
+                if (name.Length == 0 || filename.Length == 0)
+                    continue;
                 if (filename.Equals("ANIME", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (currentAnimationName is not null && result[currentAnimationName].AnimationFrames.Length == 0)
-                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an animated Sprite without frames.");
                     if (fields.Length < 4 || !TryInt(fields[2], out int animeWidth) || !TryInt(fields[3], out int animeHeight) ||
                         animeWidth <= 0 || animeHeight <= 0 || animeWidth > 8_192 || animeHeight > 8_192)
-                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid animated Sprite declaration.");
+                    {
+                        AddDiagnostic(
+                            "runtime_warning",
+                            EmueraRuntimePhase.Loading,
+                            $"{spriteCsv.LogicalPath} contains an invalid animated Sprite declaration; skipping it.",
+                            fatal: false,
+                            sourcePath: spriteCsv.LogicalPath);
+                        currentAnimationName = null;
+                        continue;
+                    }
                     if (!result.TryAdd(name, new SpriteDefinition(
                         name, string.Empty, null, 0, 0, animeWidth, animeHeight, 0, 0, animeWidth, animeHeight, [])))
-                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains a duplicate Sprite name.");
+                    {
+                        AddDiagnostic(
+                            "runtime_warning",
+                            EmueraRuntimePhase.Loading,
+                            $"{spriteCsv.LogicalPath} contains a duplicate Sprite name '{name}'; keeping the first definition.",
+                            fatal: false,
+                            sourcePath: spriteCsv.LogicalPath);
+                        currentAnimationName = null;
+                        continue;
+                    }
                     currentAnimationName = name;
                     continue;
                 }
-                if (name.Length == 0 || filename.Length == 0)
+                if (filename.IndexOf('.') < 0)
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} references a Sprite resource without a file extension; skipping it.",
+                        fatal: false,
+                        sourcePath: spriteCsv.LogicalPath);
                     continue;
+                }
 
                 RuntimeFilePath imagePath = new(RuntimeFileArea.GameContent, directory + filename);
-                RuntimeImageMetadata metadata = options.ImagePort.Load(imagePath, cancellationToken);
+                RuntimeImageMetadata metadata;
+                try
+                {
+                    metadata = options.ImagePort.Load(imagePath, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or RuntimeFileAccessException)
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} failed to load Sprite resource '{filename}'; skipping it: {SafeMessage(exception)}",
+                        fatal: false,
+                        sourcePath: imagePath.LogicalPath);
+                    continue;
+                }
                 int x = 0;
                 int y = 0;
                 int width = metadata.Width;
                 int height = metadata.Height;
-                if (fields.Length >= 6 &&
-                    (!TryInt(fields[2], out x) || !TryInt(fields[3], out y) ||
-                     !TryInt(fields[4], out width) || !TryInt(fields[5], out height)))
-                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite rectangle.");
-                if (width <= 0 || height <= 0 || x < 0 || y < 0 || x >= metadata.Width || y >= metadata.Height)
-                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an out-of-bounds Sprite rectangle.");
+                if (fields.Length >= 6)
+                {
+                    int parsedX = 0;
+                    int parsedY = 0;
+                    int parsedWidth = metadata.Width;
+                    int parsedHeight = metadata.Height;
+                    if (TryInt(fields[2], out parsedX) && TryInt(fields[3], out parsedY) &&
+                        TryInt(fields[4], out parsedWidth) && TryInt(fields[5], out parsedHeight))
+                    {
+                        x = parsedX;
+                        y = parsedY;
+                        width = parsedWidth;
+                        height = parsedHeight;
+                    }
+                    else
+                    {
+                        AddDiagnostic(
+                            "runtime_warning",
+                            EmueraRuntimePhase.Loading,
+                            $"{spriteCsv.LogicalPath} contains an invalid Sprite rectangle; using the full image as the source rectangle.",
+                            fatal: false,
+                            sourcePath: spriteCsv.LogicalPath);
+                    }
+                }
+                if (width <= 0 || height <= 0)
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} contains an out-of-bounds Sprite rectangle; skipping this Sprite.",
+                        fatal: false,
+                        sourcePath: spriteCsv.LogicalPath);
+                    continue;
+                }
 
                 int requestedWidth = width;
                 int requestedHeight = height;
+                int offsetX = 0;
+                int offsetY = 0;
+                if (fields.Length >= 8)
+                {
+                    int parsedOffsetX = 0;
+                    int parsedOffsetY = 0;
+                    if (TryInt(fields[6], out parsedOffsetX) && TryInt(fields[7], out parsedOffsetY))
+                    {
+                        offsetX = parsedOffsetX;
+                        offsetY = parsedOffsetY;
+                    }
+                    else
+                    {
+                        AddDiagnostic(
+                            "runtime_warning",
+                            EmueraRuntimePhase.Loading,
+                            $"{spriteCsv.LogicalPath} contains an invalid Sprite offset; using (0,0).",
+                            fatal: false,
+                            sourcePath: spriteCsv.LogicalPath);
+                    }
+                }
                 long requestedRight = (long)x + requestedWidth;
                 long requestedBottom = (long)y + requestedHeight;
-                int sourceWidthAfterClip = checked((int)(Math.Min((long)metadata.Width, requestedRight) - x));
-                int sourceHeightAfterClip = checked((int)(Math.Min((long)metadata.Height, requestedBottom) - y));
+                int clippedX = Math.Max(0, x);
+                int clippedY = Math.Max(0, y);
+                long sourceClipRight = Math.Min((long)metadata.Width, requestedRight);
+                long sourceClipBottom = Math.Min((long)metadata.Height, requestedBottom);
+                int sourceWidthAfterClip = checked((int)(sourceClipRight - clippedX));
+                int sourceHeightAfterClip = checked((int)(sourceClipBottom - clippedY));
                 if (sourceWidthAfterClip <= 0 || sourceHeightAfterClip <= 0)
-                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an out-of-bounds Sprite rectangle.");
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} contains an out-of-bounds Sprite rectangle; skipping this Sprite.",
+                        fatal: false,
+                        sourcePath: spriteCsv.LogicalPath);
+                    continue;
+                }
                 if (sourceWidthAfterClip != requestedWidth || sourceHeightAfterClip != requestedHeight)
                 {
                     AddDiagnostic(
                         "runtime_warning",
                         EmueraRuntimePhase.Loading,
-                        $"{spriteCsv.LogicalPath} Sprite rectangle ({x},{y},{requestedWidth},{requestedHeight}) was clipped to ({x},{y},{sourceWidthAfterClip},{sourceHeightAfterClip}) to fit the image.",
+                        $"{spriteCsv.LogicalPath} Sprite rectangle ({x},{y},{requestedWidth},{requestedHeight}) was clipped to ({clippedX},{clippedY},{sourceWidthAfterClip},{sourceHeightAfterClip}) to fit the image.",
                         fatal: false,
                         sourcePath: spriteCsv.LogicalPath);
+                    offsetX = checked(offsetX + clippedX - x);
+                    offsetY = checked(offsetY + clippedY - y);
+                    x = clippedX;
+                    y = clippedY;
                     width = sourceWidthAfterClip;
                     height = sourceHeightAfterClip;
                 }
 
-                int offsetX = 0;
-                int offsetY = 0;
-                if (fields.Length >= 8 && (!TryInt(fields[6], out offsetX) || !TryInt(fields[7], out offsetY)))
-                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite offset.");
                 int destinationWidth = requestedWidth;
                 int destinationHeight = requestedHeight;
-                if (fields.Length >= 11 && (!TryInt(fields[9], out destinationWidth) || !TryInt(fields[10], out destinationHeight)))
-                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid Sprite destination size.");
+                if (fields.Length >= 11)
+                {
+                    int parsedDestinationWidth = destinationWidth;
+                    int parsedDestinationHeight = destinationHeight;
+                    if (TryInt(fields[9], out parsedDestinationWidth) && TryInt(fields[10], out parsedDestinationHeight))
+                    {
+                        destinationWidth = parsedDestinationWidth;
+                        destinationHeight = parsedDestinationHeight;
+                    }
+                    else
+                    {
+                        AddDiagnostic(
+                            "runtime_warning",
+                            EmueraRuntimePhase.Loading,
+                            $"{spriteCsv.LogicalPath} contains an invalid Sprite destination size; using the source size.",
+                            fatal: false,
+                            sourcePath: spriteCsv.LogicalPath);
+                    }
+                }
                 if (destinationWidth <= 0 || destinationHeight <= 0)
-                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains a non-positive Sprite destination size.");
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} contains a non-positive Sprite destination size; skipping this Sprite.",
+                        fatal: false,
+                        sourcePath: spriteCsv.LogicalPath);
+                    continue;
+                }
 
                 if (currentAnimationName is not null && name.Equals(currentAnimationName, StringComparison.OrdinalIgnoreCase))
                 {
                     int delay = 1_000;
-                    if (fields.Length >= 9 && (!TryInt(fields[8], out delay) || delay <= 0))
-                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an invalid animated Sprite delay.");
+                    if (fields.Length >= 9)
+                    {
+                        int parsedDelay = delay;
+                        if (TryInt(fields[8], out parsedDelay))
+                            delay = parsedDelay;
+                        else
+                        {
+                            AddDiagnostic(
+                                "runtime_warning",
+                                EmueraRuntimePhase.Loading,
+                                $"{spriteCsv.LogicalPath} contains an invalid animated Sprite delay; using 1000 ms.",
+                                fatal: false,
+                                sourcePath: spriteCsv.LogicalPath);
+                        }
+                    }
+                    if (delay <= 0)
+                    {
+                        AddDiagnostic(
+                            "runtime_warning",
+                            EmueraRuntimePhase.Loading,
+                            $"{spriteCsv.LogicalPath} contains a non-positive animated Sprite delay; skipping this frame.",
+                            fatal: false,
+                            sourcePath: spriteCsv.LogicalPath);
+                        continue;
+                    }
                     SpriteDefinition animation = result[currentAnimationName];
                     if (animation.AnimationFrames.Length >= ConsoleContractLimits.Default.MaxSpriteFrames)
-                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains too many animated Sprite frames.");
+                    {
+                        AddDiagnostic(
+                            "runtime_warning",
+                            EmueraRuntimePhase.Loading,
+                            $"{spriteCsv.LogicalPath} contains more than {ConsoleContractLimits.Default.MaxSpriteFrames} animated Sprite frames; skipping additional frames.",
+                            fatal: false,
+                            sourcePath: spriteCsv.LogicalPath);
+                        continue;
+                    }
                     int clippedLeft = Math.Max(0, offsetX);
                     int clippedTop = Math.Max(0, offsetY);
                     int clippedRight = Math.Min(animation.DestinationWidth, checked(offsetX + width));
                     int clippedBottom = Math.Min(animation.DestinationHeight, checked(offsetY + height));
                     if (clippedRight <= clippedLeft || clippedBottom <= clippedTop)
-                        throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an animated Sprite frame outside its canvas.");
+                    {
+                        AddDiagnostic(
+                            "runtime_warning",
+                            EmueraRuntimePhase.Loading,
+                            $"{spriteCsv.LogicalPath} contains an animated Sprite frame outside its canvas; skipping the frame.",
+                            fatal: false,
+                            sourcePath: spriteCsv.LogicalPath);
+                        continue;
+                    }
                     int clippedSourceX = checked(x + clippedLeft - offsetX);
                     int clippedSourceY = checked(y + clippedTop - offsetY);
                     int clippedWidth = clippedRight - clippedLeft;
@@ -504,7 +673,14 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 }
 
                 if (currentAnimationName is not null && result[currentAnimationName].AnimationFrames.Length == 0)
-                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an animated Sprite without frames.");
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} contains an animated Sprite without frames.",
+                        fatal: false,
+                        sourcePath: spriteCsv.LogicalPath);
+                }
                 currentAnimationName = null;
 
                 if (!result.TryAdd(name, new SpriteDefinition(
@@ -520,10 +696,24 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                     destinationWidth,
                     destinationHeight,
                     [])))
-                    throw new InvalidDataException($"{spriteCsv.LogicalPath} contains a duplicate Sprite name.");
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} contains a duplicate Sprite name '{name}'; keeping the first definition.",
+                        fatal: false,
+                        sourcePath: spriteCsv.LogicalPath);
+                }
             }
             if (currentAnimationName is not null && result[currentAnimationName].AnimationFrames.Length == 0)
-                throw new InvalidDataException($"{spriteCsv.LogicalPath} contains an animated Sprite without frames.");
+            {
+                AddDiagnostic(
+                    "runtime_warning",
+                    EmueraRuntimePhase.Loading,
+                    $"{spriteCsv.LogicalPath} contains an animated Sprite without frames.",
+                    fatal: false,
+                    sourcePath: spriteCsv.LogicalPath);
+            }
         }
 
         return new ReadOnlyDictionary<string, SpriteDefinition>(result);

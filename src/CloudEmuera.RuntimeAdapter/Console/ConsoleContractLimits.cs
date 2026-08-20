@@ -10,19 +10,22 @@ public sealed record ConsoleContractLimits
 
     public int MaxTextLength { get; init; } = 16_384;
 
-    public int MaxTooltipLength { get; init; } = 4_096;
+    public int MaxTooltipLength { get; init; } = 16_384;
 
-    public int MaxButtonValueLength { get; init; } = 256;
+    public int MaxButtonValueLength { get; init; } = 16_384;
 
-    public int MaxAltTextLength { get; init; } = 1_024;
+    public int MaxAltTextLength { get; init; } = 16_384;
 
     public int MaxAssetIdLength { get; init; } = 128;
 
     public int MaxBatchNodeCount { get; init; } = 512;
 
-    public int MaxButtonLabelNodeCount { get; init; } = 16;
+    // A button label is a flat presentation list. Keep it aligned with the
+    // per-line and per-batch node budgets so style transitions in a valid
+    // Emuera button cannot fail before the aggregate limits apply.
+    public int MaxButtonLabelNodeCount { get; init; } = 512;
 
-    public int MaxNodeDepth { get; init; } = 8;
+    public int MaxNodeDepth { get; init; } = 16;
 
     public int MaxImageWidth { get; init; } = 8_192;
 
@@ -47,9 +50,9 @@ public sealed record ConsoleContractLimits
 
     public int MaxClientMessageIdLength { get; init; } = 128;
 
-    public int MaxPromptTextLength { get; init; } = 4_096;
+    public int MaxPromptTextLength { get; init; } = 16_384;
 
-    public int MaxPromptDefaultValueLength { get; init; } = 4_096;
+    public int MaxPromptDefaultValueLength { get; init; } = 16_384;
 
     public int MaxInputValueLength { get; init; } = 16_384;
 

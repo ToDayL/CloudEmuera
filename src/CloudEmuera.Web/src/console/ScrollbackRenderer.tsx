@@ -109,12 +109,12 @@ export function NodeRenderer({ node, currentPrompt, currentButtonGeneration, ass
     case "lineBreak": return <br />;
     case "button": {
       if (!node.enabled && node.value.length === 0) {
-        return <span className="console-nonbutton" title={node.tooltip ?? undefined}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</span>;
+        return <span className="console-nonbutton" style={positionStyle(node.positionX)} title={node.tooltip ?? undefined}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</span>;
       }
       const isCurrentFrame = isCurrentFrameButton(node, currentPrompt, currentButtonGeneration);
       const parts = splitButtonLabel(node.children);
       const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
-      const buttonStyle: CSSProperties = node.positionX === undefined ? {} : { marginLeft: `${node.positionX}px` };
+      const buttonStyle: CSSProperties = interactivePositionStyle(node.positionX);
       return <Fragment>
         {renderChildren(parts.leading, "leading")}
         <button className={`console-choice ${isCurrentFrame ? "" : "is-stale"}`} style={buttonStyle} type="button" disabled={!isCurrentFrame} title={node.tooltip ?? (!isCurrentFrame && node.enabled ? "上一帧选项已失效" : undefined)} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>
@@ -135,6 +135,18 @@ export function NodeRenderer({ node, currentPrompt, currentButtonGeneration, ass
       ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} currentPrompt={currentPrompt} currentButtonGeneration={currentButtonGeneration} assets={assets} onInput={onInput} onRenderError={onRenderError} />)
       : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
+}
+
+function positionStyle(positionX: number | null | undefined): CSSProperties {
+  return positionX === null || positionX === undefined
+    ? {}
+    : { position: "absolute", left: `${positionX}px`, top: 0 };
+}
+
+function interactivePositionStyle(positionX: number | null | undefined): CSSProperties {
+  return positionX === null || positionX === undefined
+    ? {}
+    : { position: "relative", left: `${positionX}px` };
 }
 
 function isCurrentFrameButton(node: Extract<RealtimeNode, { type: "button" }>, prompt: Prompt | null | undefined, currentGeneration: number): boolean {

@@ -17,6 +17,49 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-20 — Reuse structured line identity for immediate CLEARLINE reprints
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` defers a single-line delete until
+  the next output is known. An immediate reprint uses `ReplaceLine` with the
+  original line ID; a delete with no replacement is still emitted before the
+  next input wait or full console clear.
+- Purpose: the game's 30 ms portrait loop uses `CLEARLINE 1` followed by
+  `REPRINT_SHOP_ANIME`. Keeping the line identity lets the browser update the
+  existing Sprite/Canvas nodes instead of unmounting and remounting the whole
+  animated line each frame.
+- Scope: GAME-007/COMP-002 structured-console rendering compatibility.
+- Verification: `HeadlessConsoleReusesLineIdentityForClearAndImmediateReprint`
+  plus the RuntimeCompatibility suite in the dev Docker environment.
+
+## 2026-08-20 — Preserve layered HTML image positioning and timed-input defaults
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` keeps `TINPUT`/`TINPUTS` default
+  values as timeout results instead of exposing them as prefilled browser text;
+  timeout dispatch still returns the original numeric or string default.
+- The Web console projects HTML `pos` nodes to the same absolute x coordinate
+  used by desktop Emuera, allowing layered portrait parts to composite instead
+  of flowing side by side. Non-interactive portrait layers are pointer-transparent;
+  interactive `pos` buttons remain in document flow. Sprite animation redraws
+  only when the frame changes, uses a decoded-image cache across reprinted lines,
+  and keeps the last frame visible while a replacement asset loads.
+- Scope: GAME-007/COMP-002 visual and timed-input compatibility.
+- Verification: RuntimeCompatibility timed-input regression and Web console
+  rendering/typecheck/build checks pass in dev Docker.
+
+## 2026-08-20 — Preserve upstream optional Sprite CSV fallbacks
+
+- Headless glue: `Headless/EmueraRuntimeHost.cs` now matches upstream
+  `AppContents.CreateFromCsv` for optional Sprite rectangle, offset, delay and
+  destination fields. Non-numeric optional values produce bounded non-fatal
+  `runtime_warning` diagnostics and retain upstream defaults; invalid numeric
+  rectangles skip only the affected Sprite instead of failing runtime
+  initialization.
+- Scope: GAME-007/COMP-002 resource compatibility. The parser remains the
+  pinned upstream implementation; this change corrects the headless structured
+  Sprite adapter's fallback behavior.
+- Verification: `HeadlessRuntimeFixtureTests.StaticSpriteCsvKeepsUpstreamFallbackForMalformedOptionalRectangles`
+  and the existing Sprite clipping test pass in the dev Docker environment.
+
 ## 2026-08-19 — Preserve TWAIT's single effective request in headless mode
 
 - Modified upstream file: `Upstream/Emuera/Runtime/Script/Statements/Instraction.Child.cs`.
@@ -317,3 +360,32 @@ requirements/ADR references, and verification commands.
   `PrintButtonAllowsEmptyStringSubmissionValue`, and
   `EastAsianWidthConversionWorksWithoutWindowsStrConv` exercise the real
   pinned interpreter through the headless host.
+
+## 2026-08-20 — Sprite resource warning compatibility
+
+- `Headless/EmueraRuntimeHost.cs` now follows the pinned upstream
+  `AppContents.CreateFromCsv` policy for malformed Sprite resources: missing or
+  unreadable images, invalid optional fields, duplicate names, invalid
+  animation declarations, empty animations, out-of-canvas frames, and excess
+  frames produce bounded non-fatal `runtime_warning` diagnostics and are
+  skipped or defaulted as appropriate. The structured console frame limit is
+  retained as a safety boundary.
+- Source rectangles are clipped to the image while preserving the requested
+  destination size, including partially out-of-bounds legacy declarations.
+- Verification: `HeadlessRuntimeFixtureTests.SpriteLoadWarningsDoNotRejectTheWholeGame`,
+  `RuntimeCompatibility.Tests` (83 passed), and the existing malformed
+  rectangle regression test.
+
+## 2026-08-20 — Headless CHKFONT private-font fallback
+
+- Modified upstream file:
+  `Upstream/Emuera/Runtime/Script/Statements/Function/Creator.Method.cs`.
+  The headless runtime deliberately leaves `GlobalStatic.Pfc` uninitialized to
+  avoid loading desktop private font files. `CHKFONT` and the related graphics
+  font lookup now treat that optional collection as empty instead of dereferencing
+  it.
+- Scope: COMP-002. `CHKFONT` continues to query installed system fonts, while a
+  font available only through the unsupported private-font path returns `0`, as
+  an unavailable font would on desktop.
+- Verification:
+  `HeadlessRuntimeFixtureTests.CheckfontTreatsUnavailablePrivateFontsAsNotInstalled`.

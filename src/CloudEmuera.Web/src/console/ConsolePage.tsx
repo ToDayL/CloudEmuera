@@ -36,9 +36,11 @@ export function ConsolePage() {
   const [fontLoadFailed, setFontLoadFailed] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [screenWidth, setScreenWidth] = useState(() => typeof window === "undefined" ? 0 : window.innerWidth);
+  const [visualViewport, setVisualViewport] = useState(() => currentVisualViewport());
   const session = useSession(sessionId);
   const gameConsoleRef = useRef<HTMLElement>(null);
   const promptControllerRef = useRef<PromptControllerHandle>(null);
+  const currentPromptIdRef = useRef<string | null>(null);
   const endedSessionRef = useRef<string | null>(null);
   const manifest = useQuery({
     queryKey: ["presentation-manifest", sessionId],
@@ -48,12 +50,17 @@ export function ConsolePage() {
     retry: 1,
   });
   useEffect(() => {
-    const update = () => setScreenWidth(window.innerWidth);
+    const update = () => {
+      setScreenWidth(window.innerWidth);
+      setVisualViewport(currentVisualViewport());
+    };
     window.addEventListener("resize", update);
     window.visualViewport?.addEventListener("resize", update);
+    window.visualViewport?.addEventListener("scroll", update);
     return () => {
       window.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("resize", update);
+      window.visualViewport?.removeEventListener("scroll", update);
     };
   }, []);
   const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", manifest.data), [manifest.data, sessionId]);
@@ -115,6 +122,7 @@ export function ConsolePage() {
   const input = useCallback((event: ConsoleInputEvent) => {
     if (!sessionId || !stream.consoleState?.currentPrompt) return;
     const prompt = stream.consoleState.currentPrompt;
+    if (!isCurrentPromptEvent(prompt.promptId, currentPromptIdRef.current)) return;
     const allowedSource = event.source === "KEYBOARD" ? "keyboard" : event.source === "BUTTON" ? "button" : "pointer";
     if (prompt.inputType === "waitOnly" || !prompt.allowedSources.includes(allowedSource)) return;
     if (event.source === "BUTTON" && !["enterKey", "integer", "text", "anyValue", "integerButton", "textButton"].includes(prompt.inputType)) return;
@@ -130,7 +138,6 @@ export function ConsolePage() {
     if (!isBlankConsoleSurfaceTarget(event.target)) return;
     promptControllerRef.current?.submitBlankEnter();
   }, []);
-
   const close = async () => {
     if (!sessionId || !session.data || closing) return;
     if (!window.confirm(`关闭「${session.data.name}」？Worker 会停止，但 SessionRoot 和原生存档会保留。`)) return;
@@ -149,9 +156,10 @@ export function ConsolePage() {
   if (session.isError || !session.data) return <div className="console-error" role="alert"><h1>Session 不可用</h1><p>{session.error instanceof Error ? session.error.message : "资源不存在或你没有访问权限。"}</p><Link className="secondary-button" to="/sessions">返回 Session</Link></div>;
 
   const state = stream.consoleState;
+  currentPromptIdRef.current = state?.currentPrompt?.promptId ?? null;
   const terminalSession = session.data.state === "CLOSED" || session.data.state === "CRASHED";
   const fatal = stream.fatalRenderError ?? rendererError ?? (manifest.isError ? "Presentation manifest 无法加载，已停止渲染资源。" : null);
-  return <div className="console-page realtime-console">
+  return <div className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
     <div className="console-overlay-actions">
       <Link className="console-overlay-back" to="/sessions" aria-label="离开游戏">←</Link>
       <span className={`connection-chip ${connectionPhase === "ready" && networkOnline ? "is-online" : ""}`} role="status" aria-live="polite"><span className={connectionPhase === "ready" && networkOnline ? "online" : "offline"}/>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</span>
@@ -184,6 +192,10 @@ export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean
   return target instanceof Element && !target.closest("button, a, input, select, textarea, [role=\"button\"]");
 }
 
+export function isCurrentPromptEvent(promptId: string, currentPromptId: string | null): boolean {
+  return promptId.length > 0 && promptId === currentPromptId;
+}
+
 export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, screenWidth?: number, fontSize?: number, lineHeight?: number): CSSProperties {
   const width = effectiveConsoleWidth(viewportWidth, screenWidth);
   return {
@@ -198,6 +210,24 @@ export function effectiveConsoleWidth(runtimeWidth?: number, screenWidth?: numbe
   if (!runtimeWidth || runtimeWidth <= 0) return 0;
   if (!screenWidth || screenWidth <= 0) return runtimeWidth;
   return Math.min(runtimeWidth, screenWidth);
+}
+
+export function consoleViewportStyle(height: number, offsetTop = 0): CSSProperties {
+  if (!Number.isFinite(height) || height <= 0) return {};
+  const safeOffsetTop = Number.isFinite(offsetTop) ? Math.max(0, offsetTop) : 0;
+  return {
+    "--console-visual-viewport-height": `${Math.round(height)}px`,
+    "--console-visual-viewport-offset-top": `${Math.round(safeOffsetTop)}px`,
+  } as CSSProperties;
+}
+
+function currentVisualViewport(): { height: number; offsetTop: number } {
+  if (typeof window === "undefined") return { height: 0, offsetTop: 0 };
+  const viewport = window.visualViewport;
+  return {
+    height: viewport?.height ?? window.innerHeight,
+    offsetTop: viewport?.offsetTop ?? 0,
+  };
 }
 
 function presentationManifestUrlPath(sessionId: string): string {

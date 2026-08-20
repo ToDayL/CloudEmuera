@@ -111,6 +111,7 @@ public static class StructuredIpcLimits
     public const int MaxTransactions = 512;
     public const int MaxOperationsPerTransaction = 128;
     public const int MaxNodes = 8_192;
+    public const int MaxButtonLabelNodes = 512;
     public const int MaxScrollbackLines = 4_096;
     public const int MaxSceneItems = 2_048;
     public const int MaxHtmlDepth = 16;
@@ -371,7 +372,7 @@ public static class StructuredIpcValidator
             ConsoleNode.KindOneofCase.Text => IsText(node.Text.Text) && node.Text.Style is not null && ValidateStyle(node.Text.Style),
             ConsoleNode.KindOneofCase.LineBreak => true,
             ConsoleNode.KindOneofCase.Button => IsText(node.Button.Value) && node.Button.Label.Count > 0 &&
-                node.Button.Label.Count <= 16 && ValidateChildNodes(node.Button.Label, ref nodeCount, depth + 1) &&
+                node.Button.Label.Count <= StructuredIpcLimits.MaxButtonLabelNodes && ValidateChildNodes(node.Button.Label, ref nodeCount, depth + 1) &&
                 IsText(node.Button.Tooltip) && node.Button.Generation >= 0 &&
                 (!node.Button.HasPositionX || node.Button.PositionX is >= -1_000_000 and <= 1_000_000),
             ConsoleNode.KindOneofCase.Image => IsAsset(node.Image.AssetId) &&

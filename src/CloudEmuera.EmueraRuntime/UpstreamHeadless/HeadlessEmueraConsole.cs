@@ -44,6 +44,10 @@ internal sealed class EmueraConsole
     private long logicalLineCount;
     private long deletedLines;
     private string? lastLineId;
+    // CLEARLINE 1 is commonly followed immediately by a reprint for
+    // animation. Keep the physical line identity until that replacement is
+    // available so the browser can update its existing Canvas nodes.
+    private string? deferredReplacementLineId;
     private bool lastLineCanAppend;
     private bool lastLineTemporary;
     private string? htmlIslandDrawableId;
@@ -206,6 +210,7 @@ internal sealed class EmueraConsole
     public void ClearText()
     {
         FlushPendingLine();
+        FlushDeferredReplacementDelete();
         EmitStructured(ConsoleOperation.ClearConsole());
         lastLineId = null;
         lastLineCanAppend = false;
@@ -222,6 +227,14 @@ internal sealed class EmueraConsole
             .ToArray();
         if (ids.Length == 0)
             return;
+        if (count == 1 && ids.Length == 1)
+        {
+            deferredReplacementLineId = ids[0];
+            lastLineId = ids[0];
+            lastLineCanAppend = false;
+            lastLineTemporary = structured.Snapshot.Scrollback[^1].Temporary;
+            return;
+        }
         try
         {
             EmitStructured(ConsoleOperation.DeleteLines(ids));
@@ -363,20 +376,28 @@ internal sealed class EmueraConsole
     {
         isTimeOut = false;
         FlushPendingLine();
+        FlushDeferredReplacementDelete();
         ConsoleInputType type = MapInputType(request.InputType);
-        string defaultValue = request.HasDefValue
+        // TINPUT's default is a timeout/result value, not text prefilled in
+        // the desktop input box. Keep it hidden while the timer is active and
+        // apply it after the adapter reports a timeout below.
+        bool timedInput = request.Timelimit > 0;
+        string defaultValue = request.HasDefValue && !timedInput
             ? type is ConsoleInputType.Integer or ConsoleInputType.IntegerButton
                 ? request.DefIntValue.ToString(CultureInfo.InvariantCulture)
                 : request.DefStrValue
             : null;
         TimeSpan? timeout = request.Timelimit > 0 ? TimeSpan.FromMilliseconds(request.Timelimit) : null;
         ConsolePromptTimeoutAction timeoutAction = request.HasDefValue
-            ? ConsolePromptTimeoutAction.ReturnDefaultValue
+            ? timedInput ? ConsolePromptTimeoutAction.ContinueWithoutValue : ConsolePromptTimeoutAction.ReturnDefaultValue
             : ConsolePromptTimeoutAction.ContinueWithoutValue;
         var prompt = new ConsolePrompt(
             type,
             defaultValue: defaultValue,
             timeout: timeout,
+            timeoutBehavior: timedInput && request.HasDefValue
+                ? ConsolePromptTimeoutBehavior.ContinueWithoutValue
+                : request.HasDefValue ? ConsolePromptTimeoutBehavior.ReturnDefaultValue : ConsolePromptTimeoutBehavior.ContinueWithoutValue,
             timeoutAction: timeoutAction,
             oneInput: request.OneInput,
             systemInput: request.IsSystemInput,
@@ -403,6 +424,17 @@ internal sealed class EmueraConsole
             {
                 EmitLine(request.TimeUpMes, temporary: false);
             }
+        }
+
+        if (isTimeOut && request.HasDefValue)
+        {
+            if (type is ConsoleInputType.Text or ConsoleInputType.TextButton)
+                GlobalStatic.Process.InputString(request.DefStrValue ?? string.Empty);
+            else if (request.IsSystemInput)
+                GlobalStatic.Process.InputSystemInteger(request.DefIntValue);
+            else
+                GlobalStatic.Process.InputInteger(request.DefIntValue);
+            return;
         }
 
         if (type is ConsoleInputType.Integer or ConsoleInputType.IntegerButton)
@@ -881,16 +913,33 @@ internal sealed class EmueraConsole
             }
             else
             {
-                string id = $"emuera-line-{checked(++lineId):x}";
-                EmitStructured(ConsoleOperation.AppendLine(new ConsoleLine(
+                string id = deferredReplacementLineId ?? $"emuera-line-{checked(++lineId):x}";
+                ConsoleLine replacement = new(
                     id,
                     projectedNodes,
                     line.Alignment ?? ToAlignment(),
                     temporary,
-                    line.NoWrap)));
+                    line.NoWrap);
+                bool replaced = false;
+                if (deferredReplacementLineId is not null)
+                {
+                    bool canReplace = adapter is StructuredGameConsole replacementConsole &&
+                        replacementConsole.Snapshot.Scrollback.Any(existing => string.Equals(existing.LineId, id, StringComparison.Ordinal));
+                    if (canReplace)
+                    {
+                        EmitStructured(ConsoleOperation.ReplaceLine(replacement));
+                        replaced = true;
+                    }
+                    else
+                        EmitStructured(ConsoleOperation.AppendLine(replacement));
+                    deferredReplacementLineId = null;
+                }
+                else
+                    EmitStructured(ConsoleOperation.AppendLine(replacement));
                 lastLineId = id;
                 lastLineTemporary = temporary;
-                logicalLineCount = checked(logicalLineCount + 1);
+                if (!replaced)
+                    logicalLineCount = checked(logicalLineCount + 1);
                 DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
             }
 
@@ -902,6 +951,24 @@ internal sealed class EmueraConsole
         pendingLineAlignment = null;
         pendingLineNoWrap = false;
         pendingLineEnd = true;
+    }
+
+    private void FlushDeferredReplacementDelete()
+    {
+        if (deferredReplacementLineId is null || adapter is not StructuredGameConsole structured)
+            return;
+
+        string lineId = deferredReplacementLineId;
+        deferredReplacementLineId = null;
+        if (!structured.Snapshot.Scrollback.Any(line => string.Equals(line.LineId, lineId, StringComparison.Ordinal)))
+            return;
+
+        EmitStructured(ConsoleOperation.DeleteLines([lineId]));
+        deletedLines = checked(deletedLines + 1);
+        lastLineId = structured.Snapshot.Scrollback.LastOrDefault()?.LineId;
+        lastLineCanAppend = false;
+        lastLineTemporary = structured.Snapshot.Scrollback.LastOrDefault()?.Temporary ?? false;
+        logicalLineCount = Math.Max(0, logicalLineCount - 1);
     }
 
     /// <summary>

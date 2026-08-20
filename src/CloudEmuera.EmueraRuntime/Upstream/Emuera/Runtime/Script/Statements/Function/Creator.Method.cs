@@ -2418,7 +2418,11 @@ internal static partial class FunctionMethodCreator
 					break;
 				}
 			}
-			foreach (FontFamily ff in GlobalStatic.Pfc.Families)
+			// CloudEmuera headless keeps the optional private font collection
+			// uninitialized because it does not load desktop font files. Treat it
+			// as empty so CHKFONT preserves its normal false result instead of
+			// failing every font query with a NullReferenceException.
+			foreach (FontFamily ff in GlobalStatic.Pfc?.Families ?? [])
 			{
 				if (ff.Name == str)
 				{
@@ -5504,7 +5508,7 @@ internal static partial class FunctionMethodCreator
 			try
 			{
 				#region EE_フォントファイル対応
-				foreach (FontFamily ff in GlobalStatic.Pfc.Families)
+				foreach (FontFamily ff in GlobalStatic.Pfc?.Families ?? [])
 				{
 					if (ff.Name == fontname)
 					{

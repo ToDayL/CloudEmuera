@@ -41,7 +41,9 @@ public static class IpcLimits
     public const int MaxTokenLength = 256;
     public const int MaxStringLength = 32 * 1024;
     public const int MaxDisplayOperations = 512;
-    public const int MaxDisplayNodes = 512;
+    public const int MaxDisplayNodes = 8_192;
+    public const int MaxButtonLabelNodes = 512;
+    public const int MaxNodeDepth = 16;
     public const int MaxBootstrapBytes = 16 * 1024;
     public const int MaxProtocolErrorMessageLength = 512;
     public const long MaxHeartbeatResidentBytes = 1L << 50;
@@ -682,7 +684,7 @@ public static class IpcValidator
 
     private static bool ValidateNode(ConsoleNode node, ref int nodeCount, int depth)
     {
-        if (++nodeCount > IpcLimits.MaxDisplayNodes || depth > 8)
+        if (++nodeCount > IpcLimits.MaxDisplayNodes || depth > IpcLimits.MaxNodeDepth)
             return false;
 
         return node.KindCase switch
@@ -693,7 +695,7 @@ public static class IpcValidator
                 node.Image.Width >= 0 && node.Image.Height >= 0 &&
                 node.Image.AltText.Length <= IpcLimits.MaxStringLength,
             ConsoleNode.KindOneofCase.Button => IsText(node.Button.Value) &&
-                node.Button.Label.Count > 0 && node.Button.Label.Count <= 16 &&
+                node.Button.Label.Count > 0 && node.Button.Label.Count <= IpcLimits.MaxButtonLabelNodes &&
                 node.Button.Tooltip.Length <= IpcLimits.MaxStringLength &&
                 node.Button.Label.All(child => child.KindCase == ConsoleNode.KindOneofCase.Text &&
                     child.Text.Text.Length <= IpcLimits.MaxStringLength),

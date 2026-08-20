@@ -365,6 +365,100 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task CheckfontTreatsUnavailablePrivateFontsAsNotInstalled()
+    {
+        // COMP-002: the desktop runtime can populate GlobalStatic.Pfc from
+        // font/. Headless intentionally does not load those GDI font files,
+        // so a normal CHKFONT query must return false rather than crash.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "CHKFONT \"CloudEmuera Test Font\"\n" +
+            "PRINTFORML FONT={RESULT}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Contains(
+            "FONT=0",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task StaticSpriteCsvKeepsUpstreamFallbackForMalformedOptionalRectangles()
+    {
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "v18-core", "resources", "cloudemuera-v18.png");
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINT_IMG \"BROKEN_RECT\"\nPRINT_IMG \"EMPTY_RECT\"\nQUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "fallback.png"));
+                File.WriteAllText(
+                    Path.Combine(resources, "sprites.csv"),
+                    "BROKEN_RECT,fallback.png,3\\600,0,2,2\n" +
+                    "EMPTY_RECT,fallback.png,0,0,,\n");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+        Assert.Equal(2, initialized.Diagnostics.Count(diagnostic =>
+            diagnostic.Code == "runtime_warning" &&
+            diagnostic.Message.Contains("invalid Sprite rectangle", StringComparison.Ordinal)));
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+        SpriteNode[] sprites = fixture.Console.Snapshot.Scrollback
+            .SelectMany(line => line.Nodes)
+            .OfType<SpriteNode>()
+            .ToArray();
+        Assert.Equal(2, sprites.Length);
+        Assert.All(sprites, sprite => Assert.Equal(new ConsoleRect(0, 0, 2, 2), sprite.SourceRect));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task SpriteLoadWarningsDoNotRejectTheWholeGame()
+    {
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "v18-core", "resources", "cloudemuera-v18.png");
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nQUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "valid.png"));
+                File.WriteAllText(
+                    Path.Combine(resources, "sprites.csv"),
+                    "MISSING,missing.png\n" +
+                    "DUP,valid.png\n" +
+                    "DUP,valid.png\n" +
+                    "ANIM,ANIME,2,2\n" +
+                    "ANIM,valid.png,0,0,2,2,10,0,50\n" +
+                    "BROKEN_ANIM,ANIME,2\n");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult result = await host.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.IsFatal);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("failed to load Sprite resource", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("duplicate Sprite name", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("outside its canvas", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("invalid animated Sprite declaration", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     [Trait("Category", "EmueraFeatureMatrix")]
     public async Task HtmlPrintResolvesCsvSpriteAndParagraphAlignment()
     {
@@ -648,6 +742,29 @@ public sealed class HeadlessRuntimeFixtureTests
             line => Assert.Equal(
                 new RuntimeConsoleColor(96, 96, 96),
                 Assert.IsType<TextNode>(Assert.IsType<ButtonNode>(Assert.Single(line.Nodes)).Children.Single()).Style.Foreground));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void AutoButtonizedNumericButtonPreservesLabelsAboveTheLegacyNodeLimit()
+    {
+        // COMP-007: desktop Emuera keeps every styled display segment in an
+        // implicit numeric button. CloudEmuera must not reject valid labels
+        // merely because they cross the former 16-node protocol threshold.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        for (int index = 0; index < 17; index++)
+        {
+            headless.SetStringStyle(index % 2 == 0 ? Color.White : Color.LightGray);
+            headless.Print(index == 0 ? "[1]" : " choice", lineEnd: false);
+        }
+        headless.NewLine();
+
+        ButtonNode button = Assert.IsType<ButtonNode>(Assert.Single(console.Snapshot.Scrollback.Single().Nodes));
+        Assert.Equal("1", button.Value);
+        Assert.Equal(17, button.Children.Count);
     }
 
     [Fact]
@@ -963,6 +1080,28 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void HeadlessConsoleReusesLineIdentityForClearAndImmediateReprint()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        headless.Print("old");
+        headless.NewLine();
+        string lineId = Assert.Single(console.Snapshot.Scrollback).LineId;
+
+        headless.deleteLine(1);
+        headless.Print("new");
+        headless.NewLine();
+
+        ConsoleLine line = Assert.Single(console.Snapshot.Scrollback);
+        Assert.Equal(lineId, line.LineId);
+        Assert.Equal("new", Assert.IsType<TextNode>(Assert.Single(line.Nodes)).Text);
+        Assert.Contains(console.StateStore.TransactionHistory, transaction => transaction.Transaction.Operations.Any(operation => operation is ReplaceLineOperation));
+        Assert.DoesNotContain(console.StateStore.TransactionHistory, transaction => transaction.Transaction.Operations.Any(operation => operation is DeleteLinesOperation));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task PrintCUsesPrintLBoundariesAndPreservesFixedWidthButtonColumns()
     {
         // PLAY-002/COMP-007: PRINTC is a fixed-width field append operation;
@@ -1034,7 +1173,12 @@ public sealed class HeadlessRuntimeFixtureTests
         await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
         Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
 
-        EmueraRuntimeResult result = await host.RunAsync();
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.Null(fixture.Console.CurrentPrompt!.DefaultValue);
+        Assert.Equal(ConsolePromptTimeoutAction.ContinueWithoutValue, fixture.Console.CurrentPrompt.TimeoutAction);
+
+        EmueraRuntimeResult result = await run;
 
         Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
         Assert.Null(fixture.Console.CurrentPrompt);
@@ -1047,6 +1191,39 @@ public sealed class HeadlessRuntimeFixtureTests
             fixture.Console.StateStore.TransactionHistory.SelectMany(item => item.Transaction.Operations)
                 .OfType<ClosePromptOperation>(),
             operation => operation.Reason == ConsolePromptCloseReason.TimedOut);
+    }
+
+    [Fact]
+    [Trait("Category", "TimedInput")]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task StaleInputAfterAnimatedClearlineDoesNotAbortRuntime()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL FRAME-0\n" +
+            "TINPUT 40, 9999, 1, \"TIME-UP\"\n" +
+            "CLEARLINE 1\n" +
+            "PRINTL FRAME-1\n" +
+            "TINPUT 500, 9999, 1, \"TIME-UP\"\n" +
+            "PRINTL DONE\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        string stalePromptId = fixture.Console.CurrentPrompt!.PromptId;
+        Assert.True(SpinWait.SpinUntil(
+            () => fixture.Console.CurrentPrompt is { PromptId: not null } current && current.PromptId != stalePromptId,
+            TimeSpan.FromSeconds(2)));
+
+        Assert.Equal(
+            ConsoleInputResultKind.StalePrompt,
+            fixture.Console.SubmitInput(new ConsoleInputCommand(stalePromptId, "late-animation-input", "1")).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Contains("DONE", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
     }
 
     [Fact]

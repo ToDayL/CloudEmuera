@@ -153,7 +153,24 @@ describe("ScrollbackRenderer", () => {
     expect(div).toBeInTheDocument();
     expect(div.style.position).toBe("absolute");
     expect(div.style.left).toBe("1px");
-    expect(screen.getByRole("button", { name: "Go" }).style.marginLeft).toBe("42px");
+    expect(screen.getByRole("button", { name: "Go" })).toHaveStyle({ position: "relative", left: "42px" });
+  });
+
+  it("places multiple pos layers at one x coordinate so they can composite", () => {
+    const layeredLine: RealtimeLine = {
+      lineId: "layered",
+      nodes: [
+        { type: "button", children: [{ type: "text", text: "back", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], value: "", tooltip: null, enabled: false, generation: 0, positionX: 54 },
+        { type: "button", children: [{ type: "text", text: "front", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], value: "", tooltip: null, enabled: false, generation: 0, positionX: 54 },
+      ],
+      alignment: "left",
+      temporary: false,
+    };
+    render(<ScrollbackRenderer lines={[layeredLine]} assets={assets} onInput={() => undefined} />);
+    expect([...document.querySelectorAll<HTMLElement>(".console-nonbutton")].map(node => [node.style.position, node.style.left])).toEqual([
+      ["absolute", "54px"],
+      ["absolute", "54px"],
+    ]);
   });
 
   it("renders structured upstream island nodes and enables nested current-generation buttons", () => {

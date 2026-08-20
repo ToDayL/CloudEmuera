@@ -127,6 +127,63 @@ public sealed class StructuredIpcContractTests
     }
 
     [Fact]
+    public void ButtonLabelBudgetMatchesTheRuntimeContract()
+    {
+        var button = new W.ButtonNode { Value = "choice", Tooltip = string.Empty, Enabled = true };
+        for (int index = 0; index < StructuredIpcLimits.MaxButtonLabelNodes; index++)
+        {
+            button.Label.Add(new W.ConsoleNode
+            {
+                Text = new W.TextNode
+                {
+                    Text = "x",
+                    Style = new W.TextStyle { FontFamily = "default", FontSize = 16 }
+                }
+            });
+        }
+
+        var envelope = new W.WorkerEnvelope
+        {
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+            MessageId = "button-label-budget",
+            SessionId = Binding.SessionId,
+            WorkerId = Binding.WorkerId,
+            WorkerEpoch = Binding.WorkerEpoch,
+            CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+            DisplayBatch = new W.DisplayBatch
+            {
+                Transactions =
+                {
+                    new W.ConsoleTransaction
+                    {
+                        Sequence = 1,
+                        Operations =
+                        {
+                            new W.ConsoleOperation
+                            {
+                                AppendLine = new W.AppendLine
+                                {
+                                    Line = new W.ConsoleLine
+                                    {
+                                        LineId = "line-button-budget",
+                                        Alignment = W.LineAlignment.Left,
+                                        Nodes = { new W.ConsoleNode { Button = button } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Assert.True(StructuredIpcValidator.ValidateWorkerEnvelope(envelope, true, Binding).IsValid);
+
+        button.Label.Add(button.Label[0]);
+        Assert.Equal(IpcReasonCodes.InvalidEnvelope, StructuredIpcValidator.ValidateWorkerEnvelope(envelope, true, Binding).ReasonCode);
+    }
+
+    [Fact]
     public void RasterDrawableRequiresPngSignatureAtIpcBoundary()
     {
         var raster = new W.RasterDrawable
