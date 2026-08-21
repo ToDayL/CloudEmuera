@@ -7,6 +7,7 @@ using System.Threading.Channels;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Api.Realtime;
+using CloudEmuera.Api.Security;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V5;
 using CloudEmuera.Infrastructure.Persistence;
@@ -740,6 +741,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     private int disposed;
     private int runtimePersistenceReady;
     private int gracefulTerminationObserved;
+    private int forceStopRequested;
     private int heartbeatProcessingCount;
     private bool heartbeatTimeoutClaimed;
 
@@ -799,6 +801,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     public DateTimeOffset LastHeartbeatAt => new(Interlocked.Read(ref lastHeartbeatUtcTicks), TimeSpan.Zero);
     internal bool RuntimePersistenceReady => Volatile.Read(ref runtimePersistenceReady) != 0;
     internal bool GracefulTerminationObserved => Volatile.Read(ref gracefulTerminationObserved) != 0;
+    internal bool ForceStopRequested => Volatile.Read(ref forceStopRequested) != 0;
 
     public Task<int> WaitForExitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) => processExit.Task.WaitAsync(timeout, cancellationToken);
 
@@ -832,7 +835,7 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         }
         catch (OperationCanceledException) when (timeoutCancellation.IsCancellationRequested)
         {
-            throw new TimeoutException($"The Worker did not produce the expected IPC event. exited={HasExited}; diagnostics={ProcessDiagnostics}");
+            throw new TimeoutException($"The Worker did not produce the expected IPC event. exited={HasExited}; diagnostics_present={ProcessDiagnostics.Length > 0}");
         }
     }
 
@@ -1060,6 +1063,8 @@ public sealed class ApiWorkerSession : IAsyncDisposable
     internal async Task StopAsync(string reasonCode, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        if (string.Equals(reasonCode, "admin_force_stopped", StringComparison.Ordinal))
+            Interlocked.Exchange(ref forceStopRequested, 1);
         using var stopCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         stopCancellation.CancelAfter(timeout);
         await commands.Writer.WriteAsync(CreateEnvelope(IpcProtocol.NewMessageId("stop"), new StopWorker
@@ -1474,32 +1479,33 @@ public sealed class ApiWorkerSession : IAsyncDisposable
 
     internal void LogLifecycle(string eventName, string reason = "", LogLevel level = LogLevel.Information)
     {
-        Action<ILogger, string, string, string, ulong, string, Exception?> log = level switch
+        string sanitizedReason = SensitiveLogPolicy.SafeReasonCode(reason);
+        Action<ILogger, string, string, string, string, ulong, string, Exception?> log = level switch
         {
             LogLevel.Warning => LifecycleWarningLog,
             LogLevel.Error or LogLevel.Critical => LifecycleErrorLog,
             _ => LifecycleInfoLog,
         };
-        log(logger, eventName, ControlPlaneInstanceId, Binding.SessionId, Binding.WorkerEpoch, reason, null);
+        log(logger, eventName, ControlPlaneInstanceId, Binding.SessionId, Binding.WorkerId, Binding.WorkerEpoch, sanitizedReason, null);
     }
 
-    private static readonly Action<ILogger, string, string, string, ulong, string, Exception?> LifecycleInfoLog =
-        LoggerMessage.Define<string, string, string, ulong, string>(
+    private static readonly Action<ILogger, string, string, string, string, ulong, string, Exception?> LifecycleInfoLog =
+        LoggerMessage.Define<string, string, string, string, ulong, string>(
             LogLevel.Information,
             new EventId(2102, "WorkerLifecycle"),
-            "worker_event={WorkerEvent} controlPlaneInstanceId={ControlPlaneInstanceId} sessionId={SessionId} workerEpoch={WorkerEpoch} reason={Reason}");
+            "worker_event={WorkerEvent} controlPlaneInstanceId={ControlPlaneInstanceId} sessionId={SessionId} workerId={WorkerId} workerEpoch={WorkerEpoch} reason={Reason}");
 
-    private static readonly Action<ILogger, string, string, string, ulong, string, Exception?> LifecycleWarningLog =
-        LoggerMessage.Define<string, string, string, ulong, string>(
+    private static readonly Action<ILogger, string, string, string, string, ulong, string, Exception?> LifecycleWarningLog =
+        LoggerMessage.Define<string, string, string, string, ulong, string>(
             LogLevel.Warning,
             new EventId(2103, "WorkerLifecycleWarning"),
-            "worker_event={WorkerEvent} controlPlaneInstanceId={ControlPlaneInstanceId} sessionId={SessionId} workerEpoch={WorkerEpoch} reason={Reason}");
+            "worker_event={WorkerEvent} controlPlaneInstanceId={ControlPlaneInstanceId} sessionId={SessionId} workerId={WorkerId} workerEpoch={WorkerEpoch} reason={Reason}");
 
-    private static readonly Action<ILogger, string, string, string, ulong, string, Exception?> LifecycleErrorLog =
-        LoggerMessage.Define<string, string, string, ulong, string>(
+    private static readonly Action<ILogger, string, string, string, string, ulong, string, Exception?> LifecycleErrorLog =
+        LoggerMessage.Define<string, string, string, string, ulong, string>(
             LogLevel.Error,
             new EventId(2104, "WorkerLifecycleError"),
-            "worker_event={WorkerEvent} controlPlaneInstanceId={ControlPlaneInstanceId} sessionId={SessionId} workerEpoch={WorkerEpoch} reason={Reason}");
+            "worker_event={WorkerEvent} controlPlaneInstanceId={ControlPlaneInstanceId} sessionId={SessionId} workerId={WorkerId} workerEpoch={WorkerEpoch} reason={Reason}");
 
     public async ValueTask DisposeAsync()
     {
@@ -1742,11 +1748,20 @@ internal sealed class WorkerSocketLifecycle(WorkerManagerOptions options) : IDis
 
 public sealed class WorkerRuntimeReadiness
 {
+    private readonly ConcurrentDictionary<string, byte> unconfirmedFences = new(StringComparer.Ordinal);
     private int ready;
     private string reason = "worker_reconciliation_pending";
 
     public bool IsReady => Volatile.Read(ref ready) != 0;
     public string Reason => Volatile.Read(ref reason) ?? "worker_reconciliation_pending";
+
+    public IReadOnlySet<string> WriteFenceUnconfirmedSessionIds => unconfirmedFences.Keys.ToHashSet(StringComparer.Ordinal);
+
+    public void MarkWriteFenceUnconfirmed(string sessionId) =>
+        unconfirmedFences.TryAdd(sessionId, 0);
+
+    public void ClearWriteFenceUnconfirmed(string sessionId) =>
+        unconfirmedFences.TryRemove(sessionId, out _);
 
     public void MarkReady()
     {
@@ -1800,6 +1815,7 @@ internal sealed class WorkerManagerHostedService(
                     // Session's open/save mutations; it must not make the
                     // entire trusted instance fail readiness.
                     AmbiguousLeaseLog(logger, lease.Binding.SessionId, lease.Binding.WorkerId, "process_identity_missing", null);
+                    readiness.MarkWriteFenceUnconfirmed(lease.Binding.SessionId);
                     continue;
                 }
 
@@ -1809,13 +1825,17 @@ internal sealed class WorkerManagerHostedService(
                     cancellationToken).ConfigureAwait(false))
                 {
                     AmbiguousLeaseLog(logger, lease.Binding.SessionId, lease.Binding.WorkerId, "exact_process_exit_unconfirmed", null);
+                    readiness.MarkWriteFenceUnconfirmed(lease.Binding.SessionId);
                     continue;
                 }
 
                 if (!await runtimeStore.ReconcileAsync(lease, "control_plane_restarted", DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false))
                 {
                     AmbiguousLeaseLog(logger, lease.Binding.SessionId, lease.Binding.WorkerId, "reconcile_not_applied", null);
+                    readiness.MarkWriteFenceUnconfirmed(lease.Binding.SessionId);
                 }
+                else
+                    readiness.ClearWriteFenceUnconfirmed(lease.Binding.SessionId);
             }
 
             readiness.MarkReady();
@@ -1826,9 +1846,9 @@ internal sealed class WorkerManagerHostedService(
             readiness.MarkFailed("worker_reconciliation_cancelled");
             coordinator.BeginDraining();
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            ReconciliationFailedLog(logger, SessionRuntimeResultCodes.ControlPlaneReconciliationFailed, exception);
+            ReconciliationFailedLog(logger, SessionRuntimeResultCodes.ControlPlaneReconciliationFailed, null);
             readiness.MarkFailed(SessionRuntimeResultCodes.ControlPlaneReconciliationFailed);
             coordinator.BeginDraining();
         }
@@ -1873,9 +1893,9 @@ internal sealed class WorkerManagerHostedService(
                     timeProvider.GetUtcNow(),
                     CancellationToken.None).ConfigureAwait(false);
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                ShutdownPersistFailedLog(logger, worker.Binding.SessionId, exception);
+                ShutdownPersistFailedLog(logger, worker.Binding.SessionId, null);
             }
         }
         readiness.MarkFailed("control_plane_stopped");
@@ -1944,13 +1964,10 @@ internal sealed class WorkerManagerHostedService(
             }
 
             int exitCode = await exitTask.ConfigureAwait(false);
-            string diagnostics = worker.ProcessDiagnostics.Replace('\r', ' ').Replace('\n', ' ').Trim();
-            if (diagnostics.Length > 1_800)
-                diagnostics = diagnostics[^1_800..];
             worker.LogLifecycle(
                 "worker_process_exit_observed",
                 $"exit={exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)};" +
-                $"ready={worker.ReadyConfirmed};graceful={worker.GracefulTerminationObserved};diagnostics={diagnostics}",
+                $"ready={worker.ReadyConfirmed};graceful={worker.GracefulTerminationObserved};diagnostics_present={worker.ProcessDiagnostics.Length > 0}",
                 exitCode == 0 ? LogLevel.Information : LogLevel.Warning);
 
             // A zero exit code is not sufficient: when the UDS control stream
@@ -1958,11 +1975,11 @@ internal sealed class WorkerManagerHostedService(
             // same process code, but the durable Session must be fenced as
             // CRASHED until the user explicitly reopens it. Only a terminal
             // Worker envelope observed by this API proves graceful completion.
-            bool graceful = worker.ReadyConfirmed && exitCode == 0 && worker.GracefulTerminationObserved;
+            bool graceful = !worker.ForceStopRequested && worker.ReadyConfirmed && exitCode == 0 && worker.GracefulTerminationObserved;
             await runtimeStore.CompleteAsync(
                 worker.RuntimeBinding,
                 graceful ? SessionRuntimeTerminalState.Closed : SessionRuntimeTerminalState.Crashed,
-                graceful ? "runtime_completed" : "worker_exit",
+                worker.ForceStopRequested ? "admin_force_stopped" : graceful ? "runtime_completed" : "worker_exit",
                 worker.LastOutputSequence,
                 timeProvider.GetUtcNow(),
                 CancellationToken.None).ConfigureAwait(false);
@@ -1971,9 +1988,9 @@ internal sealed class WorkerManagerHostedService(
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            ReconciliationFailedLog(logger, SessionRuntimeResultCodes.ControlPlaneReconciliationFailed, exception);
+            ReconciliationFailedLog(logger, SessionRuntimeResultCodes.ControlPlaneReconciliationFailed, null);
         }
         finally
         {

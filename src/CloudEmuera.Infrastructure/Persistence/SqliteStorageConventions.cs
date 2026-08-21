@@ -24,6 +24,7 @@ public static class SqliteStorageConventions
     public const string SessionCreationOperationsTable = "session_creation_operations";
     public const string SessionRootMutationLeasesTable = "session_root_mutation_leases";
     public const string SaveFileOperationsTable = "save_file_operations";
+    public const string CurrentSchemaCompatibilityVersion = "20260819100000_AddSessionDisplayConfiguration";
 }
 
 public static class PersistenceLimits

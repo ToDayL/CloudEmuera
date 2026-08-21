@@ -12,6 +12,7 @@ import {
 } from "react-router-dom";
 import { CreateUserInput, CurrentUser, UpdateUserInput, useAuth } from "./auth";
 import { ApiError } from "./api";
+import { AdminWorker, forceStopSession, getAdminRuntime, AdminRuntimeResponse } from "./admin";
 import {
   ContentScope,
   GameDiagnosticItem,
@@ -593,12 +594,85 @@ function GameFilesPanel({ game }: { game: GameLibraryItem }) {
 }
 
 function Status({ state }: { state: string }) {
-  const label = state === "RUNNING" ? "运行中" : "已关闭";
+  const label = state === "RUNNING" ? "运行中" : state === "STARTING" ? "启动中" : state === "STOPPING" ? "停止中" : state === "CRASHED" ? "已崩溃" : "已关闭";
   return <span className={`status-pill ${state.toLowerCase()}`}><i/>{label}</span>;
 }
 
 function AdminPage() {
-  return <><PageHeader eyebrow="SYSTEM" title="运行状态" description="查看单机 API、Worker Manager 和活动 Session 的基本状态。" actions={<span className="updated"><i/>刚刚更新</span>}/><section className="health-grid"><article><span className="summary-icon mint"><Icon name="server"/></span><div><p>API</p><strong>健康</strong><small>12 ms · v0.1.0-dev</small></div></article><article><span className="summary-icon mint"><Icon name="settings"/></span><div><p>Worker Manager</p><strong>健康</strong><small>进程监视运行中</small></div></article><article><span className="summary-icon blue"><Icon name="gamepad"/></span><div><p>活动 Worker</p><strong>2</strong><small>当前运行进程</small></div></article><article><span className="summary-icon peach"><Icon name="archive"/></span><div><p>数据目录</p><strong>可用</strong><small>空间检查正常</small></div></article></section><section className="panel"><div className="panel-heading"><div><h2>活动 Worker</h2><p>每个活动 Session 由一个独立进程持有。</p></div></div><div className="worker-table"><div className="worker-head"><span>Session / Worker</span><span>状态</span><span>epoch</span><span>心跳</span></div>{[{name:"周目二 · 港口存档",id:"wrk_8fd2",epoch:"3"},{name:"初见流程",id:"wrk_1ac4",epoch:"1"}].map(w=><div className="worker-row" key={w.id}><span><strong>{w.name}</strong><small>{w.id}</small></span><span><Status state="RUNNING"/></span><span>{w.epoch}</span><span>2 秒前</span></div>)}</div></section></>;
+  const [runtime, setRuntime] = useState<AdminRuntimeResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState<AdminWorker | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      setRuntime(await getAdminRuntime());
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "无法读取运行时诊断。");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    let timer: number | undefined;
+    const stopPolling = () => {
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+        timer = undefined;
+      }
+    };
+    const startPolling = () => {
+      if (document.hidden) return;
+      void refresh();
+      timer = window.setInterval(() => {
+        if (!document.hidden) void refresh();
+      }, 5000);
+    };
+    const onVisibilityChange = () => {
+      stopPolling();
+      if (!document.hidden) startPolling();
+    };
+    startPolling();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [refresh]);
+
+  const submitForceStop = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selected || reason.trim().length === 0) return;
+    setBusy(true); setError("");
+    try {
+      await forceStopSession(selected.session.id, reason.trim());
+      setSelected(null); setReason("");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "强制停止失败。");
+    } finally { setBusy(false); }
+  };
+
+  const state = runtime?.instance.controlPlaneState ?? (loading ? "STARTING" : "NOT_READY");
+  return <>
+    <PageHeader eyebrow="SYSTEM" title="运行状态" description="查看 API、Worker、Realtime 和持久 Session 的当前诊断。" actions={<span className="updated"><i/>{runtime ? "采样于 " + formatDateTime(runtime.observedAt) : "等待采样"}</span>}/>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <section className="health-grid">
+      <article><span className="summary-icon mint"><Icon name="server"/></span><div><p>控制面</p><strong>{state}</strong><small>健康端点与 Worker 对账状态</small></div></article>
+      <article><span className="summary-icon mint"><Icon name="settings"/></span><div><p>活动 Worker</p><strong>{runtime?.instance.activeWorkerCount ?? "—"}</strong><small>{runtime?.instance.subscriptionCount ?? 0} 个 Realtime 订阅</small></div></article>
+      <article><span className="summary-icon blue"><Icon name="gamepad"/></span><div><p>WebSocket</p><strong>{runtime?.instance.webSocketConnectionCount ?? "—"}</strong><small>当前连接数</small></div></article>
+      <article><span className="summary-icon peach"><Icon name="archive"/></span><div><p>失败记录</p><strong>{runtime?.recentFailures.length ?? "—"}</strong><small>最近持久化 CRASHED Session</small></div></article>
+    </section>
+    <section className="panel">
+      <div className="panel-heading"><div><h2>活动 Worker</h2><p>诊断数据来自 API 内存快照与 SQLite 持久绑定的合并结果。</p></div></div>
+      {loading && !runtime ? <p className="admin-empty" aria-busy="true">正在读取运行时…</p> : <div className="worker-table"><div className="worker-head"><span>Session / Worker</span><span>状态</span><span>epoch</span><span>Realtime</span><span>操作</span></div>{runtime?.workers.map(worker => <div className="worker-row" key={worker.session.id}><span><strong>{worker.session.name}</strong><small>{worker.session.id} · {worker.session.ownerUsername} · {worker.worker.workerId ?? "未注册"} · PID {worker.worker.pid ?? "—"} · 心跳 {worker.worker.heartbeatAgeMilliseconds === null ? "—" : `${Math.round(worker.worker.heartbeatAgeMilliseconds / 1000)} 秒前`}</small></span><span><Status state={worker.session.state}/><small className="worker-consistency">{worker.runtimeConsistency}</small></span><span>{worker.worker.workerEpoch}</span><span><strong>{worker.realtime.hubState}</strong><small>{worker.realtime.subscriptionCount} 订阅 · snapshot {worker.realtime.snapshotBytes === null ? worker.realtime.snapshotSizeStatus : formatBytes(worker.realtime.snapshotBytes)}</small></span><span>{["STARTING", "RUNNING", "STOPPING"].includes(worker.session.state) ? <button className="text-button danger-text" onClick={() => { setSelected(worker); setReason(""); }}>强制停止</button> : <small>不可操作</small>}</span></div>)}{runtime?.workers.length === 0 && <p className="admin-empty">当前没有活动 Worker。</p>}</div>}
+    </section>
+    {runtime && runtime.recentFailures.length > 0 && <section className="panel"><div className="panel-heading"><div><h2>最近失败</h2><p>保留 SessionRoot 与存档；重新打开会使用更高 Worker epoch。</p></div></div><div className="worker-table"><div className="worker-head"><span>Session</span><span>游戏</span><span>epoch</span><span>原因</span><span>时间</span></div>{runtime.recentFailures.map(failure => <div className="worker-row" key={failure.sessionId + "-" + failure.failedAt}><span><strong>{failure.sessionName}</strong><small>{failure.sessionId} · {failure.ownerUsername}</small></span><span>{failure.gameName}</span><span>{failure.workerEpoch}</span><span>{failure.reasonCode}</span><span>{failure.failedAt ? formatDateTime(failure.failedAt) : "—"}</span></div>)}</div></section>}
+    {selected && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="force-stop-title"><button className="icon-button modal-close" aria-label="关闭" onClick={() => setSelected(null)} disabled={busy}><Icon name="close"/></button><h2 id="force-stop-title">强制停止 {selected.session.name}</h2><p className="modal-intro">Worker 会被有界停止或终止；Session 将标记为 CRASHED，SessionRoot 和存档会保留。</p><form className="form-panel modal-form" onSubmit={submitForceStop}><label><span>操作原因（必填）</span><textarea value={reason} onChange={event => setReason(event.target.value)} maxLength={500} rows={4} required placeholder="例如：处理异常 Worker"/></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setSelected(null)} disabled={busy}>取消</button><button className="danger-button" disabled={busy || reason.trim().length === 0}>{busy ? "处理中…" : "确认强制停止"}</button></div></form></section></div>}
+  </>;
 }
 
 const defaultUserInput: CreateUserInput = { username: "", email: "", temporaryPassword: "", role: "PLAYER" };

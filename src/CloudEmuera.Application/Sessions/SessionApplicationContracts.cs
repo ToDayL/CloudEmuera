@@ -180,6 +180,13 @@ public interface ISessionLifecycleExecutor
         string sessionId,
         string reasonCode = "requested",
         CancellationToken cancellationToken = default);
+
+    Task<SessionRuntimeCloseResult> ForceStopAsync(
+        string sessionId,
+        string expectedWorkerId,
+        long expectedWorkerEpoch,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This lifecycle executor does not support administrative force-stop.");
 }
 
 /// <summary>
@@ -246,6 +253,39 @@ public sealed class SessionLifecycleExecutor(
                 route.Binding,
                 route.Process,
                 new SessionRuntimeCloseRequest(sessionId, Force: false, reasonCode),
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReleaseGate(sessionId, gate);
+        }
+    }
+
+    public async Task<SessionRuntimeCloseResult> ForceStopAsync(
+        string sessionId,
+        string expectedWorkerId,
+        long expectedWorkerEpoch,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedWorkerId);
+        SessionGate gate = await AcquireGateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            CurrentWorkerRoute? route = await workerRouter.GetCurrentAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (route is null || !string.Equals(route.Binding.WorkerId, expectedWorkerId, StringComparison.Ordinal) ||
+                route.Binding.WorkerEpoch != expectedWorkerEpoch)
+            {
+                throw new SessionApplicationException(
+                    SessionErrorCodes.SessionTransitionInProgress,
+                    "当前 Session 的 Worker 代次已变化。",
+                    409);
+            }
+
+            return await coordinator.CloseAsync(
+                route.Binding,
+                route.Process,
+                new SessionRuntimeCloseRequest(sessionId, Force: true, "admin_force_stopped"),
                 cancellationToken).ConfigureAwait(false);
         }
         finally

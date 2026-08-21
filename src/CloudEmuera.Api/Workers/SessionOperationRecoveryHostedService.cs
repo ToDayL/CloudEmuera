@@ -1,4 +1,5 @@
 using CloudEmuera.Application.Sessions;
+using CloudEmuera.Application.Administration;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace CloudEmuera.Api.Workers;
@@ -57,6 +58,7 @@ public sealed class SessionCommandReadiness(
 /// </summary>
 public sealed partial class SessionOperationRecoveryHostedService(
     ISessionOperationRecovery recovery,
+    IAdminForceStopRecovery adminForceStopRecovery,
     SessionOperationRecoveryReadiness readiness,
     ILogger<SessionOperationRecoveryHostedService> logger) : IHostedService, IDisposable
 {
@@ -69,6 +71,7 @@ public sealed partial class SessionOperationRecoveryHostedService(
         try
         {
             await recovery.RecoverAsync(cancellationToken).ConfigureAwait(false);
+            await adminForceStopRecovery.RecoverAsync(cancellationToken).ConfigureAwait(false);
             readiness.MarkReady();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -76,10 +79,10 @@ public sealed partial class SessionOperationRecoveryHostedService(
             readiness.MarkFailed("session_operation_recovery_cancelled");
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             readiness.MarkFailed("session_operation_recovery_failed");
-            LogRecoveryFailed(logger, exception);
+            LogRecoveryFailed(logger);
         }
 
         loop = RunPeriodicRecoveryAsync(stop.Token);
@@ -123,16 +126,17 @@ public sealed partial class SessionOperationRecoveryHostedService(
             try
             {
                 await recovery.RecoverAsync(stoppingToken).ConfigureAwait(false);
+                await adminForceStopRecovery.RecoverAsync(stoppingToken).ConfigureAwait(false);
                 readiness.MarkReady();
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
-            catch (Exception exception)
+            catch (Exception)
             {
                 readiness.MarkFailed("session_operation_recovery_failed");
-                LogRecoveryFailed(logger, exception);
+                LogRecoveryFailed(logger);
             }
 
             try
@@ -147,5 +151,5 @@ public sealed partial class SessionOperationRecoveryHostedService(
     }
 
     [LoggerMessage(EventId = 2604, Level = LogLevel.Warning, Message = "session_operation_recovery_failed; retrying on the next pass")]
-    private static partial void LogRecoveryFailed(ILogger logger, Exception exception);
+    private static partial void LogRecoveryFailed(ILogger logger);
 }

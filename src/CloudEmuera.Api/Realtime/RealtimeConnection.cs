@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Net.WebSockets;
 using System.Security.Claims;
 using CloudEmuera.Api.Workers;
+using CloudEmuera.Api.Security;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Ipc;
@@ -141,7 +142,7 @@ public sealed class RealtimeConnection
         catch (RealtimeProtocolException exception)
         {
             if (logger is not null)
-                ProtocolErrorLog(logger, ConnectionId, exception.ReasonCode, exception);
+                ProtocolErrorLog(logger, SensitiveLogPolicy.SafeReasonCode(exception.ReasonCode), null);
             RequestClose(exception.CloseCode, exception.ReasonCode);
             // The receive-loop cancellation is part of RequestClose.  Use a
             // bounded independent send token here so a protocol.error can be
@@ -157,7 +158,7 @@ public sealed class RealtimeConnection
         catch (Exception exception)
         {
             if (logger is not null)
-                ConnectionFaultLog(logger, ConnectionId, exception);
+                ConnectionFaultLog(logger, SensitiveLogPolicy.SafeDiagnosticText(exception.Message), null);
             RequestClose(1011, "internal_error");
         }
         finally
@@ -742,7 +743,7 @@ public sealed class RealtimeConnection
     private void OnWriterFault(Exception exception)
     {
         if (logger is not null)
-            WriterFaultLog(logger, ConnectionId, exception);
+            WriterFaultLog(logger, SensitiveLogPolicy.SafeDiagnosticText(exception.Message), null);
         RequestClose(
             exception is RealtimeSlowConsumerException ? 1008 : 1011,
             exception is RealtimeSlowConsumerException ? "slow_consumer" : "writer_failed");
@@ -756,7 +757,7 @@ public sealed class RealtimeConnection
         if (Interlocked.Exchange(ref closeLogged, 1) == 0)
         {
             if (logger is not null)
-                ConnectionCloseLog(logger, ConnectionId, Volatile.Read(ref closeCode), closeReason, null);
+                ConnectionCloseLog(logger, Volatile.Read(ref closeCode), SensitiveLogPolicy.SafeReasonCode(closeReason), null);
         }
         stop.Cancel();
         lock (closeSync)
@@ -830,29 +831,29 @@ public sealed class RealtimeConnection
 
     private static string NewMessageId() => $"msg_{Guid.CreateVersion7():N}";
 
-    private static readonly Action<ILogger, string, string, Exception?> ProtocolErrorLog =
-        LoggerMessage.Define<string, string>(
+    private static readonly Action<ILogger, string, Exception?> ProtocolErrorLog =
+        LoggerMessage.Define<string>(
             LogLevel.Information,
             new EventId(2201, "RealtimeProtocolError"),
-            "realtime_event=protocol_error connectionId={ConnectionId} reason={Reason}");
+            "realtime_event=protocol_error reason={Reason}");
 
     private static readonly Action<ILogger, string, Exception?> ConnectionFaultLog =
         LoggerMessage.Define<string>(
             LogLevel.Error,
             new EventId(2202, "RealtimeConnectionFault"),
-            "realtime_event=connection_fault connectionId={ConnectionId}");
+            "realtime_event=connection_fault fault={Fault}");
 
     private static readonly Action<ILogger, string, Exception?> WriterFaultLog =
         LoggerMessage.Define<string>(
             LogLevel.Warning,
             new EventId(2203, "RealtimeWriterFault"),
-            "realtime_event=writer_fault connectionId={ConnectionId}");
+            "realtime_event=writer_fault fault={Fault}");
 
-    private static readonly Action<ILogger, string, int, string, Exception?> ConnectionCloseLog =
-        LoggerMessage.Define<string, int, string>(
+    private static readonly Action<ILogger, int, string, Exception?> ConnectionCloseLog =
+        LoggerMessage.Define<int, string>(
             LogLevel.Information,
             new EventId(2204, "RealtimeConnectionClose"),
-            "realtime_event=connection_close connectionId={ConnectionId} closeCode={CloseCode} closeReason={CloseReason}");
+            "realtime_event=connection_close closeCode={CloseCode} closeReason={CloseReason}");
 
     private static string NormalizeCloseReason(string value) =>
         string.IsNullOrWhiteSpace(value) ? "normal" : value.Length > 120 ? value[..120] : value;

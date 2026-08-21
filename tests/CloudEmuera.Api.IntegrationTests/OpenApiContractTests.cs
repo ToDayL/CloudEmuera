@@ -37,6 +37,8 @@ public sealed class OpenApiContractTests
         Assert.True(paths.TryGetProperty("/api/v1/sessions/{sessionId}/assets/{assetId}", out _), "OpenAPI must describe the session asset route.");
         Assert.True(paths.TryGetProperty("/api/v1/sessions/{sessionId}:open", out _), "OpenAPI must describe session open.");
         Assert.True(paths.TryGetProperty("/api/v1/sessions/{sessionId}:close", out _), "OpenAPI must describe session close.");
+        Assert.True(paths.TryGetProperty("/api/v1/admin/workers", out _), "OpenAPI must describe admin runtime diagnostics.");
+        Assert.True(paths.TryGetProperty("/api/v1/admin/sessions/{sessionId}:force-stop", out _), "OpenAPI must describe admin force-stop.");
         JsonElement create = paths.GetProperty("/api/v1/sessions").GetProperty("post");
         Assert.Contains(create.GetProperty("parameters").EnumerateArray(), parameter =>
             parameter.GetProperty("name").GetString() == "Idempotency-Key" && parameter.GetProperty("in").GetString() == "header");

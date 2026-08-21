@@ -575,9 +575,9 @@ public sealed partial class SqliteSessionApplicationService(
             await TryWriteLifecycleAuditAsync(actorUserId, command.SessionId, open, requested: false, succeeded: false, before, failure.Code, before?.State, before?.State).ConfigureAwait(false);
             return new SessionCommandResult(null, failure.StatusCode, false, false, failure);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogLifecycleFailed(logger, exception, command.SessionId, open ? "open" : "close");
+            LogLifecycleFailed(logger, command.SessionId, open ? "open" : "close");
             // An unexpected exception can happen after the Worker has changed
             // the durable Session state (for example while reading the view or
             // writing the idempotency completion).  Keep the command pending so
@@ -598,7 +598,7 @@ public sealed partial class SqliteSessionApplicationService(
         catch (Exception exception)
         {
             string code = StableCreateFailureCode(exception);
-            LogCreateFailed(logger, exception, sessionId, operationId, code);
+            LogCreateFailed(logger, sessionId, operationId, code);
             int status = code switch
             {
                 SessionErrorCodes.GameHasNoCurrentContent or SessionErrorCodes.GameBlocked => 409,
@@ -1114,9 +1114,9 @@ public sealed partial class SqliteSessionApplicationService(
                 SafeDeleteOwnedStaging(ResolveDataPath(stagingPath), stagingPath);
             cleanupProven = !finalPublished && !finalContainerPresent;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogCreateCleanupFailed(logger, exception, sessionId, operationId);
+            LogCreateCleanupFailed(logger, sessionId, operationId);
             failure = new SessionCommandFailure(SessionErrorCodes.SessionRootInvalid, "Session 创建现场无法安全清理。", 503);
         }
 
@@ -1128,9 +1128,9 @@ public sealed partial class SqliteSessionApplicationService(
                 await CommitCreateAsync(operationId, sessionId, actorUserId).ConfigureAwait(false);
                 return CreateFailureDisposition.Committed;
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                LogCreateRecoveryCommitFailed(logger, exception, sessionId, operationId);
+                LogCreateRecoveryCommitFailed(logger, sessionId, operationId);
                 // The final container is valid, but the durable commit outcome
                 // is unknown.  Never turn this into FAILED: that would make the
                 // recovery scanner skip a valid root permanently.
@@ -1316,9 +1316,9 @@ public sealed partial class SqliteSessionApplicationService(
                 return new SessionDeleteResult(202, Replayed: false, Pending: true, failure);
             return new SessionDeleteResult(failure.StatusCode, Replayed: false, Pending: false, failure);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogDeleteFailed(logger, exception, command.SessionId);
+            LogDeleteFailed(logger, command.SessionId);
             // Filesystem and database failures leave the durable command in
             // progress so a later recovery pass can retry without guessing
             // whether the root was fully removed.
@@ -1417,9 +1417,9 @@ public sealed partial class SqliteSessionApplicationService(
         {
             return await GetByOwnerAsync(actorUserId, sessionId).ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogLifecycleReadFailed(logger, exception, sessionId);
+            LogLifecycleReadFailed(logger, sessionId);
             return null;
         }
     }
@@ -1567,9 +1567,9 @@ public sealed partial class SqliteSessionApplicationService(
             await CompleteDeleteSuccessAsync(actorUserId, key, digest, resourceId).ConfigureAwait(false);
             return true;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogLifecycleCompletionFailed(logger, exception, resourceId, "delete-success");
+            LogLifecycleCompletionFailed(logger, resourceId, "delete-success");
             return false;
         }
     }
@@ -1601,9 +1601,9 @@ public sealed partial class SqliteSessionApplicationService(
             await CompleteSuccessAsync(actorUserId, scope, key, digest, status, view, resourceId).ConfigureAwait(false);
             return true;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogLifecycleCompletionFailed(logger, exception, resourceId, "success");
+            LogLifecycleCompletionFailed(logger, resourceId, "success");
             return false;
         }
     }
@@ -1621,9 +1621,9 @@ public sealed partial class SqliteSessionApplicationService(
             await CompleteFailureAsync(actorUserId, scope, key, digest, failure, resourceId).ConfigureAwait(false);
             return true;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogLifecycleCompletionFailed(logger, exception, resourceId ?? string.Empty, "failure");
+            LogLifecycleCompletionFailed(logger, resourceId ?? string.Empty, "failure");
             return false;
         }
     }
@@ -1668,9 +1668,9 @@ public sealed partial class SqliteSessionApplicationService(
             });
             await db.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogLifecycleAuditFailed(logger, exception, sessionId, open ? "open" : "close");
+            LogLifecycleAuditFailed(logger, sessionId, open ? "open" : "close");
         }
     }
 
@@ -2096,26 +2096,26 @@ public sealed partial class SqliteSessionApplicationService(
         string CapabilitySetDigest = RuntimeBaseline.CapabilitySetDigest);
 
     [LoggerMessage(EventId = 2601, Level = LogLevel.Error, Message = "session_lifecycle_failed sessionId={SessionId} operation={Operation}")]
-    private static partial void LogLifecycleFailed(ILogger logger, Exception exception, string sessionId, string operation);
+    private static partial void LogLifecycleFailed(ILogger logger, string sessionId, string operation);
 
     [LoggerMessage(EventId = 2602, Level = LogLevel.Error, Message = "session_create_cleanup_failed sessionId={SessionId} operationId={OperationId}")]
-    private static partial void LogCreateCleanupFailed(ILogger logger, Exception exception, string sessionId, string operationId);
+    private static partial void LogCreateCleanupFailed(ILogger logger, string sessionId, string operationId);
 
     [LoggerMessage(EventId = 2606, Level = LogLevel.Error, Message = "session_create_failed sessionId={SessionId} operationId={OperationId} code={Code}")]
-    private static partial void LogCreateFailed(ILogger logger, Exception exception, string sessionId, string operationId, string code);
+    private static partial void LogCreateFailed(ILogger logger, string sessionId, string operationId, string code);
 
     [LoggerMessage(EventId = 2603, Level = LogLevel.Error, Message = "session_create_recovery_commit_failed sessionId={SessionId} operationId={OperationId}")]
-    private static partial void LogCreateRecoveryCommitFailed(ILogger logger, Exception exception, string sessionId, string operationId);
+    private static partial void LogCreateRecoveryCommitFailed(ILogger logger, string sessionId, string operationId);
 
     [LoggerMessage(EventId = 2605, Level = LogLevel.Warning, Message = "session_lifecycle_audit_failed sessionId={SessionId} operation={Operation}")]
-    private static partial void LogLifecycleAuditFailed(ILogger logger, Exception exception, string sessionId, string operation);
+    private static partial void LogLifecycleAuditFailed(ILogger logger, string sessionId, string operation);
 
     [LoggerMessage(EventId = 2607, Level = LogLevel.Warning, Message = "session_lifecycle_idempotency_completion_failed sessionId={SessionId} result={Result}")]
-    private static partial void LogLifecycleCompletionFailed(ILogger logger, Exception exception, string sessionId, string result);
+    private static partial void LogLifecycleCompletionFailed(ILogger logger, string sessionId, string result);
 
     [LoggerMessage(EventId = 2608, Level = LogLevel.Warning, Message = "session_lifecycle_view_read_failed sessionId={SessionId}")]
-    private static partial void LogLifecycleReadFailed(ILogger logger, Exception exception, string sessionId);
+    private static partial void LogLifecycleReadFailed(ILogger logger, string sessionId);
 
     [LoggerMessage(EventId = 2609, Level = LogLevel.Error, Message = "session_delete_failed sessionId={SessionId}")]
-    private static partial void LogDeleteFailed(ILogger logger, Exception exception, string sessionId);
+    private static partial void LogDeleteFailed(ILogger logger, string sessionId);
 }

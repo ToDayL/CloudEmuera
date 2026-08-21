@@ -410,7 +410,13 @@ public sealed class SessionRuntimeCoordinator(
         // disconnected HTTP client.
         CancellationToken operationCancellationToken = CancellationToken.None;
 
-        SessionRuntimeTerminalState terminalState = SessionRuntimeTerminalState.Closed;
+        // Administrative force-stop is a crash-equivalent terminal event even
+        // when the Worker cooperatively acknowledges StopWorker. This keeps
+        // the audit/recovery distinction stable and allows the same Session ID
+        // and persistent root to be reopened at a higher epoch.
+        SessionRuntimeTerminalState terminalState = request.Force
+            ? SessionRuntimeTerminalState.Crashed
+            : SessionRuntimeTerminalState.Closed;
         string reasonCode = request.ReasonCode;
         long lastOutputSequence = binding.InitialOutputSequence;
         try

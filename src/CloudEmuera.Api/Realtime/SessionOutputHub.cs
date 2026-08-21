@@ -40,6 +40,17 @@ public sealed record RealtimeHubStatistics(
     long FaultCount,
     long SnapshotEncodingCount);
 
+public sealed record RealtimeHubDiagnostics(
+    SessionOutputHubState State,
+    long SnapshotSequence,
+    long? SnapshotBytes,
+    string SnapshotSizeStatus,
+    int SubscriptionCount,
+    long ResyncCount,
+    long SoftOverflowCount,
+    long HardOverflowCount,
+    long FaultCount);
+
 public enum RealtimeFrameKind
 {
     Snapshot,
@@ -613,6 +624,73 @@ public sealed class SessionOutputHub : IAsyncDisposable
     }
 
     internal void RecordResync() => Interlocked.Increment(ref resyncCount);
+
+    /// <summary>
+    /// Reads bounded operational counters and, when possible, the encoded
+    /// snapshot byte length. Encoding failure is reported as a diagnostic
+    /// value only; this method never transitions the Hub to Faulted and never
+    /// returns snapshot content.
+    /// </summary>
+    public async Task<RealtimeHubDiagnostics> ReadDiagnosticsAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        R.ConsoleSnapshot? snapshot;
+        RealtimeEncodedPayload? payload;
+        int subscriptionCount;
+        long softOverflow;
+        long hardOverflow;
+        lock (sync)
+        {
+            snapshot = latestSnapshot;
+            payload = latestSnapshotPayload;
+            subscriptionCount = subscriptions.Count;
+            softOverflow = subscriptions.Values.Sum(value => value.QueueStatistics.SoftOverflowCount);
+            hardOverflow = subscriptions.Values.Sum(value => value.QueueStatistics.HardOverflowCount);
+        }
+
+        long? bytes = payload?.ByteLength;
+        string sizeStatus;
+        if (snapshot is null)
+        {
+            sizeStatus = "NOT_READY";
+        }
+        else if (bytes is not null)
+        {
+            sizeStatus = "KNOWN";
+        }
+        else
+        {
+            try
+            {
+                RealtimeEncodedPayload? encoded = await GetOrCreateSnapshotPayloadAsync(snapshot).ConfigureAwait(false);
+                bytes = encoded?.ByteLength;
+                sizeStatus = bytes is null ? "FAILED" : "KNOWN";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                sizeStatus = "FAILED";
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (sync)
+        {
+            return new RealtimeHubDiagnostics(
+                state,
+                latestSnapshot?.SnapshotSequence ?? 0,
+                bytes,
+                sizeStatus,
+                subscriptionCount,
+                Volatile.Read(ref resyncCount),
+                softOverflow,
+                hardOverflow,
+                Volatile.Read(ref faultCount));
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {

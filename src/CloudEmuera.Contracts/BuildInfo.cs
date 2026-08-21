@@ -8,3 +8,16 @@ public sealed record BuildInfo(
     int RealtimeProtocolVersion,
     int IpcProtocolVersion,
     string RealtimePayloadSchemaVersion = "p1-s03-display-commit");
+
+public sealed record VersionResponse(
+    string Product,
+    string Version,
+    string? Commit,
+    string Runtime,
+    int HttpApiSchemaVersion,
+    int RealtimeEnvelopeVersion,
+    string RealtimePayloadSchemaVersion,
+    int WorkerIpcMajor,
+    string RuntimeIntegrationVersion,
+    string UpstreamCommit,
+    string DatabaseSchemaCompatibilityVersion);

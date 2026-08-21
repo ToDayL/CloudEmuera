@@ -26,9 +26,9 @@ public sealed partial class GamePackageIngestionReaperService(
             if (count > 0) LogReaped(logger, count);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogFailure(logger, exception);
+            LogFailure(logger);
         }
     }
 
@@ -36,5 +36,5 @@ public sealed partial class GamePackageIngestionReaperService(
     private static partial void LogReaped(ILogger logger, int count);
 
     [LoggerMessage(EventId = 1302, Level = LogLevel.Error, Message = "Game package ingestion reaper failed.")]
-    private static partial void LogFailure(ILogger logger, Exception exception);
+    private static partial void LogFailure(ILogger logger);
 }

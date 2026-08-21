@@ -300,9 +300,14 @@ public sealed class SqliteSessionRuntimeStore(
         await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, cancellationToken).ConfigureAwait(false);
         WorkerLeaseRow? lease = await FindLeaseAsync(db, binding, cancellationToken).ConfigureAwait(false);
         SessionRow? session = await db.Sessions.SingleOrDefaultAsync(row => row.Id == binding.SessionId, cancellationToken).ConfigureAwait(false);
-        if (lease is null || session is null || session.State is not (SessionState.Starting or SessionState.Running) ||
-            session.StateVersion != binding.StateVersion || lease.Status is not (WorkerLeaseStatus.Starting or WorkerLeaseStatus.Active))
+        if (lease is null || session is null || session.State is not (SessionState.Starting or SessionState.Running or SessionState.Stopping) ||
+            session.StateVersion != binding.StateVersion || lease.Status is not (WorkerLeaseStatus.Starting or WorkerLeaseStatus.Active or WorkerLeaseStatus.Stopping))
             return SessionRuntimeWriteResult.Stale();
+        if (session.State == SessionState.Stopping && lease.Status == WorkerLeaseStatus.Stopping)
+        {
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return SessionRuntimeWriteResult.Accepted(binding);
+        }
         session.State = SessionState.Stopping;
         session.StateVersion = checked(session.StateVersion + 1);
         session.WaitingForInput = false;

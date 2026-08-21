@@ -58,9 +58,9 @@ public sealed partial class BootstrapAdminInitializer(
             await RecordFailureAsync("BOOTSTRAP_CONFIGURATION_INVALID", cancellationToken).ConfigureAwait(false);
             readiness.Fail("BOOTSTRAP_CONFIGURATION_INVALID");
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            LogBootstrapFailure(logger, exception);
+            LogBootstrapFailure(logger);
             await RecordFailureAsync("BOOTSTRAP_INITIALIZATION_FAILED", cancellationToken).ConfigureAwait(false);
             readiness.Fail("BOOTSTRAP_INITIALIZATION_FAILED");
         }
@@ -133,7 +133,7 @@ public sealed partial class BootstrapAdminInitializer(
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     [LoggerMessage(LogLevel.Error, "Bootstrap initialization failed without recording configuration values.")]
-    private static partial void LogBootstrapFailure(ILogger logger, Exception exception);
+    private static partial void LogBootstrapFailure(ILogger logger);
 }
 
 internal enum BootstrapAttemptResult { Ready, ConfigurationInvalid, SchemaInvalid }

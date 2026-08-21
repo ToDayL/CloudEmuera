@@ -108,6 +108,29 @@ public sealed class SessionRuntimeCoordinatorTests
     }
 
     [Fact]
+    public async Task ForceCloseAlwaysCompletesAsCrashEquivalentEvenAfterCooperativeExit()
+    {
+        var trace = new List<string>();
+        RecordingStore store = new(trace);
+        RecordingRootInspector inspector = new(trace);
+        RecordingWorkerControl workerControl = new(trace);
+        SessionRuntimeCoordinator coordinator = new(store, workerControl, inspector, TimeProvider.System);
+        SessionRuntimeOpenResult opened = await coordinator.OpenAsync(CreateOpenOptions());
+        trace.Clear();
+
+        SessionRuntimeCloseResult result = await coordinator.CloseAsync(
+            opened.Lease.Binding,
+            workerControl.Process,
+            new SessionRuntimeCloseRequest(opened.Lease.Binding.SessionId, Force: true, "admin_force_stopped"));
+
+        Assert.True(result.Completion.Applied);
+        Assert.Equal(SessionState.Crashed, result.Completion.State);
+        Assert.Equal(SessionRuntimeTerminalState.Crashed, store.CompletedTerminalState);
+        Assert.Equal("admin_force_stopped", store.CompletedReason);
+        Assert.Equal(["stopping", "request-stop", "exit", "complete"], trace);
+    }
+
+    [Fact]
     public async Task CloseDoesNotCompleteWhenForcedExitCannotBeConfirmed()
     {
         var trace = new List<string>();

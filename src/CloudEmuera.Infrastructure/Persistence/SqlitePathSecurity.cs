@@ -70,6 +70,9 @@ internal static class SqlitePathSecurity
             }
 
             using SafeFileHandle directoryHandle = LinuxFileOperations.OpenDirectory(Path.GetFullPath(path));
+            LinuxFileOperations.FileIdentity identity = LinuxFileOperations.ReadIdentity(directoryHandle);
+            if (!identity.IsDirectory || identity.UserId != LinuxFileOperations.CurrentUserId)
+                throw new SqlitePathException($"The {description} must be an owned directory.");
             return;
         }
 

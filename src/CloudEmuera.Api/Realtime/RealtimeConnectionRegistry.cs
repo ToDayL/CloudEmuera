@@ -9,6 +9,8 @@ public sealed record RealtimeConnectionDiagnostics(
     int PendingInputs,
     long ControlQueueBytes);
 
+public sealed record RealtimeRegistryDiagnostics(int ConnectionCount, int SubscriptionCount);
+
 /// <summary>
 /// Transient connection admission and diagnostics.  It stores no cookie,
 /// prompt, input value, snapshot or Session state and is never persisted.
@@ -47,6 +49,12 @@ public sealed class RealtimeConnectionRegistry
     public int SubscriptionCount
     {
         get { lock (sync) return sessionCounts.Values.Sum(); }
+    }
+
+    public RealtimeRegistryDiagnostics ReadDiagnostics()
+    {
+        lock (sync)
+            return new RealtimeRegistryDiagnostics(entries.Count, sessionCounts.Values.Sum());
     }
 
     public RealtimeConnectionAdmission? TryReserve(string actorUserId)

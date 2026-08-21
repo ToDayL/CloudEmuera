@@ -21,9 +21,9 @@ internal sealed partial class GameContentOperationReaperService(
                 if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) break;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (Exception exception)
+            catch (Exception)
             {
-                LogReaperFailure(logger, exception);
+                LogReaperFailure(logger);
                 await Task.Delay(TimeSpan.FromSeconds(10), timeProvider, stoppingToken).ConfigureAwait(false);
             }
         }
@@ -55,7 +55,7 @@ internal sealed partial class GameContentOperationReaperService(
     }
 
     [LoggerMessage(EventId = 1311, Level = LogLevel.Error, Message = "Game content operation reaper failed.")]
-    private static partial void LogReaperFailure(ILogger logger, Exception exception);
+    private static partial void LogReaperFailure(ILogger logger);
 
     [LoggerMessage(EventId = 1312, Level = LogLevel.Warning, Message = "Reaped {Count} expired game content operations.")]
     private static partial void LogReaped(ILogger logger, int count);

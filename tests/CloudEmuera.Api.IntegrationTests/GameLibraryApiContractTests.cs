@@ -214,10 +214,23 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal("RUNNING", secondOpened.State);
         await ExerciseRealtimeWebSocketAsync(secondCreated.Id, secondOpened.WorkerEpoch, completeInput: false);
 
-        ApiWorkerSession secondWorker = _factory.Services.GetRequiredService<WorkerManager>().Workers.Single(worker => worker.Binding.SessionId == secondCreated.Id);
-        await secondWorker.DisconnectCurrentConnectionForTestAsync();
-        SessionResponse crashed = await WaitForSessionStateAsync(client, secondCreated.Id, "CRASHED");
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage forceStopResponse = await SendJsonAsync(client, HttpMethod.Post,
+            $"/api/v1/admin/sessions/{secondCreated.Id}:force-stop",
+            new { reason = "integration test force stop" }, csrf, idempotencyKey: "admin-force-stop-2");
+        SessionResponse crashed = await forceStopResponse.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Force-stop response was missing.");
+        Assert.Equal(HttpStatusCode.OK, forceStopResponse.StatusCode);
         Assert.Equal("CRASHED", crashed.State);
+        Assert.Equal("admin_force_stopped", crashed.CloseReason);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage forceStopReplay = await SendJsonAsync(client, HttpMethod.Post,
+            $"/api/v1/admin/sessions/{secondCreated.Id}:force-stop",
+            new { reason = "integration test force stop" }, csrf, idempotencyKey: "admin-force-stop-2");
+        SessionResponse replayedForceStop = await forceStopReplay.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Force-stop replay response was missing.");
+        Assert.Equal(HttpStatusCode.OK, forceStopReplay.StatusCode);
+        Assert.Equal(crashed.Id, replayedForceStop.Id);
+        Assert.Equal("CRASHED", replayedForceStop.State);
 
         (HttpResponseMessage crashReopenResponse, SessionResponse crashReopened) = await WaitForLifecycleAsync(client, secondCreated.Id, "open", "session-reopen-after-crash");
         Assert.Equal(HttpStatusCode.OK, crashReopenResponse.StatusCode);

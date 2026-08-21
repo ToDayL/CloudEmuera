@@ -58,10 +58,10 @@ public sealed partial class SaveFileOperationRecoveryHostedService(
             readiness.MarkFailed("save_operation_recovery_cancelled");
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             readiness.MarkFailed("save_operation_recovery_failed");
-            LogRecoveryFailed(logger, exception);
+            LogRecoveryFailed(logger);
         }
 
         loop = RunPeriodicRecoveryAsync(stop.Token);
@@ -117,10 +117,10 @@ public sealed partial class SaveFileOperationRecoveryHostedService(
             {
                 break;
             }
-            catch (Exception exception)
+            catch (Exception)
             {
                 readiness.MarkFailed("save_operation_recovery_failed");
-                LogRecoveryFailed(logger, exception);
+                LogRecoveryFailed(logger);
             }
 
             try
@@ -135,5 +135,5 @@ public sealed partial class SaveFileOperationRecoveryHostedService(
     }
 
     [LoggerMessage(EventId = 2605, Level = LogLevel.Warning, Message = "save_file_operation_recovery_failed; retrying on the next pass")]
-    private static partial void LogRecoveryFailed(ILogger logger, Exception exception);
+    private static partial void LogRecoveryFailed(ILogger logger);
 }

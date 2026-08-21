@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Http.Features;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Reflection;
 using CloudEmuera.Api.Bootstrap;
 using CloudEmuera.Api.Configuration;
 using CloudEmuera.Api.Security;
 using CloudEmuera.Application.Auditing;
+using CloudEmuera.Application.Administration;
 using CloudEmuera.Application.Authorization;
 using CloudEmuera.Application.Identity;
 using CloudEmuera.Contracts;
@@ -29,8 +31,14 @@ using CloudEmuera.Infrastructure.Assets;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Sessions;
 using CloudEmuera.Domain.Sessions;
+using CloudEmuera.RuntimeAdapter;
+using CloudEmuera.Ipc;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Api.Workers;
+using CloudEmuera.Api.Administration;
+using CloudEmuera.Api.Health;
+using CloudEmuera.Contracts.Administration;
+using CloudEmuera.Infrastructure.Administration;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Antiforgery;
@@ -162,6 +170,12 @@ builder.Services.AddSingleton<IRealtimeSessionRegistry>(serviceProvider => servi
 builder.Services.AddSingleton<RealtimeEndpoint>();
 builder.Services.AddSingleton<ISessionRootMutationLeaseStore, SqliteSessionRootMutationLeaseStore>();
 builder.Services.AddSingleton<SqliteIdempotencyStore>();
+builder.Services.AddSingleton<IAdminRuntimeStore, SqliteAdminRuntimeStore>();
+builder.Services.AddSingleton<IAdminRuntimeDiagnostics, ApiAdminRuntimeDiagnostics>();
+builder.Services.AddSingleton<IAdminRuntimeQuery, AdminRuntimeQuery>();
+builder.Services.AddSingleton<SqliteAdminSessionCommandService>();
+builder.Services.AddSingleton<IAdminSessionCommandService>(serviceProvider => serviceProvider.GetRequiredService<SqliteAdminSessionCommandService>());
+builder.Services.AddSingleton<IAdminForceStopRecovery>(serviceProvider => serviceProvider.GetRequiredService<SqliteAdminSessionCommandService>());
 builder.Services.AddSingleton<ISessionApplicationService, SqliteSessionApplicationService>();
 builder.Services.AddSingleton<ISessionOperationRecovery>(serviceProvider =>
     (ISessionOperationRecovery)serviceProvider.GetRequiredService<ISessionApplicationService>());
@@ -256,7 +270,7 @@ builder.Services.AddRateLimiter(options =>
     {
         context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         context.HttpContext.Response.Headers.RetryAfter = "60";
-        await context.HttpContext.Response.WriteAsJsonAsync(new ApiError("TOO_MANY_ATTEMPTS", "请求过于频繁。", $"req_{Guid.CreateVersion7():N}"), cancellationToken).ConfigureAwait(false);
+        await context.HttpContext.Response.WriteAsJsonAsync(new ApiError("TOO_MANY_ATTEMPTS", "请求过于频繁。", RequestCorrelation.Current ?? context.HttpContext.TraceIdentifier), cancellationToken).ConfigureAwait(false);
     };
     options.AddPolicy("game-read", context => RateLimitPartition.GetFixedWindowLimiter(
         context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -278,6 +292,10 @@ builder.Services.AddAntiforgery(options => options.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks()
     .AddCheck<BootstrapHealthCheck>("identity_bootstrap", tags: ["ready"])
+    .AddCheck<DatabaseReadinessHealthCheck>("database", tags: ["ready"])
+    .AddCheck<SchemaReadinessHealthCheck>("schema", tags: ["ready"])
+    .AddCheck<DataRootReadinessHealthCheck>("data_root", tags: ["ready"])
+    .AddCheck<DataRootSpaceReadinessHealthCheck>("data_root_space", tags: ["ready"])
     .AddCheck<WorkerRuntimeHealthCheck>("worker_runtime", tags: ["ready"])
     .AddCheck<SessionOperationRecoveryHealthCheck>("session_operation_recovery", tags: ["ready"])
     .AddCheck<SaveOperationRecoveryHealthCheck>("save_operation_recovery", tags: ["ready"]);
@@ -290,6 +308,10 @@ if (!development)
     app.UseHsts();
     app.UseHttpsRedirection();
 }
+app.Use((context, next) => RequestCorrelationMiddleware.InvokeAsync(
+    context,
+    next,
+    context.RequestServices.GetRequiredService<ILoggerFactory>()));
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseWebSockets(new WebSocketOptions
 {
@@ -322,22 +344,34 @@ app.MapGrpcService<WorkerControlGrpcService>();
 app.MapGet("/api/v1/realtime", (HttpContext context, RealtimeEndpoint endpoint) => endpoint.HandleAsync(context))
     .RequireAuthorization();
 
-app.MapGet("/api/v1/version", () => Results.Ok(new BuildInfo(
-    "CloudEmuera",
-    typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0-dev",
-    System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
-    1,
-    RealtimeProtocol.Version,
-    3,
-    RealtimeProtocol.PayloadSchemaVersion)));
-app.MapHealthChecks("/health/live", new() { Predicate = _ => false });
-app.MapOpenApi();
-app.MapHealthChecks("/health/ready", new() { Predicate = check => check.Tags.Contains("ready"), ResponseWriter = async (context, report) =>
+app.MapGet("/api/v1/version", (HttpContext context) =>
 {
-    context.Response.ContentType = "application/json";
-    string reason = report.Entries.Values.FirstOrDefault().Description ?? "READY";
-    await context.Response.WriteAsJsonAsync(new { status = report.Status == HealthStatus.Healthy ? "READY" : "NOT_READY", reason });
-}});
+    context.Response.Headers.CacheControl = "no-store";
+    Assembly assembly = typeof(Program).Assembly;
+    string informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? string.Empty;
+    string? commit = informational.Split('+', 2) is [_, var suffix] && suffix.Length is > 0 and <= 64 && suffix.All(Uri.IsHexDigit)
+        ? suffix.ToLowerInvariant()
+        : null;
+    return Results.Ok(new VersionResponse(
+        "CloudEmuera",
+        assembly.GetName().Version?.ToString() ?? "0.0.0-dev",
+        commit,
+        System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+        1,
+        RealtimeProtocol.Version,
+        RealtimeProtocol.PayloadSchemaVersion,
+        checked((int)StructuredIpcProtocol.CurrentVersion),
+        RuntimeBaseline.CloudEmueraIntegrationVersion,
+        RuntimeBaseline.UpstreamCommit,
+        SqliteStorageConventions.CurrentSchemaCompatibilityVersion));
+});
+app.MapGet("/health/live", (HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Json(new { status = "LIVE" });
+});
+app.MapOpenApi();
+app.MapHealthChecks("/health/ready", new() { Predicate = check => check.Tags.Contains("ready"), ResponseWriter = ReadinessResponseWriter.WriteAsync });
 
 app.MapGet("/api/v1/auth/csrf", (HttpContext context, IAntiforgery antiforgery) =>
 {
@@ -345,6 +379,79 @@ app.MapGet("/api/v1/auth/csrf", (HttpContext context, IAntiforgery antiforgery) 
     context.Response.Headers.CacheControl = "no-store";
     return Results.Ok(new CsrfResponse(tokens.RequestToken!));
 });
+
+var adminRuntime = app.MapGroup("/api/v1/admin").RequireAuthorization();
+adminRuntime.MapGet("/workers", async (HttpContext context, int? recentFailureLimit, IResourceAuthorizer authorizer, IAdminRuntimeQuery query) =>
+{
+    if (await ApiIdentity.RequireAdminAsync(context, authorizer).ConfigureAwait(false) is IResult denied)
+        return denied;
+    if (recentFailureLimit is < 1 or > 100)
+        return ApiIdentity.Error(AdminErrorCodes.ValidationFailed, "recentFailureLimit 必须是 1 到 100。", StatusCodes.Status400BadRequest);
+    try
+    {
+        AdminRuntimeSnapshot snapshot = await query.ReadAsync(new AdminRuntimeQueryOptions(recentFailureLimit ?? 20), context.RequestAborted).ConfigureAwait(false);
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(ApiIdentity.ToResponse(snapshot));
+    }
+    catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception)
+    {
+        return ApiIdentity.Error(AdminErrorCodes.ServiceNotReady, "运行时诊断暂不可用。", StatusCodes.Status503ServiceUnavailable);
+    }
+}).Produces<AdminRuntimeResponse>(StatusCodes.Status200OK)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status401Unauthorized)
+  .Produces<ApiError>(StatusCodes.Status403Forbidden)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
+
+adminRuntime.MapPost("/sessions/{sessionId}:force-stop", async (
+    string sessionId,
+    HttpContext context,
+    JsonElement body,
+    [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+    IAntiforgery antiforgery,
+    SessionCommandReadiness readiness,
+    IAdminSessionCommandService service,
+    IResourceAuthorizer authorizer) =>
+{
+    if (await ApiIdentity.RequireAdminAsync(context, authorizer).ConfigureAwait(false) is IResult denied)
+        return denied;
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false))
+        return ApiIdentity.Error(AdminErrorCodes.CsrfValidationFailed, "请求验证失败。", StatusCodes.Status400BadRequest);
+    if (!ApiIdentity.TryAdminIdempotencyKey(idempotencyKey, out string key))
+        return ApiIdentity.Error(AdminErrorCodes.IdempotencyKeyRequired, "需要有效的 Idempotency-Key。", StatusCodes.Status400BadRequest);
+    if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("reason", out JsonElement reasonValue) || reasonValue.ValueKind != JsonValueKind.String)
+        return ApiIdentity.Error(AdminErrorCodes.ValidationFailed, "需要提供强制停止原因。", StatusCodes.Status400BadRequest);
+    if (!readiness.IsReady)
+        return ApiIdentity.Error(AdminErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", StatusCodes.Status503ServiceUnavailable);
+    try
+    {
+        AdminForceStopResult result = await service.ForceStopAsync(ApiIdentity.Actor(context)!, sessionId, key, reasonValue.GetString() ?? string.Empty, context.RequestAborted).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            AdminCommandFailure failure = result.Failure ?? new(AdminErrorCodes.ServiceNotReady, "强制停止失败。", StatusCodes.Status503ServiceUnavailable);
+            return ApiIdentity.Error(failure.Code, failure.Message, failure.StatusCode, failure.Details);
+        }
+        ApiIdentity.SetSessionETag(context, result.Value!);
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers.Location = $"/api/v1/sessions/{result.Value!.Id}";
+        return Results.Ok(ApiIdentity.ToResponse(result.Value));
+    }
+    catch (AdminSessionCommandException exception)
+    {
+        return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
+    }
+}).RequireRateLimiting("session-write")
+  .Accepts<JsonElement>("application/json")
+  .Produces<SessionResponse>(StatusCodes.Status200OK)
+  .Produces<ApiError>(StatusCodes.Status400BadRequest)
+  .Produces<ApiError>(StatusCodes.Status401Unauthorized)
+  .Produces<ApiError>(StatusCodes.Status403Forbidden)
+  .Produces<ApiError>(StatusCodes.Status409Conflict)
+  .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
 
 app.MapPost("/api/v1/auth/login", async (HttpContext context, LoginRequest request, IAntiforgery antiforgery, BootstrapReadiness readiness, ILocalIdentityService identities) =>
 {
@@ -968,12 +1075,12 @@ internal static class ValidatorAssemblyResolver
 internal static class ApiIdentity
 {
     public static IResult Error(string code, string message, int status) => Error(code, message, status, null);
-    public static IResult Error(string code, string message, int status, object? details) => Results.Json(new ApiError(code, message, $"req_{Guid.CreateVersion7():N}", details), statusCode: status);
+    public static IResult Error(string code, string message, int status, object? details) => Results.Json(new ApiError(code, message, RequestCorrelation.Current ?? $"req_{Guid.CreateVersion7():N}", details), statusCode: status);
     public static Task WriteErrorAsync(HttpContext context, string code, string message, int status)
     {
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
-        return context.Response.WriteAsJsonAsync(new ApiError(code, message, $"req_{Guid.CreateVersion7():N}"));
+        return context.Response.WriteAsJsonAsync(new ApiError(code, message, RequestCorrelation.Current ?? context.TraceIdentifier));
     }
     public static CurrentUserResponse ToResponse(CurrentUser value) => new(value.Id, value.Username, value.Email, value.Role, value.Status, value.MustChangePassword, value.StateVersion);
     public static CurrentActor? Actor(HttpContext context)
@@ -1010,6 +1117,57 @@ internal static class ApiIdentity
 
     public static SessionListResponse ToResponse(SessionListPage value) =>
         new(value.Items.Select(ToResponse).ToArray(), value.NextCursor);
+
+    public static AdminRuntimeResponse ToResponse(AdminRuntimeSnapshot value) => new(
+        value.SchemaVersion,
+        value.ObservedAt,
+        new AdminInstanceResponse(
+            value.Instance.ControlPlaneState,
+            value.Instance.ActiveWorkerCount,
+            value.Instance.WebSocketConnectionCount,
+            value.Instance.SubscriptionCount),
+        value.Workers.Select(worker => new AdminWorkerResponse(
+            new AdminSessionResponse(
+                worker.Session.Id,
+                worker.Session.Name,
+                worker.Session.OwnerUsername,
+                worker.Session.GameId,
+                worker.Session.GameName,
+                worker.Session.State,
+                worker.Session.StateVersion,
+                worker.Session.LastActivityAt),
+            new AdminWorkerProcessResponse(
+                worker.Worker.WorkerId,
+                worker.Worker.Pid,
+                worker.Worker.WorkerEpoch,
+                worker.Worker.LeaseStatus,
+                worker.Worker.HeartbeatAt,
+                worker.Worker.HeartbeatAgeMilliseconds,
+                worker.Worker.Registered,
+                worker.Worker.Ready,
+                worker.Worker.ProcessExited,
+                worker.Worker.LastOutputSequence),
+            new AdminRealtimeResponse(
+                worker.Realtime.HubState,
+                worker.Realtime.SnapshotSequence,
+                worker.Realtime.SnapshotBytes,
+                worker.Realtime.SnapshotSizeStatus,
+                worker.Realtime.SubscriptionCount,
+                worker.Realtime.ResyncCount,
+                worker.Realtime.SoftOverflowCount,
+                worker.Realtime.HardOverflowCount,
+                worker.Realtime.FaultCount,
+                worker.Realtime.DroppedPendingEventCount),
+            worker.RuntimeConsistency)).ToArray(),
+        value.RecentFailures.Select(failure => new AdminFailureResponse(
+            failure.SessionId,
+            failure.SessionName,
+            failure.OwnerUsername,
+            failure.GameId,
+            failure.GameName,
+            failure.WorkerEpoch,
+            failure.FailedAt,
+            failure.ReasonCode)).ToArray());
 
     public static void SetSessionETag(HttpContext context, SessionView value) =>
         context.Response.Headers.ETag = QuoteETag(value.StateVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -1170,6 +1328,12 @@ internal static class ApiIdentity
     {
         key = (value ?? string.Empty).Trim();
         return key.Length is > 0 and <= 256 && !key.Any(char.IsControl);
+    }
+
+    public static bool TryAdminIdempotencyKey(string? value, out string key)
+    {
+        key = (value ?? string.Empty).Trim();
+        return key.Length is >= 8 and <= 128 && !key.Any(char.IsControl);
     }
 
     public static string QuoteETag(string etag) => etag.StartsWith('"') ? etag : $"\"{etag}\"";

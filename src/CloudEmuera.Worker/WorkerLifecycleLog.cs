@@ -42,9 +42,24 @@ internal static class WorkerLifecycleLog
             LogLevel.Warning => Warning,
             _ => Information
         };
-        log(logger, eventName, binding.SessionId, binding.WorkerId, binding.WorkerEpoch, reason, null);
+        log(logger, eventName, binding.SessionId, binding.WorkerId, binding.WorkerEpoch, SafeReasonCode(reason), null);
     }
 
     public static void WriteRuntimeWidth(ILogger logger, WorkerBinding binding, int browserWidth) =>
         RuntimeWidth(logger, binding.SessionId, binding.WorkerId, binding.WorkerEpoch, browserWidth, null);
+
+    private static string SafeReasonCode(string? value)
+    {
+        string candidate = value?.Trim() ?? string.Empty;
+        if (candidate.Length == 0)
+            return string.Empty;
+        if (candidate.Length > 128)
+            return "diagnostic_present";
+        foreach (char character in candidate)
+        {
+            if (!(character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '-' or ':' or '.'))
+                return "diagnostic_present";
+        }
+        return candidate;
+    }
 }

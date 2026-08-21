@@ -31,9 +31,9 @@ public sealed partial class AuthSessionCleanupService(IServiceScopeFactory scope
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-        catch (Exception exception) { LogCleanupFailure(logger, exception); }
+        catch (Exception) { LogCleanupFailure(logger); }
     }
 
     [LoggerMessage(LogLevel.Warning, "Bounded authentication session cleanup failed; the next pass will retry.")]
-    private static partial void LogCleanupFailure(ILogger logger, Exception exception);
+    private static partial void LogCleanupFailure(ILogger logger);
 }

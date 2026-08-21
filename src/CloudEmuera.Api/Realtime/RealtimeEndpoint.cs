@@ -132,6 +132,6 @@ public sealed class RealtimeEndpoint(
             return;
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
-        await context.Response.WriteAsJsonAsync(new ApiError(code, message, $"req_{Guid.CreateVersion7():N}"), context.RequestAborted).ConfigureAwait(false);
+        await context.Response.WriteAsJsonAsync(new ApiError(code, message, RequestCorrelation.Current ?? context.TraceIdentifier), context.RequestAborted).ConfigureAwait(false);
     }
 }

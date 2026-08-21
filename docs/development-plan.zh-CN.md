@@ -811,9 +811,11 @@ Hot Reload 和诊断端口环境，保持 API 直接管理 Worker 的父子生�
 修复客户端把服务端 `heartbeat_timeout`（当前沿用 close code `1008`）误判为认证失效的问题；心跳超时现
 在保留 Session 订阅状态的前提下进入退避重连，并补充实时连接回归测试。
 
-### P1-12 — 基本管理、诊断与就绪检查（TODO）
+### P1-12 — 基本管理、诊断与就绪检查（DONE）
 
 需求映射：OPS-001、OPS-003～006、AC-007。
+
+详细方案：[`tasks/P1-12-basic-admin-diagnostics-readiness-plan.zh-CN.md`](tasks/P1-12-basic-admin-diagnostics-readiness-plan.zh-CN.md)。
 
 交付物：结构化关联日志、Worker/Session 基本状态和最近错误、管理员强制停止、live/ready/version
 语义及敏感字段过滤。保留现有关键审计写入，不实现通用审计浏览、专用遥测平台、进程级 CPU/RSS/FD/
@@ -830,6 +832,11 @@ Hot Reload 和诊断端口环境，保持 API 直接管理 Worker 的父子生�
 通过条件：日志包含 request/session/worker/epoch 关联字段但不含秘密或默认输入全文；数据库、DataRoot、
 迁移或启动对账未就绪时 ready 失败但 live 语义正确；管理员终止可审计；基本状态能反映 Worker 崩溃、
 Snapshot 大小和队列溢出，且不出现专用遥测或通用审计浏览入口。
+
+实施记录（2026-08-21）：已交付真实 `/admin` 运行时诊断页、持久 Session/Worker 合并查询、幂等且可恢复的
+force-stop、`/health/live`/`/health/ready`/`/api/v1/version` 契约、数据库/DataRoot/recovery 探针、
+结构化关联日志和敏感字段策略；Blocked Game 的 UI/门控/SessionRoot 保留行为也已完成回归。验证：
+`./scripts/check.sh`、`./scripts/verify-dev-user.sh`、`./scripts/verify-third-party.sh`。
 
 ### P1-13 — 基础 Worker 进程边界与实例级上限（TODO）
 

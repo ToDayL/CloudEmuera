@@ -44,6 +44,9 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
         CurrentUserResponse current = await (await anonymous.GetAsync("/api/v1/auth/me")).Content.ReadFromJsonAsync<CurrentUserResponse>() ?? throw new Xunit.Sdk.XunitException("Current user response was missing.");
         Assert.False(current.MustChangePassword);
+        HttpResponseMessage adminRuntime = await anonymous.GetAsync("/api/v1/admin/workers");
+        Assert.Equal(HttpStatusCode.OK, adminRuntime.StatusCode);
+        Assert.DoesNotContain("SessionRoot", await adminRuntime.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 
         csrf = await GetCsrfAsync(anonymous);
         HttpResponseMessage gameCreated = await SendJsonAsync(anonymous, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("API Fixture"), csrf);
@@ -67,6 +70,7 @@ public sealed class IdentityApiContractTests : IDisposable
         HttpResponseMessage playerLogin = await SendJsonAsync(playerClient, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("player@example.test", "player-temporary-password", false), playerCsrf);
         Assert.True(playerLogin.IsSuccessStatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await playerClient.GetAsync("/api/v1/admin/users")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await playerClient.GetAsync("/api/v1/admin/workers")).StatusCode);
         playerCsrf = await GetCsrfAsync(playerClient);
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(playerClient, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("player-temporary-password", "player-permanent-password"), playerCsrf)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/games/{game.Id}")).StatusCode);
@@ -95,7 +99,11 @@ public sealed class IdentityApiContractTests : IDisposable
 
         HttpResponseMessage[] responses = await Task.WhenAll(firstClient.GetAsync("/health/ready"), secondClient.GetAsync("/health/ready"));
 
-        Assert.All(responses, response => Assert.True(response.IsSuccessStatusCode));
+        Assert.All(responses, response =>
+        {
+            string body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            Assert.True(response.IsSuccessStatusCode, body);
+        });
         await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = Path.Combine(_dataRoot, SqliteStorageConventions.DatabaseFileName) }.ToString());
         await connection.OpenAsync();
         Assert.Equal(1L, await ScalarLongAsync(connection, "SELECT COUNT(*) FROM users WHERE role = 'ADMIN';"));
@@ -112,7 +120,10 @@ public sealed class IdentityApiContractTests : IDisposable
         using (TestConfigurationOverride configured = new(_dataRoot, includeBootstrap: true))
         using (IdentityFactory first = new(_dataRoot))
         using (HttpClient firstClient = first.CreateClient())
-            Assert.True((await firstClient.GetAsync("/health/ready")).IsSuccessStatusCode);
+        {
+            HttpResponseMessage ready = await firstClient.GetAsync("/health/ready");
+            Assert.True(ready.IsSuccessStatusCode, await ready.Content.ReadAsStringAsync());
+        }
 
         await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = Path.Combine(_dataRoot, SqliteStorageConventions.DatabaseFileName) }.ToString()))
         {

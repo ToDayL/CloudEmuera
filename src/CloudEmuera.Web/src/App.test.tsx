@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -76,6 +76,43 @@ describe("App", () => {
     const user: CurrentUser = { id: "usr_test", username: "tester", email: "tester@example.com", role: "PLAYER", status: "ACTIVE", mustChangePassword: false, stateVersion: 0 };
     return render(<MemoryRouter initialEntries={[path]}><AuthProvider initialUser={user}><App /></AuthProvider></MemoryRouter>);
   }
+
+  it("renders live admin runtime diagnostics and sends an audited force-stop command", async () => {
+    const admin: CurrentUser = { id: "usr_admin", username: "admin", email: "admin@example.com", role: "ADMIN", status: "ACTIVE", mustChangePassword: false, stateVersion: 1 };
+    const runtime = {
+      schemaVersion: 1,
+      observedAt: "2026-08-21T08:00:00Z",
+      instance: { controlPlaneState: "READY", activeWorkerCount: 1, webSocketConnectionCount: 2, subscriptionCount: 1 },
+      workers: [{
+        session: { id: "sess-1", name: "Session One", ownerUsername: "owner", gameId: "game-1", gameName: "Game One", state: "RUNNING", stateVersion: 4, lastActivityAt: "2026-08-21T07:59:00Z" },
+        worker: { workerId: "worker-1", pid: 431, workerEpoch: 7, leaseStatus: "ACTIVE", heartbeatAt: "2026-08-21T07:59:57Z", heartbeatAgeMilliseconds: 3000, registered: true, ready: true, processExited: false, lastOutputSequence: 19 },
+        realtime: { hubState: "LIVE", snapshotSequence: 19, snapshotBytes: 4096, snapshotSizeStatus: "KNOWN", subscriptionCount: 1, resyncCount: 2, softOverflowCount: 3, hardOverflowCount: 0, faultCount: 0, droppedPendingEventCount: 0 },
+        runtimeConsistency: "MATCHED",
+      }],
+      recentFailures: [],
+    };
+    const fetchMock = mockFetch((url, init) => {
+      if (url === "/api/v1/admin/workers?recentFailureLimit=20") return jsonResponse(runtime);
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/admin/sessions/sess-1:force-stop" && init?.method === "POST") return jsonResponse(session({ id: "sess-1", state: "CRASHED", closeReason: "admin_force_stopped" }));
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+
+    render(<MemoryRouter initialEntries={["/admin"]}><AuthProvider initialUser={admin}><App /></AuthProvider></MemoryRouter>);
+
+    expect(await screen.findByText("Session One")).toBeInTheDocument();
+    expect(screen.getByText(/worker-1/)).toBeInTheDocument();
+    expect(screen.getByText(/snapshot 4\.0 KB/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "强制停止" }));
+    const dialog = await screen.findByRole("dialog", { name: "强制停止 Session One" });
+    fireEvent.change(within(dialog).getByLabelText("操作原因（必填）"), { target: { value: "管理员处理异常 Worker" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认强制停止" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/admin/sessions/sess-1:force-stop", expect.objectContaining({ method: "POST" })));
+    const forceCall = fetchMock.mock.calls.find(([url]) => String(url) === "/api/v1/admin/sessions/sess-1:force-stop");
+    expect(JSON.parse(String(forceCall?.[1]?.body))).toEqual({ reason: "管理员处理异常 Worker" });
+    vi.unstubAllGlobals();
+  });
 
   it("loads the game library from the real API and filters by search and visibility", async () => {
     mockFetch((url) => {
