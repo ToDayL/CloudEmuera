@@ -74,7 +74,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | API 描述 | ASP.NET Core OpenAPI + 仓库内 JSON Schema | 10.x / schema v2 | HTTP 契约由 OpenAPI 生成；WebSocket 负载用 JSON Schema 单独校验和生成 TypeScript 类型 |
 | 浏览器实时通信 | ASP.NET Core 原生 WebSocket | RFC 6455，应用协议 v2 | CloudEmuera 需要自定义 epoch、sequence、完整 snapshot 替换和背压语义；不采用 SignalR 的 Hub/RPC 抽象 |
 | WebSocket 编码 | UTF-8 JSON + `System.Text.Json` source generation | 应用协议 v2 | 易调试、浏览器零额外解码依赖；达到性能瓶颈后才通过新协议版本评估 MessagePack |
-| 进程间通信 | gRPC 双向流 + Protocol Buffers over Unix Domain Socket | 结构化 IPC 协议 v4 | 强类型、代码生成、截止时间和流式通信成熟；UDS 不暴露容器网络端口 |
+| 进程间通信 | gRPC 双向流 + Protocol Buffers over Unix Domain Socket | 结构化 IPC 协议 v5 | 强类型、代码生成、截止时间和流式通信成熟；UDS 不暴露容器网络端口 |
 | 元数据数据库 | SQLite | 3.x，随运行镜像锁定 | 符合单容器和本地备份要求，无外部服务；使用 WAL、外键和 busy timeout |
 | 数据访问 | EF Core SQLite Provider；关键 CAS 使用参数化原生 SQL | EF Core 10.x | 普通 CRUD、关系和迁移成本低；状态机、实例级容量检查和 epoch 更新用显式 SQL 保证条件更新可审查 |
 | 数据库迁移 | 独立 `CloudEmuera.Migrator` 控制台程序 | 与应用同版本 | 容器初始化阶段执行并持有独占迁移锁；API 和 Worker 不在运行时自动迁移 |
@@ -886,17 +886,22 @@ form；动态 Raster 的 Blob URL 只由校验后的 PNG 创建并在 drawable �
 
 P1-08 的 API mirror、订阅竞态、逐连接双预算队列与降级细节见
 [`tasks/P1-08-complete-snapshot-reconnect-bounded-output-plan.zh-CN.md`](tasks/P1-08-complete-snapshot-reconnect-bounded-output-plan.zh-CN.md)，
-待评审决策见 [`ADR-0020`](adr/0020-api-snapshot-mirror-and-bounded-realtime-output.md)。API 对每个活动
-Worker 只维护一份最新完整状态，不保留可按客户端游标补发的生产历史；控制面 wait probe 不复制
-`DisplayBatch`，其余事件也受消息数和字节预算限制。
+待评审决策见 [`ADR-0020`](adr/0020-api-snapshot-mirror-and-bounded-realtime-output.md)。显示提交边界和
+原子帧见临时任务 [`tasks/P1-S03-display-commit-boundary-plan.zh-CN.md`](tasks/P1-S03-display-commit-boundary-plan.zh-CN.md)
+及 [`ADR-0026`](adr/0026-display-commit-boundary-realtime-v3.md)。API 对每个活动 Worker 维护 working
+与 committed 两种镜像，不保留可按客户端游标补发的生产历史；控制面 wait probe 不复制显示帧，其余事件
+也受消息数和字节预算限制。
 
-- 每个被接受的显示操作或原子批次分配一个严格递增的 `sequence`；
-- Snapshot 表示应用完 `snapshotSequence` 后的完整有界显示树和当前 prompt；
-- 实时发送队列仅保存尚未发送的有界批次；溢出时以较新的 Snapshot 替代，不维护历史增量窗口；
+- 每个被接受的显示操作或原子批次分配一个严格递增的 `sequence`；`DisplayCommit` 另以 epoch 内单调
+  `frameId` 标识一次浏览器可见提交；
+- Snapshot 表示应用完 `snapshotSequence` 后的完整有界显示树和当前 prompt，并在可见恢复路径带
+  `committedFrameId`；working Snapshot 不得成为浏览器基线；
+- 实时发送队列仅保存尚未发送的有界 committed frame；溢出时以较新的 committed Snapshot 替代，不维护历史增量窗口；
 - 快照 JSON 按需惰性编码：批次发布只失效编码缓存，首个订阅或 resync 需要时编码并缓存；无浏览器
   连接的 Session 持续输出不产生全量编码成本；
 - sequence 使用 64 位整数，数据库仅保存观测值，不参与热路径分配；
-- Worker 重启必须使用新 epoch；客户端以最新完整 `(epoch, snapshotSequence)` Snapshot 替换本地显示状态。
+- Worker 重启必须使用新 epoch；客户端以最新完整 `(epoch, committedFrameId, snapshotSequence)` Snapshot
+  替换本地显示状态。
 
 ### 8.3 完整快照恢复算法
 
@@ -904,11 +909,11 @@ Realtime Gateway 对一个 Session 执行以下恢复：
 
 1. 验证 WebSocket 身份和 Session 权限；
 2. 从 API 为当前 Worker epoch 维护的不可变镜像读取 `Snapshot(N)`，其中包含当前 prompt；
-3. 先注册有界连接队列并再次比较当前 epoch/sequence；若 Hub 尚未取得首个 Snapshot，则订阅保持等待，
-   首个 Worker display batch 到达后发送快照；若已经前进则直接标记需要重新同步。当前 v2 客户端对
+3. 先注册有界连接队列并再次比较当前 epoch/committedFrameId；若 Hub 尚未取得首个 commit，则订阅保持等待，
+   首个 Worker committed frame 到达后发送快照；若已经前进则直接标记需要重新同步。当前 v3 客户端对
    `SNAPSHOT_NOT_READY` 按短退避重新 resume；
 4. Gateway 发送 Snapshot，客户端以其完整替换本地显示树；
-5. Gateway 从序号大于 `N` 的下一批实时事件开始转发；
+5. Gateway 从下一个连续的 committed `display.frame` 开始转发；
 6. 若读取与转发衔接期间检测到序号缺口或连接队列溢出，放弃待发增量并读取较新的完整 Snapshot。
 
 MVP 不接受 `lastSequence` 作为历史补发承诺，也不维护 ack 驱动的重放日志。恢复正确性只要求客户端
@@ -926,7 +931,8 @@ MVP 不接受 `lastSequence` 作为历史补发承诺，也不维护 ack 驱动�
 
 ### 8.5 输入一致性
 
-Worker 在生成内部输入请求时创建不可重复的 `promptId`，但浏览器不回传它。Realtime v2 输入命令必须带：
+Worker 在生成内部输入请求时创建不可重复的 `promptId`，但浏览器不回传它。Realtime v3 的输入命令沿用
+ADR-0025 语义，必须带：
 
 ```text
 sessionId, workerEpoch, clientMessageId, source, value, pointer?, key?
@@ -959,8 +965,8 @@ sessionId, workerEpoch, clientMessageId, source, value, pointer?, key?
 
 ```json
 {
-  "protocolVersion": 2,
-  "type": "display.batch",
+  "protocolVersion": 3,
+  "type": "display.frame",
   "messageId": "msg_...",
   "sessionId": "sess_...",
   "workerEpoch": 4,
@@ -975,12 +981,13 @@ sessionId, workerEpoch, clientMessageId, source, value, pointer?, key?
 客户端 `messageId` 在一个连接内使用最近 4096 个 ID 的有界重复检测窗口；窗口淘汰后的旧 ID 不提供永久重放
 保护，客户端仍必须在整个连接生命周期内不复用已发送 ID。
 
-依据 [`ADR-0025`](adr/0025-current-input-slot-realtime-v2.md)，Realtime v2 是唯一支持的当前协议：协商
-`cloudemuera.realtime.v2`，envelope 为 `protocolVersion=2`，其 Snapshot/resync、鉴权、连接预算和 Session
-command gate 行为沿用 P1-09 已实现的基础。v2 的 `session.input` 必须带 `workerEpoch + clientMessageId`，
-不带 `promptId`；API 完成 persistent binding 检查后以 IPC v4 correlation 等待 Worker 回执。v1 子协议和
-带 `promptId` 的 input 必须拒绝，不能被解释或改写。连接、订阅、接收消息、控制队列、pending input 和最终 envelope 都受数量/字节
-双上限，连接断开不改变 Session 或 Worker 生命周期。
+依据 [`ADR-0025`](adr/0025-current-input-slot-realtime-v2.md) 和 [`ADR-0026`](adr/0026-display-commit-boundary-realtime-v3.md)，
+Realtime v3 是唯一支持的当前协议：协商 `cloudemuera.realtime.v3`，envelope 为 `protocolVersion=3`，显示
+只允许 `session.snapshot`（已提交基线）和原子 `display.frame`。输入继续采用 ADR-0025 的当前槽语义，必须
+带 `workerEpoch + clientMessageId`、不带 `promptId`；API 完成 persistent binding 检查后以 IPC v5 correlation
+等待 Worker 回执。v1/v2 子协议、旧 `display.batch` 和带 `promptId` 的 input 必须拒绝，不能被解释或改写。
+连接、订阅、接收消息、控制队列、pending input 和最终 envelope 都受数量/字节双上限，连接断开不改变
+Session 或 Worker 生命周期。
 
 ## 9. HTTP API 设计
 
@@ -1040,8 +1047,8 @@ Worker 使用一次性启动令牌注册，令牌绑定 Session、Worker、epoch
 禁止把 UDS 暴露到容器端口或共享宿主目录。对敏感命令同时验证对端身份和消息字段，不把“能连接 socket”视为完整授权。
 
 P0-06 的历史基础契约位于 [`src/CloudEmuera.Ipc/Protos/worker.proto`](../src/CloudEmuera.Ipc/Protos/worker.proto)，
-其中 `protocolVersion=1`。运行期结构化 Worker 契约由 [`ADR-0025`](adr/0025-current-input-slot-realtime-v2.md)
-规定为 IPC v4；注册同时校验 IPC 版本、`RuntimeBaseline.CloudEmueraIntegrationVersion`
+其中 `protocolVersion=1`。运行期结构化 Worker 契约由 [`ADR-0026`](adr/0026-display-commit-boundary-realtime-v3.md)
+规定为 IPC v5；注册同时校验 IPC 版本、`RuntimeBaseline.CloudEmueraIntegrationVersion`
 和固定 upstream commit；API Worker Manager 以 256-bit bootstrap token 和完整 binding 校验 Worker，
 Worker 通过 `SocketsHttpHandler.ConnectCallback` 只连接 UDS，不提供 TCP fallback。bootstrap
 目录/文件权限为 `0700`/`0600`，文件拒绝链接、特殊文件、异常 hardlink 和非当前服务账户所有者。
@@ -1062,7 +1069,7 @@ sessionId, workerId?, workerEpoch, type, payload
 - `worker.forceStop`；
 - `worker.register` / `worker.registered`；
 - `worker.heartbeat`；
-- `session.resume` / `session.snapshot` / `display.batch`；
+- `session.resume` / committed `session.snapshot` / `display.frame`；
 - `session.input` / `session.input.result`；
 - `worker.fenced` / `worker.crashed`。
 

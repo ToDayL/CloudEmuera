@@ -6,14 +6,14 @@ namespace CloudEmuera.Contracts.Realtime;
 
 /// <summary>
 /// Constants and closed client message contracts for the browser realtime
-/// protocol.  Display payloads remain the transport-neutral P1-08 contracts;
-/// this file only freezes the v2 envelope and browser commands around them.
+/// protocol. Display payloads use the atomic committed-frame contract from
+/// P1-S03; this file freezes the v3 envelope and browser commands around it.
 /// </summary>
 public static class RealtimeProtocol
 {
-    public const int Version = 2;
-    public const string Subprotocol = "cloudemuera.realtime.v2";
-    public const string PayloadSchemaVersion = "p1-11";
+    public const int Version = 3;
+    public const string Subprotocol = "cloudemuera.realtime.v3";
+    public const string PayloadSchemaVersion = "p1-s03-display-commit";
     public const int DefaultClientJsonMaxDepth = 32;
     public const int DefaultClientMessageMaxBytes = 64 * 1024;
     public const int MaxIdentifierLength = 128;
@@ -501,6 +501,7 @@ public sealed record RealtimeServerEnvelope(
 [JsonSerializable(typeof(ProtocolErrorPayload))]
 [JsonSerializable(typeof(RealtimeEmptyPayload))]
 [JsonSerializable(typeof(RealtimeSnapshot))]
+[JsonSerializable(typeof(RealtimeDisplayFrame))]
 [JsonSerializable(typeof(RealtimeTransactionBatch))]
 [JsonSerializable(typeof(RealtimeResyncRequired))]
 [JsonSerializable(typeof(RealtimeTransaction))]

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V4;
+using CloudEmuera.Ipc.V5;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;
@@ -137,6 +137,10 @@ public sealed class WorkerProcessIsolationTests
             value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.WorkerStopped,
             TimeSpan.FromSeconds(15));
         Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
+
+        RealtimeFrame terminalDisplay = await output.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.True(terminalDisplay.Kind is RealtimeFrameKind.DisplayFrame or RealtimeFrameKind.Snapshot);
+        Assert.True(terminalDisplay.LastSequence > firstDisplay.LastSequence);
 
         Assert.Equal(
             Normalize(File.ReadAllText(Path.Combine(fixture.FixtureRoot, "expected-transcript.txt"))),

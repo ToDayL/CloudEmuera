@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-option csharp_namespace = "CloudEmuera.Ipc.V4";
+option csharp_namespace = "CloudEmuera.Ipc.V5";
 
-package cloudemuera.ipc.v4;
+package cloudemuera.ipc.v5;
 
 service WorkerControl {
   rpc Connect(stream WorkerEnvelope) returns (stream WorkerCommandEnvelope);
@@ -27,6 +27,7 @@ message WorkerEnvelope {
     RuntimeFailed runtime_failed = 16;
     WorkerStopped worker_stopped = 17;
     WorkerCommandResult command_result = 18;
+    DisplayFrame display_frame = 19;
   }
 }
 
@@ -58,12 +59,27 @@ message WorkerHeartbeat {
   string current_prompt_id = 4;
   PromptTiming prompt_timing = 5;
   int64 resident_memory_bytes = 6;
+  int64 working_sequence = 7;
+  int64 committed_sequence = 8;
+  uint64 committed_frame_id = 9;
 }
 
 message DisplayBatch {
   repeated ConsoleTransaction transactions = 1;
   bool is_snapshot = 2;
   ConsoleSnapshot snapshot = 3;
+}
+
+// A DisplayFrame is the only Worker message that may become browser-visible.
+// Its transaction list is one atomic commit and is never split into IPC
+// chunks. A snapshot frame and a delta frame are mutually exclusive.
+message DisplayFrame {
+  uint64 frame_id = 1;
+  int64 commit_sequence = 2;
+  DisplayCommitReason reason = 3;
+  bool requires_snapshot = 4;
+  ConsoleSnapshot snapshot = 5;
+  repeated ConsoleTransaction transactions = 6;
 }
 
 message InputResult {
@@ -439,3 +455,4 @@ enum BackgroundMode { BACKGROUND_MODE_UNSPECIFIED = 0; BACKGROUND_MODE_STRETCH =
 enum ShapeKind { SHAPE_KIND_UNSPECIFIED = 0; SHAPE_KIND_RECTANGLE = 1; SHAPE_KIND_ELLIPSE = 2; SHAPE_KIND_LINE = 3; SHAPE_KIND_POLYGON = 4; SHAPE_KIND_SPACE = 5; }
 enum MediaPlaybackState { MEDIA_PLAYBACK_STATE_UNSPECIFIED = 0; MEDIA_PLAYBACK_STATE_STOPPED = 1; MEDIA_PLAYBACK_STATE_REQUESTED = 2; }
 enum MediaStartPolicy { MEDIA_START_POLICY_UNSPECIFIED = 0; MEDIA_START_POLICY_IMMEDIATE = 1; MEDIA_START_POLICY_ON_USER_GESTURE = 2; }
+enum DisplayCommitReason { DISPLAY_COMMIT_REASON_UNSPECIFIED = 0; DISPLAY_COMMIT_REASON_WAITING_FOR_INPUT = 1; DISPLAY_COMMIT_REASON_RUNTIME_COMPLETED = 2; DISPLAY_COMMIT_REASON_RUNTIME_FAILED = 3; DISPLAY_COMMIT_REASON_EXPLICIT_REFRESH = 4; }

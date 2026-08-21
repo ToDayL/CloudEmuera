@@ -1,5 +1,5 @@
 using CloudEmuera.Contracts.Realtime;
-using W = CloudEmuera.Ipc.V4;
+using W = CloudEmuera.Ipc.V5;
 using R = CloudEmuera.RuntimeAdapter;
 
 namespace CloudEmuera.Api.Realtime;
@@ -44,6 +44,7 @@ public enum RealtimeFrameKind
 {
     Snapshot,
     TransactionBatch,
+    DisplayFrame,
     Completed
 }
 
@@ -54,13 +55,17 @@ public sealed record RealtimeFrame(
     long LastSequence,
     ReadOnlyMemory<byte> Payload,
     bool ReplacesState,
-    string? Reason = null)
+    string? Reason = null,
+    long FrameId = 0)
 {
     public static RealtimeFrame Snapshot(RealtimeEncodedPayload payload, bool replacesState, string? reason = null) =>
         new(RealtimeFrameKind.Snapshot, payload.WorkerEpoch, payload.FirstSequence, payload.LastSequence, payload.Bytes, replacesState, reason);
 
     public static RealtimeFrame Transactions(RealtimeEncodedPayload payload) =>
         new(RealtimeFrameKind.TransactionBatch, payload.WorkerEpoch, payload.FirstSequence, payload.LastSequence, payload.Bytes, false);
+
+    public static RealtimeFrame Display(RealtimeEncodedPayload payload) =>
+        new(RealtimeFrameKind.DisplayFrame, payload.WorkerEpoch, payload.FirstSequence, payload.LastSequence, payload.Bytes, false, payload.CommitReason, payload.FrameId);
 
     public static RealtimeFrame Completed(ulong workerEpoch, string reason) =>
         new(RealtimeFrameKind.Completed, workerEpoch, 0, 0, ReadOnlyMemory<byte>.Empty, false, reason);
@@ -80,7 +85,12 @@ public sealed class SessionOutputHub : IAsyncDisposable
     private readonly object sync = new();
     private readonly SemaphoreSlim publishGate = new(1, 1);
     private readonly Dictionary<Guid, RealtimeSubscription> subscriptions = [];
+    // The Worker sends only committed frames. Keep the working reference
+    // private to this publish transaction so no subscription can observe it
+    // before the frame metadata and reducer result are complete.
+    private R.ConsoleSnapshot? workingSnapshot;
     private R.ConsoleSnapshot? latestSnapshot;
+    private R.DisplayCommit? committedFrame;
     private RealtimeEncodedPayload? latestSnapshotPayload;
     private SnapshotEncodingOperation? snapshotEncoding;
     private SessionOutputHubState state = SessionOutputHubState.AwaitingInitialSnapshot;
@@ -92,9 +102,11 @@ public sealed class SessionOutputHub : IAsyncDisposable
     private long snapshotEncodingCount;
     private int disposed;
 
-    private sealed class SnapshotEncodingOperation(R.ConsoleSnapshot snapshot)
+    private sealed class SnapshotEncodingOperation(R.ConsoleSnapshot snapshot, R.DisplayCommit? commit)
     {
         public R.ConsoleSnapshot Snapshot { get; } = snapshot;
+
+        public R.DisplayCommit? Commit { get; } = commit;
 
         public TaskCompletionSource<RealtimeEncodedPayload> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -368,6 +380,174 @@ public sealed class SessionOutputHub : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Publishes the only Worker payload that is allowed to become browser
+    /// visible. A frame is reduced and promoted as one unit; timer, count and
+    /// byte thresholds are used only to decide whether its wire delta is safe,
+    /// never to create a visible boundary.
+    /// </summary>
+    public RealtimePublishResult PublishDisplayFrame(W.DisplayFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        if (Volatile.Read(ref disposed) != 0)
+            return Rejected("hub-disposed");
+
+        bool gateEntered = false;
+        try
+        {
+            publishGate.Wait();
+            gateEntered = true;
+            if (Volatile.Read(ref disposed) != 0)
+                return Rejected("hub-disposed");
+
+            IReadOnlyList<R.SequencedConsoleTransaction> transactions;
+            R.ConsoleSnapshot? incomingSnapshot = null;
+            R.DisplayCommitReason reason;
+            long frameId;
+            try
+            {
+                if (frame.FrameId == 0 || frame.FrameId > long.MaxValue || frame.CommitSequence < 0)
+                    throw new InvalidDataException("The display frame metadata is invalid.");
+                reason = RealtimePayloadMapper.FromProto(frame.Reason);
+                transactions = RealtimePayloadMapper.FromProto(frame);
+                if (frame.RequiresSnapshot)
+                {
+                    if (frame.Snapshot is null || transactions.Count != 0)
+                        throw new InvalidDataException("A snapshot display frame must contain exactly one snapshot representation.");
+                    incomingSnapshot = RealtimePayloadMapper.FromProto(frame.Snapshot);
+                    if (incomingSnapshot.SnapshotSequence != frame.CommitSequence)
+                        throw new InvalidDataException("The display frame snapshot sequence does not match its commit sequence.");
+                }
+                else if (frame.Snapshot is not null || transactions.Count == 0)
+                {
+                    throw new InvalidDataException("A delta display frame must contain transactions and no snapshot.");
+                }
+                frameId = checked((long)frame.FrameId);
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidDataException or OverflowException)
+            {
+                return Fault("invalid-display-frame", exception);
+            }
+
+            R.ConsoleSnapshot candidate;
+            RealtimePublishDisposition disposition;
+            R.DisplayCommit commit;
+            lock (sync)
+            {
+                if (state is SessionOutputHubState.Faulted or SessionOutputHubState.Disposed)
+                    return Rejected(terminalReason ?? "hub-not-live");
+
+                try
+                {
+                    if (latestSnapshot is null)
+                    {
+                        if (!frame.RequiresSnapshot || incomingSnapshot is null)
+                            return FaultLocked("initial-display-snapshot-required");
+                        if (incomingSnapshot.SnapshotSequence < minimumInitialSequence)
+                            return FaultLocked("initial-display-snapshot-sequence-regressed");
+                        candidate = incomingSnapshot;
+                    }
+                    else
+                    {
+                        long currentFrameId = committedFrame?.FrameId ?? 0;
+                        if (frameId <= currentFrameId)
+                            return IgnoredLocked();
+
+                        if (frame.RequiresSnapshot)
+                        {
+                            if (incomingSnapshot is null || incomingSnapshot.SnapshotSequence < latestSnapshot.SnapshotSequence)
+                                return IgnoredLocked();
+                            if (incomingSnapshot.SnapshotSequence == latestSnapshot.SnapshotSequence)
+                                return IgnoredLocked();
+                            candidate = incomingSnapshot;
+                        }
+                        else
+                        {
+                            if (committedFrame is null || frameId != currentFrameId + 1)
+                                return FaultLocked("display-frame-gap");
+                            if (transactions[0].Sequence != latestSnapshot.SnapshotSequence + 1)
+                                return FaultLocked("display-frame-sequence-gap");
+                            candidate = R.ConsoleSnapshotReducer.ApplyBatch(latestSnapshot, transactions, reducerOptions);
+                        }
+                    }
+
+                    if (candidate.SnapshotSequence != frame.CommitSequence)
+                        return FaultLocked("display-frame-sequence-mismatch");
+
+                    workingSnapshot = candidate;
+                    commit = new R.DisplayCommit(
+                        frameId,
+                        frame.CommitSequence,
+                        reason,
+                        frame.RequiresSnapshot,
+                        candidate,
+                        frame.RequiresSnapshot ? Array.Empty<R.SequencedConsoleTransaction>() : transactions);
+                    committedFrame = commit;
+                    latestSnapshot = candidate;
+                    latestSnapshotPayload = null;
+                    workingSnapshot = null;
+                    state = SessionOutputHubState.Live;
+                    publishedBatchCount++;
+                    disposition = RealtimePublishDisposition.Applied;
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidDataException or OverflowException)
+                {
+                    return FaultLocked("invalid-display-frame", exception);
+                }
+            }
+
+            bool requiresSnapshotDelivery = commit.RequiresSnapshot;
+            RealtimeEncodedPayload? displayPayload = null;
+            if (!requiresSnapshotDelivery)
+            {
+                try
+                {
+                    RealtimeEncodedPayload candidatePayload = serializer.SerializeDisplayFrame(WorkerEpoch, commit);
+                    if (candidatePayload.ByteLength <= options.BatchTargetBytes)
+                        displayPayload = candidatePayload;
+                    else
+                        requiresSnapshotDelivery = true;
+                }
+                catch (RealtimePayloadSizeException)
+                {
+                    // The delta optimization has its own hard encoding
+                    // limit. A large committed frame still has one valid
+                    // representation: the committed snapshot requested
+                    // below. Snapshot encoding remains responsible for the
+                    // final 12 MiB fail-closed check.
+                    requiresSnapshotDelivery = true;
+                }
+            }
+
+            lock (sync)
+            {
+                if (state is SessionOutputHubState.Faulted or SessionOutputHubState.Disposed)
+                    return Rejected(terminalReason ?? "hub-not-live");
+                foreach (RealtimeSubscription subscription in subscriptions.Values.ToArray())
+                {
+                    if (requiresSnapshotDelivery)
+                        subscription.RequestResyncLocked("display-snapshot-committed");
+                    else
+                        subscription.EnqueueLocked(displayPayload!);
+                }
+                return new RealtimePublishResult(disposition, state, candidate.SnapshotSequence);
+            }
+        }
+        catch (RealtimePayloadSizeException exception)
+        {
+            return Fault("display-frame-too-large", exception);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidDataException or OverflowException)
+        {
+            return Fault("display-frame-encoding-failed", exception);
+        }
+        finally
+        {
+            if (gateEntered)
+                publishGate.Release();
+        }
+    }
+
     public void Complete(string reason = "runtime-completed", bool preservePending = true)
     {
         if (string.IsNullOrWhiteSpace(reason))
@@ -448,6 +628,8 @@ public sealed class SessionOutputHub : IAsyncDisposable
                 {
                     latestSnapshot = null;
                     latestSnapshotPayload = null;
+                    committedFrame = null;
+                    workingSnapshot = null;
                 }
             }
             finally
@@ -487,9 +669,14 @@ public sealed class SessionOutputHub : IAsyncDisposable
             return Array.Empty<RealtimeEncodedPayload>();
         var result = new List<RealtimeEncodedPayload>();
         foreach (R.SequencedConsoleTransaction transaction in transactions)
-            result.AddRange(batcher.Add(WorkerEpoch, transaction));
+        {
+            IReadOnlyList<RealtimeEncodedPayload> flushed = batcher.Add(WorkerEpoch, transaction);
+            result.AddRange(flushed);
+        }
         if (batcher.PendingCount != 0)
             ArmBatchTimer();
+        else
+            StopBatchTimer();
         return result;
     }
 
@@ -681,7 +868,11 @@ public sealed class SessionOutputHub : IAsyncDisposable
             }
             else
             {
-                operation = new SnapshotEncodingOperation(currentSnapshot);
+                operation = new SnapshotEncodingOperation(
+                    currentSnapshot,
+                    committedFrame is { } currentCommit && ReferenceEquals(currentCommit.Snapshot, currentSnapshot)
+                        ? currentCommit
+                        : null);
                 snapshotEncoding = operation;
                 ownsEncoding = true;
             }
@@ -691,7 +882,9 @@ public sealed class SessionOutputHub : IAsyncDisposable
         {
             try
             {
-                RealtimeEncodedPayload payload = serializer.SerializeSnapshot(WorkerEpoch, operation.Snapshot);
+                RealtimeEncodedPayload payload = operation.Commit is { } commit
+                    ? serializer.SerializeSnapshot(WorkerEpoch, commit)
+                    : serializer.SerializeSnapshot(WorkerEpoch, operation.Snapshot);
                 Interlocked.Increment(ref snapshotEncodingCount);
                 lock (sync)
                 {
@@ -840,7 +1033,12 @@ public sealed class RealtimeSubscription : IAsyncDisposable
                             continue;
                         }
                         expectedSequence = payload.LastSequence;
-                        return RealtimeFrame.Transactions(payload);
+                        return payload.Kind switch
+                        {
+                            RealtimePayloadKind.TransactionBatch => RealtimeFrame.Transactions(payload),
+                            RealtimePayloadKind.DisplayFrame => RealtimeFrame.Display(payload),
+                            _ => throw new InvalidDataException("The realtime queue returned a non-delta payload."),
+                        };
                     }
                 default:
                     throw new InvalidDataException("The realtime queue returned an unknown item.");

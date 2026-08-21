@@ -24,8 +24,8 @@ public sealed class RealtimeProtocolTests
         ClientHelloMessage hello = Assert.IsType<ClientHelloMessage>(message.Payload);
         Assert.Equal(RealtimeProtocol.Version, message.Envelope.ProtocolVersion);
         Assert.Equal("msg_01KHELLO", message.Envelope.MessageId);
-        Assert.Equal([2], hello.Value.SupportedProtocolVersions);
-        Assert.Equal("sha256:runtime-v4", hello.Value.CapabilityDigest);
+        Assert.Equal([3], hello.Value.SupportedProtocolVersions);
+        Assert.Equal("sha256:runtime-v5", hello.Value.CapabilityDigest);
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public sealed class RealtimeProtocolTests
     [Fact]
     public void DuplicateEnvelopePropertyIsRejectedBeforeTypedDeserialization()
     {
-        const string json = "{\"protocolVersion\":2,\"type\":\"client.hello\",\"type\":\"client.hello\",\"messageId\":\"msg_1\",\"payload\":{\"supportedProtocolVersions\":[2],\"capabilityDigest\":\"digest\",\"supportedCapabilities\":[]}}";
+        const string json = "{\"protocolVersion\":3,\"type\":\"client.hello\",\"type\":\"client.hello\",\"messageId\":\"msg_1\",\"payload\":{\"supportedProtocolVersions\":[3],\"capabilityDigest\":\"digest\",\"supportedCapabilities\":[]}}";
 
         RealtimeProtocolException exception = Assert.Throws<RealtimeProtocolException>(() => Parse(json));
         Assert.Equal("duplicate_property", exception.ReasonCode);
@@ -54,8 +54,8 @@ public sealed class RealtimeProtocolTests
     [Fact]
     public void DuplicateNestedPropertyAndSystemSourceAreRejected()
     {
-        const string duplicateNested = "{\"protocolVersion\":2,\"type\":\"session.input\",\"messageId\":\"msg_1\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"clientMessageId\":\"client_1\",\"source\":\"BUTTON\",\"value\":\"0\",\"value\":\"1\"}}";
-        const string systemSource = "{\"protocolVersion\":2,\"type\":\"session.input\",\"messageId\":\"msg_2\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"clientMessageId\":\"client_2\",\"source\":\"SYSTEM\",\"value\":\"0\"}}";
+        const string duplicateNested = "{\"protocolVersion\":3,\"type\":\"session.input\",\"messageId\":\"msg_1\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"clientMessageId\":\"client_1\",\"source\":\"BUTTON\",\"value\":\"0\",\"value\":\"1\"}}";
+        const string systemSource = "{\"protocolVersion\":3,\"type\":\"session.input\",\"messageId\":\"msg_2\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"clientMessageId\":\"client_2\",\"source\":\"SYSTEM\",\"value\":\"0\"}}";
 
         Assert.Equal("duplicate_property", Assert.Throws<RealtimeProtocolException>(() => Parse(duplicateNested)).ReasonCode);
         Assert.Equal("invalid_command", Assert.Throws<RealtimeProtocolException>(() => Parse(systemSource)).ReasonCode);
@@ -64,8 +64,8 @@ public sealed class RealtimeProtocolTests
     [Fact]
     public void PointerAndKeyPayloadsMustBeCompleteAndMatchTheirSource()
     {
-        const string incompletePointer = "{\"protocolVersion\":2,\"type\":\"session.input\",\"messageId\":\"msg_3\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"clientMessageId\":\"client_3\",\"source\":\"POINTER\",\"value\":\"\",\"pointer\":{\"x\":1,\"y\":2,\"button\":0}}}";
-        const string pointerOnButton = "{\"protocolVersion\":2,\"type\":\"session.input\",\"messageId\":\"msg_4\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"clientMessageId\":\"client_4\",\"source\":\"BUTTON\",\"value\":\"\",\"pointer\":{\"x\":1,\"y\":2,\"button\":0,\"pressed\":true}}}";
+        const string incompletePointer = "{\"protocolVersion\":3,\"type\":\"session.input\",\"messageId\":\"msg_3\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"clientMessageId\":\"client_3\",\"source\":\"POINTER\",\"value\":\"\",\"pointer\":{\"x\":1,\"y\":2,\"button\":0}}}";
+        const string pointerOnButton = "{\"protocolVersion\":3,\"type\":\"session.input\",\"messageId\":\"msg_4\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"clientMessageId\":\"client_4\",\"source\":\"BUTTON\",\"value\":\"\",\"pointer\":{\"x\":1,\"y\":2,\"button\":0,\"pressed\":true}}}";
 
         Assert.Equal("invalid_payload", Assert.Throws<RealtimeProtocolException>(() => Parse(incompletePointer)).ReasonCode);
         Assert.Equal("invalid_command", Assert.Throws<RealtimeProtocolException>(() => Parse(pointerOnButton)).ReasonCode);
@@ -75,7 +75,7 @@ public sealed class RealtimeProtocolTests
     public void MessageDepthAndByteLimitsFailClosedWithStableCodes()
     {
         string nested = new string('[', 40) + "0" + new string(']', 40);
-        string deep = "{\"protocolVersion\":2,\"type\":\"client.hello\",\"messageId\":\"msg_1\",\"payload\":{\"supportedProtocolVersions\":[2],\"capabilityDigest\":\"d\",\"supportedCapabilities\":[],\"unknown\":" + nested + "}}";
+        string deep = "{\"protocolVersion\":3,\"type\":\"client.hello\",\"messageId\":\"msg_1\",\"payload\":{\"supportedProtocolVersions\":[3],\"capabilityDigest\":\"d\",\"supportedCapabilities\":[],\"unknown\":" + nested + "}}";
         RealtimeProtocolException depth = Assert.Throws<RealtimeProtocolException>(() => Parse(deep, new RealtimeProtocolParserOptions(64 * 1024, 8)));
         Assert.Equal("json_too_deep", depth.ReasonCode);
 
@@ -87,7 +87,7 @@ public sealed class RealtimeProtocolTests
     [Fact]
     public void V2InputRejectsTheRemovedPromptIdField()
     {
-        const string json = "{\"protocolVersion\":2,\"type\":\"session.input\",\"messageId\":\"msg_1\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"promptId\":\"prompt_1\",\"clientMessageId\":\"client_1\",\"source\":\"BUTTON\",\"value\":\"0\"}}";
+        const string json = "{\"protocolVersion\":3,\"type\":\"session.input\",\"messageId\":\"msg_1\",\"sessionId\":\"sess_1\",\"workerEpoch\":1,\"payload\":{\"promptId\":\"prompt_1\",\"clientMessageId\":\"client_1\",\"source\":\"BUTTON\",\"value\":\"0\"}}";
 
         Assert.Equal("invalid_payload", Assert.Throws<RealtimeProtocolException>(() => Parse(json)).ReasonCode);
     }
@@ -107,7 +107,7 @@ public sealed class RealtimeProtocolTests
         var codec = new RealtimeEnvelopeCodec(gateway);
 
         EncodedRealtimeMessage encoded = codec.Encode(
-            "display.batch",
+            "display.frame",
             "msg_1",
             (ReadOnlyMemory<byte>)Encoding.UTF8.GetBytes("{}"),
             sessionId: "sess_1",
@@ -117,7 +117,7 @@ public sealed class RealtimeProtocolTests
         Assert.InRange(encoded.Bytes.Length, 1, gateway.ServerMessageMaxBytes);
 
         Assert.Throws<RealtimeEnvelopeSizeException>(() => codec.Encode(
-            "display.batch",
+            "display.frame",
             "msg_2",
             (ReadOnlyMemory<byte>)new byte[257],
             sessionId: "sess_1",
@@ -160,10 +160,10 @@ public sealed class RealtimeProtocolTests
         EncodedRealtimeMessage message = codec.Encode(
             "server.hello",
             "msg_1",
-            new ServerHelloPayload(1, RealtimeProtocol.PayloadSchemaVersion, "conn_1", 1, 20_000, 10_000, 4, 32, gateway.ServerMessageMaxBytes, "digest"));
+            new ServerHelloPayload(RealtimeProtocol.Version, RealtimeProtocol.PayloadSchemaVersion, "conn_1", 1, 20_000, 10_000, 4, 32, gateway.ServerMessageMaxBytes, "digest"));
 
         string json = Encoding.UTF8.GetString(message.Bytes);
-        Assert.Contains("\"payloadSchemaVersion\":\"p1-11\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"payloadSchemaVersion\":\"p1-s03-display-commit\"", json, StringComparison.Ordinal);
         Assert.Contains("\"capabilityDigest\":\"digest\"", json, StringComparison.Ordinal);
     }
 

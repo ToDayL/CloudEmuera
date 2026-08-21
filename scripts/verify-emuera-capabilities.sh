@@ -20,9 +20,9 @@ schema = json.loads(schema_path.read_text(encoding="utf-8"))
 expected_upstream = "2175f8a629257efb08214e093704b3a3d3d06d05"
 expected_matrix = "p1-07"
 expected_runtime = "headless-p0.5.1"
-expected_protocol = 4
+expected_protocol = 5
 expected_digest = hashlib.sha256(
-    f"cloudemuera:{expected_matrix}:{expected_upstream}:structured-console-v4".encode()
+    f"cloudemuera:{expected_matrix}:{expected_upstream}:structured-console-v5-display-commit".encode()
 ).hexdigest()
 
 def fail(message):
@@ -39,7 +39,7 @@ if matrix.get("upstreamCommit") != expected_upstream:
 if matrix.get("runtimeIntegrationVersion") != expected_runtime:
     fail("runtime integration version is not the pinned headless version")
 if matrix.get("protocolVersion") != expected_protocol:
-    fail("structured protocol version is not 4")
+    fail("structured protocol version is not 5")
 if matrix.get("capabilitySetDigest") != expected_digest:
     fail("capability digest does not match the canonical input")
 
@@ -152,10 +152,10 @@ if f'CapabilitySetDigest = "{expected_digest}"' not in baseline:
     fail("RuntimeBaseline capability digest is missing")
 
 protocol = (root / "src/CloudEmuera.Ipc/StructuredIpcProtocol.cs").read_text(encoding="utf-8")
-if "CurrentVersion = 4" not in protocol or "CapabilityMatrixVersion = \"p1-07\"" not in protocol:
-    fail("v4 structured IPC constants are not frozen")
+if "CurrentVersion = 5" not in protocol or "CapabilityMatrixVersion = \"p1-07\"" not in protocol:
+    fail("v5 structured IPC constants are not frozen")
 proto = (root / "src/CloudEmuera.Ipc/Protos/structured-worker.proto").read_text(encoding="utf-8")
-for required_proto in ("package cloudemuera.ipc.v4;", "string capability_set_digest", "message ConsoleSnapshot", "message ConsoleTransaction"):
+for required_proto in ("package cloudemuera.ipc.v5;", "string capability_set_digest", "message ConsoleSnapshot", "message ConsoleTransaction"):
     if required_proto not in proto:
         fail(f"structured-worker.proto misses {required_proto}")
 

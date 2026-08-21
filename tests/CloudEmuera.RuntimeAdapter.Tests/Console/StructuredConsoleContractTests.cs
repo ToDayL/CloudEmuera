@@ -77,6 +77,101 @@ public sealed class StructuredConsoleContractTests
     }
 
     [Fact]
+    public void DisplayCommitIsCreatedOnlyAfterTheFinalOpenPromptOperation()
+    {
+        var store = new ConsoleStateStore();
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode("working")])),
+        ]));
+
+        Assert.Null(store.CommittedSnapshot);
+        Assert.Equal(1, store.CurrentSequence);
+
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.Open(new ConsolePrompt("prompt-1", ConsoleInputType.Text)),
+        ]));
+
+        DisplayCommit commit = store.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected a waiting-for-input display commit.");
+        Assert.Equal(DisplayCommitReason.WaitingForInput, commit.Reason);
+        Assert.True(commit.RequiresSnapshot);
+        Assert.Equal(2, commit.CommitSequence);
+        Assert.Equal(2, commit.Snapshot.SnapshotSequence);
+        Assert.Equal("working", Assert.IsType<TextNode>(commit.Snapshot.Scrollback[0].Nodes[0]).Text);
+    }
+
+    [Fact]
+    public void WorkingClearAndReprintRemainHiddenUntilTheNextPromptCommit()
+    {
+        var store = new ConsoleStateStore();
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode("old")])),
+            ConsoleOperation.Open(new ConsolePrompt("prompt-1", ConsoleInputType.Text)),
+        ]));
+        DisplayCommit first = store.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected the initial display commit.");
+
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.Close("prompt-1", ConsolePromptCloseReason.InputAccepted),
+        ]));
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.ClearConsole(),
+            ConsoleOperation.AppendLine(new ConsoleLine("line-2", [new TextNode("reprinted")])),
+        ]));
+        Assert.Same(first.Snapshot, store.CommittedSnapshot);
+
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.Open(new ConsolePrompt("prompt-2", ConsoleInputType.Text)),
+        ]));
+
+        DisplayCommit second = store.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected the reprint display commit.");
+        Assert.Equal(first.FrameId + 1, second.FrameId);
+        Assert.False(second.RequiresSnapshot);
+        Assert.Equal([2L, 3L, 4L], second.Transactions.Select(item => item.Sequence));
+        Assert.Equal("reprinted", Assert.IsType<TextNode>(second.Snapshot.Scrollback[0].Nodes[0]).Text);
+    }
+
+    [Fact]
+    public void CommitFallsBackToSnapshotWhenPendingDeltaHistoryIsCompacted()
+    {
+        var store = new ConsoleStateStore(new ConsoleHistoryOptions { MaxDeltaCount = 2 });
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.Open(new ConsolePrompt("prompt-1", ConsoleInputType.Text)),
+        ]));
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.Close("prompt-1", ConsolePromptCloseReason.InputAccepted),
+        ]));
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode("one")])),
+        ]));
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.AppendLine(new ConsoleLine("line-2", [new TextNode("two")])),
+        ]));
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.Open(new ConsolePrompt("prompt-2", ConsoleInputType.Text)),
+        ]));
+
+        DisplayCommit commit = store.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected the compacted display commit.");
+        Assert.True(commit.RequiresSnapshot);
+        Assert.Empty(commit.Transactions);
+        Assert.True(store.RequiresSnapshotAtCommit is false);
+    }
+
+    [Fact]
+    public void TerminalCommitPublishesTheLastNoPromptWorkingState()
+    {
+        var store = new ConsoleStateStore();
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode("done")])),
+        ]));
+
+        DisplayCommit commit = store.CommitDisplayFrame(DisplayCommitReason.RuntimeCompleted);
+
+        Assert.Equal(DisplayCommitReason.RuntimeCompleted, commit.Reason);
+        Assert.True(commit.RequiresSnapshot);
+        Assert.Null(commit.Snapshot.CurrentPrompt);
+        Assert.Equal(store.CurrentSequence, store.CommittedSequence);
+    }
+
+    [Fact]
     public void StructuredResumeCompactsToABaselineWithoutLosingCurrentState()
     {
         var store = new ConsoleStateStore(new ConsoleHistoryOptions { MaxDeltaCount = 2 });

@@ -27,7 +27,7 @@ function assertFields(actual, expected, name) {
   requireValue(JSON.stringify(actual) === JSON.stringify(sorted), `${name} fields drifted: expected ${sorted.join(",")}, got ${actual.join(",")}`);
 }
 
-const schema = JSON.parse(await read("src/CloudEmuera.Contracts/Realtime/realtime-v2.schema.json"));
+const schema = JSON.parse(await read("src/CloudEmuera.Contracts/Realtime/realtime-v3.schema.json"));
 const protocolCs = await read("src/CloudEmuera.Contracts/Realtime/RealtimeProtocol.cs");
 const realtimeGenerated = await read("src/CloudEmuera.Web/src/realtime/generated.ts");
 const apiGenerated = await read("src/CloudEmuera.Web/src/api/generated.ts");
@@ -40,7 +40,7 @@ requireValue(protocolCs.includes(`PayloadSchemaVersion = \"${payloadSchemaVersio
 requireValue(realtimeGenerated.includes("GENERATED CONTRACT SNAPSHOT"), "realtime generated snapshot header is missing");
 requireValue(realtimeGenerated.includes(`REALTIME_PAYLOAD_SCHEMA_VERSION = \"${payloadSchemaVersion}\"`), "TypeScript realtime payload schema version drifted");
 requireValue(apiGenerated.includes("GENERATED CONTRACT SNAPSHOT"), "API generated snapshot header is missing");
-requireValue(realtimeGenerated === generateRealtimeTypes(schema), "realtime/generated.ts is not reproducible from realtime-v2.schema.json");
+requireValue(realtimeGenerated === generateRealtimeTypes(schema), "realtime/generated.ts is not reproducible from realtime-v3.schema.json");
 requireValue(capabilityTs === generateCapabilities(capabilityMatrix), "realtime/capabilities.ts is not reproducible from runtime-capabilities.json");
 for (const generatedType of ["RealtimeSnapshotPayload", "RealtimeNode", "RealtimeDrawable", "RealtimeOperation", "ConsoleState"]) {
   requireValue(new RegExp(`(?:interface|type) ${generatedType}\\b`).test(realtimeGenerated), `realtime generated type ${generatedType} is missing`);

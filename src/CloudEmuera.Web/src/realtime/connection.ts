@@ -113,7 +113,7 @@ export class RealtimeConnectionManager {
     socket.addEventListener("open", () => {
       if (this.socket !== socket) return;
       this.setPhase("hello_pending");
-      this.send("client.hello", { supportedProtocolVersions: [2], capabilityDigest: CAPABILITY_DIGEST, supportedCapabilities: [...SUPPORTED_CAPABILITIES] });
+      this.send("client.hello", { supportedProtocolVersions: [3], capabilityDigest: CAPABILITY_DIGEST, supportedCapabilities: [...SUPPORTED_CAPABILITIES] });
     });
     socket.addEventListener("message", event => { if (this.socket === socket) this.handleMessage(event.data); });
     socket.addEventListener("error", () => { /* close is the reconnect boundary */ });
@@ -227,7 +227,7 @@ export class RealtimeConnectionManager {
 
   private send(type: string, payload: object, sessionId?: string, workerEpoch?: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
-    const message = { protocolVersion: 2, type, messageId: newMessageId(), ...(sessionId ? { sessionId } : {}), ...(workerEpoch ? { workerEpoch } : {}), payload };
+    const message = { protocolVersion: 3, type, messageId: newMessageId(), ...(sessionId ? { sessionId } : {}), ...(workerEpoch ? { workerEpoch } : {}), payload };
     this.socket.send(JSON.stringify(message));
   }
 
@@ -289,7 +289,9 @@ export class RealtimeConnectionManager {
   }
 }
 
-function notify(subscription: Subscription): void { for (const listener of subscription.listeners) listener(subscription.state); }
+function notify(subscription: Subscription): void {
+  for (const listener of subscription.listeners) listener(subscription.state);
+}
 function newMessageId(): string { return `web-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`; }
 function newClientMessageId(): string { return `client-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`; }
 function realtimeUrl(): string { const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"; return `${protocol}//${window.location.host}/api/v1/realtime`; }

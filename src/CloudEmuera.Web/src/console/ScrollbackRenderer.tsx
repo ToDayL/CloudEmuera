@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
@@ -36,7 +36,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     container.addEventListener("scroll", updatePosition, { passive: true });
     return () => container.removeEventListener("scroll", updatePosition);
   }, [scrollContainerRef]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     scrollToBottom("auto");
     // New output is authoritative for the reading position: the console always follows it.
   }, [lines, scrollToBottom, scrollVersion]);

@@ -3,7 +3,7 @@ import { decodeRealtimeMessage, RealtimeDecodeError } from "./codec";
 import { CAPABILITY_DIGEST } from "./capabilities";
 
 function envelope(type: string, payload: unknown, extra: Record<string, unknown> = {}) {
-  return JSON.stringify({ protocolVersion: 2, type, messageId: "msg-1", ...extra, payload });
+  return JSON.stringify({ protocolVersion: 3, type, messageId: "msg-1", ...extra, payload });
 }
 
 const emptyState = {
@@ -15,12 +15,12 @@ const emptyState = {
 describe("realtime codec", () => {
   it("decodes a closed server hello and complete snapshot envelope", () => {
     const helloJson = envelope("server.hello", {
-      protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "conn-1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000,
+      protocolVersion: 3, payloadSchemaVersion: "p1-s03-display-commit", connectionId: "conn-1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000,
       heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST,
     });
     const hello = decodeRealtimeMessage(helloJson);
     expect(hello.type).toBe("server.hello");
-    const snapshot = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, consoleState: emptyState }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
+    const snapshot = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: emptyState }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
     expect(snapshot.type).toBe("session.snapshot");
   });
 
@@ -32,7 +32,7 @@ describe("realtime codec", () => {
         { type: "element", tag: "img", style, assetId: "sha256-image", altText: "fixture", children: [] },
       ],
     } }], alignment: "left", temporary: false }] };
-    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, consoleState: html }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
+    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: html }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
     expect(decoded.type).toBe("session.snapshot");
   });
 
@@ -47,7 +47,7 @@ describe("realtime codec", () => {
         children: [{ type: "button", children: [{ type: "text", text: "go", style }], value: "go", tooltip: null, enabled: true, generation: 1, positionX: 42 }],
       }], alignment: "left", temporary: false }],
     };
-    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
+    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
     const node = (decoded as Extract<typeof decoded, { type: "session.snapshot" }>).payload.consoleState.scrollback[0].nodes[0];
     expect(node.type).toBe("div");
     if (node.type === "div") {
@@ -70,7 +70,7 @@ describe("realtime codec", () => {
         }],
       }] }],
     };
-    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
+    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
     const node = (decoded as Extract<typeof decoded, { type: "session.snapshot" }>).payload.consoleState.scrollback[0].nodes[0];
     expect(node.type).toBe("htmlIsland");
     if (node.type === "htmlIsland") {
@@ -80,13 +80,13 @@ describe("realtime codec", () => {
   });
 
   it("rejects duplicate keys, unknown fields, unsupported HTML and invalid PNG raster", () => {
-    expect(() => decodeRealtimeMessage('{"protocolVersion":2,"type":"server.hello","messageId":"m","messageId":"n","payload":{}}')).toThrowError(RealtimeDecodeError);
-    expect(() => decodeRealtimeMessage(envelope("server.hello", { protocolVersion: 2, payloadSchemaVersion: "p1-11", connectionId: "c", serverNowUnixMilliseconds: 1, heartbeatIntervalMilliseconds: 1, heartbeatTimeoutMilliseconds: 1, maxSubscriptionsPerConnection: 1, maxPendingInputsPerConnection: 1, serverMessageMaxBytes: 1, capabilityDigest: CAPABILITY_DIGEST, extra: true }))).toThrowError("不受支持的字段");
+    expect(() => decodeRealtimeMessage('{"protocolVersion":3,"type":"server.hello","messageId":"m","messageId":"n","payload":{}}')).toThrowError(RealtimeDecodeError);
+    expect(() => decodeRealtimeMessage(envelope("server.hello", { protocolVersion: 3, payloadSchemaVersion: "p1-s03-display-commit", connectionId: "c", serverNowUnixMilliseconds: 1, heartbeatIntervalMilliseconds: 1, heartbeatTimeoutMilliseconds: 1, maxSubscriptionsPerConnection: 1, maxPendingInputsPerConnection: 1, serverMessageMaxBytes: 1, capabilityDigest: CAPABILITY_DIGEST, extra: true }))).toThrowError("不受支持的字段");
     const html = { ...emptyState, scrollback: [{ lineId: "line-1", nodes: [{ type: "htmlIsland", root: { type: "element", tag: "script", children: [] } }], alignment: "left", temporary: false }] };
-    expect(() => decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, consoleState: html }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }))).toThrowError(RealtimeDecodeError);
+    expect(() => decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: html }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }))).toThrowError(RealtimeDecodeError);
     const raster = { type: "raster", drawableId: "r", bounds: { x: 0, y: 0, width: 1, height: 1 }, zIndex: 0, opacity: 1, pngData: "aGVsbG8=" };
     const state = { ...emptyState, canvasScene: { drawables: [raster], hitRegions: [] } };
-    expect(() => decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }))).toThrowError("PNG");
+    expect(() => decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }))).toThrowError("PNG");
   });
 
   it("rejects non-finite JSON numbers before JSON.parse can accept them", () => {
@@ -95,7 +95,7 @@ describe("realtime codec", () => {
 
   it("rejects a payload schema version that the client did not compile", () => {
     expect(() => decodeRealtimeMessage(envelope("server.hello", {
-      protocolVersion: 2, payloadSchemaVersion: "p1-09", connectionId: "c", serverNowUnixMilliseconds: 1,
+      protocolVersion: 3, payloadSchemaVersion: "p1-09", connectionId: "c", serverNowUnixMilliseconds: 1,
       heartbeatIntervalMilliseconds: 1, heartbeatTimeoutMilliseconds: 1, maxSubscriptionsPerConnection: 1,
       maxPendingInputsPerConnection: 1, serverMessageMaxBytes: 1, capabilityDigest: CAPABILITY_DIGEST,
     }))).toThrowError("实时消息内容版本不兼容");

@@ -39,7 +39,7 @@ async function loginForRealtime(page: import("@playwright/test").Page) {
   throw new Error("The realtime smoke test could not authenticate the bootstrap administrator.");
 }
 
-test("authenticated browser can complete the realtime v1 hello handshake", async ({ page }, testInfo) => {
+test("authenticated browser can complete the realtime v3 hello handshake", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   test.skip(!["chromium", "mobile-chrome"].includes(testInfo.project.name), "The protocol smoke runs in the two E2E journeys.");
   await loginForRealtime(page);
@@ -47,19 +47,19 @@ test("authenticated browser can complete the realtime v1 hello handshake", async
   const hello = await page.evaluate(() => new Promise<{ type: string; protocolVersion: number }>((resolve, reject) => {
     const socket = new WebSocket(
       `${window.location.origin.replace(/^http/, "ws")}/api/v1/realtime`,
-      "cloudemuera.realtime.v2");
+      "cloudemuera.realtime.v3");
     const timeout = window.setTimeout(() => {
       socket.close();
       reject(new Error("realtime hello timed out"));
     }, 10_000);
 
     socket.onopen = () => socket.send(JSON.stringify({
-      protocolVersion: 2,
+      protocolVersion: 3,
       type: "client.hello",
       messageId: "msg_e2e_realtime_hello",
       payload: {
-        supportedProtocolVersions: [2],
-          capabilityDigest: "7f0003c99e6f86f383b6cb018a894338bead34c502ab9a71a87d8eb2e9e2c86e",
+        supportedProtocolVersions: [3],
+          capabilityDigest: "906354201ae69d3564dfad8c117a905af640f12a5d3523ec17aa7626e5b8a653",
         supportedCapabilities: [],
       },
     }));
@@ -76,5 +76,5 @@ test("authenticated browser can complete the realtime v1 hello handshake", async
     };
   }));
 
-  expect(hello).toMatchObject({ type: "server.hello", protocolVersion: 2 });
+  expect(hello).toMatchObject({ type: "server.hello", protocolVersion: 3 });
 });

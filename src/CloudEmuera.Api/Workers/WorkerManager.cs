@@ -8,7 +8,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V4;
+using CloudEmuera.Ipc.V5;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Grpc.AspNetCore.Server;
@@ -451,6 +451,18 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             StructuredIpcProtocol.CapabilitySetDigest);
         if (!validation.IsValid)
         {
+            if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.Heartbeat)
+            {
+                // Heartbeats are liveness samples, not control transitions.
+                // A malformed sample must be ignored so the next valid sample
+                // can renew the lease; the bounded watchdog handles a Worker
+                // that keeps emitting invalid samples.
+                connection.Session.LogLifecycle(
+                    "heartbeat_rejected",
+                    $"invalid_heartbeat_payload={validation.ReasonCode}",
+                    LogLevel.Warning);
+                return;
+            }
             connection.Session.RecordProtocolError(validation.ReasonCode);
             connection.Cancel();
             return;
@@ -461,19 +473,19 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             connection.Cancel();
             return;
         }
-        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch)
+        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayFrame)
         {
-            RealtimePublishResult outputResult = connection.Session.AcceptDisplayBatch(message.DisplayBatch);
-            if (message.DisplayBatch.IsSnapshot)
+            RealtimePublishResult outputResult = connection.Session.AcceptDisplayFrame(message.DisplayFrame);
+            if (message.DisplayFrame.RequiresSnapshot)
             {
                 connection.Session.LogLifecycle(
                     "display_snapshot_received",
-                    $"sequence={outputResult.SnapshotSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                    $"frameId={message.DisplayFrame.FrameId.ToString(System.Globalization.CultureInfo.InvariantCulture)};sequence={outputResult.SnapshotSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
             }
             if (!outputResult.Accepted)
             {
                 connection.Session.LogLifecycle(
-                    "display_batch_not_applied",
+                    "display_frame_not_applied",
                     outputResult.ReasonCode ?? outputResult.Disposition.ToString(),
                     outputResult.Disposition == RealtimePublishDisposition.Faulted ? LogLevel.Error : LogLevel.Warning);
             }
@@ -485,6 +497,16 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             }
             if (!outputResult.Accepted)
                 return;
+        }
+        if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.DisplayBatch)
+        {
+            // v5 has one production display boundary: DisplayFrame.  Keep the
+            // old mapper/hub entry point only for historical unit fixtures; a
+            // live Worker sending DisplayBatch must fail closed instead of
+            // reintroducing timer- or batch-boundary visibility.
+            connection.Session.RecordProtocolError(IpcReasonCodes.UnsupportedMessage);
+            connection.Cancel();
+            return;
         }
         if (message.PayloadCase == WorkerEnvelope.PayloadOneofCase.InputResult)
         {
@@ -570,6 +592,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                     $"status={message.RuntimeCompleted.Status};lastSequence={message.RuntimeCompleted.LastOutputSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
                 connection.Session.MarkGracefulTerminationObserved();
                 connection.Session.OutputHub.Complete("runtime-completed");
+                await connection.Session.SendTerminalAcknowledgementAsync(message, connection.CancellationToken).ConfigureAwait(false);
                 break;
             case WorkerEnvelope.PayloadOneofCase.RuntimeFailed:
                 connection.Session.LogLifecycle(
@@ -580,6 +603,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                     string.IsNullOrWhiteSpace(message.RuntimeFailed.StableCode)
                         ? "runtime-failed"
                         : message.RuntimeFailed.StableCode);
+                await connection.Session.SendTerminalAcknowledgementAsync(message, connection.CancellationToken).ConfigureAwait(false);
                 break;
             case WorkerEnvelope.PayloadOneofCase.WorkerStopped when message.WorkerStopped.Graceful:
                 connection.Session.LogLifecycle(
@@ -1305,6 +1329,20 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         return result;
     }
 
+    internal RealtimePublishResult AcceptDisplayFrame(DisplayFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        RealtimePublishResult result = OutputHub.PublishDisplayFrame(frame);
+        if (!result.Accepted)
+            return result;
+
+        lock (sync)
+        {
+            lastDisplaySequence = Math.Max(lastDisplaySequence, result.SnapshotSequence);
+        }
+        return result;
+    }
+
     internal void RecordProtocolError(string reasonCode)
     {
         if (OutputHub.State is not SessionOutputHubState.Faulted and not SessionOutputHubState.Disposed)
@@ -1336,10 +1374,10 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             if (Volatile.Read(ref disposed) != 0)
                 return Task.CompletedTask;
 
-            // DisplayBatch is consumed by SessionOutputHub and must never be
+            // DisplayBatch and DisplayFrame are consumed by SessionOutputHub and must never be
             // duplicated into the control-plane wait probe. All other events
             // are retained only while they fit both explicit budgets.
-            if (value.PayloadCase != WorkerEnvelope.PayloadOneofCase.DisplayBatch)
+            if (value.PayloadCase is not WorkerEnvelope.PayloadOneofCase.DisplayBatch and not WorkerEnvelope.PayloadOneofCase.DisplayFrame)
             {
                 WorkerEnvelope copy = value.Clone();
                 int copyBytes = copy.CalculateSize();
@@ -1368,6 +1406,24 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         }
         return Task.CompletedTask;
     }
+
+    internal Task SendTerminalAcknowledgementAsync(WorkerEnvelope terminal, CancellationToken cancellationToken = default) =>
+        SendRawAsync(new WorkerCommandEnvelope
+        {
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+            MessageId = IpcProtocol.NewMessageId("terminal-ack"),
+            CorrelationId = terminal.MessageId,
+            SessionId = Binding.SessionId,
+            WorkerId = Binding.WorkerId,
+            WorkerEpoch = Binding.WorkerEpoch,
+            ControlPlaneInstanceId = ControlPlaneInstanceId,
+            CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+            Stop = new StopWorker
+            {
+                ReasonCode = IpcReasonCodes.TerminalAck,
+                DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.Add(ShutdownTimeout).ToUnixTimeMilliseconds(),
+            },
+        }, cancellationToken);
 
     internal async Task WriteCommandsAsync(IServerStreamWriter<WorkerCommandEnvelope> writer, CancellationToken cancellationToken)
     {
@@ -1585,7 +1641,8 @@ public sealed class ApiWorkerConnection : IDisposable
     internal ApiWorkerConnection(ApiWorkerSession session) => Session = session;
     public ApiWorkerSession Session { get; }
     public CancellationToken CancellationToken => cancellation.Token;
-    public void Cancel() => cancellation.Cancel();
+    public void Cancel()
+        => cancellation.Cancel();
     public void Dispose() => cancellation.Dispose();
 }
 
@@ -1634,8 +1691,13 @@ internal sealed class WorkerControlGrpcService(WorkerManager manager) : WorkerCo
         Task writer = decision.Session.WriteCommandsAsync(responseStream, lifetime.Token);
         try
         {
-            while (await requestStream.MoveNext(lifetime.Token).ConfigureAwait(false))
+            while (true)
+            {
+                if (!await requestStream.MoveNext(lifetime.Token).ConfigureAwait(false))
+                    break;
+
                 await manager.ReceiveAsync(connection, requestStream.Current).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {

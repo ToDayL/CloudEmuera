@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V4;
+using CloudEmuera.Ipc.V5;
 using CloudEmuera.Realtime;
 using CloudEmuera.RuntimeAdapter;
 using R = CloudEmuera.RuntimeAdapter;
@@ -39,8 +39,10 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     private Task? runtimeTask;
     private Task? outputTask;
     private Task? heartbeatTask;
-    private long lastSentSequence;
-    private bool forceSnapshot = true;
+    private long lastSentCommittedSequence;
+    private long lastSentCommittedFrameId;
+    private readonly TaskCompletionSource<bool> terminalAcknowledged =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool stoppedMessageSent;
 
     public WorkerRuntimeController(
@@ -52,7 +54,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         binding = bootstrap.Binding;
         this.connection = connection ?? throw new ArgumentNullException(nameof(connection));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        lastSentSequence = bootstrap.InitialOutputSequence;
+        lastSentCommittedSequence = bootstrap.InitialOutputSequence;
     }
 
     public Task<int> Completion => completion.Task;
@@ -318,6 +320,13 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task HandleStopAsync(WorkerCommandEnvelope envelope, CancellationToken cancellationToken)
     {
+        if (string.Equals(envelope.Stop.ReasonCode, IpcReasonCodes.TerminalAck, StringComparison.Ordinal))
+        {
+            terminalAcknowledged.TrySetResult(true);
+            LogLifecycle("terminal_acknowledged", envelope.CorrelationId);
+            return;
+        }
+
         bool alreadyStopping;
         lock (sync)
         {
@@ -382,7 +391,9 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             EmueraRuntimeResult initialized = await host.InitializeAsync(runtimeCancellation.Token).ConfigureAwait(false);
             if (initialized.Status != EmueraRuntimeStatus.Completed)
             {
+                await CommitFailureFrameAndDrainAsync().ConfigureAwait(false);
                 await SendRuntimeFailureAsync(initialized, "initialization").ConfigureAwait(false);
+                await WaitForTerminalAcknowledgementAsync().ConfigureAwait(false);
                 Complete(WorkerExitCodes.RuntimeInitializationFailed);
                 return;
             }
@@ -424,6 +435,10 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             outputTask = Task.Run(() => OutputPumpAsync(runtimeCancellation.Token), CancellationToken.None);
             heartbeatTask = Task.Run(() => HeartbeatAsync(runtimeCancellation.Token), CancellationToken.None);
             EmueraRuntimeResult result = await host.RunAsync(runtimeCancellation.Token).ConfigureAwait(false);
+            if (result.Status == EmueraRuntimeStatus.Completed)
+                _ = console.CommitDisplayFrame(R.DisplayCommitReason.RuntimeCompleted);
+            else if (result.Status != EmueraRuntimeStatus.Cancelled)
+                _ = console.CommitDisplayFrame(R.DisplayCommitReason.RuntimeFailed);
             runtimeCancellation.Cancel();
             await outputTask.ConfigureAwait(false);
             if (heartbeatTask is not null)
@@ -438,6 +453,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             }
             await SendRuntimeResultAsync(result).ConfigureAwait(false);
             LogLifecycle("runtime_finished", result.Status.ToString().ToLowerInvariant());
+            await WaitForTerminalAcknowledgementAsync().ConfigureAwait(false);
 
             bool wasStopping;
             lock (sync)
@@ -462,7 +478,9 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         catch (WorkerSessionRootException exception)
         {
             LogLifecycle("runtime_failed", exception.Code, LogLevel.Warning);
+            await CommitFailureFrameAndDrainAsync().ConfigureAwait(false);
             await SendFailureCodeAsync(exception.Code, "initialization", exception.SafeMessage, fatal: true).ConfigureAwait(false);
+            await WaitForTerminalAcknowledgementAsync().ConfigureAwait(false);
             Complete(WorkerExitCodes.SessionRootInvalid);
         }
         catch (OperationCanceledException)
@@ -476,8 +494,71 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 "runtime_failed",
                 $"runtime_worker_failure:{exception.GetType().Name}:{SafeMessage(exception.Message)}",
                 LogLevel.Error);
+            await CommitFailureFrameAndDrainAsync().ConfigureAwait(false);
             await SendFailureCodeAsync("runtime_worker_failure", "execution", SafeMessage(exception.Message), fatal: true).ConfigureAwait(false);
+            await WaitForTerminalAcknowledgementAsync().ConfigureAwait(false);
             Complete(WorkerExitCodes.RuntimeExecutionFailed);
+        }
+    }
+
+    private async Task WaitForTerminalAcknowledgementAsync()
+    {
+        try
+        {
+            await terminalAcknowledged.Task.WaitAsync(
+                    TimeSpan.FromMilliseconds(Math.Max(1, bootstrap.ShutdownGracePeriodMilliseconds)))
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            LogLifecycle("terminal_ack_timeout", IpcReasonCodes.TerminalAck, LogLevel.Warning);
+        }
+    }
+
+    private async Task CommitFailureFrameAndDrainAsync()
+    {
+        StructuredGameConsole? gameConsole = console;
+        if (gameConsole is null)
+            return;
+
+        // A terminal frame is valid only after the prompt has been resolved.
+        // If the runtime failed while waiting for input, preserve the last
+        // committed prompt frame rather than exposing a synthetic terminal
+        // state.
+        if (gameConsole.CurrentPrompt is null)
+        {
+            try
+            {
+                _ = gameConsole.CommitDisplayFrame(R.DisplayCommitReason.RuntimeFailed);
+            }
+            catch (ConsoleContractException)
+            {
+                // Keep the previously committed frame when the runtime state
+                // cannot form a valid terminal commit.
+            }
+        }
+
+        runtimeCancellation?.Cancel();
+        if (outputTask is not null)
+        {
+            try
+            {
+                await outputTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+        else
+        {
+            using var drainCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            try
+            {
+                await SendPendingOutputAsync(gameConsole, drainCancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
     }
 
@@ -542,11 +623,12 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                bool sent = await SendPendingOutputAsync(gameConsole, cancellationToken).ConfigureAwait(false);
-                if (!sent)
-                    await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-                else
-                    await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+                // Keep the committed-frame detection cadence at 10 ms. The
+                // old display pump used the same idle cadence; backing this
+                // off to 20 ms makes an input-to-next-prompt transition
+                // visibly slower even though the frame itself is atomic.
+                _ = await SendPendingOutputAsync(gameConsole, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(10, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -565,90 +647,69 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task<bool> SendPendingOutputAsync(StructuredGameConsole gameConsole, CancellationToken cancellationToken)
     {
-        StructuredConsoleResumeResult result;
-        if (forceSnapshot)
+        DisplayCommitReadResult result = gameConsole.StateStore.ReadCommittedSince(
+            Interlocked.Read(ref lastSentCommittedFrameId),
+            Interlocked.Read(ref lastSentCommittedSequence));
+        if (result.Kind == DisplayCommitReadKind.UpToDate || result.Commit is null)
+            return false;
+
+        DisplayCommit commit = result.Commit;
+        var displayFrame = new DisplayFrame
         {
-            R.ConsoleSnapshot snapshot = gameConsole.StateStore.StructuredSnapshot;
-            result = new StructuredConsoleSnapshotWithDeltasResult(
-                snapshot,
-                Array.Empty<SequencedConsoleTransaction>(),
-                snapshot.SnapshotSequence);
+            FrameId = (ulong)commit.FrameId,
+            CommitSequence = commit.CommitSequence,
+            Reason = ToProto(commit.Reason),
+            RequiresSnapshot = result.Kind == DisplayCommitReadKind.Snapshot || commit.RequiresSnapshot
+        };
+        if (displayFrame.RequiresSnapshot)
+        {
+            displayFrame.Snapshot = StructuredConsoleWireMapper.ToProto(commit.Snapshot);
         }
         else
         {
-            result = gameConsole.StateStore.ReadStructuredSince(Interlocked.Read(ref lastSentSequence));
-        }
-        if (result is StructuredConsoleUpToDateResult)
-            return true;
-
-        if (result is StructuredConsoleSnapshotWithDeltasResult snapshotResult)
-        {
-            SequencedConsoleTransaction[] transactions = snapshotResult.TransactionsAfterSnapshot.ToArray();
-            if (transactions.Length == 0)
-            {
-                var snapshotBatch = new DisplayBatch
-                {
-                    IsSnapshot = true,
-                    Snapshot = StructuredConsoleWireMapper.ToProto(snapshotResult.Snapshot)
-                };
-                await SendDisplayAsync(snapshotBatch, cancellationToken).ConfigureAwait(false);
-                Interlocked.Exchange(ref lastSentSequence, snapshotResult.Snapshot.SnapshotSequence);
-                connection.SetLastOutputSequence(snapshotResult.Snapshot.SnapshotSequence);
-                forceSnapshot = false;
-            }
-            else
-            {
-                bool firstBatch = true;
-                foreach (SequencedConsoleTransaction[] batch in transactions.Chunk(StructuredIpcLimits.MaxTransactions))
-                {
-                    var displayBatch = new DisplayBatch
-                    {
-                        IsSnapshot = firstBatch
-                    };
-                    if (firstBatch)
-                        displayBatch.Snapshot = StructuredConsoleWireMapper.ToProto(snapshotResult.Snapshot);
-                    displayBatch.Transactions.AddRange(batch.Select(StructuredConsoleWireMapper.ToProto));
-                    await SendDisplayAsync(displayBatch, cancellationToken).ConfigureAwait(false);
-                    Interlocked.Exchange(ref lastSentSequence, batch[^1].Sequence);
-                    connection.SetLastOutputSequence(batch[^1].Sequence);
-                    firstBatch = false;
-                }
-                forceSnapshot = false;
-            }
-            return true;
+            if (commit.Transactions.Count == 0 || commit.Transactions.Count > StructuredIpcLimits.MaxTransactions)
+                throw new InvalidDataException("A committed display delta cannot be split across IPC messages.");
+            displayFrame.Transactions.AddRange(commit.Transactions.Select(StructuredConsoleWireMapper.ToProto));
         }
 
-        StructuredConsoleDeltaBatchResult delta = (StructuredConsoleDeltaBatchResult)result;
-        foreach (SequencedConsoleTransaction[] batch in delta.Transactions.Chunk(StructuredIpcLimits.MaxTransactions))
+        WorkerEnvelope envelope = CreateDisplayEnvelope(displayFrame);
+        if (envelope.CalculateSize() > StructuredIpcLimits.MaxEnvelopeBytes && !displayFrame.RequiresSnapshot)
         {
-            var displayBatch = new DisplayBatch();
-            displayBatch.Transactions.AddRange(batch.Select(StructuredConsoleWireMapper.ToProto));
-            await SendDisplayAsync(displayBatch, cancellationToken).ConfigureAwait(false);
-            Interlocked.Exchange(ref lastSentSequence, batch[^1].Sequence);
-            connection.SetLastOutputSequence(batch[^1].Sequence);
+            displayFrame.RequiresSnapshot = true;
+            displayFrame.Transactions.Clear();
+            displayFrame.Snapshot = StructuredConsoleWireMapper.ToProto(commit.Snapshot);
+            envelope = CreateDisplayEnvelope(displayFrame);
         }
+        if (envelope.CalculateSize() > StructuredIpcLimits.MaxEnvelopeBytes)
+            throw new InvalidDataException("The committed display frame exceeds the IPC size limit.");
+
+        await connection.SendDisplayAsync(envelope, cancellationToken).ConfigureAwait(false);
+        Interlocked.Exchange(ref lastSentCommittedFrameId, commit.FrameId);
+        Interlocked.Exchange(ref lastSentCommittedSequence, commit.CommitSequence);
+        connection.SetLastOutputSequence(commit.CommitSequence);
         return true;
     }
 
-    private Task SendDisplayAsync(DisplayBatch batch, CancellationToken cancellationToken) =>
-        SendDisplayEnvelopeAsync(new WorkerEnvelope
-        {
-            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
-            MessageId = IpcProtocol.NewMessageId("display"),
-            SessionId = binding.SessionId,
-            WorkerId = binding.WorkerId,
-            WorkerEpoch = binding.WorkerEpoch,
-            ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
-            CapabilitySetDigest = bootstrap.CapabilitySetDigest,
-            DisplayBatch = batch
-        }, cancellationToken);
-
-    private Task SendDisplayEnvelopeAsync(WorkerEnvelope envelope, CancellationToken cancellationToken)
+    private WorkerEnvelope CreateDisplayEnvelope(DisplayFrame frame) => new()
     {
-        if (envelope.CalculateSize() > StructuredIpcLimits.MaxEnvelopeBytes)
-            throw new InvalidDataException("The Worker display envelope exceeds the IPC size limit.");
-        return connection.SendDisplayAsync(envelope, cancellationToken);
-    }
+        ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+        MessageId = IpcProtocol.NewMessageId("display-frame"),
+        SessionId = binding.SessionId,
+        WorkerId = binding.WorkerId,
+        WorkerEpoch = binding.WorkerEpoch,
+        ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
+        CapabilitySetDigest = bootstrap.CapabilitySetDigest,
+        DisplayFrame = frame
+    };
+
+    private static CloudEmuera.Ipc.V5.DisplayCommitReason ToProto(R.DisplayCommitReason reason) => reason switch
+    {
+        R.DisplayCommitReason.WaitingForInput => CloudEmuera.Ipc.V5.DisplayCommitReason.WaitingForInput,
+        R.DisplayCommitReason.RuntimeCompleted => CloudEmuera.Ipc.V5.DisplayCommitReason.RuntimeCompleted,
+        R.DisplayCommitReason.RuntimeFailed => CloudEmuera.Ipc.V5.DisplayCommitReason.RuntimeFailed,
+        R.DisplayCommitReason.ExplicitRefresh => CloudEmuera.Ipc.V5.DisplayCommitReason.ExplicitRefresh,
+        _ => throw new InvalidDataException("The runtime display commit reason is unknown.")
+    };
 
     private async Task HeartbeatAsync(CancellationToken cancellationToken)
     {
@@ -656,7 +717,9 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         {
             await Task.Delay(bootstrap.HeartbeatIntervalMilliseconds, cancellationToken).ConfigureAwait(false);
             StructuredGameConsole? gameConsole = console;
-            long outputSequence = gameConsole?.StateStore.CurrentSequence ?? 0;
+            long workingSequence = gameConsole?.StateStore.CurrentSequence ?? 0;
+            long committedSequence = gameConsole?.StateStore.CommittedSequence ?? 0;
+            long committedFrameId = gameConsole?.StateStore.CommittedFrameId ?? 0;
             // Sample the prompt exactly once. Reading CurrentPrompt again for
             // each field allowed a prompt transition between reads to emit
             // WaitingForInput=true with an empty CurrentPromptId (or the
@@ -672,7 +735,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 WorkerEpoch = binding.WorkerEpoch,
                 ControlPlaneInstanceId = bootstrap.ControlPlaneInstanceId,
                 CapabilitySetDigest = bootstrap.CapabilitySetDigest,
-                Heartbeat = CreateHeartbeat(outputSequence, currentPrompt)
+                Heartbeat = CreateHeartbeat(workingSequence, committedSequence, committedFrameId, currentPrompt)
             }, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -682,12 +745,19 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     /// PromptTiming all describe the same prompt snapshot, so the API store
     /// never sees a self-contradictory payload.
     /// </summary>
-    internal static WorkerHeartbeat CreateHeartbeat(long outputSequence, CloudEmuera.RuntimeAdapter.ConsolePrompt? currentPrompt)
+    internal static WorkerHeartbeat CreateHeartbeat(
+        long workingSequence,
+        long committedSequence,
+        long committedFrameId,
+        CloudEmuera.RuntimeAdapter.ConsolePrompt? currentPrompt)
     {
         return new WorkerHeartbeat
         {
             MonotonicTimestampTicks = Stopwatch.GetTimestamp(),
-            OutputSequence = outputSequence,
+            OutputSequence = committedSequence,
+            WorkingSequence = workingSequence,
+            CommittedSequence = committedSequence,
+            CommittedFrameId = (ulong)Math.Max(0, committedFrameId),
             WaitingForInput = currentPrompt is not null,
             ResidentMemoryBytes = Environment.WorkingSet,
             CurrentPromptId = currentPrompt?.PromptId ?? string.Empty,
@@ -721,7 +791,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 RuntimeCompleted = new RuntimeCompleted
                 {
                     Status = result.Status.ToString().ToLowerInvariant(),
-                    LastOutputSequence = Interlocked.Read(ref lastSentSequence)
+                    LastOutputSequence = Interlocked.Read(ref lastSentCommittedSequence)
                 }
             }).ConfigureAwait(false);
             return;
@@ -738,7 +808,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 diagnostic.Phase.ToString(),
                 SafeMessage(diagnostic.Message),
                 diagnostic.IsFatal,
-                lastSequence: Interlocked.Read(ref lastSentSequence))
+                lastSequence: Interlocked.Read(ref lastSentCommittedSequence))
             .ConfigureAwait(false);
     }
 
@@ -782,7 +852,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                     ? message[..StructuredIpcLimits.MaxProtocolErrorMessageLength]
                     : message,
                 Fatal = fatal,
-                LastOutputSequence = lastSequence ?? Interlocked.Read(ref lastSentSequence)
+                LastOutputSequence = lastSequence ?? Interlocked.Read(ref lastSentCommittedSequence)
             }
         });
 
@@ -848,7 +918,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 WorkerStopped = new WorkerStopped
                 {
                     ReasonCode = NormalizeCode(reason),
-                    LastOutputSequence = Interlocked.Read(ref lastSentSequence),
+                    LastOutputSequence = Interlocked.Read(ref lastSentCommittedSequence),
                     Graceful = graceful
                 }
             }, deadline.Token).ConfigureAwait(false);

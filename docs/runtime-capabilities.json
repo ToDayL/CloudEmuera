@@ -3,8 +3,8 @@
   "matrixVersion": "p1-07",
   "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
   "runtimeIntegrationVersion": "headless-p0.5.1",
-  "protocolVersion": 4,
-  "capabilitySetDigest": "7f0003c99e6f86f383b6cb018a894338bead34c502ab9a71a87d8eb2e9e2c86e",
+  "protocolVersion": 5,
+  "capabilitySetDigest": "906354201ae69d3564dfad8c117a905af640f12a5d3523ec17aa7626e5b8a653",
   "capabilities": [
     {
       "capabilityId": "console.text-lines",

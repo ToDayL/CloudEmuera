@@ -1,24 +1,24 @@
 using System.Security.Cryptography;
 using System.Text;
-using CloudEmuera.Ipc.V4;
-using ProtoConsoleColor = CloudEmuera.Ipc.V4.ConsoleColor;
+using CloudEmuera.Ipc.V5;
+using ProtoConsoleColor = CloudEmuera.Ipc.V5.ConsoleColor;
 
 namespace CloudEmuera.Ipc;
 
 /// <summary>Versioned constants for the lossless structured Worker protocol.</summary>
 public static class StructuredIpcProtocol
 {
-    public const uint CurrentVersion = 4;
+    public const uint CurrentVersion = 5;
     public const string CapabilityMatrixVersion = "p1-07";
     public const string UpstreamCommit = "2175f8a629257efb08214e093704b3a3d3d06d05";
 
     public static string CapabilitySetDigest { get; } = Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v4")))
+        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v5-display-commit")))
         .ToLowerInvariant();
 }
 
 /// <summary>
-/// Builds and checks the v4 bootstrap handshake. Registration carries the
+/// Builds and checks the v5 bootstrap handshake. Registration carries the
 /// same capability digest in the envelope and payload so a peer cannot
 /// silently downgrade by dropping the new contract metadata.
 /// </summary>
@@ -156,7 +156,12 @@ public static class StructuredIpcValidator
             WorkerEnvelope.PayloadOneofCase.Registration => ValidateRegistration(envelope.Registration, envelope.CapabilitySetDigest),
             WorkerEnvelope.PayloadOneofCase.Ready => ValidateReady(envelope.Ready, envelope.CapabilitySetDigest),
             WorkerEnvelope.PayloadOneofCase.Heartbeat => ValidateHeartbeat(envelope.Heartbeat),
-            WorkerEnvelope.PayloadOneofCase.DisplayBatch => ValidateDisplayBatch(envelope.DisplayBatch),
+            // DisplayBatch remains in the generated message only so old
+            // source fixtures can be read during the migration. It is not a
+            // valid v5 Worker payload and must never reach API routing.
+            WorkerEnvelope.PayloadOneofCase.DisplayBatch =>
+                IpcValidationResult.Invalid(IpcReasonCodes.UnsupportedMessage),
+            WorkerEnvelope.PayloadOneofCase.DisplayFrame => ValidateDisplayFrame(envelope.DisplayFrame),
             WorkerEnvelope.PayloadOneofCase.InputResult => ValidateInputResult(envelope.InputResult),
             WorkerEnvelope.PayloadOneofCase.RuntimeCompleted => envelope.RuntimeCompleted.LastOutputSequence >= 0
                 ? IpcValidationResult.Valid()
@@ -220,13 +225,24 @@ public static class StructuredIpcValidator
             ? IpcValidationResult.Valid()
             : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
 
-    private static IpcValidationResult ValidateHeartbeat(WorkerHeartbeat value) =>
-        value.MonotonicTimestampTicks >= 0 && value.OutputSequence >= 0 &&
-        value.ResidentMemoryBytes >= 0 && value.ResidentMemoryBytes <= (1L << 50) &&
-        (!string.IsNullOrEmpty(value.CurrentPromptId) && !IsIdentifier(value.CurrentPromptId) ||
-         value.PromptTiming is not null && !ValidateTiming(value.PromptTiming))
-            ? IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope)
-            : IpcValidationResult.Valid();
+    private static IpcValidationResult ValidateHeartbeat(WorkerHeartbeat value)
+    {
+        if (value.MonotonicTimestampTicks < 0 || value.OutputSequence < 0 ||
+            value.WorkingSequence < 0 || value.CommittedSequence < 0 ||
+            value.CommittedFrameId > long.MaxValue ||
+            value.CommittedSequence > value.WorkingSequence ||
+            value.OutputSequence > value.WorkingSequence ||
+            value.ResidentMemoryBytes < 0 || value.ResidentMemoryBytes > (1L << 50))
+        {
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+        }
+
+        if (!string.IsNullOrEmpty(value.CurrentPromptId) && !IsIdentifier(value.CurrentPromptId))
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+        if (value.PromptTiming is not null && !ValidateTiming(value.PromptTiming))
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+        return IpcValidationResult.Valid();
+    }
 
     private static IpcValidationResult ValidateDisplayBatch(DisplayBatch value)
     {
@@ -257,6 +273,54 @@ public static class StructuredIpcValidator
             }
         }
 
+        return nodeCount <= StructuredIpcLimits.MaxNodes
+            ? IpcValidationResult.Valid()
+            : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+    }
+
+    private static IpcValidationResult ValidateDisplayFrame(DisplayFrame value)
+    {
+        if (value.FrameId == 0 || value.FrameId > long.MaxValue || value.CommitSequence < 0 ||
+            value.Reason is DisplayCommitReason.Unspecified ||
+            value.Transactions.Count > StructuredIpcLimits.MaxTransactions)
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+
+        bool snapshotFrame = value.RequiresSnapshot;
+        if (snapshotFrame != (value.Snapshot is not null) ||
+            (snapshotFrame && value.Transactions.Count != 0) ||
+            (!snapshotFrame && value.Transactions.Count == 0))
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+        if (snapshotFrame && (value.Snapshot is null || !ValidateSnapshot(value.Snapshot) || value.Snapshot.SnapshotSequence != value.CommitSequence))
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+        if (snapshotFrame && value.Snapshot is not null &&
+            ((value.Reason == DisplayCommitReason.WaitingForInput && !value.Snapshot.HasCurrentPrompt) ||
+             (value.Reason is DisplayCommitReason.RuntimeCompleted or DisplayCommitReason.RuntimeFailed && value.Snapshot.HasCurrentPrompt)))
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+
+        long previousSequence = 0;
+        int nodeCount = 0;
+        bool hasOpenPrompt = false;
+        foreach (ConsoleTransaction transaction in value.Transactions)
+        {
+            if (transaction.Sequence <= previousSequence || transaction.Sequence <= 0 ||
+                transaction.Operations.Count == 0 || transaction.Operations.Count > StructuredIpcLimits.MaxOperationsPerTransaction)
+                return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+            previousSequence = transaction.Sequence;
+            for (int index = 0; index < transaction.Operations.Count; index++)
+            {
+                ConsoleOperation operation = transaction.Operations[index];
+                if (!ValidateOperation(operation, ref nodeCount))
+                    return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+                if (operation.PayloadCase == ConsoleOperation.PayloadOneofCase.OpenPrompt &&
+                    (index != transaction.Operations.Count - 1 || value.Reason != DisplayCommitReason.WaitingForInput))
+                    return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+                hasOpenPrompt |= operation.PayloadCase == ConsoleOperation.PayloadOneofCase.OpenPrompt;
+            }
+        }
+
+        if (!snapshotFrame && (previousSequence != value.CommitSequence ||
+            value.Reason == DisplayCommitReason.WaitingForInput && !hasOpenPrompt))
+            return IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
         return nodeCount <= StructuredIpcLimits.MaxNodes
             ? IpcValidationResult.Valid()
             : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);

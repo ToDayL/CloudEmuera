@@ -1,7 +1,7 @@
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using CloudEmuera.Ipc;
-using W = CloudEmuera.Ipc.V4;
+using W = CloudEmuera.Ipc.V5;
 using Xunit;
 
 namespace CloudEmuera.Ipc.ContractTests;
@@ -12,7 +12,7 @@ public sealed class StructuredIpcContractTests
     private static readonly WorkerBinding Binding = new("sess_structured", "wrk_structured", 9);
 
     [Fact]
-    public void V4InputDescriptorReservesPromptFieldAndUsesOptionalResolvedPromptPresence()
+    public void V5InputDescriptorReservesPromptFieldAndUsesOptionalResolvedPromptPresence()
     {
         MessageDescriptor submitInput = W.StructuredWorkerReflection.Descriptor.MessageTypes.Single(message => message.Name == "SubmitInput");
         MessageDescriptor inputResult = W.StructuredWorkerReflection.Descriptor.MessageTypes.Single(message => message.Name == "InputResult");
@@ -74,7 +74,12 @@ public sealed class StructuredIpcContractTests
     [Fact]
     public void RichDisplayTransactionRoundTripsWithoutFlattening()
     {
-        var display = new W.DisplayBatch();
+        var display = new W.DisplayFrame
+        {
+            FrameId = 1,
+            CommitSequence = 17,
+            Reason = W.DisplayCommitReason.ExplicitRefresh,
+        };
         var transaction = new W.ConsoleTransaction { Sequence = 17 };
         transaction.Operations.Add(new W.ConsoleOperation
         {
@@ -147,7 +152,7 @@ public sealed class StructuredIpcContractTests
             WorkerId = Binding.WorkerId,
             WorkerEpoch = Binding.WorkerEpoch,
             CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
-            DisplayBatch = display
+            DisplayFrame = display
         };
         W.WorkerEnvelope parsed = W.WorkerEnvelope.Parser.ParseFrom(envelope.ToByteArray());
 
@@ -157,8 +162,37 @@ public sealed class StructuredIpcContractTests
             registered: true,
             Binding,
             StructuredIpcProtocol.CapabilitySetDigest).IsValid);
-        Assert.Equal(W.LineAlignment.Center, parsed.DisplayBatch.Transactions[0].Operations[0].AppendLine.Line.Alignment);
-        Assert.Equal(W.MediaStartPolicy.OnUserGesture, parsed.DisplayBatch.Transactions[0].Operations[1].SetMediaChannel.Channel.StartPolicy);
+        Assert.Equal(W.LineAlignment.Center, parsed.DisplayFrame.Transactions[0].Operations[0].AppendLine.Line.Alignment);
+        Assert.Equal(W.MediaStartPolicy.OnUserGesture, parsed.DisplayFrame.Transactions[0].Operations[1].SetMediaChannel.Channel.StartPolicy);
+    }
+
+    [Fact]
+    public void V5RejectsLegacyDisplayBatchBeforeRouting()
+    {
+        var envelope = new W.WorkerEnvelope
+        {
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+            MessageId = "legacy-display-batch",
+            SessionId = Binding.SessionId,
+            WorkerId = Binding.WorkerId,
+            WorkerEpoch = Binding.WorkerEpoch,
+            CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+            DisplayBatch = new W.DisplayBatch
+            {
+                Transactions =
+                {
+                    new W.ConsoleTransaction
+                    {
+                        Sequence = 1,
+                        Operations = { new W.ConsoleOperation { ClearScrollback = new W.ClearScrollback() } }
+                    }
+                }
+            }
+        };
+
+        Assert.Equal(
+            IpcReasonCodes.UnsupportedMessage,
+            StructuredIpcValidator.ValidateWorkerEnvelope(envelope, registered: true, Binding).ReasonCode);
     }
 
     [Fact]
@@ -185,8 +219,11 @@ public sealed class StructuredIpcContractTests
             WorkerId = Binding.WorkerId,
             WorkerEpoch = Binding.WorkerEpoch,
             CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
-            DisplayBatch = new W.DisplayBatch
+            DisplayFrame = new W.DisplayFrame
             {
+                FrameId = 1,
+                CommitSequence = 1,
+                Reason = W.DisplayCommitReason.ExplicitRefresh,
                 Transactions =
                 {
                     new W.ConsoleTransaction
@@ -236,8 +273,11 @@ public sealed class StructuredIpcContractTests
             WorkerId = Binding.WorkerId,
             WorkerEpoch = Binding.WorkerEpoch,
             CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
-            DisplayBatch = new W.DisplayBatch
+            DisplayFrame = new W.DisplayFrame
             {
+                FrameId = 1,
+                CommitSequence = 1,
+                Reason = W.DisplayCommitReason.ExplicitRefresh,
                 Transactions =
                 {
                     new W.ConsoleTransaction
@@ -292,7 +332,14 @@ public sealed class StructuredIpcContractTests
             WorkerId = Binding.WorkerId,
             WorkerEpoch = Binding.WorkerEpoch,
             CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
-            DisplayBatch = new W.DisplayBatch { IsSnapshot = true, Snapshot = snapshot }
+            DisplayFrame = new W.DisplayFrame
+            {
+                FrameId = 1,
+                CommitSequence = 3,
+                Reason = W.DisplayCommitReason.ExplicitRefresh,
+                RequiresSnapshot = true,
+                Snapshot = snapshot,
+            }
         };
 
         Assert.True(StructuredIpcValidator.ValidateWorkerEnvelope(envelope, true, Binding).IsValid);
@@ -315,8 +362,11 @@ public sealed class StructuredIpcContractTests
             WorkerId = Binding.WorkerId,
             WorkerEpoch = Binding.WorkerEpoch,
             CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
-            DisplayBatch = new W.DisplayBatch
+            DisplayFrame = new W.DisplayFrame
             {
+                FrameId = 1,
+                CommitSequence = 1,
+                Reason = W.DisplayCommitReason.ExplicitRefresh,
                 Transactions =
                 {
                     new W.ConsoleTransaction
@@ -355,6 +405,9 @@ public sealed class StructuredIpcContractTests
             {
                 MonotonicTimestampTicks = 1,
                 OutputSequence = 1,
+                WorkingSequence = 1,
+                CommittedSequence = 1,
+                CommittedFrameId = 1,
                 WaitingForInput = true,
                 CurrentPromptId = "prompt-1",
                 PromptTiming = new W.PromptTiming

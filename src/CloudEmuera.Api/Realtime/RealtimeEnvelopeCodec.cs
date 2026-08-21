@@ -15,7 +15,7 @@ public sealed record EncodedRealtimeMessage(
     long? Sequence = null);
 
 /// <summary>
-/// Encodes one final WebSocket message.  P1-08 snapshot/batch bytes are
+/// Encodes one final WebSocket message. Snapshot and committed-frame bytes are
 /// already validated and are embedded as raw JSON exactly once; all other
 /// payloads are serialized by the source-generated contract first.
 /// </summary>
@@ -88,6 +88,7 @@ public sealed class RealtimeEnvelopeCodec(RealtimeGatewayOptions options)
             case RealtimeEmptyPayload value: JsonSerializer.Serialize(writer, value, RealtimeJsonContext.Default.RealtimeEmptyPayload); break;
             case RealtimeResyncRequired value: JsonSerializer.Serialize(writer, value, RealtimeJsonContext.Default.RealtimeResyncRequired); break;
             case RealtimeSnapshot value: JsonSerializer.Serialize(writer, value, RealtimeJsonContext.Default.RealtimeSnapshot); break;
+            case RealtimeDisplayFrame value: JsonSerializer.Serialize(writer, value, RealtimeJsonContext.Default.RealtimeDisplayFrame); break;
             case RealtimeTransactionBatch value: JsonSerializer.Serialize(writer, value, RealtimeJsonContext.Default.RealtimeTransactionBatch); break;
             default: throw new InvalidDataException("The realtime payload is outside the closed protocol.");
         }

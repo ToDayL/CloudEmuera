@@ -26,9 +26,13 @@ public sealed class ConsoleStateStore
     private Dictionary<string, MediaChannelState> mediaChannels = new(StringComparer.Ordinal);
     private WindowMetadata windowMetadata = new();
     private readonly List<SequencedConsoleTransaction> transactionHistory = [];
+    private readonly List<SequencedConsoleTransaction> pendingCommitTransactions = [];
     private long droppedLineCount;
     private long droppedTextLength;
     private long generatedLineId;
+    private long pendingCommitEstimatedBytes;
+    private bool requiresSnapshotAtCommit;
+    private DisplayCommit? committedFrame;
 
     public ConsoleStateStore()
         : this(ConsoleHistoryOptions.Default)
@@ -140,6 +144,68 @@ public sealed class ConsoleStateStore
 
     public ConsoleSnapshot CurrentSnapshot => Snapshot;
 
+    /// <summary>
+    /// Latest runtime state. This is a working snapshot and must not be sent
+    /// to a browser unless a <see cref="DisplayCommit"/> has promoted it.
+    /// </summary>
+    public ConsoleSnapshot WorkingSnapshot => Snapshot;
+
+    /// <summary>Latest state explicitly committed for browser display.</summary>
+    public ConsoleSnapshot? CommittedSnapshot
+    {
+        get
+        {
+            lock (sync)
+            {
+                return committedFrame?.Snapshot;
+            }
+        }
+    }
+
+    public long CommittedSequence
+    {
+        get
+        {
+            lock (sync)
+            {
+                return committedFrame?.CommitSequence ?? 0;
+            }
+        }
+    }
+
+    public long CommittedFrameId
+    {
+        get
+        {
+            lock (sync)
+            {
+                return committedFrame?.FrameId ?? 0;
+            }
+        }
+    }
+
+    public bool RequiresSnapshotAtCommit
+    {
+        get
+        {
+            lock (sync)
+            {
+                return requiresSnapshotAtCommit;
+            }
+        }
+    }
+
+    public DisplayCommit? CurrentDisplayCommit
+    {
+        get
+        {
+            lock (sync)
+            {
+                return committedFrame;
+            }
+        }
+    }
+
     public ConsoleSnapshot GetSnapshot() => Snapshot;
 
     public ConsoleSnapshot BaselineSnapshot
@@ -249,6 +315,7 @@ public sealed class ConsoleStateStore
         bool publishHistory)
     {
         ValidateTransactionLimits(transaction);
+        ValidateDisplayCommitBoundary(transaction);
         EnsureStructuredState();
         var candidate = new StructuredCandidate(
             structuredScrollback.ToList(),
@@ -307,12 +374,67 @@ public sealed class ConsoleStateStore
                 baselineSnapshot = snapshot;
                 transactionHistory.Clear();
             }
+
+            RecordPendingCommitTransaction(sequenced);
+            if (ContainsWaitingCommit(transaction))
+                _ = CommitDisplayFrameLocked(DisplayCommitReason.WaitingForInput);
         }
 
         return sequenced;
     }
 
     public SequencedConsoleTransaction ApplyStructured(ConsoleTransaction transaction) => ApplyTransaction(transaction);
+
+    /// <summary>
+    /// Promotes the current working state to the browser-visible state. The
+    /// caller uses this for terminal runtime boundaries; opening a prompt is
+    /// committed automatically after its transaction succeeds.
+    /// </summary>
+    public DisplayCommit CommitDisplayFrame(DisplayCommitReason reason)
+    {
+        lock (sync)
+        {
+            EnsureStructuredState();
+            return CommitDisplayFrameLocked(reason);
+        }
+    }
+
+    /// <summary>
+    /// Returns only the latest committed frame. If the caller missed a frame
+    /// or the frame's bounded delta representation was compacted, the result
+    /// is a complete committed snapshot instead of a working-state delta.
+    /// </summary>
+    public DisplayCommitReadResult ReadCommittedSince(long lastFrameId, long lastCommittedSequence)
+    {
+        lock (sync)
+        {
+            if (lastFrameId < 0 || lastCommittedSequence < 0 || lastCommittedSequence > currentSequence)
+                throw new ConsoleContractException(ConsoleContractViolationReason.InvalidCursor, "The committed display cursor is invalid.");
+
+            if (committedFrame is null)
+                return new DisplayCommitReadResult(DisplayCommitReadKind.UpToDate, 0, 0);
+
+            DisplayCommit current = committedFrame;
+            if (lastFrameId == current.FrameId && lastCommittedSequence == current.CommitSequence)
+                return new DisplayCommitReadResult(DisplayCommitReadKind.UpToDate, current.FrameId, current.CommitSequence);
+            if (lastFrameId > current.FrameId || lastCommittedSequence > current.CommitSequence)
+                throw new ConsoleContractException(ConsoleContractViolationReason.InvalidCursor, "The committed display cursor is ahead of the current frame.");
+
+            bool canUseDelta = !current.RequiresSnapshot && current.Transactions.Count != 0 &&
+                lastFrameId == current.FrameId - 1 &&
+                lastCommittedSequence == current.Transactions[0].Sequence - 1;
+            return new DisplayCommitReadResult(
+                canUseDelta ? DisplayCommitReadKind.DeltaFrame : DisplayCommitReadKind.Snapshot,
+                current.FrameId,
+                current.CommitSequence,
+                canUseDelta ? current : new DisplayCommit(
+                    current.FrameId,
+                    current.CommitSequence,
+                    current.Reason,
+                    requiresSnapshot: true,
+                    snapshot: current.Snapshot));
+        }
+    }
 
     public ConsoleSnapshot StructuredSnapshot
     {
@@ -339,7 +461,99 @@ public sealed class ConsoleStateStore
         windowMetadata = new WindowMetadata();
         baselineSnapshot = CreateStructuredSnapshot(currentSequence);
         transactionHistory.Clear();
+        pendingCommitTransactions.Clear();
+        pendingCommitEstimatedBytes = 0;
+        requiresSnapshotAtCommit = false;
         structuredMode = true;
+    }
+
+    private static void ValidateDisplayCommitBoundary(ConsoleTransaction transaction)
+    {
+        int promptCount = 0;
+        for (int index = 0; index < transaction.Operations.Count; index++)
+        {
+            if (transaction.Operations[index] is not OpenPromptOperation)
+                continue;
+            promptCount++;
+            if (promptCount > 1 || index != transaction.Operations.Count - 1)
+            {
+                throw new ConsoleContractException(
+                    ConsoleContractViolationReason.InvalidPrompt,
+                    "OpenPrompt must be the final operation of a display-commit transaction.");
+            }
+        }
+    }
+
+    private static bool ContainsWaitingCommit(ConsoleTransaction transaction) =>
+        transaction.Operations.Count != 0 && transaction.Operations[^1] is OpenPromptOperation;
+
+    private void RecordPendingCommitTransaction(SequencedConsoleTransaction transaction, long? estimatedBytesOverride = null)
+    {
+        if (requiresSnapshotAtCommit)
+            return;
+
+        long estimatedBytes = estimatedBytesOverride ?? transaction.Transaction.Operations.Sum(ConsoleSizeEstimator.MeasureOperation);
+        if (pendingCommitTransactions.Count >= options.MaxDeltaCount ||
+            estimatedBytes > options.MaxEstimatedBytes ||
+            pendingCommitEstimatedBytes > options.MaxEstimatedBytes - estimatedBytes)
+        {
+            pendingCommitTransactions.Clear();
+            pendingCommitEstimatedBytes = 0;
+            requiresSnapshotAtCommit = true;
+            return;
+        }
+
+        pendingCommitTransactions.Add(transaction);
+        pendingCommitEstimatedBytes = checked(pendingCommitEstimatedBytes + estimatedBytes);
+    }
+
+    private DisplayCommit CommitDisplayFrameLocked(DisplayCommitReason reason)
+    {
+        if (reason == DisplayCommitReason.WaitingForInput && currentPrompt is null)
+        {
+            throw new ConsoleContractException(
+                ConsoleContractViolationReason.InvalidPrompt,
+                "A waiting-for-input display commit requires an active prompt.");
+        }
+        if ((reason is DisplayCommitReason.RuntimeCompleted or DisplayCommitReason.RuntimeFailed) && currentPrompt is not null)
+        {
+            throw new ConsoleContractException(
+                ConsoleContractViolationReason.InvalidPrompt,
+                "A terminal display commit cannot contain an active prompt.");
+        }
+        if (committedFrame is not null && currentSequence < committedFrame.CommitSequence)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidCursor, "The committed sequence cannot move backwards.");
+        if (committedFrame is not null && currentSequence == committedFrame.CommitSequence &&
+            pendingCommitTransactions.Count == 0 && !requiresSnapshotAtCommit && reason == committedFrame.Reason)
+        {
+            throw new ConsoleContractException(
+                ConsoleContractViolationReason.InvalidCursor,
+                "The same display state cannot be committed twice.");
+        }
+        if (committedFrame?.FrameId == long.MaxValue)
+            throw new ConsoleContractException(ConsoleContractViolationReason.SequenceExhausted, "The display frame id is exhausted.");
+
+        ConsoleSnapshot snapshot = structuredMode
+            ? CreateStructuredSnapshot(currentSequence)
+            : CreateSnapshot(currentSequence, visibleNodes, currentPrompt);
+        bool requiresSnapshot = committedFrame is null || requiresSnapshotAtCommit || pendingCommitTransactions.Count == 0;
+        if (!requiresSnapshot && committedFrame is not null &&
+            pendingCommitTransactions[0].Sequence != committedFrame.CommitSequence + 1)
+            requiresSnapshot = true;
+
+        long frameId = checked((committedFrame?.FrameId ?? 0) + 1);
+        DisplayCommit commit = new(
+            frameId,
+            currentSequence,
+            reason,
+            requiresSnapshot,
+            snapshot,
+            requiresSnapshot ? Array.Empty<SequencedConsoleTransaction>() : pendingCommitTransactions.ToArray());
+        committedFrame = commit;
+        pendingCommitTransactions.Clear();
+        pendingCommitEstimatedBytes = 0;
+        requiresSnapshotAtCommit = false;
+        return commit;
     }
 
     private void ApplyStructuredOperation(StructuredCandidate candidate, ConsoleOperation operation)
@@ -614,6 +828,17 @@ public sealed class ConsoleStateStore
                 history.Clear();
                 historyEstimatedBytes = 0;
             }
+
+            // The legacy node reducer is still the hot path for ordinary
+            // upstream text operations. Record the same explicit display
+            // boundary metadata as the structured reducer so a prompt opened
+            // through IGameConsole also promotes one atomic waiting frame.
+            var transaction = new SequencedConsoleTransaction(
+                nextSequence,
+                new ConsoleTransaction([operation]));
+            RecordPendingCommitTransaction(transaction, operationEstimatedBytes);
+            if (operation is OpenPromptOperation)
+                _ = CommitDisplayFrameLocked(DisplayCommitReason.WaitingForInput);
 
             return sequenced;
         }

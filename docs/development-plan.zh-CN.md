@@ -273,6 +273,21 @@ Kestrel+UDS 集成、Web reducer/断线重试和双客户端竞争测试，以�
 `NO_ACTIVE_PROMPT` 且重试不会被后续 prompt 接受；旧 epoch 和停止态仍被 fence；v1 子协议、带 `promptId`
 的输入与 v3 Worker 均 fail closed；SQLite 不新增输入 receipt 或 current-prompt 正确性依赖。
 
+### P1-S03 — 显示提交边界与等待状态完整帧（临时修复，DONE）
+
+这是针对实际游玩闪烁问题新增的临时任务，不占用原规划的 P1-12 编号。关联决策：
+[`ADR-0026`](adr/0026-display-commit-boundary-realtime-v3.md)。
+
+详细方案：[`tasks/P1-S03-display-commit-boundary-plan.zh-CN.md`](tasks/P1-S03-display-commit-boundary-plan.zh-CN.md)。
+
+交付物：Runtime/Worker 的 working/committed 显示状态和 `DisplayCommit`；IPC v5 与 WebSocket v3 的原子
+`display.frame`；API 只镜像已提交状态；Web reducer 一次性归约完整显示帧。16ms、64 条、256KiB 和
+历史压缩只影响内部表示或降级为已提交 Snapshot，不再成为浏览器可见边界；删除
+`DeferOutputUntilNextPrompt` 诊断开关。
+
+验证：RuntimeAdapter、IPC、Realtime、Web codec/store 和真实 API/Worker 集成测试，以及开发容器中的
+`./scripts/check.sh`；旧 v2/v4 协议和 `display.batch` 浏览器消息必须 fail closed。
+
 ### P1-01 — SQLite 首版 schema 与迁移（DONE）
 
 需求映射：核心领域模型、GAME-004/008/010、SESS-002/005/007/010、SAVE-005/015、

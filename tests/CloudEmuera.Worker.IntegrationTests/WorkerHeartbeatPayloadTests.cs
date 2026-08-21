@@ -1,4 +1,4 @@
-using CloudEmuera.Ipc.V4;
+using CloudEmuera.Ipc.V5;
 using CloudEmuera.RuntimeAdapter;
 using Xunit;
 
@@ -24,18 +24,18 @@ public sealed class WorkerHeartbeatPayloadTests
             openedAtUnixMilliseconds: 1_000,
             deadlineUnixMilliseconds: 6_000);
 
-        WorkerHeartbeat heartbeat = WorkerRuntimeController.CreateHeartbeat(42, prompt);
+        WorkerHeartbeat heartbeat = WorkerRuntimeController.CreateHeartbeat(42, 42, 1, prompt);
 
         Assert.True(heartbeat.WaitingForInput);
         Assert.Equal("prompt-1", heartbeat.CurrentPromptId);
         Assert.NotNull(heartbeat.PromptTiming);
         Assert.Equal(42, heartbeat.OutputSequence);
 
-        WorkerHeartbeat idle = WorkerRuntimeController.CreateHeartbeat(43, null);
+        WorkerHeartbeat idle = WorkerRuntimeController.CreateHeartbeat(43, 42, 1, null);
 
         Assert.False(idle.WaitingForInput);
         Assert.Equal(string.Empty, idle.CurrentPromptId);
         Assert.Null(idle.PromptTiming);
-        Assert.Equal(43, idle.OutputSequence);
+        Assert.Equal(42, idle.OutputSequence);
     }
 }

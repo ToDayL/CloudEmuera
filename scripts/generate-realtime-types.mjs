@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const schemaPath = path.join(root, "src/CloudEmuera.Contracts/Realtime/realtime-v2.schema.json");
+const schemaPath = path.join(root, "src/CloudEmuera.Contracts/Realtime/realtime-v3.schema.json");
 const outputPath = path.join(root, "src/CloudEmuera.Web/src/realtime/generated.ts");
 
 const refTypes = {
@@ -18,7 +18,7 @@ const refTypes = {
   resume: "ResumePayload",
   resumeResult: "ResumeResultPayload",
   snapshot: "RealtimeSnapshotPayload",
-  batch: "RealtimeTransactionBatchPayload",
+  displayFrame: "RealtimeDisplayFramePayload",
   resync: "ResyncRequiredPayload",
   streamEnded: "StreamEndedPayload",
   input: "InputPayload",
@@ -59,7 +59,7 @@ const objectDefinitions = [
   ["resume", "ResumePayload"],
   ["resumeResult", "ResumeResultPayload"],
   ["snapshot", "RealtimeSnapshotPayload"],
-  ["batch", "RealtimeTransactionBatchPayload"],
+  ["displayFrame", "RealtimeDisplayFramePayload"],
   ["resync", "ResyncRequiredPayload"],
   ["streamEnded", "StreamEndedPayload"],
   ["input", "InputPayload"],
@@ -143,7 +143,7 @@ export function generateRealtimeTypes(schema) {
   }
 
   const lines = [
-    "/* GENERATED CONTRACT SNAPSHOT — source: realtime-v2.schema.json. */",
+    "/* GENERATED CONTRACT SNAPSHOT — source: realtime-v3.schema.json. */",
     `export const REALTIME_SCHEMA_ID = ${JSON.stringify(schema.$id)} as const;`,
     `export const REALTIME_PROTOCOL_VERSION = ${JSON.stringify(protocolVersion)} as const;`,
     `export const REALTIME_PAYLOAD_SCHEMA_VERSION = ${JSON.stringify(payloadSchemaVersion)} as const;`,
@@ -174,7 +174,7 @@ export function generateRealtimeTypes(schema) {
     `export type InputType = ${typeScriptType(defs.prompt.properties.inputType, defs)};`,
     "",
     "export interface RealtimeEnvelope<TType extends string, TPayload> {",
-    "  protocolVersion: 2;",
+    "  protocolVersion: 3;",
     "  type: TType;",
     "  messageId: string;",
     "  correlationId?: string;",
@@ -196,7 +196,7 @@ export function generateRealtimeTypes(schema) {
     ["connection.ping", "PingPayload", null],
     ["session.resume.result", "ResumeResultPayload", null],
     ["session.snapshot", "RealtimeSnapshotPayload", null],
-    ["display.batch", "RealtimeTransactionBatchPayload", null],
+    ["display.frame", "RealtimeDisplayFramePayload", null],
     ["resync.required", "ResyncRequiredPayload", null],
     ["session.stream.ended", "StreamEndedPayload", null],
     ["session.input.result", "InputResultPayload", null],

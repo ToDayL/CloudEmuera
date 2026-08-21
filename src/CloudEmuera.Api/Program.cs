@@ -914,7 +914,13 @@ internal static class ValidatorAssemblyResolver
 {
     public static string ResolveSiblingAssembly(string contentRoot, string projectName, string assemblyName)
     {
-        string[] configurations = ["Debug", "Release"];
+        string? currentConfiguration = GetCurrentConfiguration(typeof(Program).Assembly.Location);
+        string[] configurations = currentConfiguration switch
+        {
+            "Debug" => ["Debug", "Release"],
+            "Release" => ["Release", "Debug"],
+            _ => ["Debug", "Release"]
+        };
         DirectoryInfo? current = new DirectoryInfo(contentRoot);
         while (current is not null)
         {
@@ -926,6 +932,13 @@ internal static class ValidatorAssemblyResolver
             current = current.Parent;
         }
         return Path.Combine(AppContext.BaseDirectory, assemblyName);
+    }
+
+    private static string? GetCurrentConfiguration(string assemblyPath)
+    {
+        DirectoryInfo? netTarget = new FileInfo(assemblyPath).Directory;
+        string? configuration = netTarget?.Parent?.Name;
+        return configuration is "Debug" or "Release" ? configuration : null;
     }
 
     /// <summary>

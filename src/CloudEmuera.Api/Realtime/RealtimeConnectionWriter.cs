@@ -219,8 +219,10 @@ public sealed class RealtimeConnectionWriter : IAsyncDisposable
         {
             RealtimeFrameKind.Snapshot => EncodeSnapshot(sessionId, frame),
             RealtimeFrameKind.TransactionBatch =>
+                throw new InvalidDataException("The v3 realtime writer cannot emit legacy display.batch messages."),
+            RealtimeFrameKind.DisplayFrame =>
             [codec.Encode(
-                "display.batch",
+                "display.frame",
                 NewMessageId(),
                 frame.Payload,
                 sessionId: sessionId,

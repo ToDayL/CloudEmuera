@@ -1,4 +1,4 @@
-import { InputResultPayload, RealtimeServerMessage, RealtimeSnapshotPayload, RealtimeTransactionBatchPayload } from "./protocol";
+import { InputResultPayload, RealtimeDisplayFramePayload, RealtimeServerMessage, RealtimeSnapshotPayload, RealtimeTransaction } from "./protocol";
 import { applyTransactions, ConsoleReductionError, createEmptyConsoleState } from "./reducer";
 
 export type SessionPhase = "idle" | "resuming" | "snapshot_ready" | "live" | "resyncing" | "ended" | "forbidden" | "error";
@@ -18,6 +18,7 @@ export interface SessionStoreState {
   sessionId: string;
   workerEpoch: number | null;
   sequence: number | null;
+  committedFrameId: number;
   consoleState: ReturnType<typeof createEmptyConsoleState> | null;
   phase: SessionPhase;
   pendingInput: PendingInput | null;
@@ -27,7 +28,7 @@ export interface SessionStoreState {
 }
 
 export function createSessionStoreState(sessionId: string): SessionStoreState {
-  return { sessionId, workerEpoch: null, sequence: null, consoleState: null, phase: "idle", pendingInput: null, lastReceipt: null, clockSample: null, fatalRenderError: null };
+  return { sessionId, workerEpoch: null, sequence: null, committedFrameId: 0, consoleState: null, phase: "idle", pendingInput: null, lastReceipt: null, clockSample: null, fatalRenderError: null };
 }
 
 export function replaceSnapshot(state: SessionStoreState, envelope: { sessionId?: string; workerEpoch?: number; sequence?: number }, payload: RealtimeSnapshotPayload): SessionStoreState {
@@ -37,11 +38,17 @@ export function replaceSnapshot(state: SessionStoreState, envelope: { sessionId?
   // subscription is installed. It is stale data, not a reason to resync again.
   if (state.workerEpoch !== null && payload.workerEpoch < state.workerEpoch) return state;
   if (state.workerEpoch === payload.workerEpoch && state.sequence !== null && payload.snapshotSequence < state.sequence) return state;
+  if (state.workerEpoch === payload.workerEpoch && payload.snapshotSequence === state.sequence && payload.committedFrameId < state.committedFrameId) return state;
+  if (state.workerEpoch === payload.workerEpoch && state.sequence !== null && payload.snapshotSequence > state.sequence && payload.committedFrameId <= state.committedFrameId)
+    return { ...state, phase: "resyncing", fatalRenderError: "快照提交帧号没有前进，请重新同步。" };
+  if (state.workerEpoch === payload.workerEpoch && payload.snapshotSequence === state.sequence && payload.committedFrameId === state.committedFrameId)
+    return state;
   const epochChanged = state.workerEpoch !== null && payload.workerEpoch !== state.workerEpoch;
   return {
     ...state,
     workerEpoch: payload.workerEpoch,
     sequence: payload.snapshotSequence,
+    committedFrameId: payload.committedFrameId,
     consoleState: payload.consoleState,
     phase: "snapshot_ready",
     pendingInput: epochChanged ? null : state.pendingInput,
@@ -50,7 +57,14 @@ export function replaceSnapshot(state: SessionStoreState, envelope: { sessionId?
   };
 }
 
-export function applyBatch(state: SessionStoreState, envelope: { sessionId?: string; workerEpoch?: number; sequence?: number }, payload: RealtimeTransactionBatchPayload): SessionStoreState {
+export interface LegacyRealtimeTransactionBatchPayload {
+  workerEpoch: number;
+  firstSequence: number;
+  lastSequence: number;
+  transactions: RealtimeTransaction[];
+}
+
+export function applyBatch(state: SessionStoreState, envelope: { sessionId?: string; workerEpoch?: number; sequence?: number }, payload: LegacyRealtimeTransactionBatchPayload): SessionStoreState {
   assertSession(state, envelope.sessionId);
   if (state.phase === "resyncing" || state.phase === "ended" || state.phase === "error") return state;
   if (state.workerEpoch !== null && payload.workerEpoch < state.workerEpoch) return state;
@@ -69,6 +83,52 @@ export function applyBatch(state: SessionStoreState, envelope: { sessionId?: str
     const reduced = applyTransactions(state.consoleState, payload.transactions, state.sequence);
     if (reduced.sequence !== payload.lastSequence) throw new ConsoleReductionError("sequence_mismatch", "批次末序号不一致。");
     return { ...state, consoleState: reduced.state, sequence: reduced.sequence, phase: "live" };
+  } catch {
+    return { ...state, phase: "resyncing" };
+  }
+}
+
+export function applyDisplayFrame(state: SessionStoreState, envelope: { sessionId?: string; workerEpoch?: number; sequence?: number }, payload: RealtimeDisplayFramePayload): SessionStoreState {
+  assertSession(state, envelope.sessionId);
+  if (state.phase === "resyncing" || state.phase === "ended" || state.phase === "error") return state;
+  if (state.workerEpoch !== null && payload.workerEpoch < state.workerEpoch) return state;
+  if (state.workerEpoch !== payload.workerEpoch || envelope.workerEpoch !== payload.workerEpoch || envelope.sequence !== payload.commitSequence)
+    return { ...state, phase: "resyncing" };
+
+  if (state.workerEpoch === payload.workerEpoch && payload.frameId <= state.committedFrameId) return state;
+  if (state.workerEpoch === payload.workerEpoch && state.committedFrameId !== 0 && payload.frameId !== state.committedFrameId + 1)
+    return { ...state, phase: "resyncing" };
+
+  if (payload.requiresSnapshot) {
+    if (payload.consoleState === null || payload.transactions.length !== 0) return { ...state, phase: "resyncing" };
+    if (payload.reason === "WAITING_FOR_INPUT" && payload.consoleState.currentPrompt === null)
+      return { ...state, phase: "resyncing" };
+    if ((payload.reason === "RUNTIME_COMPLETED" || payload.reason === "RUNTIME_FAILED") && payload.consoleState.currentPrompt !== null)
+      return { ...state, phase: "resyncing" };
+    return {
+      ...state,
+      workerEpoch: payload.workerEpoch,
+      sequence: payload.commitSequence,
+      committedFrameId: payload.frameId,
+      consoleState: payload.consoleState,
+      phase: "live",
+      pendingInput: state.workerEpoch === payload.workerEpoch ? state.pendingInput : null,
+      fatalRenderError: null,
+    };
+  }
+
+  if (payload.consoleState !== null || payload.transactions.length === 0 || state.consoleState === null || state.sequence === null)
+    return { ...state, phase: "resyncing" };
+  if (payload.transactions[0].sequence !== state.sequence + 1 || payload.transactions.at(-1)?.sequence !== payload.commitSequence)
+    return { ...state, phase: "resyncing" };
+  try {
+    const reduced = applyTransactions(state.consoleState, payload.transactions, state.sequence);
+    if (reduced.sequence !== payload.commitSequence) throw new ConsoleReductionError("sequence_mismatch", "显示帧末序号不一致。");
+    if (payload.reason === "WAITING_FOR_INPUT" && reduced.state.currentPrompt === null)
+      return { ...state, phase: "resyncing" };
+    if ((payload.reason === "RUNTIME_COMPLETED" || payload.reason === "RUNTIME_FAILED") && reduced.state.currentPrompt !== null)
+      return { ...state, phase: "resyncing" };
+    return { ...state, consoleState: reduced.state, sequence: reduced.sequence, committedFrameId: payload.frameId, phase: "live", fatalRenderError: null };
   } catch {
     return { ...state, phase: "resyncing" };
   }
@@ -106,7 +166,7 @@ export function applyInputReceipt(state: SessionStoreState, envelope: { workerEp
 export function handleServerMessage(state: SessionStoreState, message: RealtimeServerMessage): SessionStoreState {
   switch (message.type) {
     case "session.snapshot": return replaceSnapshot(state, message, message.payload);
-    case "display.batch": return applyBatch(state, message, message.payload);
+    case "display.frame": return applyDisplayFrame(state, message, message.payload);
     case "session.input.result": return applyInputReceipt(state, message, message.payload);
     case "resync.required": return markResync(state, message.payload.reason);
     case "session.stream.ended": return markEnded(state);

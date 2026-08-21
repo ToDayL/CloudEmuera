@@ -63,6 +63,7 @@ public static class IpcReasonCodes
     public const string RuntimeVersionMismatch = "runtime_version_mismatch";
     public const string UnsupportedMessage = "unsupported_message";
     public const string UnsupportedProtocolVersion = "unsupported_protocol_version";
+    public const string TerminalAck = "terminal_ack";
     public const string WorkerStopping = "worker_stopping";
     public const string ControlPlaneMismatch = "control_plane_mismatch";
 }

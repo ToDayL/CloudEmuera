@@ -1,8 +1,8 @@
-/* GENERATED CONTRACT SNAPSHOT — source: realtime-v2.schema.json. */
-export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v2.schema.json" as const;
-export const REALTIME_PROTOCOL_VERSION = 2 as const;
-export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-11" as const;
-export const REALTIME_MESSAGE_TYPES = ["client.hello","server.hello","connection.ping","connection.pong","session.resume","session.resume.result","session.unsubscribe","session.snapshot","display.batch","resync.required","session.stream.ended","session.input","session.input.result","protocol.error"] as const;
+/* GENERATED CONTRACT SNAPSHOT — source: realtime-v3.schema.json. */
+export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v3.schema.json" as const;
+export const REALTIME_PROTOCOL_VERSION = 3 as const;
+export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-s03-display-commit" as const;
+export const REALTIME_MESSAGE_TYPES = ["client.hello","server.hello","connection.ping","connection.pong","session.resume","session.resume.result","session.unsubscribe","session.snapshot","display.frame","resync.required","session.stream.ended","session.input","session.input.result","protocol.error"] as const;
 
 export type EmptyPayload = Record<never, never>;
 
@@ -13,8 +13,8 @@ export interface ClientHelloPayload {
 }
 
 export interface ServerHelloPayload {
-  protocolVersion: 2;
-  payloadSchemaVersion: "p1-11";
+  protocolVersion: 3;
+  payloadSchemaVersion: "p1-s03-display-commit";
   connectionId: string;
   serverNowUnixMilliseconds: number;
   heartbeatIntervalMilliseconds: number;
@@ -48,13 +48,17 @@ export interface ResumeResultPayload {
 export interface RealtimeSnapshotPayload {
   workerEpoch: number;
   snapshotSequence: number;
+  committedFrameId: number;
   consoleState: ConsoleState;
 }
 
-export interface RealtimeTransactionBatchPayload {
+export interface RealtimeDisplayFramePayload {
   workerEpoch: number;
-  firstSequence: number;
-  lastSequence: number;
+  frameId: number;
+  commitSequence: number;
+  reason: "WAITING_FOR_INPUT" | "RUNTIME_COMPLETED" | "RUNTIME_FAILED" | "EXPLICIT_REFRESH";
+  requiresSnapshot: boolean;
+  consoleState: ConsoleState | null;
   transactions: RealtimeTransaction[];
 }
 
@@ -499,7 +503,7 @@ export type ShapeKind = "rectangle" | "ellipse" | "line" | "polygon" | "space";
 export type InputType = "enterKey" | "anyKey" | "integer" | "text" | "anyValue" | "integerButton" | "textButton" | "primitivePointerKey" | "waitOnly";
 
 export interface RealtimeEnvelope<TType extends string, TPayload> {
-  protocolVersion: 2;
+  protocolVersion: 3;
   type: TType;
   messageId: string;
   correlationId?: string;
@@ -516,7 +520,7 @@ export type UnsubscribeMessage = RealtimeEnvelope<"session.unsubscribe", EmptyPa
 export type InputMessage = RealtimeEnvelope<"session.input", InputPayload>;
 
 export type RealtimeClientType = "client.hello" | "connection.pong" | "session.resume" | "session.unsubscribe" | "session.input";
-export type RealtimeServerType = "server.hello" | "connection.ping" | "session.resume.result" | "session.snapshot" | "display.batch" | "resync.required" | "session.stream.ended" | "session.input.result" | "protocol.error";
+export type RealtimeServerType = "server.hello" | "connection.ping" | "session.resume.result" | "session.snapshot" | "display.frame" | "resync.required" | "session.stream.ended" | "session.input.result" | "protocol.error";
 
 export type RealtimeClientMessage = ClientHelloMessage | PongMessage | ResumeMessage | UnsubscribeMessage | InputMessage;
-export type RealtimeServerMessage = RealtimeEnvelope<"server.hello", ServerHelloPayload> | RealtimeEnvelope<"connection.ping", PingPayload> | RealtimeEnvelope<"session.resume.result", ResumeResultPayload> | RealtimeEnvelope<"session.snapshot", RealtimeSnapshotPayload> | RealtimeEnvelope<"display.batch", RealtimeTransactionBatchPayload> | RealtimeEnvelope<"resync.required", ResyncRequiredPayload> | RealtimeEnvelope<"session.stream.ended", StreamEndedPayload> | RealtimeEnvelope<"session.input.result", InputResultPayload> | RealtimeEnvelope<"protocol.error", ProtocolErrorPayload>;
+export type RealtimeServerMessage = RealtimeEnvelope<"server.hello", ServerHelloPayload> | RealtimeEnvelope<"connection.ping", PingPayload> | RealtimeEnvelope<"session.resume.result", ResumeResultPayload> | RealtimeEnvelope<"session.snapshot", RealtimeSnapshotPayload> | RealtimeEnvelope<"display.frame", RealtimeDisplayFramePayload> | RealtimeEnvelope<"resync.required", ResyncRequiredPayload> | RealtimeEnvelope<"session.stream.ended", StreamEndedPayload> | RealtimeEnvelope<"session.input.result", InputResultPayload> | RealtimeEnvelope<"protocol.error", ProtocolErrorPayload>;

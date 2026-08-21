@@ -336,15 +336,41 @@ SessionRoot，不重新复制 Game current content，也不恢复崩溃前的解
 
 ```json
 {
-  "protocolVersion": 2,
+  "protocolVersion": 3,
   "sessionId": "sess_123",
   "workerEpoch": 4,
   "sequence": 1052,
-  "type": "display.line.append",
+  "type": "display.frame",
   "payload": {
-    "parts": [
-      { "type": "text", "text": "选择行动：" },
-      { "type": "button", "text": "[0] 休息", "value": "0" }
+    "workerEpoch": 4,
+    "frameId": 8,
+    "commitSequence": 1052,
+    "reason": "WAITING_FOR_INPUT",
+    "requiresSnapshot": false,
+    "consoleState": null,
+    "transactions": [
+      {
+        "sequence": 1052,
+        "operations": [
+          {
+            "type": "openPrompt",
+            "prompt": {
+              "promptId": "prompt_1052",
+              "inputType": "text",
+              "constraints": { "type": "text" },
+              "timeoutBehavior": "none",
+              "timeoutAction": "none",
+              "allowedSources": ["keyboard"],
+              "oneInput": false,
+              "systemInput": false,
+              "stopMessageSkip": false,
+              "displayTime": false,
+              "openedAtUnixMilliseconds": 0,
+              "deadlineUnixMilliseconds": 0
+            }
+          }
+        ]
+      }
     ]
   }
 }
@@ -360,14 +386,16 @@ SessionRoot，不重新复制 Game current content，也不恢复崩溃前的解
 }
 ```
 
-Worker/API 必须返回当前 epoch 下序号为 `N` 的完整 ConsoleSnapshot，并把它作为新的显示基线，再
-推送序号大于 `N` 的实时批次。MVP 不按 `lastSequence` 或 ack 补发断线期间的历史增量。
+Worker/API 必须返回当前 epoch 最近一次已提交的完整 ConsoleSnapshot，并携带
+`committedFrameId` 作为显示基线；随后只推送原子的 `display.frame`。MVP 不按 `lastSequence` 或 ack
+补发断线期间的历史增量，working Snapshot 不得用于浏览器 resume/resync。
 
-当前协议将该请求封装在 `GET /api/v1/realtime` 的原生 WebSocket v2 envelope 中，协商子协议
-`cloudemuera.realtime.v2`。每次 `session.resume` 都重新检查登录态、Session 授权和当前 Worker binding，
-并以 `session.snapshot` 作为该连接该 epoch 的首个显示帧；Hub 尚未取得首个 Snapshot 时先保留有界订阅，
-待 Worker 首个 display batch 到达后发送；v2 客户端收到 `SNAPSHOT_NOT_READY` 后退避重试；连接、订阅和 Snapshot 不写入 SQLite。协议接收
-缓冲、控制队列、pending input、订阅数和最终 UTF-8 消息均有消息数/字节数硬上限，溢出只影响当前连接。
+当前协议将该请求封装在 `GET /api/v1/realtime` 的原生 WebSocket v3 envelope 中，协商子协议
+`cloudemuera.realtime.v3`。每次 `session.resume` 都重新检查登录态、Session 授权和当前 Worker binding，
+并以 `session.snapshot` 或 `display.frame` 作为该连接该 epoch 的已提交显示状态；Hub 尚未取得首个 commit
+时先保留有界订阅，待 Worker 的 committed frame 到达后发送；v3 客户端收到 `SNAPSHOT_NOT_READY` 后退避重试。
+连接、订阅和 Snapshot 不写入 SQLite。协议接收缓冲、控制队列、pending input、订阅数和最终 UTF-8 消息
+均有消息数/字节数硬上限，溢出只影响当前连接。显示提交边界见 [`ADR-0026`](adr/0026-display-commit-boundary-realtime-v3.md)。
 
 ### 10.3 输入请求
 

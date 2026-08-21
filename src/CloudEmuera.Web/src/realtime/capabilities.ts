@@ -1,5 +1,5 @@
 /** GENERATED CONTRACT SNAPSHOT — source: docs/runtime-capabilities.json. */
-export const CAPABILITY_DIGEST = "7f0003c99e6f86f383b6cb018a894338bead34c502ab9a71a87d8eb2e9e2c86e";
+export const CAPABILITY_DIGEST = "906354201ae69d3564dfad8c117a905af640f12a5d3523ec17aa7626e5b8a653";
 export const SUPPORTED_CAPABILITIES = [
   "console.text-lines",
   "console.buttons",

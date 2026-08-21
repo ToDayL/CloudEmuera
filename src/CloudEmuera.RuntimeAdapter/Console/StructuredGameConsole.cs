@@ -52,6 +52,12 @@ public sealed class StructuredGameConsole : IGameConsole
 
     public ConsoleSnapshot Snapshot => StateStore.Snapshot;
 
+    public ConsoleSnapshot? CommittedSnapshot => StateStore.CommittedSnapshot;
+
+    public DisplayCommit? CurrentDisplayCommit => StateStore.CurrentDisplayCommit;
+
+    public DisplayCommit CommitDisplayFrame(DisplayCommitReason reason) => StateStore.CommitDisplayFrame(reason);
+
     public ConsolePrompt? CurrentPrompt => StateStore.CurrentPrompt;
 
     public SequencedConsoleTransaction EmitTransaction(ConsoleTransaction transaction)
@@ -90,7 +96,7 @@ public sealed class StructuredGameConsole : IGameConsole
                     isTimeOut = false;
                     try
                     {
-                        StateStore.Apply(assignedOperation);
+                        ApplyRuntimeOperation(assignedOperation);
                     }
                     catch
                     {
@@ -100,11 +106,11 @@ public sealed class StructuredGameConsole : IGameConsole
 
                     break;
                 case ClosePromptOperation close:
-                    StateStore.Apply(operation);
+                    ApplyRuntimeOperation(operation);
                     InputCoordinator.ClosePrompt(close.PromptId, close.Reason);
                     break;
                 default:
-                    StateStore.Apply(operation);
+                    ApplyRuntimeOperation(operation);
                     break;
             }
         }
@@ -143,7 +149,7 @@ public sealed class StructuredGameConsole : IGameConsole
             isTimeOut = false;
             try
             {
-                StateStore.Apply(new OpenPromptOperation(assignedPrompt));
+                ApplyRuntimeOperation(new OpenPromptOperation(assignedPrompt));
             }
             catch
             {
@@ -244,7 +250,10 @@ public sealed class StructuredGameConsole : IGameConsole
         ConsolePrompt? current = StateStore.CurrentPrompt;
         if (current is not null && string.Equals(current.PromptId, promptId, StringComparison.Ordinal))
         {
-            StateStore.Apply(new ClosePromptOperation(promptId, reason));
+            ApplyRuntimeOperation(new ClosePromptOperation(promptId, reason));
         }
     }
+
+    private void ApplyRuntimeOperation(ConsoleOperation operation) =>
+        _ = StateStore.Apply(operation);
 }

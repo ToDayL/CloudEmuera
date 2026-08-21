@@ -1,7 +1,7 @@
 using System.Net.Sockets;
 using System.Threading.Channels;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V4;
+using CloudEmuera.Ipc.V5;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;

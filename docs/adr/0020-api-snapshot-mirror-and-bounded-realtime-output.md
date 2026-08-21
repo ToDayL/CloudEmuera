@@ -5,7 +5,11 @@
 日期：2026-08-13
 
 关联：SESS-004、PLAY-002、PLAY-004～006、PLAY-010/012、AC-002/012、ADR-0003、ADR-0017、
-ADR-0018、P1-08
+ADR-0018、P1-08、ADR-0026
+
+说明：本 ADR 继续约束 API 镜像、惰性 Snapshot 编码和逐连接有界队列；其中“16ms/64/256KiB 产生可见
+flush”以及“最新 working Snapshot 可用于 resync”的显示语义已由 [ADR-0026](0026-display-commit-boundary-realtime-v3.md)
+取代。生产 Worker 现在只发送 committed `DisplayFrame`，旧批处理文字仅保留为历史实现背景。
 
 ## 背景
 
@@ -135,6 +139,10 @@ WebSocket envelope、鉴权握手、ping/pong 和输入回执；不得在 P1-09 
 - 持续输出与反复重连测试中 API 内存达到稳定平台，最终 Snapshot 与 Worker 权威状态等价。
 
 ## 实施记录
+
+2026-08-21：显示提交边界临时修复转入 [ADR-0026](0026-display-commit-boundary-realtime-v3.md)，
+删除了诊断性的 `DeferOutputUntilNextPrompt` 开关和 API 猜测 Prompt 边界的特殊分支。API 镜像/队列的
+有界性与惰性 Snapshot 编码仍按本 ADR 执行，但浏览器可见提交、resync 基线和协议版本以 ADR-0026 为准。
 
 P1-08 已按本 ADR 落地：RuntimeAdapter 提供公共 `ConsoleSnapshotReducer` 和注入限制的完整校验；
 `CloudEmuera.Realtime` 共享 protobuf/runtime mapper；Worker 每个 epoch 的首个显示消息强制携带完整

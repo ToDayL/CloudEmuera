@@ -3,7 +3,7 @@ using System.Linq;
 using System.Text;
 using CloudEmuera.Api.Realtime;
 using RuntimeColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
-using W = CloudEmuera.Ipc.V4;
+using W = CloudEmuera.Ipc.V5;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Realtime;
 using Xunit;
@@ -57,6 +57,66 @@ public sealed class RealtimeOutputTests
         Assert.Equal(RealtimeFrameKind.TransactionBatch, transactionBatch.Kind);
         Assert.Equal(2, transactionBatch.FirstSequence);
         Assert.Equal(2, transactionBatch.LastSequence);
+    }
+
+    [Fact]
+    public async Task DisplayFrameCommitsClearAndReprintAsOneBrowserVisibleUnit()
+    {
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 30);
+        await using RealtimeSubscription subscription = hub.Subscribe();
+
+        Assert.Equal(RealtimePublishDisposition.Applied, hub.PublishDisplayFrame(DisplaySnapshotFrame(1, ConsoleSnapshot.Empty)).Disposition);
+        Assert.Equal(RealtimeFrameKind.Snapshot, (await subscription.ReadAsync()).Kind);
+
+        W.DisplayFrame frame = DisplayDeltaFrame(
+            2,
+            3,
+            W.DisplayCommitReason.WaitingForInput,
+            new SequencedConsoleTransaction(1, new ConsoleTransaction([
+                ConsoleOperation.ClearConsole(),
+            ])),
+            new SequencedConsoleTransaction(2, new ConsoleTransaction([
+                ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode("reprinted")])),
+            ])),
+            new SequencedConsoleTransaction(3, new ConsoleTransaction([
+                ConsoleOperation.Open(new ConsolePrompt("prompt-1", ConsoleInputType.Text)),
+            ])));
+        RealtimePublishResult result = hub.PublishDisplayFrame(frame);
+
+        Assert.Equal(RealtimePublishDisposition.Applied, result.Disposition);
+        RealtimeFrame visible = await subscription.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.DisplayFrame, visible.Kind);
+        Assert.Equal(2, visible.FrameId);
+        Assert.Equal(1, visible.FirstSequence);
+        Assert.Equal(3, visible.LastSequence);
+        string payload = Encoding.UTF8.GetString(visible.Payload.Span);
+        Assert.Contains("reprinted", payload);
+        Assert.Contains("openPrompt", payload);
+        Assert.Contains("\"consoleState\":null", payload);
+    }
+
+    [Fact]
+    public async Task OversizedCommittedDeltaFallsBackToTheCommittedSnapshot()
+    {
+        var options = RealtimeOutputOptions.Default with
+        {
+            BatchTargetBytes = 256,
+            ConnectionQueueSoftBytes = 4 * 1024,
+            ConnectionQueueHardBytes = 8 * 1024,
+        };
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 31, options);
+        await using RealtimeSubscription subscription = hub.Subscribe();
+        hub.PublishDisplayFrame(DisplaySnapshotFrame(1, ConsoleSnapshot.Empty));
+        Assert.Equal(RealtimeFrameKind.Snapshot, (await subscription.ReadAsync()).Kind);
+
+        hub.PublishDisplayFrame(DisplayDeltaFrame(2, 1, W.DisplayCommitReason.ExplicitRefresh, new SequencedConsoleTransaction(1, new ConsoleTransaction([
+            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode(new string('x', 2_000))])),
+        ]))));
+
+        RealtimeFrame replacement = await subscription.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.Snapshot, replacement.Kind);
+        Assert.Contains("\"committedFrameId\":2", Encoding.UTF8.GetString(replacement.Payload.Span));
+        Assert.Contains(new string('x', 2_000), Encoding.UTF8.GetString(replacement.Payload.Span));
     }
 
     [Fact]
@@ -204,6 +264,90 @@ public sealed class RealtimeOutputTests
         Assert.Equal(2, combined.FirstSequence);
         Assert.Equal(3, combined.LastSequence);
         Assert.Equal(RealtimeFrameKind.Completed, (await subscription.ReadAsync()).Kind);
+    }
+
+    [Fact]
+    public async Task CommittedDisplayFrameIsVisibleWithoutWaitingForTheTransportTimer()
+    {
+        var options = RealtimeOutputOptions.Default with
+        {
+            BatchMaxTransactions = 64,
+            BatchMaxDelay = TimeSpan.FromMilliseconds(900),
+            BatchTargetBytes = 256 * 1024
+        };
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 12, options);
+        await using RealtimeSubscription subscription = hub.Subscribe();
+        hub.PublishDisplayFrame(DisplaySnapshotFrame(1, ConsoleSnapshot.Empty));
+        Assert.Equal(RealtimeFrameKind.Snapshot, (await subscription.ReadAsync()).Kind);
+
+        hub.PublishDisplayFrame(DisplayDeltaFrame(2, 1, W.DisplayCommitReason.WaitingForInput, Transaction(1, [
+            ConsoleOperation.ClearConsole(),
+            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode("reprinted")])),
+            ConsoleOperation.UpsertDrawable(new ShapeDrawable(
+                "portrait-1",
+                ConsoleShapeKind.Rectangle,
+                new ConsoleRect(0, 0, 1, 1),
+                new RuntimeColor(255, 255, 255)))
+            ,
+            ConsoleOperation.Open(new ConsolePrompt("prompt-1", ConsoleInputType.Text))
+        ])));
+
+        RealtimeFrame committed = await subscription.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.DisplayFrame, committed.Kind);
+        Assert.Equal(1, committed.FirstSequence);
+        Assert.Equal(1, committed.LastSequence);
+        string json = Encoding.UTF8.GetString(committed.Payload.Span);
+        Assert.Contains("reprinted", json);
+        Assert.Contains("portrait-1", json);
+        Assert.Contains("openPrompt", json);
+    }
+
+    [Fact]
+    public async Task OpenPromptMustBeTheFinalOperationOfItsTransaction()
+    {
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 13);
+        hub.PublishDisplayBatch(SnapshotBatch(ConsoleSnapshot.Empty, Transaction(1, "initial")));
+
+        RealtimePublishResult result = hub.PublishDisplayBatch(DeltaBatch(Transaction(2, [
+            ConsoleOperation.Open(new ConsolePrompt("prompt-1", ConsoleInputType.Text)),
+            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode("late")]))
+        ])));
+
+        Assert.Equal(RealtimePublishDisposition.Faulted, result.Disposition);
+        Assert.Equal(SessionOutputHubState.Faulted, hub.State);
+    }
+
+    [Fact]
+    public async Task LegacyTransportBatchThresholdsDoNotClaimDisplayCommitOwnership()
+    {
+        var options = RealtimeOutputOptions.Default with
+        {
+            BatchMaxTransactions = 1,
+            BatchMaxDelay = TimeSpan.FromMilliseconds(1),
+            BatchTargetBytes = 1,
+        };
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 14, options);
+        await using RealtimeSubscription subscription = hub.Subscribe();
+        hub.PublishDisplayBatch(SnapshotBatch(ConsoleSnapshot.Empty, Transaction(1, [
+            ConsoleOperation.Open(new ConsolePrompt("prompt-1", ConsoleInputType.Text))
+        ])));
+        Assert.Equal(RealtimeFrameKind.Snapshot, (await subscription.ReadAsync()).Kind);
+
+        hub.PublishDisplayBatch(DeltaBatch(Transaction(2, [
+            ConsoleOperation.Close("prompt-1", ConsolePromptCloseReason.InputAccepted)
+        ])));
+        RealtimeFrame transportFlush = await subscription.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.TransactionBatch, transportFlush.Kind);
+        Assert.Equal(2, transportFlush.FirstSequence);
+        Assert.Equal(2, transportFlush.LastSequence);
+
+        hub.PublishDisplayBatch(DeltaBatch(Transaction(3, [
+            ConsoleOperation.ClearConsole(),
+            ConsoleOperation.AppendLine(new ConsoleLine("line-2", [new TextNode("reprinted")]))
+        ])));
+        RealtimeFrame secondFlush = await subscription.ReadAsync();
+        Assert.Equal(3, secondFlush.FirstSequence);
+        Assert.Equal(3, secondFlush.LastSequence);
     }
 
     [Fact]
@@ -574,6 +718,9 @@ public sealed class RealtimeOutputTests
             ConsoleOperation.AppendLine(new ConsoleLine($"line-{sequence}", [new TextNode(text)]))
         ]));
 
+    private static SequencedConsoleTransaction Transaction(long sequence, params ConsoleOperation[] operations) =>
+        new(sequence, new ConsoleTransaction(operations));
+
     private static W.DisplayBatch SnapshotBatch(ConsoleSnapshot snapshot, params SequencedConsoleTransaction[] transactions)
     {
         var batch = new W.DisplayBatch
@@ -590,6 +737,32 @@ public sealed class RealtimeOutputTests
         var batch = new W.DisplayBatch();
         batch.Transactions.AddRange(transactions.Select(StructuredConsoleWireMapper.ToProto));
         return batch;
+    }
+
+    private static W.DisplayFrame DisplaySnapshotFrame(ulong frameId, ConsoleSnapshot snapshot) => new()
+    {
+        FrameId = frameId,
+        CommitSequence = snapshot.SnapshotSequence,
+        Reason = W.DisplayCommitReason.ExplicitRefresh,
+        RequiresSnapshot = true,
+        Snapshot = StructuredConsoleWireMapper.ToProto(snapshot),
+    };
+
+    private static W.DisplayFrame DisplayDeltaFrame(
+        ulong frameId,
+        long commitSequence,
+        W.DisplayCommitReason reason,
+        params SequencedConsoleTransaction[] transactions)
+    {
+        var frame = new W.DisplayFrame
+        {
+            FrameId = frameId,
+            CommitSequence = commitSequence,
+            Reason = reason,
+            RequiresSnapshot = false,
+        };
+        frame.Transactions.AddRange(transactions.Select(StructuredConsoleWireMapper.ToProto));
+        return frame;
     }
 
     private static RealtimeEncodedPayload Payload(ulong epoch, long sequence, int length) =>

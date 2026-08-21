@@ -13,7 +13,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.RuntimeAdapter;
-using W = CloudEmuera.Ipc.V4;
+using W = CloudEmuera.Ipc.V5;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -31,7 +31,7 @@ namespace CloudEmuera.Realtime.Tests;
 [Trait("Category", "SessionLifecycle")]
 public sealed class RealtimeStateMachineTests
 {
-    private static readonly int[] SupportedProtocolVersions = [2];
+    private static readonly int[] SupportedProtocolVersions = [3];
 
     [Fact]
     public void KestrelPortResolutionHonorsConfiguredUrlsAndExplicitPort()
@@ -188,9 +188,12 @@ public sealed class RealtimeStateMachineTests
         }
         Assert.Equal(1, registry.SubscriptionCount);
 
-        hub.PublishDisplayBatch(new W.DisplayBatch
+        hub.PublishDisplayFrame(new W.DisplayFrame
         {
-            IsSnapshot = true,
+            FrameId = 1,
+            CommitSequence = 0,
+            Reason = W.DisplayCommitReason.ExplicitRefresh,
+            RequiresSnapshot = true,
             Snapshot = StructuredConsoleWireMapper.ToProto(ConsoleSnapshot.Empty),
         });
         string snapshotText = await WaitForSentTextAsync(socket, "session.snapshot");
@@ -314,7 +317,7 @@ public sealed class RealtimeStateMachineTests
 
     private static string ClientHello(string messageId) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 2,
+        protocolVersion = 3,
         type = "client.hello",
         messageId,
         payload = new
@@ -327,7 +330,7 @@ public sealed class RealtimeStateMachineTests
 
     private static string Resume(string messageId, string sessionId) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 2,
+        protocolVersion = 3,
         type = "session.resume",
         messageId,
         sessionId,
@@ -336,7 +339,7 @@ public sealed class RealtimeStateMachineTests
 
     private static string Input(string messageId, string sessionId, ulong workerEpoch) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 2,
+        protocolVersion = 3,
         type = "session.input",
         messageId,
         sessionId,

@@ -28,3 +28,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0023：Session Presentation Asset 身份、清单与浏览器安全策略](0023-session-presentation-assets-and-csp.md)
 - [ADR-0024：HTML_PRINT 使用固定上游解析器并在 headless 边界安全翻译](0024-html-print-upstream-parser-authority.md)
 - [ADR-0025：浏览器输入投递到当前 Runtime 输入槽](0025-current-input-slot-realtime-v2.md)
+- [ADR-0026：显示提交边界与原子 Realtime v3 帧](0026-display-commit-boundary-realtime-v3.md)

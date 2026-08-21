@@ -81,18 +81,18 @@ describe("realtime reducer", () => {
     expect(() => applyTransactions(initial, [transaction(2, [{ type: "clearConsole" }])], 0)).toThrowError("交易序号不连续");
 
     let state = createSessionStoreState("s1");
-    state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 0 }, { workerEpoch: 4, snapshotSequence: 0, consoleState: initial });
+    state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 0 }, { workerEpoch: 4, snapshotSequence: 0, committedFrameId: 0, consoleState: initial });
     state = createPendingInput(state, { workerEpoch: 4, clientMessageId: "client-1", value: "yes", source: "KEYBOARD" });
     state = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 2 }, { workerEpoch: 4, firstSequence: 1, lastSequence: 2, transactions: [transaction(1, [{ type: "appendNodes", nodes: [text("one")] }]), transaction(2, [{ type: "appendNodes", nodes: [text("two")] }])] });
     expect(state.sequence).toBe(2);
     const duplicate = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 2 }, { workerEpoch: 4, firstSequence: 1, lastSequence: 2, transactions: [transaction(1, [{ type: "appendNodes", nodes: [text("duplicate")] }]), transaction(2, [{ type: "appendNodes", nodes: [text("duplicate")] }])] });
     expect(duplicate).toBe(state);
-    const staleSnapshot = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 1 }, { workerEpoch: 4, snapshotSequence: 1, consoleState: initial });
+    const staleSnapshot = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 1 }, { workerEpoch: 4, snapshotSequence: 1, committedFrameId: 0, consoleState: initial });
     expect(staleSnapshot).toBe(state);
     state = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 4 }, { workerEpoch: 4, firstSequence: 4, lastSequence: 4, transactions: [transaction(4, [{ type: "appendNodes", nodes: [text("must-not-apply")] }])] });
     expect(state.phase).toBe("resyncing");
     expect(state.consoleState?.scrollback.flatMap(item => item.nodes).some(node => node.type === "text" && node.text === "must-not-apply")).toBe(false);
-    state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 5, sequence: 0 }, { workerEpoch: 5, snapshotSequence: 0, consoleState: initial });
+    state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 5, sequence: 0 }, { workerEpoch: 5, snapshotSequence: 0, committedFrameId: 0, consoleState: initial });
     expect(state.pendingInput).toBeNull();
 
     const oldEpochBatch = applyBatch(state, { sessionId: "s1", workerEpoch: 4, sequence: 3 }, { workerEpoch: 4, firstSequence: 3, lastSequence: 3, transactions: [transaction(3, [{ type: "appendNodes", nodes: [text("old epoch")] }])] });
@@ -101,7 +101,7 @@ describe("realtime reducer", () => {
 
   it("resyncs on an overlapping batch that contains unseen transactions", () => {
     const initial = createEmptyConsoleState();
-    let state = replaceSnapshot(createSessionStoreState("s1"), { sessionId: "s1", workerEpoch: 1, sequence: 0 }, { workerEpoch: 1, snapshotSequence: 0, consoleState: initial });
+    let state = replaceSnapshot(createSessionStoreState("s1"), { sessionId: "s1", workerEpoch: 1, sequence: 0 }, { workerEpoch: 1, snapshotSequence: 0, committedFrameId: 0, consoleState: initial });
     state = applyBatch(state, { sessionId: "s1", workerEpoch: 1, sequence: 2 }, { workerEpoch: 1, firstSequence: 1, lastSequence: 2, transactions: [transaction(1, [{ type: "appendNodes", nodes: [text("one")] }]), transaction(2, [{ type: "appendNodes", nodes: [text("two")] }])] });
 
     const overlapping = applyBatch(state, { sessionId: "s1", workerEpoch: 1, sequence: 3 }, { workerEpoch: 1, firstSequence: 2, lastSequence: 3, transactions: [transaction(2, [{ type: "appendNodes", nodes: [text("replayed")] }]), transaction(3, [{ type: "appendNodes", nodes: [text("three")] }])] });
@@ -114,12 +114,14 @@ describe("realtime reducer", () => {
     let state = replaceSnapshot(createSessionStoreState("s1"), { sessionId: "s1", workerEpoch: 4, sequence: 0 }, {
       workerEpoch: 4,
       snapshotSequence: 0,
+      committedFrameId: 0,
       consoleState: { ...initial, currentPrompt: { promptId: "prompt-old", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null } },
     });
     state = createPendingInput(state, { workerEpoch: 4, clientMessageId: "client-1", value: "answer", source: "KEYBOARD" });
     state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 1 }, {
       workerEpoch: 4,
       snapshotSequence: 1,
+      committedFrameId: 1,
       consoleState: { ...initial, currentPrompt: { promptId: "prompt-new", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null } },
     });
     expect(state.pendingInput?.status).toBe("pending");

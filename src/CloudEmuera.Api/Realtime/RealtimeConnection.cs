@@ -205,7 +205,7 @@ public sealed class RealtimeConnection
             throw new RealtimeProtocolException("hello_required", "The first realtime message must be client.hello.", 1002);
         RememberMessageId(hello.Envelope.MessageId);
         if (!clientHello.Value.SupportedProtocolVersions.Contains(RealtimeProtocol.Version))
-            throw new RealtimeProtocolException("unsupported_protocol_version", "The client does not support realtime protocol v2.", 1002);
+            throw new RealtimeProtocolException("unsupported_protocol_version", "The client does not support realtime protocol v3.", 1002);
         return hello;
     }
 

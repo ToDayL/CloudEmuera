@@ -5,7 +5,18 @@ namespace CloudEmuera.Contracts.Realtime;
 public sealed record RealtimeSnapshot(
     ulong WorkerEpoch,
     long SnapshotSequence,
+    long CommittedFrameId,
     RealtimeConsoleState ConsoleState);
+
+public sealed record RealtimeDisplayFrame(
+    ulong WorkerEpoch,
+    long FrameId,
+    long CommitSequence,
+    string Reason,
+    bool RequiresSnapshot,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    RealtimeConsoleState? ConsoleState,
+    IReadOnlyList<RealtimeTransaction> Transactions);
 
 public sealed record RealtimeTransactionBatch(
     ulong WorkerEpoch,

@@ -15,9 +15,9 @@ import {
   RealtimeOperation,
   RealtimeServerMessage,
   RealtimeSnapshotPayload,
+  RealtimeDisplayFramePayload,
   RealtimeTextStyle,
   SpriteAnimationFrame,
-  RealtimeTransactionBatchPayload,
   Truncation,
   WindowMetadata,
 } from "./protocol";
@@ -50,7 +50,7 @@ export function decodeRealtimeMessage(input: string | ArrayBuffer): RealtimeServ
   catch { throw new RealtimeDecodeError("invalid_json", "实时消息不是有效 JSON。"); }
   const envelope = object(value, "invalid_envelope");
   ensureKeys(envelope, ["protocolVersion", "type", "messageId", "correlationId", "sessionId", "workerEpoch", "sequence", "payload"], "envelope");
-  if (integer(envelope.protocolVersion, "protocolVersion") !== 2)
+  if (integer(envelope.protocolVersion, "protocolVersion") !== 3)
     throw new RealtimeDecodeError("unsupported_protocol_version", "实时协议版本不兼容。");
   const type = string(envelope.type, "type");
   const messageId = string(envelope.messageId, "messageId");
@@ -60,14 +60,14 @@ export function decodeRealtimeMessage(input: string | ArrayBuffer): RealtimeServ
   if (envelope.workerEpoch !== undefined && positiveInteger(envelope.workerEpoch, "workerEpoch") === 0) throw new RealtimeDecodeError("invalid_envelope", "workerEpoch 无效。");
   if (envelope.sequence !== undefined && integer(envelope.sequence, "sequence") < 0) throw new RealtimeDecodeError("invalid_envelope", "sequence 无效。");
   const payload = object(envelope.payload, "missing_payload");
-  const base = { protocolVersion: 2 as const, type, messageId, ...(envelope.correlationId === undefined ? {} : { correlationId: string(envelope.correlationId, "correlationId") }), ...(envelope.sessionId === undefined ? {} : { sessionId: string(envelope.sessionId, "sessionId") }), ...(envelope.workerEpoch === undefined ? {} : { workerEpoch: positiveInteger(envelope.workerEpoch, "workerEpoch") }), ...(envelope.sequence === undefined ? {} : { sequence: integer(envelope.sequence, "sequence") }) };
+  const base = { protocolVersion: 3 as const, type, messageId, ...(envelope.correlationId === undefined ? {} : { correlationId: string(envelope.correlationId, "correlationId") }), ...(envelope.sessionId === undefined ? {} : { sessionId: string(envelope.sessionId, "sessionId") }), ...(envelope.workerEpoch === undefined ? {} : { workerEpoch: positiveInteger(envelope.workerEpoch, "workerEpoch") }), ...(envelope.sequence === undefined ? {} : { sequence: integer(envelope.sequence, "sequence") }) };
 
   switch (type) {
     case "server.hello": return { ...base, type, payload: decodeServerHello(payload) } as RealtimeServerMessage;
     case "connection.ping": return { ...base, type, payload: decodePing(payload) } as RealtimeServerMessage;
     case "session.resume.result": return { ...requireSession(base), type, payload: decodeResumeResult(payload) } as RealtimeServerMessage;
     case "session.snapshot": return { ...requireSession(base), type, payload: decodeSnapshot(payload) } as RealtimeServerMessage;
-    case "display.batch": return { ...requireSession(base), type, payload: decodeBatch(payload) } as RealtimeServerMessage;
+    case "display.frame": return { ...requireSession(base), type, payload: decodeDisplayFrame(payload) } as RealtimeServerMessage;
     case "resync.required": return { ...requireSession(base), type, payload: decodeResync(payload) } as RealtimeServerMessage;
     case "session.stream.ended": ensureKeys(payload, ["reasonCode"], "stream.ended"); return { ...requireSession(base), type, payload: { reasonCode: string(payload.reasonCode, "reasonCode") } } as RealtimeServerMessage;
     case "session.input.result": return { ...requireSession(base), type, payload: decodeInputResult(payload) } as RealtimeServerMessage;
@@ -84,12 +84,12 @@ function requireSession<T extends { sessionId?: string }>(value: T): T & { sessi
 function decodeServerHello(value: JsonObject) {
   ensureKeys(value, ["protocolVersion", "payloadSchemaVersion", "connectionId", "serverNowUnixMilliseconds", "heartbeatIntervalMilliseconds", "heartbeatTimeoutMilliseconds", "maxSubscriptionsPerConnection", "maxPendingInputsPerConnection", "serverMessageMaxBytes", "capabilityDigest"], "server.hello");
   const protocolVersion = positiveInteger(value.protocolVersion, "protocolVersion");
-  if (protocolVersion !== 2) throw new RealtimeDecodeError("unsupported_protocol_version", "服务端协议版本不兼容。");
+  if (protocolVersion !== 3) throw new RealtimeDecodeError("unsupported_protocol_version", "服务端协议版本不兼容。");
   const payloadSchemaVersion = string(value.payloadSchemaVersion, "payloadSchemaVersion");
   if (payloadSchemaVersion !== REALTIME_PAYLOAD_SCHEMA_VERSION)
     throw new RealtimeDecodeError("unsupported_payload_schema_version", "实时消息内容版本不兼容。");
   return {
-    protocolVersion: 2 as const,
+    protocolVersion: 3 as const,
     payloadSchemaVersion,
     connectionId: checkedIdentifier(value.connectionId, "connectionId"),
     serverNowUnixMilliseconds: finiteNumber(value.serverNowUnixMilliseconds, "serverNowUnixMilliseconds"),
@@ -116,21 +116,43 @@ function decodeResumeResult(value: JsonObject) {
 }
 
 function decodeSnapshot(value: JsonObject): RealtimeSnapshotPayload {
-  ensureKeys(value, ["workerEpoch", "snapshotSequence", "consoleState"], "session.snapshot");
-  return { workerEpoch: positiveInteger(value.workerEpoch, "workerEpoch"), snapshotSequence: nonNegativeInteger(value.snapshotSequence, "snapshotSequence"), consoleState: decodeConsoleState(value.consoleState) };
+  ensureKeys(value, ["workerEpoch", "snapshotSequence", "committedFrameId", "consoleState"], "session.snapshot");
+  return { workerEpoch: positiveInteger(value.workerEpoch, "workerEpoch"), snapshotSequence: nonNegativeInteger(value.snapshotSequence, "snapshotSequence"), committedFrameId: nonNegativeInteger(value.committedFrameId, "committedFrameId"), consoleState: decodeConsoleState(value.consoleState) };
 }
 
-function decodeBatch(value: JsonObject): RealtimeTransactionBatchPayload {
-  ensureKeys(value, ["workerEpoch", "firstSequence", "lastSequence", "transactions"], "display.batch");
+function decodeDisplayFrame(value: JsonObject): RealtimeDisplayFramePayload {
+  ensureKeys(value, ["workerEpoch", "frameId", "commitSequence", "reason", "requiresSnapshot", "consoleState", "transactions"], "display.frame");
+  const reason = string(value.reason, "reason");
+  if (!["WAITING_FOR_INPUT", "RUNTIME_COMPLETED", "RUNTIME_FAILED", "EXPLICIT_REFRESH"].includes(reason))
+    throw new RealtimeDecodeError("invalid_payload", "display.frame 提交原因无效。");
+  const requiresSnapshot = bool(value.requiresSnapshot, "requiresSnapshot");
+  const consoleState = value.consoleState === null ? null : decodeConsoleState(value.consoleState);
   const transactions = array(value.transactions, "transactions").map(item => decodeTransaction(object(item, "transaction")));
-  if (transactions.length === 0) throw new RealtimeDecodeError("invalid_payload", "display.batch 不能为空。");
-  const firstSequence = positiveInteger(value.firstSequence, "firstSequence");
-  const lastSequence = positiveInteger(value.lastSequence, "lastSequence");
-  if (lastSequence < firstSequence || transactions[0].sequence !== firstSequence || transactions.at(-1)?.sequence !== lastSequence)
-    throw new RealtimeDecodeError("invalid_payload", "display.batch 序号不连续。");
+  const commitSequence = nonNegativeInteger(value.commitSequence, "commitSequence");
+  if (requiresSnapshot && (consoleState === null || transactions.length !== 0))
+    throw new RealtimeDecodeError("invalid_payload", "display.frame 快照表示不完整。");
+  if (!requiresSnapshot && (consoleState !== null || transactions.length === 0))
+    throw new RealtimeDecodeError("invalid_payload", "display.frame 增量表示不完整。");
+  if (requiresSnapshot && consoleState !== null &&
+      ((reason === "WAITING_FOR_INPUT" && consoleState.currentPrompt === null) ||
+       ((reason === "RUNTIME_COMPLETED" || reason === "RUNTIME_FAILED") && consoleState.currentPrompt !== null)))
+    throw new RealtimeDecodeError("invalid_payload", "display.frame 的提交原因与快照 Prompt 状态不一致。");
+  let hasOpenPrompt = false;
   for (let i = 1; i < transactions.length; i++) if (transactions[i].sequence !== transactions[i - 1].sequence + 1)
-    throw new RealtimeDecodeError("invalid_payload", "display.batch 内部序号不连续。");
-  return { workerEpoch: positiveInteger(value.workerEpoch, "workerEpoch"), firstSequence, lastSequence, transactions };
+    throw new RealtimeDecodeError("invalid_payload", "display.frame 内部序号不连续。");
+  for (const transaction of transactions) {
+    for (let index = 0; index < transaction.operations.length; index++) {
+      const operation = transaction.operations[index];
+      if (operation.type === "openPrompt") {
+        if (index !== transaction.operations.length - 1 || reason !== "WAITING_FOR_INPUT")
+          throw new RealtimeDecodeError("invalid_payload", "openPrompt 必须是等待提交帧的最后一个操作。");
+        hasOpenPrompt = true;
+      }
+    }
+  }
+  if (!requiresSnapshot && (transactions.at(-1)?.sequence !== commitSequence || reason === "WAITING_FOR_INPUT" && !hasOpenPrompt))
+    throw new RealtimeDecodeError("invalid_payload", "display.frame 序号或 Prompt 边界无效。");
+  return { workerEpoch: positiveInteger(value.workerEpoch, "workerEpoch"), frameId: positiveInteger(value.frameId, "frameId"), commitSequence, reason: reason as RealtimeDisplayFramePayload["reason"], requiresSnapshot, consoleState, transactions };
 }
 
 function decodeResync(value: JsonObject) {

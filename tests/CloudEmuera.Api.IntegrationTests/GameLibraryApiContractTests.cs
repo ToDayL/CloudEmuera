@@ -28,7 +28,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 {
     private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid().ToString("N")[..16]}");
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly int[] SupportedRealtimeProtocolVersions = [2];
+    private static readonly int[] SupportedRealtimeProtocolVersions = [3];
     private IdentityFactory? _factory;
 
     [Fact]
@@ -656,7 +656,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
                 await socket.ConnectAsync(wsUri, connectTimeout.Token);
                 await SendRealtimeAsync(socket, new
                 {
-                    protocolVersion = 2,
+                    protocolVersion = 3,
                     type = "client.hello",
                     messageId = $"msg_realtime_{connectionLabel}_hello",
                     payload = new
@@ -688,7 +688,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
             {
                 await SendRealtimeAsync(socket, new
                 {
-                    protocolVersion = 2,
+                    protocolVersion = 3,
                     type = "session.resume",
                     messageId = $"msg_realtime_{connectionLabel}_resume_{attempt}",
                     sessionId,
@@ -747,7 +747,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 
         await SendRealtimeAsync(socket, new
         {
-            protocolVersion = 2,
+            protocolVersion = 3,
             type = "session.input",
             messageId = "msg_realtime_reconnect_input",
             sessionId,
@@ -769,7 +769,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
             string type = document.RootElement.GetProperty("type").GetString()!;
             if (type == "session.input.result")
                 accepted = document.RootElement.GetProperty("payload").GetProperty("status").GetString() == "ACCEPTED";
-            else if (type is "display.batch" or "session.stream.ended")
+            else if (type is "display.frame" or "session.stream.ended")
                 outputObserved = true;
         }
 
@@ -812,7 +812,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
         await socket.ConnectAsync(wsUri, connectTimeout.Token);
         await SendRealtimeAsync(socket, new
         {
-            protocolVersion = 2,
+            protocolVersion = 3,
             type = "client.hello",
             messageId = "msg_realtime_draining_hello",
             payload = new

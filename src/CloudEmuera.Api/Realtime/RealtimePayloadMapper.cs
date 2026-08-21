@@ -1,6 +1,6 @@
 using System.Text.Json;
 using CloudEmuera.Contracts.Realtime;
-using CloudEmuera.Ipc.V4;
+using CloudEmuera.Ipc.V5;
 using R = CloudEmuera.RuntimeAdapter;
 using RuntimeMapper = CloudEmuera.Realtime.StructuredConsoleWireMapper;
 
@@ -20,8 +20,44 @@ public static class RealtimePayloadMapper
             .ToArray();
     }
 
-    public static RealtimeSnapshot ToSnapshot(ulong workerEpoch, R.ConsoleSnapshot snapshot) =>
-        new(workerEpoch, snapshot.SnapshotSequence, ToState(snapshot));
+    public static IReadOnlyList<R.SequencedConsoleTransaction> FromProto(DisplayFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        return frame.Transactions
+            .Select(transaction => new R.SequencedConsoleTransaction(
+                transaction.Sequence,
+                RuntimeMapper.FromProto(transaction)))
+            .ToArray();
+    }
+
+    public static R.DisplayCommitReason FromProto(DisplayCommitReason reason) => reason switch
+    {
+        DisplayCommitReason.WaitingForInput => R.DisplayCommitReason.WaitingForInput,
+        DisplayCommitReason.RuntimeCompleted => R.DisplayCommitReason.RuntimeCompleted,
+        DisplayCommitReason.RuntimeFailed => R.DisplayCommitReason.RuntimeFailed,
+        DisplayCommitReason.ExplicitRefresh => R.DisplayCommitReason.ExplicitRefresh,
+        _ => throw new InvalidDataException("The display commit reason is outside the IPC contract.")
+    };
+
+    public static RealtimeSnapshot ToSnapshot(ulong workerEpoch, R.ConsoleSnapshot snapshot, long committedFrameId = 0) =>
+        new(workerEpoch, snapshot.SnapshotSequence, committedFrameId, ToState(snapshot));
+
+    public static RealtimeDisplayFrame ToDisplayFrame(ulong workerEpoch, R.DisplayCommit commit) =>
+        new(
+            workerEpoch,
+            commit.FrameId,
+            commit.CommitSequence,
+            commit.Reason switch
+            {
+                R.DisplayCommitReason.WaitingForInput => "WAITING_FOR_INPUT",
+                R.DisplayCommitReason.RuntimeCompleted => "RUNTIME_COMPLETED",
+                R.DisplayCommitReason.RuntimeFailed => "RUNTIME_FAILED",
+                R.DisplayCommitReason.ExplicitRefresh => "EXPLICIT_REFRESH",
+                _ => throw new InvalidDataException("The display commit reason is outside the realtime contract.")
+            },
+            commit.RequiresSnapshot,
+            commit.RequiresSnapshot ? ToState(commit.Snapshot) : null,
+            commit.Transactions.Select(ToTransaction).ToArray());
 
     public static RealtimeTransactionBatch ToTransactionBatch(
         ulong workerEpoch,
@@ -418,6 +454,25 @@ public sealed class RealtimePayloadSerializer
         return new RealtimeEncodedPayload(RealtimePayloadKind.Snapshot, workerEpoch, snapshot.SnapshotSequence, snapshot.SnapshotSequence, bytes);
     }
 
+    public RealtimeEncodedPayload SerializeSnapshot(ulong workerEpoch, R.DisplayCommit commit)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(
+            RealtimePayloadMapper.ToSnapshot(workerEpoch, commit.Snapshot, commit.FrameId),
+            RealtimeJsonContext.Default.RealtimeSnapshot);
+        EnsureSize(bytes, options.SnapshotMaxBytes, "snapshot");
+        return new RealtimeEncodedPayload(RealtimePayloadKind.Snapshot, workerEpoch, commit.CommitSequence, commit.CommitSequence, bytes, commit.FrameId, commit.Reason.ToString());
+    }
+
+    public RealtimeEncodedPayload SerializeDisplayFrame(ulong workerEpoch, R.DisplayCommit commit)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        RealtimeDisplayFrame payload = RealtimePayloadMapper.ToDisplayFrame(workerEpoch, commit);
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(payload, RealtimeJsonContext.Default.RealtimeDisplayFrame);
+        EnsureSize(bytes, options.SnapshotMaxBytes, "display frame");
+        return new RealtimeEncodedPayload(RealtimePayloadKind.DisplayFrame, workerEpoch, commit.Transactions.Count == 0 ? commit.CommitSequence : commit.Transactions[0].Sequence, commit.CommitSequence, bytes, commit.FrameId, commit.Reason.ToString());
+    }
+
     public RealtimeEncodedPayload SerializeTransactionBatch(
         ulong workerEpoch,
         IReadOnlyList<R.SequencedConsoleTransaction> transactions)
@@ -438,7 +493,8 @@ public sealed class RealtimePayloadSerializer
 public enum RealtimePayloadKind
 {
     Snapshot,
-    TransactionBatch
+    TransactionBatch,
+    DisplayFrame
 }
 
 public sealed class RealtimeEncodedPayload(
@@ -446,7 +502,9 @@ public sealed class RealtimeEncodedPayload(
     ulong workerEpoch,
     long firstSequence,
     long lastSequence,
-    byte[] bytes)
+    byte[] bytes,
+    long frameId = 0,
+    string? commitReason = null)
 {
     public RealtimePayloadKind Kind { get; } = kind;
     public ulong WorkerEpoch { get; } = workerEpoch;
@@ -454,6 +512,8 @@ public sealed class RealtimeEncodedPayload(
     public long LastSequence { get; } = lastSequence;
     public ReadOnlyMemory<byte> Bytes { get; } = bytes ?? throw new ArgumentNullException(nameof(bytes));
     public int ByteLength => Bytes.Length;
+    public long FrameId { get; } = frameId;
+    public string? CommitReason { get; } = commitReason;
 }
 
 public sealed class RealtimePayloadSizeException(string message) : ArgumentException(message);
