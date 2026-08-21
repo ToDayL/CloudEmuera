@@ -238,15 +238,16 @@ export class RealtimeConnectionManager {
     if (this.helloTimer !== null) { window.clearTimeout(this.helloTimer); this.helloTimer = null; }
     if (this.heartbeatTimer !== null) { window.clearTimeout(this.heartbeatTimer); this.heartbeatTimer = null; }
     if (this.disposed) return;
-    // The server currently uses 1008 for its heartbeat timeout as well as
-    // authentication failures. A dead/paused browser tab must reconnect and
-    // resume its subscriptions; only the authentication variants are
-    // terminal for this connection manager.
-    if (code === 1008 && reason !== "heartbeat_timeout") {
+    // The server uses 1008 for hello timeouts as well as authentication
+    // failures, while the client uses 1002 when its own hello timer fires.
+    // A hello timeout is transient handshake failure, not evidence of an
+    // incompatible protocol or an expired session; keep the manager retrying.
+    if (reason === "hello_timeout") {
+      // Fall through to the normal reconnect path below.
+    } else if (code === 1008 && reason !== "heartbeat_timeout") {
       this.setPhase("auth_required", reason || "authentication_expired");
       return;
-    }
-    if (code === 1002) { this.setPhase("incompatible", reason || "protocol_error"); return; }
+    } else if (code === 1002) { this.setPhase("incompatible", reason || "protocol_error"); return; }
     for (const subscription of this.subscriptions.values()) {
       if (subscription.state.phase === "live" || subscription.state.phase === "snapshot_ready") subscription.state = markInputUnknown(subscription.state);
       notify(subscription);

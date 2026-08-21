@@ -251,6 +251,47 @@ describe("RealtimeConnectionManager", () => {
     vi.unstubAllGlobals();
   });
 
+  it("reconnects after a server hello timeout instead of requiring authentication", () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    const manager = new RealtimeConnectionManager();
+    manager.subscribe("s1", () => undefined);
+    const first = FakeWebSocket.instances[0];
+
+    first.finishClose(1008, "hello_timeout");
+    expect(manager.status).toBe("backing_off");
+    vi.advanceTimersByTime(250);
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(manager.status).toBe("connecting");
+    manager.dispose();
+    vi.mocked(Math.random).mockRestore();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("reconnects after its local hello timeout instead of becoming incompatible", () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    const manager = new RealtimeConnectionManager();
+    manager.subscribe("s1", () => undefined);
+
+    vi.advanceTimersByTime(8_000);
+    expect(manager.status).toBe("backing_off");
+    vi.advanceTimersByTime(250);
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(manager.status).toBe("connecting");
+    manager.dispose();
+    vi.mocked(Math.random).mockRestore();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
   it("uses bounded exponential reconnect backoff instead of a reconnect storm", () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", FakeWebSocket);
