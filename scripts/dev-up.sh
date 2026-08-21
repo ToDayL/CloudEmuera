@@ -13,18 +13,27 @@ fi
 compose+=(--file "$repo_root/docker/compose.dev.yml")
 
 "${compose[@]}" build api web
-# The running API and Worker are launched as already-built DLLs. Build both
-# Build development assemblies explicitly so the API has no dotnet CLI host
-# above it and cannot silently fall back to stale dependencies.
-"${compose[@]}" run --rm api \
-  dotnet build src/CloudEmuera.Api/CloudEmuera.Api.csproj --configuration Debug
-"${compose[@]}" run --rm api \
-  dotnet build src/CloudEmuera.Worker/CloudEmuera.Worker.csproj --configuration Debug
-# Schema changes are owned exclusively by Migrator. Stop a possibly older API
-# before upgrading the persistent development database, then start services
-# only after migration and its pre-change backup succeed.
+# Stop the old API before replacing bind-mounted DLLs. This preserves the
+# direct API-to-Worker parent relationship across development rebuilds.
 "${compose[@]}" stop api
-"${compose[@]}" run --rm api \
-  dotnet run --project src/CloudEmuera.Migrator -- migrate --data-root /data
-"${compose[@]}" up --detach api web
+# The running API and its Worker are launched as already-built DLLs. Restore
+# once and build every runtime process before replacing the running API so no
+# dotnet CLI host remains above the API/Worker parent-child tree.
+"${compose[@]}" run --rm api sh -euc '
+  dotnet restore CloudEmuera.slnx --locked-mode
+  dotnet build src/CloudEmuera.Api/CloudEmuera.Api.csproj --no-restore --configuration Debug
+  dotnet build src/CloudEmuera.Worker/CloudEmuera.Worker.csproj --no-restore --configuration Debug
+  dotnet build src/CloudEmuera.Validator/CloudEmuera.Validator.csproj --no-restore --configuration Debug
+  dotnet build src/CloudEmuera.Migrator/CloudEmuera.Migrator.csproj --no-restore --configuration Debug
+'
+# The API container entrypoint owns the migration-before-API ordering. This
+# keeps development aligned with the production single-container topology.
+"${compose[@]}" run --rm web \
+  sh -euc 'pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web build'
+"${compose[@]}" up --detach api
+running_services="$("${compose[@]}" ps --services --filter status=running | sed '/^$/d')"
+if [[ "$running_services" != "api" ]]; then
+  echo "default development topology must have only api running; got: $running_services" >&2
+  exit 1
+fi
 "${compose[@]}" ps

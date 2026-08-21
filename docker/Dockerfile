@@ -23,9 +23,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libgdiplus && \
     ln -sf /usr/lib/libgdiplus.so /usr/lib/libgdiplus.dll.so && \
-    rm -rf /var/lib/apt/lists/* && \
-    groupadd --gid 10001 cloudemuera && \
-    useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin cloudemuera
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /app/api
 ENV ASPNETCORE_URLS=http://0.0.0.0:28647 \
     CloudEmuera__DataPath=/data \
@@ -35,11 +33,12 @@ COPY --from=dotnet-build /out/api /app/api/
 COPY --from=dotnet-build /out/worker /app/worker/
 COPY --from=dotnet-build /out/validator /app/validator/
 COPY --from=dotnet-build /out/migrator /app/migrator/
+COPY docker/start.sh /app/start.sh
 RUN mkdir -p /data && \
     chown -R root:root /app && \
     chmod -R a=rX /app && \
-    chown -R cloudemuera:cloudemuera /data && \
+    chmod 0555 /app/start.sh && \
     chmod 0770 /data
-USER 10001:10001
 EXPOSE 28647
-ENTRYPOINT ["dotnet", "/app/api/CloudEmuera.Api.dll"]
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/app/start.sh"]

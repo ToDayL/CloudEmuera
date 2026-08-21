@@ -1,69 +1,53 @@
-# ADR-0028：生产 bind mount 使用部署者 UID/GID
+# ADR-0028：生产数据目录身份与单容器入口
 
 - 状态：Accepted
 - 日期：2026-08-21
-- 关联：ADR-0017、ADR-0027、P1-13
+- 关联：ADR-0017、ADR-0027、P1-13、P1-14
 
 ## 背景
 
-P1-13 的生产镜像需要以非 root 身份运行，但单机自托管部署的持久数据通常属于启动
-`docker compose` 的宿主机用户。若生产 Compose 固定使用镜像内 UID（例如 `10001`），
-bind mount 到 `/data` 后会导致新建的 SQLite、游戏内容、SessionRoot、存档和日志归固定
-容器 UID 所有，部署者需要额外执行 `chown`，也不符合宿主机权限管理习惯。
-
-同时，单机部署也需要一个不依赖宿主机路径的默认模式，方便用户直接使用 Docker volume。
-
-本 ADR 只决定生产容器与宿主机数据目录的身份映射，不改变应用登录用户、资源授权或
-SessionRoot 的逻辑隔离。当前 MVP 仍是可信自托管实例；API 与 Worker 使用同一进程身份，
-不构成恶意游戏代码的内核级沙箱。
+生产 MVP 使用一个容器，同时包含 API、Worker、Validator、Migrator 和已经构建好的 SPA。Docker
+named volume 不需要与宿主机用户做 UID 映射；固定镜像 UID 只会增加目录所有权和 Compose 配置复杂度。
+bind mount 则可能需要让容器进程匹配预先创建数据目录的宿主账号。
 
 ## 决定
 
-1. `docker/Dockerfile` 保留一个固定的非 root 默认用户，保证直接运行镜像时不会以 root 启动。
-2. 生产 Compose 必须要求部署者提供 `CLOUDEMUERA_UID` 和 `CLOUDEMUERA_GID`，并用
-   `user: "${CLOUDEMUERA_UID}:${CLOUDEMUERA_GID}"` 启动 API。API 创建的 Worker、Validator
-   和 Migrator 也继承该身份。
-3. 生产 Compose 根据 `CLOUDEMUERA_DATA_PATH` 选择 `/data`：变量未设置时使用声明的
-   Docker named volume `cloudemuera-data`；变量设置后使用该宿主机路径作为 bind mount。
-   bind mount 的相对路径相对于 `docker/` 目录解析，部署者应预先创建并设置目录权限。
-4. 镜像中的 `/data` 默认目录属于 `10001:10001`，使用 `0770`；生产 Compose 为动态部署者
-   UID/GID 添加固定辅助组 `10001`，因此新建 named volume 也能由部署者身份写入。bind mount
-   时则由部署者的主 UID/GID 直接取得目录写权限。
-5. 生产启动前使用 bind mount 的部署者以自己的账号创建并设置数据目录权限，例如：
-
-   ```bash
-   export CLOUDEMUERA_UID="$(id -u)"
-   export CLOUDEMUERA_GID="$(id -g)"
-   export CLOUDEMUERA_DATA_PATH="$PWD/data"
-   install -d -m 700 "$CLOUDEMUERA_DATA_PATH"
-   ```
-
-6. 生产镜像不挂 Docker socket、宿主 home、源码、密钥或 Worker UDS；容器仍保持非 root、
-   `cap_drop: ALL`、`no-new-privileges` 和整体资源限制。
+1. 生产 `docker/Dockerfile` 不声明固定 `USER`，也不创建或使用 `10001` 用户/辅助组。直接运行镜像和
+   默认 named volume Compose 部署使用 root；`/app` 只读，`/data` 可写。
+2. 生产 `docker/compose.yml` 只保留一个 `api` 服务。`user` 默认展开为 `0:0`；使用 bind mount 时，
+   部署者可以设置 `CLOUDEMUERA_UID` 和 `CLOUDEMUERA_GID`，API 创建的 Worker、Validator 和容器内
+   Migrator 都继承该身份。
+3. `CLOUDEMUERA_DATA_PATH` 未设置时使用 named volume `cloudemuera-data`；设置后使用该宿主机路径
+   作为 `/data` bind mount。bind mount 的目录由部署者预先创建并授予选择的 UID/GID，应用不会在入口
+   脚本中递归修改目录所有权。
+4. `/app/start.sh` 是唯一生产入口：先在同一容器内独占运行 Migrator，成功后 `exec` API。SPA 已进入
+   API 的静态 web root，不启动独立 web 服务。
+5. 生产 Compose 不主动映射 `CloudEmuera__Capacity:*` 或其他细粒度容量环境变量；应用使用代码默认值。
+   CPU 不设置限制；内存/PID 约束仍可由部署者显式覆盖。
+6. 容器不挂 Docker socket、宿主 home、源码、密钥或 Worker UDS，继续使用 `init: true`、`cap_drop: ALL`
+   和 `no-new-privileges`。
+7. 生产 Compose 的宿主 HTTP 端口默认绑定 `127.0.0.1`，由部署者在宿主机上配置 HTTPS 反向代理对外提供
+   Web/API；只有明确设置 `CLOUDEMUERA_HTTP_BIND_ADDRESS` 时才直接绑定其他地址。容器内 API 仍监听
+   `0.0.0.0:28647`，SPA、HTTP API 和 WebSocket 共用该应用端口。
 
 ## 备选方案
 
-1. 固定镜像 UID 配合 named volume 或 bind mount：部署简单，但 bind mount 数据会归镜像 UID
-   所有，部署者需要额外调整宿主权限。
-2. 容器以 root 启动后在 entrypoint 中动态降权：可以匹配宿主目录，但扩大 root 权限窗口，
-   且会让 PID1、迁移和 Worker 身份语义复杂化。
-3. 为每个应用登录用户切换 Unix UID：与单容器 API 的请求模型不匹配，也不是当前应用级
-   授权需求。
+1. 固定镜像 UID（例如 `10001`）：named volume 需要辅助组，bind mount 还会制造宿主机所有权问题。
+2. root 入口再动态降权：会让迁移、API、Worker 和 PID 1 的身份语义变复杂，并增加入口脚本权限窗口。
+3. 生产拆成 Migrator、API、Web 多个服务：增加 Compose 依赖、生命周期和数据卷拓扑，不符合单容器 MVP。
 
 ## 后果
 
-生产部署需要在 `docker/.env` 中填写 UID/GID；只有选择 bind mount 时必须先创建数据目录。好处是 bind mount
-持久化文件直接归部署者所有，named volume 也能使用同一部署者身份写入；备份、迁移和宿主机清理不需要
-固定 UID 特殊处理；API、Worker、Validator 和 Migrator 仍共享
-同一非 root 身份，既保留 P1-13 的可信自托管边界，也不会把它误标为恶意租户沙箱。
-
-从旧 named volume 迁移到 bind mount 时，部署者必须先停服务并将旧卷内容复制到目标目录，
-再按目标宿主机 UID/GID 调整目录所有权；应用不会在启动时递归修改数据权限。
+默认部署最小且可直接使用 named volume；选择 bind mount 的部署者需要自行创建目录并按需填写 UID/GID。
+默认 loopback 绑定避免把应用端口意外暴露到公网；公网部署需要外部 HTTPS 终结点，直接绑定公网地址是显式
+部署选择。root 默认不代表恶意游戏隔离，当前 MVP 仍是假设可信自托管参与者；路径、SessionRoot、授权和 Worker
+生命周期边界仍由应用负责。迁移和 API 共用一个容器，但 Migrator 只在 API 进程启动前运行，API 仍是
+运行期间唯一访问 SQLite 的业务进程。
 
 ## 验证
 
-- `scripts/test-production-image.sh` 使用临时宿主机目录、当前测试 UID/GID 和 bind mount，
-  检查 Compose 实际进程 UID/GID、`/data` 挂载类型与路径，并完成真实 Worker smoke；
-- Compose 配置检查同时覆盖未设置 `CLOUDEMUERA_DATA_PATH` 时的 named volume 分支；
-- `scripts/test-instance-limits.sh` 和完整 `scripts/check.sh` 继续在 dev Docker 中运行；
-- `docker compose config` 在未提供 UID/GID 或数据目录不存在时拒绝生产配置。
+- `scripts/test-production-image.sh` 检查 Compose 只有 `api` 服务、没有 `migrator`、没有 CPU 限制、没有
+  `CloudEmuera__Capacity:*` 映射，并覆盖 named volume root 默认与 bind mount 动态 UID/GID；
+- `scripts/test-process-recovery.sh` 通过单容器入口验证迁移、SIGTERM/SIGKILL、Worker 对账和冷恢复；
+- `scripts/verify-dev-user.sh` 继续验证开发 bind mount 使用宿主 UID/GID；
+- `git diff --check`、`./scripts/check.sh` 和第三方声明检查通过。

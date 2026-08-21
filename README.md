@@ -2,7 +2,7 @@
 
 CloudEmuera 将 Emuera.EM+EE 文字游戏运行时部署到远程服务器，使玩家能够通过桌面或移动浏览器管理游戏包、运行彼此隔离且可重连的 Session，并管理各自的原生 Emuera 存档。
 
-项目目前处于架构验证和开发环境初始化阶段，不建议用于托管不受信任用户上传的游戏。
+项目目前处于 Phase 1 单机 MVP 阶段，不建议用于托管不受信任用户上传的游戏。
 
 ## 技术栈
 
@@ -20,7 +20,7 @@ CloudEmuera 将 Emuera.EM+EE 文字游戏运行时部署到远程服务器，使
 
 ```bash
 cp docker/.env.example docker/.env
-# 编辑 docker/.env：至少把 CLOUDEMUERA_UID/GID 改成 id -u/id -g
+# 只有使用 bind mount 时才需要在 docker/.env 设置 CLOUDEMUERA_UID/GID
 ./scripts/dev-up.sh
 ```
 
@@ -29,12 +29,12 @@ P1-02 身份功能已落地。首次使用前可在 `docker/.env` 修改管理�
 登录仅使用 email，首次登录必须修改临时密码。初始化完成后后续启动忽略这三个 bootstrap 变量。
 `docker/.env` 不得提交 Git。
 
-启动脚本会先停止可能仍在运行的旧 API，通过独占 Migrator 为 `./data` 创建迁移前备份并升级到最新 schema，再启动 API/Web。它还会读取宿主机的 `id -u` 和 `id -g`，以此构建开发镜像，并让所有容器进程使用相同 UID/GID。容器写入的 `node_modules`、`bin`、`obj` 和 lockfile 因而仍归当前开发用户所有。不要直接运行未注入 UID/GID、未执行 Migrator 的裸 `docker compose up`；如需手工运行，请先执行：
+启动脚本会先停止可能仍在运行的旧 API，在 API 容器内由 `dev-start.sh` 先执行 Migrator，再以 API 为唯一长驻进程启动服务；前端由一次性的 `web` frozen install/build 工具容器构建，API 直接服务 `dist` 中的 SPA。开发脚本仍读取宿主机的 `id -u` 和 `id -g`，保证 bind mount 产生的 `node_modules`、`bin` 和 `obj` 归当前开发用户所有。不要直接运行未构建 DLL/SPA 的裸 `docker compose up`；日常开发请使用 `./scripts/dev-up.sh`。需要浏览器 HMR 时，另开终端执行：
 
 ```bash
 export CLOUDEMUERA_UID="$(id -u)"
 export CLOUDEMUERA_GID="$(id -g)"
-docker compose --env-file docker/.env -f docker/compose.dev.yml up --build
+docker compose --env-file docker/.env -f docker/compose.dev.yml --profile hmr up --build api web-hmr
 ```
 
 可独立验证两个开发镜像的运行身份和 bind mount 写入归属：
@@ -43,11 +43,14 @@ docker compose --env-file docker/.env -f docker/compose.dev.yml up --build
 ./scripts/verify-dev-user.sh
 ```
 
-启动后：
+启动后 API 同时提供前端和后端：
 
-- 前端开发服务器：<http://localhost:5173>
-- API：<http://localhost:28647>
+- Web/API：<http://localhost:28647>
 - API 存活检查：<http://localhost:28647/health/live>
+
+默认开发拓扑只有 API 长驻运行。HMR 仅在显式启用 `hmr` profile 时提供：<http://localhost:5173>；HMR
+终端退出不影响 API。需要重新生成前端静态文件时可单独运行 `docker compose --env-file docker/.env
+-f docker/compose.dev.yml run --rm web`。
 
 停止环境：
 
@@ -66,23 +69,52 @@ docker compose --env-file docker/.env -f docker/compose.dev.yml up --build
 
 ## 生产 Docker 部署
 
-所有生产 Docker 文件集中在 [`docker/`](docker/) 目录。部署者只需复制配置、修改 UID/GID、管理员信息、
-监听端口、容量选项和可选数据目录，然后从该目录执行一次 `docker compose up -d`：
+所有生产 Docker 文件集中在 [`docker/`](docker/) 目录。部署者只需复制配置、填写管理员信息和端口，
+并按需设置 bind mount 的 UID/GID 和数据目录，然后从该目录执行一次 `docker compose up -d`：
 
 ```bash
 cd docker
 cp .env.example .env
-# 编辑 .env：CLOUDEMUERA_UID/GID 应为启动服务账号的 id -u/id -g
+# named volume 默认以 root 运行；只有 bind mount 才设置 CLOUDEMUERA_UID/GID
 docker compose up -d
 ```
 
 `CLOUDEMUERA_DATA_PATH` 未设置时使用 Docker named volume `cloudemuera-data`；设置后使用指定宿主机目录
-作为 `/data` bind mount。使用 bind mount 时请先创建并赋予启动账号权限。Compose 会自动先运行独占
-Migrator，成功后才启动 API；后续 schema 变更再次执行 `docker compose up -d` 即可。
+作为 `/data` bind mount。使用 bind mount 时请先创建并赋予启动账号权限。容器入口 `/app/start.sh` 会在
+同一个容器内先运行独占 Migrator，成功后以 `exec` 启动 API；后续 schema 变更再次执行 `docker compose up -d`
+即可。生产镜像已经包含构建后的 SPA，不需要独立 web 容器。默认情况下宿主机只在
+`127.0.0.1:28647` 监听，建议由宿主机上的 Nginx、Caddy 或其他 HTTPS 网关代理到该地址；只有明确需要
+直接暴露时才设置 `CLOUDEMUERA_HTTP_BIND_ADDRESS=0.0.0.0`。SPA 和 API 仍然是同一应用端口：浏览器
+加载 `/` 的静态文件后，使用同源 `/api/v1/*` 和 `/api/v1/realtime`。
 
-镜像默认以非 root 用户运行，生产 Compose 使用 `docker/.env` 中的启动者 UID/GID 运行 API、Worker、Validator
-和 Migrator，因此持久化文件归部署者所有。生产 Compose 不挂 Docker socket、宿主 home、密钥、源码或
-Worker UDS；同 UID Worker 是可信自托管边界，不构成恶意游戏代码的内核级沙箱。默认值与交叉关系见
+API 使用 Docker `init: true` 作为轻量 PID 1，并把 SIGTERM 传给 API；镜像默认 `STOPSIGNAL` 也是
+SIGTERM。API 收到停机信号后先停止接入，给所有 Worker 共用 5 秒优雅停止预算，再给仍存活的 Worker
+共用 5 秒强制终止预算；Host 总预算为 15 秒，Compose 停止宽限期为 20 秒。控制面停机不会伪装成用户
+关闭，活动 Session 会在可确认时记为 `CRASHED`，SessionRoot 和原生存档保留。
+
+生产升级或维护前应做冷备份：先停止 API，再复制整个 `/data`（必须同时包含 SQLite、WAL/SHM、keys、
+games、sessions、logs 和 backups），完成复制后再启动 API。bind mount 可直接复制宿主目录；named volume
+可使用临时工具容器，例如：
+
+```bash
+docker compose stop api
+mkdir -p backups/cloudemuera-data
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v cloudemuera-data:/source:ro \
+  -v "$PWD/backups/cloudemuera-data:/backup" \
+  busybox:1.36 sh -c 'cp -a /source/. /backup/'
+docker compose start api
+```
+
+恢复时同样先停止 API，把备份目录完整恢复到 `/data` 后执行
+`docker compose run --rm --no-deps api rebind-session-roots`，再启动 API；该命令只在离线恢复时
+重新校验数据库 marker，并更新恢复后 Game 目录和 SessionRoot 的文件系统 identity，不会改变正常启动语义。
+不要只恢复 SQLite 或只恢复某个 SessionRoot。
+
+镜像默认不声明 USER；named volume 使用 root 以避免固定镜像 UID 的目录所有权问题。使用 bind mount 时可在
+生产 Compose 通过 `CLOUDEMUERA_UID/GID` 让 API、Worker、Validator 和 Migrator 继承宿主部署账号。生产
+Compose 不挂 Docker socket、宿主 home、密钥、源码或 Worker UDS；同 UID Worker 是可信自托管边界，不构成
+恶意游戏代码的内核级沙箱。默认值与交叉关系见
 [ADR-0027](docs/adr/0027-instance-capacity-and-production-boundary.md)，数据目录身份见
 [ADR-0028](docs/adr/0028-production-bind-mount-ownership.md)。
 
@@ -91,6 +123,7 @@ Worker UDS；同 UID Worker 是可信自托管边界，不构成恶意游戏代�
 ```bash
 ./scripts/test-production-image.sh
 ./scripts/test-instance-limits.sh
+./scripts/test-process-recovery.sh
 ```
 
 如果选择原生开发，需要 .NET 10 SDK、Node.js 24 LTS 和 pnpm 11：
@@ -123,11 +156,11 @@ Emuera.EM+EE 以普通 Git 文件形式固定在 `src/CloudEmuera.EmueraRuntime/
 
 ## 项目状态
 
-开发环境、Phase 0 运行时切分、P1-01～P1-13 已完成；其中包括安全游戏包摄取、持久 SessionRoot、
+开发环境、Phase 0 运行时切分、P1-01～P1-14 已完成；其中包括安全游戏包摄取、持久 SessionRoot、
 API-owned Worker Manager、浏览器实时协议、正式存档与实例级 Worker/文件/并发边界。固定上游
 Emuera loader/interpreter 已在 Linux 无 UI Runtime 中跑通两套 INPUT 往返，真实独立 Worker 也完成
-注册、结构化输出、重复输入、短断重连、优雅停止和双进程隔离。下一步是 P1-14 运行期恢复与
-PID1 编排；后续功能按 [开发计划](docs/development-plan.zh-CN.md) 分阶段实现。
+注册、结构化输出、重复输入、短断重连、优雅停止和双进程隔离。P1-14 已补齐单容器进程恢复、信号
+转发、冷备份说明和可重复故障验证；后续功能按 [开发计划](docs/development-plan.zh-CN.md) 分阶段实现。
 
 ## 贡献与安全
 

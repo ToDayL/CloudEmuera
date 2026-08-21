@@ -141,7 +141,9 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
     private readonly ILogger logger;
     private readonly WorkerProcessLauncher processLauncher;
     private readonly object sync = new();
+    private readonly object shutdownSync = new();
     private readonly Dictionary<string, ApiWorkerSession> sessions = new(StringComparer.Ordinal);
+    private Task? shutdownTask;
     private int disposed;
     private int draining;
 
@@ -638,6 +640,101 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
 
     public static void Disconnect(ApiWorkerConnection connection) => connection.Session.DetachConnection(connection);
 
+    internal Task ShutdownAsync(string reasonCode = "requested")
+    {
+        if (string.IsNullOrWhiteSpace(reasonCode))
+            reasonCode = "requested";
+
+        lock (shutdownSync)
+            return shutdownTask ??= ShutdownWorkersAsync(reasonCode);
+    }
+
+    private async Task ShutdownWorkersAsync(string reasonCode)
+    {
+        BeginDraining();
+        ApiWorkerSession[] workers = Workers.ToArray();
+        if (workers.Length == 0)
+            return;
+
+        using var gracefulCancellation = new CancellationTokenSource(options.WorkerShutdownTimeout);
+        DateTimeOffset gracefulDeadline = DateTimeOffset.UtcNow.Add(options.WorkerShutdownTimeout);
+        await Task.WhenAll(workers.Select(worker => RequestGracefulStopAsync(
+            worker,
+            reasonCode,
+            gracefulDeadline,
+            gracefulCancellation.Token))).ConfigureAwait(false);
+
+        ApiWorkerSession[] remaining = workers.Where(worker => !worker.HasExited).ToArray();
+        if (remaining.Length == 0)
+            return;
+
+        using var forceCancellation = new CancellationTokenSource(options.WorkerShutdownTimeout);
+        DateTimeOffset forceDeadline = DateTimeOffset.UtcNow.Add(options.WorkerShutdownTimeout);
+        await Task.WhenAll(remaining.Select(worker => ForceStopAsync(
+            worker,
+            reasonCode,
+            forceDeadline,
+            forceCancellation.Token))).ConfigureAwait(false);
+    }
+
+    private static TimeSpan RemainingUntil(DateTimeOffset deadline)
+    {
+        TimeSpan remaining = deadline - DateTimeOffset.UtcNow;
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1);
+    }
+
+    private static async Task RequestGracefulStopAsync(
+        ApiWorkerSession worker,
+        string reasonCode,
+        DateTimeOffset deadline,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await worker.StopAsync(reasonCode, RemainingUntil(deadline), cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            worker.LogLifecycle("worker_graceful_stop_deadline", reasonCode, LogLevel.Warning);
+        }
+        catch (Exception exception)
+        {
+            worker.LogLifecycle(
+                "worker_graceful_stop_failed",
+                $"{reasonCode};{SensitiveLogPolicy.SafeReasonCode(exception.GetType().Name)}",
+                LogLevel.Warning);
+        }
+    }
+
+    private static async Task ForceStopAsync(
+        ApiWorkerSession worker,
+        string reasonCode,
+        DateTimeOffset deadline,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!await worker.TerminateProcessAsync(
+                RemainingUntil(deadline),
+                reasonCode,
+                cancellationToken).ConfigureAwait(false))
+            {
+                worker.LogLifecycle("worker_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            worker.LogLifecycle("worker_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
+        }
+        catch (Exception exception)
+        {
+            worker.LogLifecycle(
+                "worker_force_stop_failed",
+                $"{reasonCode};{SensitiveLogPolicy.SafeReasonCode(exception.GetType().Name)}",
+                LogLevel.Error);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0)
@@ -645,19 +742,9 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
         BeginDraining();
         try
         {
+            await ShutdownAsync().ConfigureAwait(false);
             ApiWorkerSession[] workers = Workers.ToArray();
-            foreach (ApiWorkerSession worker in workers)
-            {
-                try
-                {
-                    await worker.StopAsync(options.WorkerShutdownTimeout).ConfigureAwait(false);
-                }
-                catch
-                {
-                    await worker.TerminateProcessAsync(options.WorkerShutdownTimeout, "manager-dispose", CancellationToken.None).ConfigureAwait(false);
-                }
-                await worker.DisposeAsync().ConfigureAwait(false);
-            }
+            await Task.WhenAll(workers.Select(worker => worker.DisposeResourcesAsync().AsTask())).ConfigureAwait(false);
         }
         finally
         {
@@ -1469,6 +1556,10 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         {
             return false;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     internal Task<bool> TerminateProcessAsync(
@@ -1507,7 +1598,17 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             new EventId(2104, "WorkerLifecycleError"),
             "worker_event={WorkerEvent} controlPlaneInstanceId={ControlPlaneInstanceId} sessionId={SessionId} workerId={WorkerId} workerEpoch={WorkerEpoch} reason={Reason}");
 
+    internal async ValueTask DisposeResourcesAsync()
+    {
+        await DisposeCoreAsync(terminateProcess: false).ConfigureAwait(false);
+    }
+
     public async ValueTask DisposeAsync()
+    {
+        await DisposeCoreAsync(terminateProcess: true).ConfigureAwait(false);
+    }
+
+    private async ValueTask DisposeCoreAsync(bool terminateProcess)
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0)
             return;
@@ -1523,9 +1624,12 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             eventSignal.TrySetResult(true);
         }
         commands.Writer.TryComplete();
-        bool exited = await TerminateProcessAsync(options.WorkerShutdownTimeout, "session-dispose", CancellationToken.None).ConfigureAwait(false);
-        if (!exited)
-            LogLifecycle("worker_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
+        if (terminateProcess)
+        {
+            bool exited = await TerminateProcessAsync(options.WorkerShutdownTimeout, "session-dispose", CancellationToken.None).ConfigureAwait(false);
+            if (!exited)
+                LogLifecycle("worker_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
+        }
         await OutputHub.DisposeAsync().ConfigureAwait(false);
         WorkerBootstrapFile.DeleteIfOwned(bootstrapPath);
         LogLifecycle("worker_session_disposed");
@@ -1792,15 +1896,18 @@ internal sealed class WorkerManagerHostedService(
     WorkerManagerOptions managerOptions,
     WorkerRuntimeReadiness readiness,
     TimeProvider timeProvider,
+    IHostApplicationLifetime applicationLifetime,
     ILogger<WorkerManagerHostedService> logger) : IHostedService, IDisposable
 {
     private readonly CancellationTokenSource monitorCancellation = new();
     private readonly ConcurrentDictionary<string, Task> workerMonitors = new(StringComparer.Ordinal);
     private Task? monitorTask;
     private int stopped;
+    private CancellationTokenRegistration applicationStoppingRegistration;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        applicationStoppingRegistration = applicationLifetime.ApplicationStopping.Register(BeginDrainingImmediately);
         try
         {
             socketLifecycle.SealSocket();
@@ -1873,34 +1980,48 @@ internal sealed class WorkerManagerHostedService(
             }
         }
         ApiWorkerSession[] workers = manager.Workers.ToArray();
+        await manager.ShutdownAsync("control_plane_stopped").ConfigureAwait(false);
+        using var persistenceCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        persistenceCancellation.CancelAfter(WorkerShutdownDefaults.PersistenceTimeout);
+        await Task.WhenAll(workers.Select(worker => PersistShutdownStateAsync(worker, persistenceCancellation.Token))).ConfigureAwait(false);
         await manager.DisposeAsync().ConfigureAwait(false);
-        foreach (ApiWorkerSession worker in workers)
-        {
-            if (!worker.HasExited)
-            {
-                readiness.MarkFailed(SessionRuntimeResultCodes.WorkerExitUnconfirmed);
-                worker.LogLifecycle("shutdown_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
-                continue;
-            }
-
-            try
-            {
-                await runtimeStore.CompleteAsync(
-                    worker.RuntimeBinding,
-                    SessionRuntimeTerminalState.Crashed,
-                    "control_plane_stopped",
-                    worker.LastOutputSequence,
-                    timeProvider.GetUtcNow(),
-                    CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                ShutdownPersistFailedLog(logger, worker.Binding.SessionId, null);
-            }
-        }
         readiness.MarkFailed("control_plane_stopped");
         socketLifecycle.Dispose();
-        monitorCancellation.Dispose();
+    }
+
+    private void BeginDrainingImmediately()
+    {
+        // ApplicationStopping is intentionally a synchronous, no-I/O barrier.
+        // Host shutdown invokes hosted services in reverse registration order;
+        // this callback makes all control-plane gates fail closed first.
+        coordinator.BeginDraining();
+        manager.BeginDraining();
+        readiness.MarkFailed("control_plane_stopping");
+    }
+
+    private async Task PersistShutdownStateAsync(ApiWorkerSession worker, CancellationToken cancellationToken)
+    {
+        if (!worker.HasExited)
+        {
+            readiness.MarkFailed(SessionRuntimeResultCodes.WorkerExitUnconfirmed);
+            worker.LogLifecycle("shutdown_exit_unconfirmed", SessionRuntimeResultCodes.WorkerExitUnconfirmed, LogLevel.Error);
+            return;
+        }
+
+        try
+        {
+            await runtimeStore.CompleteAsync(
+                worker.RuntimeBinding,
+                SessionRuntimeTerminalState.Crashed,
+                "control_plane_stopped",
+                worker.LastOutputSequence,
+                timeProvider.GetUtcNow(),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            ShutdownPersistFailedLog(logger, worker.Binding.SessionId, exception);
+        }
     }
 
     private async Task MonitorWorkersAsync(CancellationToken cancellationToken)
@@ -1975,11 +2096,15 @@ internal sealed class WorkerManagerHostedService(
             // same process code, but the durable Session must be fenced as
             // CRASHED until the user explicitly reopens it. Only a terminal
             // Worker envelope observed by this API proves graceful completion.
-            bool graceful = !worker.ForceStopRequested && worker.ReadyConfirmed && exitCode == 0 && worker.GracefulTerminationObserved;
+            bool controlPlaneStopping = manager.IsDraining;
+            bool graceful = !controlPlaneStopping && !worker.ForceStopRequested && worker.ReadyConfirmed && exitCode == 0 && worker.GracefulTerminationObserved;
+            string reasonCode = controlPlaneStopping
+                ? "control_plane_stopped"
+                : worker.ForceStopRequested ? "admin_force_stopped" : graceful ? "runtime_completed" : "worker_exit";
             await runtimeStore.CompleteAsync(
                 worker.RuntimeBinding,
                 graceful ? SessionRuntimeTerminalState.Closed : SessionRuntimeTerminalState.Crashed,
-                worker.ForceStopRequested ? "admin_force_stopped" : graceful ? "runtime_completed" : "worker_exit",
+                reasonCode,
                 worker.LastOutputSequence,
                 timeProvider.GetUtcNow(),
                 CancellationToken.None).ConfigureAwait(false);
@@ -2016,7 +2141,11 @@ internal sealed class WorkerManagerHostedService(
         }
     }
 
-    public void Dispose() => monitorCancellation.Dispose();
+    public void Dispose()
+    {
+        applicationStoppingRegistration.Dispose();
+        monitorCancellation.Dispose();
+    }
 
     private static readonly Action<ILogger, string, Exception?> ReconciliationFailedLog =
         LoggerMessage.Define<string>(

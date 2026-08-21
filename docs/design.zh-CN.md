@@ -25,7 +25,8 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 
 - 一个 Web/API 进程；
 - 每个活动 Session 一个 Session Worker 进程；
-- 一个负责监督 API、回收孤儿进程和转发容器信号的 init/进程管理器。
+- Docker 提供的轻量 `init: true` PID 1，只负责转发容器信号和回收僵尸进程，不是产品级
+  Supervisor，也不拥有 Session 或 Worker 状态。
 
 系统只依赖一个挂载到 `/data` 的持久化目录，不依赖外部数据库、对象存储、消息队列或远程文件系统。SQLite 是权威元数据存储，文件系统是游戏内容、完整 SessionRoot、原生存档、日志和备份的权威内容存储。
 
@@ -77,14 +78,14 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | 进程间通信 | gRPC 双向流 + Protocol Buffers over Unix Domain Socket | 结构化 IPC 协议 v5 | 强类型、代码生成、截止时间和流式通信成熟；UDS 不暴露容器网络端口 |
 | 元数据数据库 | SQLite | 3.x，随运行镜像锁定 | 符合单容器和本地备份要求，无外部服务；使用 WAL、外键和 busy timeout |
 | 数据访问 | EF Core SQLite Provider；关键 CAS 使用参数化原生 SQL | EF Core 10.x | 普通 CRUD、关系和迁移成本低；状态机、实例级容量检查和 epoch 更新用显式 SQL 保证条件更新可审查 |
-| 数据库迁移 | 独立 `CloudEmuera.Migrator` 控制台程序 | 与应用同版本 | 容器初始化阶段执行并持有独占迁移锁；API 和 Worker 不在运行时自动迁移 |
+| 数据库迁移 | `CloudEmuera.Migrator` 控制台程序，由同一容器入口脚本调用 | 与应用同版本 | API 启动前在容器内持有独占迁移锁；API 和 Worker 不在运行时自动迁移 |
 | 后台任务 | ASP.NET Core `BackgroundService` + SQLite 持久任务表 | .NET 10 | 上传验证、孤儿清理等任务需要重启可恢复；不引入外部消息队列 |
 | Runtime Host | C# Console Worker + 仓库内 Emuera.EM+EE 固定源码快照 | 清单锁定 commit 与 integration version | 保持原生解释器和存档格式；直接修改内置源码并通过适配层替换 WinForms/GDI+、路径、输入和显示 |
 | 图像与字体兼容层 | System.Drawing.Common 6.0.0 + libgdiplus（MVP） | NuGet lock + 镜像包锁定 | 依据 ADR-0019 复用固定上游的 GDI+ 像素语义；只存在于 Worker 内部，输出转换为平台无关结构，Skia/HarfBuzz 为长期替换方向 |
 | 游戏包格式 | MVP 仅接受 ZIP；使用 `System.IO.Compression` 安全逐项解包 | .NET 10 | 收窄攻击面且不增加原生解压依赖；7z/RAR 等格式需另行评审和协议声明 |
 | 文本编码 | `System.Text.Encoding` + `System.Text.Encoding.CodePages` 严格解码器 | .NET 10 | 明确支持 UTF-8 BOM/无 BOM 与 Shift-JIS，并禁用依赖系统 locale 的隐式回退 |
 | 容器进程管理 | 轻量 init/PID 1 | 随生产镜像锁定 | 只负责转发信号和回收僵尸进程；API 是唯一长驻服务，Session Worker 由 API Worker Manager 管理 |
-| Worker 进程约束 | 同容器非 root 子进程 + 私有启动绑定 + 可选容器整体限制 | 随生产镜像锁定 | 独立进程隔离 Emuera 全局状态并支持有界终止；API 与 Worker 可同 UID，MVP 不宣称具备敌对租户隔离 |
+| Worker 进程约束 | 同容器子进程 + 私有启动绑定 + 应用级边界 | 随生产镜像锁定 | 独立进程隔离 Emuera 全局状态并支持有界终止；API 与 Worker 共享容器身份，MVP 不宣称具备敌对租户隔离 |
 | 前端语言和框架 | TypeScript + React | TypeScript 7.x、React 19.x | 适合复杂交互和长期状态界面，生态成熟；不采用 SSR，输出纯 SPA |
 | 前端构建 | Vite + Node.js + pnpm | Vite 8.x、Node.js 24 LTS、pnpm 11.x | 仅在构建阶段使用 Node；生产镜像不包含 Node.js，依赖由 lockfile 固定 |
 | 路由与服务端状态 | React Router + TanStack Query | 当前兼容主版本，lockfile 固定 | 路由与 HTTP 缓存/失效交给成熟库；游戏实时状态不进入 Query 缓存 |
@@ -180,11 +181,11 @@ Emuera 解释器；前端只依赖生成的公开契约。
 - [.NET 官方支持策略](https://dotnet.microsoft.com/en-us/platform/support/policy)：.NET 10 是当前活动 LTS，支持至 2028-11-14。
 - [ASP.NET Core WebSocket 文档](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/websockets?view=aspnetcore-10.0)：Kestrel 原生提供 WebSocket 和 Origin 等配置能力。
 - [.NET gRPC over UDS 文档](https://learn.microsoft.com/en-us/aspnet/core/grpc/interprocess-uds?view=aspnetcore-10.0)：官方支持以 Unix Domain Socket 承载进程间 gRPC。
-- [EF Core SQLite 限制](https://learn.microsoft.com/en-us/ef/core/providers/sqlite/limitations)：明确了并发 token 和表重建式迁移等限制，本文据此采用应用版本号和独立 Migrator。
+- [EF Core SQLite 限制](https://learn.microsoft.com/en-us/ef/core/providers/sqlite/limitations)：明确了并发 token 和表重建式迁移等限制，本文据此采用应用版本号和同容器入口调用的独立 Migrator 程序。
 - [React 19](https://react.dev/blog/2024/12/05/react-19) 与 [Vite 8](https://vite.dev/blog/announcing-vite8)：采用当前稳定主版本；Node.js 仅参与构建。
 - [Node.js 发布策略](https://nodejs.org/en/about/previous-releases)：构建环境采用 Node.js 24 LTS，不采用 Current 分支。
 - [Playwright 浏览器矩阵](https://playwright.dev/docs/browsers)：可覆盖 Chromium、Firefox、WebKit 及移动设备配置。
-- [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/)：部署者可以在容器整体层设置 CPU、内存和 PID 上限。
+- [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/)：部署者可以在容器整体层按需设置内存和 PID 上限；生产 Compose 不设置 CPU 上限。
 - [libgdiplus](https://www.mono-project.com/docs/gui/libgdiplus/)：P1 MVP 在 Linux Worker 内承接固定上游的 GDI+ 调用；具体约束见 ADR-0019。
 
 ## 3. 系统上下文与进程架构
@@ -293,8 +294,8 @@ owner、单链接和 `0700` 父目录后，才通过受保护父目录句柄 `un
 
 ### 3.4 进程启动顺序
 
-1. init 独占运行 Migrator；迁移或完整性检查失败则不启动 API；
-2. init 启动 API，API 生成新的控制面实例身份并建立受保护 Worker UDS；
+1. 容器 `/app/start.sh` 在 API 启动前独占运行一次性 Migrator；迁移或完整性检查失败则不启动 API；
+2. 入口脚本以 `exec` 启动 API，Docker `init: true` 负责转发信号和回收僵尸进程，API 生成新的控制面实例身份并建立受保护 Worker UDS；
 3. Worker Manager 清理或终止上一实例遗留 Worker，确认其已失去 SessionRoot 写权限；
 4. API 以条件更新把遗留活动 Session 对账为 `CRASHED`、失效 lease 并释放活动 Worker 名额；
 5. 数据库、数据目录、Worker Manager 和迁移版本检查成功后，API 开始接收业务流量。
@@ -307,6 +308,25 @@ Linux `PR_SET_PDEATHSIG` 绑定的是创建子进程的具体线程而不只是�
 控制面停止中断的活动 Session 进入 `CRASHED` 而不是伪装成用户关闭的 `CLOSED`；新 API 在无法
 证明某个旧 Worker 已退出时阻止对应 Session 的 open 和存档写，不把缺少额外内核隔离能力作为全局
 readiness 失败条件。
+
+### 3.5 停止、恢复与开发拓扑
+
+API 收到 `SIGTERM` 后，`ApplicationStopping` 同步回调只设置 draining 屏障、拒绝新接入并标记
+readiness，不执行 I/O；随后由宿主停止流程并行处理所有 Worker。所有 Worker 共用 5 秒优雅停止预算，
+仍存活的 Worker 再共用 5 秒强制终止预算；Host 总停止预算为 15 秒，生产 Compose 的
+`stop_grace_period` 为 20 秒。控制面主动停止的 Worker 退出事实统一按 `CRASHED` 对账，避免把容器
+维护伪装成用户 `CLOSED`；只有显式 Session close 才能产生 `CLOSED`。
+
+停机持久化有独立的短预算。若某 Worker 在预算内退出，API 写入控制面停止原因并释放已确认的 lease；
+若退出事实无法确认，则保留 lease/epoch 供下一次 API 启动对账，下一实例必须先确认旧写权限释放才可
+重新开启该 Session。释放失败只隔离对应 Session，不把全局 API readiness 永久变成失败。API/Worker
+之间继续使用 `PR_SET_PDEATHSIG` 和 IPC 断开退出语义；不新增常驻进程管理器、进程组服务或数据库表。
+
+生产备份是冷备份：停止 API 后复制整个 `/data`，包括 SQLite 主文件及 WAL/SHM、keys、games、sessions、
+logs 和 backups，复制完成后再启动。恢复时整体替换 `/data`，执行入口脚本的离线
+`rebind-session-roots`（先迁移并校验数据库 marker，再刷新恢复后 Game 目录和 SessionRoot 的目录 identity），
+再启动 API；不能只恢复 SQLite 或单个 SessionRoot。默认开发环境把 SPA 构建输出挂到 API 的 web root，只有 API 长驻；`web` 是一次性
+frozen install/build 工具，`web-hmr` 仅通过 `hmr` profile 显式启用。
 
 ## 4. 领域模型与状态约束
 
@@ -669,11 +689,10 @@ P1-01 另外建立 EF history 表 `schema_migrations`，并保留 EF Core SQLite
 └── backups/
 ```
 
-生产 Compose 通过 `CLOUDEMUERA_UID`、`CLOUDEMUERA_GID` 以部署账号运行 API、Worker、Validator 和
-Migrator。`CLOUDEMUERA_DATA_PATH` 未设置时使用 Docker named volume，设置后由部署者预先创建宿主机
-数据目录并 bind mount 到 `/data`；此时持久化文件归启动服务者所有。生产配置不依赖固定镜像 UID，
-也不以 root entrypoint 递归修正目录权限。
-镜像本身仍保留一个非 root 默认用户，供不经 Compose 的直接运行场景使用。具体配置和迁移约束见
+生产 Compose 默认以 root 运行 API、Worker、Validator 和 Migrator。`CLOUDEMUERA_DATA_PATH` 未设置时
+使用 Docker named volume；设置后由部署者预先创建宿主机数据目录，并可通过 `CLOUDEMUERA_UID/GID`
+以该账号 bind mount 到 `/data`。生产配置不依赖固定镜像 UID，也不以 root entrypoint 递归修正目录权限。
+具体配置和迁移约束见
 [`ADR-0028`](adr/0028-production-bind-mount-ownership.md)。
 
 `/data/run` 必须设置为仅 API 和 Worker 服务身份可访问；也可以实际放在容器 tmpfs 中，但对外路径保持配置化。
@@ -708,7 +727,7 @@ SessionRoot。Worker 正常启动参数只包含自己的完整副本及必要 I
 
 SessionRoot 位于挂载数据目录中，本身就是存档的唯一权威副本。Worker 重启复用同一路径；正常退出和崩溃都不触发复制、generation 发布或第二套存档提交协议。
 
-同一容器内 API 与 Worker 可以使用相同的非 root UID。Worker launcher 仍必须只接受经过验证的
+同一容器内 API 与 Worker 使用相同的容器身份（named volume 默认是 root，bind mount 可配置 UID/GID）。Worker launcher 仍必须只接受经过验证的
 SessionRoot、Worker binding 和 IPC 参数，不向 Worker 传递 Game workspace/current 路径。该应用级边界
 不把“其他目录不可枚举”或“抵御恶意 Worker”作为安全保证。
 
@@ -802,7 +821,7 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 3. 在 `BEGIN IMMEDIATE` 短事务中检查实例级活动 Worker 上限，以 CAS 递增 epoch、写入绑定当前控制面实例的
    `STARTING` lease；
 4. 事务提交后，Worker Manager 再次验证 SessionRoot 的目录 identity、owner 和 manifest marker，
-   构造同 UID 非 root 子进程启动参数并启动 Worker；不得重新复制或合并 Game current content；
+   构造同容器身份子进程启动参数并启动 Worker；不得重新复制或合并 Game current content；
 5. Worker 使用绑定控制面实例、Session、Worker 和 epoch 的启动令牌注册，加载 Runtime，发送
    `worker.ready`；
 6. Worker Manager 验证实例身份和 epoch，并以 CAS 将 Session 更新为 `RUNNING`；浏览器连接数不
@@ -1156,12 +1175,12 @@ API 和 readiness 均保持关闭。该 operation 表只记录 API 管理命令�
 
 MVP 控制为：
 
-- 整个生产容器以部署者提供的非 root UID/GID 运行，API 与 Worker 使用相同 UID/GID；
+- named volume 默认以 root 运行，bind mount 可通过部署者提供的 UID/GID 运行 API 与 Worker；两者始终共享同一容器身份；
 - Worker 保持每 Session 一个独立子进程，只接收自己的 SessionRoot、binding 和私有 UDS 信息；
 - 容器不得挂载 Docker socket、宿主密钥或无关宿主目录；
 - Snapshot、IPC/WebSocket 队列、ZIP archive/expanded/entry/single-file、SessionRoot 文件数/字节、存档
   列表和 DataRoot 空间使用具有实例级上限；Presentation asset 还受 manifest、单资源和并发在途预算限制；
-- 部署者可在 Docker 层为整个容器配置 CPU、内存和 PID 上限；
+- 生产 Compose 不设置 CPU 上限；内存和 PID 仍可由部署者按需配置；
 - close、API 停止或控制通道断开都必须在期限内结束 Worker，必要时使用进程组强制终止。
 
 MVP 不承诺面向敌对租户的内核级 Worker 隔离，也不因缺少额外内核隔离能力拒绝 readiness。因此同 UID
@@ -1171,6 +1190,9 @@ Worker 从内核视角可能读取 DataRoot 内其他资源；实例不得面向
 ### 12.3 Web 安全
 
 - 生产环境仅使用 HTTPS，Cookie 设置 `Secure`、`HttpOnly`、合适的 `SameSite`；
+- 生产 Compose 的宿主 HTTP 端口默认只绑定 `127.0.0.1`，由外部 HTTPS 网关对外提供同一个 Web/API
+  来源；直接绑定公网地址必须显式配置。SPA 需要调用 API，因此不能把 API 当作浏览器不可达的内部接口，
+  必须依靠认证、逐资源授权、CSRF 和限流保护业务路由；
 - Cookie 认证的写操作使用 CSRF 防护；Realtime WebSocket 不限制 Origin，但仍校验登录态并在每次资源
   操作时重新授权；部署网络边界不得面向不受信任的站点开放；
 - CSP 默认禁止脚本来源扩张、对象嵌入和任意媒体 URL；
@@ -1312,11 +1334,11 @@ pending clientMessageId → result
   分别表示成功、配置非法、锁竞争、数据库高于当前 binary、备份失败、migration 失败和完整性
   检查失败。业务 API 和 Worker 不调用 `Database.Migrate()`。
 - `CloudEmuera:Capacity:*` 实例级容量：活动 Worker（默认 8）、未启动 Session（默认 64）、archive/expanded/
-  single-file/entry、SessionRoot 文件数/字节、staging、存档文件/列表和 DataRoot 最低剩余空间。默认值、
-  启动交叉关系和 `MaxGamePackageBytes`/旧根 free-space 键的一个周期兼容见
+  single-file/entry、SessionRoot 文件数/字节、staging、存档文件/列表和 DataRoot 最低剩余空间。该组在应用
+  内使用安全默认值并校验交叉关系；生产 Compose 不主动映射这组环境变量。默认值和旧键兼容见
   [`ADR-0027`](adr/0027-instance-capacity-and-production-boundary.md)；
 - `CloudEmuera:Assets:*` presentation manifest、单资源、Range、并发读取和在途字节预算；
-- Snapshot、IPC 和 WebSocket 队列上限；容器整体 CPU/内存/PID 限制属于部署选项，不进入 ready probe；
+- Snapshot、IPC 和 WebSocket 队列上限；生产 Compose 不设置 CPU 限制，内存/PID 限制属于部署选项，不进入 ready probe；
 - 心跳、启动、停止、强制终止超时；
 - 存档文件大小、停止态管理操作和 SessionRoot 备份保留；
 - Runtime 基线、兼容配置和禁止能力；
@@ -1431,6 +1453,6 @@ bootstrap 配置；不得读取、修改或清理人工 `docker/.env`、`./data`
 - 所有待决项已指定负责人和截止阶段，不阻塞当前迭代；
 - Session 状态转换、HTTP/WebSocket/IPC schema 形成机器可校验定义；
 - SQLite 首版迁移和文件布局经过崩溃一致性评审；
-- 非 root 生产容器、敏感挂载禁用、Worker 有界回收和实例级容量上限完成可重复验证；
+- 单容器入口、敏感挂载禁用、Worker 有界回收和实例级容量上限完成可重复验证；
 - v18 与当前 EM+EE 最小兼容测试集可在 CI 运行；
 - AC-001 至 AC-014 均有可执行的验收方案。

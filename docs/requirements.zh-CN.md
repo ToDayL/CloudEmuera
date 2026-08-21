@@ -256,12 +256,17 @@ Session 1 ── 1 私有 SessionRoot
 - Administration & Audit
 
 API 进程不得把活动 Session 仅保存在内存中。它是运行期间唯一访问 SQLite 的业务进程，通过持久
-Session、WorkerLease、epoch 和状态版本协调 HTTP、后台任务与 Worker 生命周期；独立 Migrator
-只在 API 启动前执行迁移或检查，Session Worker 不访问 SQLite。
+Session、WorkerLease、epoch 和状态版本协调 HTTP、后台任务与 Worker 生命周期；Migrator 由同一容器
+入口脚本在 API 启动前独占执行迁移或检查，Session Worker 不访问 SQLite。
 
 API 进程直接创建、监视和终止 Session Worker，并只执行实例级活动 Worker 数量门控。API 退出会结束其管理的活动 Worker；API
 重新启动后不接管旧 Worker，而是在确认旧进程已失去 SessionRoot 写权限后，把遗留活动 Session
 对账为 `CRASHED` 并保留 SessionRoot。
+
+生产单容器中只有 API 是长驻业务进程；每个 Session Worker 是 API 的子进程。容器使用 Docker 提供的
+轻量 init/PID 1 转发信号并回收僵尸进程，不新增常驻 Supervisor 或第二个运行期控制面。容器入口脚本
+先在同一容器内独占执行 `Migrator`，成功后才以 API 为主进程启动。开发环境默认同样只有 API 长驻，API
+直接服务构建后的 SPA；Node/Web 容器只执行一次性 install/build，HMR 必须显式启用 profile。
 
 ### 8.3 Worker 层
 
@@ -439,10 +444,10 @@ Worker 在收到时的单一输入临界区读取当前 prompt；没有 prompt �
 
 容器必须将一个宿主机数据目录挂载到 `/data`。所有游戏、Session、存档、日志和备份都必须使用该目录下的物理文件或目录：
 
-生产 Compose 必须允许部署者以启动服务账号的宿主机 UID/GID 运行 API、Worker、Validator 和
-Migrator；`CLOUDEMUERA_DATA_PATH` 未设置时使用 Docker named volume，设置后将该账号预先创建的
-数据目录 bind mount 到 `/data`。不得要求 bind mount 数据目录归镜像内固定 UID 所有，也不得以
-root entrypoint 自动修改目录所有权。
+生产 Compose 默认以 root 运行 API、Worker、Validator 和 Migrator，以便 named volume 开箱可写；
+`CLOUDEMUERA_DATA_PATH` 未设置时使用 Docker named volume，设置后可通过 `CLOUDEMUERA_UID/GID`
+让进程以预先创建数据目录的宿主账号运行。不得要求 bind mount 数据目录归镜像内固定 UID 所有，也不得
+以 root entrypoint 自动递归修改目录所有权。
 
 ```text
 /data/
@@ -458,14 +463,24 @@ root entrypoint 自动修改目录所有权。
 
 Session 管理方必须复制 Game 当前清单中的全部合法普通文件和目录，不按已知目录白名单丢弃未知内容。游戏包自带的软链接、硬链接和特殊文件仍必须拒绝。普通字节复制是基线；支持时可以使用保持写时复制语义的 reflink，并在不可用时回退普通复制。不得使用硬链接。每个 SessionRoot 必须私有、持久且相互隔离，Emuera 直接读写其中的完整游戏副本、配置、临时文件和原生存档。不得使用对象存储、远程文件系统或外部文件服务作为运行时或持久化依赖。备份必须通过宿主机文件系统快照、目录复制或等价的本地备份工具完成。
 
+生产停机备份必须是冷备份：先停止 API，再复制 `/data` 的完整目录树，至少包含 SQLite 主文件及其
+`-wal`/`-shm` 文件、Data Protection keys、games、sessions、logs 和 backups；复制完成后才可启动 API。
+恢复必须整体替换 `/data`，离线执行当前镜像入口的 `rebind-session-roots`（先迁移并校验数据库 marker，再重新
+校验恢复后的 Game 目录和 SessionRoot 的目录 identity）后启动 API，不得只恢复数据库或单个 SessionRoot。正常
+停机由 API 处理 SIGTERM；默认给所有 Worker 共用 5 秒优雅停止预算、仍存活 Worker 共用 5 秒强制停止
+预算，Host 停止预算为 15 秒，Compose 停止宽限期为 20 秒。
+
 ## 12. 安全需求
 
 - **SEC-001**：游戏包、文件名和显示内容必须按不安全数据格式解析；部署者只应运行自己信任的游戏，系统不承诺安全执行恶意 ERB/Runtime 内容。
-- **SEC-002**：生产容器必须以部署者提供的非 root UID/GID 运行，不得挂载容器管理接口、宿主密钥或无关宿主目录；Worker 不应主动使用公网，执行边界以容器整体限制和应用路径校验为准。
+- **SEC-002**：生产容器默认可使用 root 以兼容 Docker named volume；bind mount 可由部署者提供 UID/GID。生产
+  宿主 HTTP 端口默认只绑定 loopback，公网访问应通过外部 HTTPS 网关；直接绑定公网地址必须显式配置。无论
+  身份都不得挂载容器管理接口、宿主密钥或无关宿主目录；Worker 不应主动使用公网，执行边界以容器整体限制
+  和应用路径校验为准。
 - **SEC-003**：Session 管理方只把分配的完整 SessionRoot 路径交给 Worker，正常 Worker 逻辑不得访问 Game 库或其他 SessionRoot；API 与 Worker 可以同 UID，故该约束不构成抵御恶意 Worker 的内核强制租户隔离。
 - **SEC-004**：ConsoleSnapshot、IPC/WebSocket 队列、ZIP archive/expanded/entry/single-file、SessionRoot
-  文件数/字节、存档列表、presentation asset 和 DataRoot 使用必须有实例级上限；CPU、内存和 PID 可由
-  部署者在容器层整体限制，不要求细粒度进程资源治理。
+  文件数/字节、存档列表、presentation asset 和 DataRoot 使用必须有实例级上限；生产 Compose 不设置 CPU
+  上限，内存和 PID 仍可由部署者按需配置，不要求细粒度进程资源治理。
 - **SEC-005**：必须防止归档路径穿越、符号链接逃逸、大小写碰撞和超量解压。
 - **SEC-006**：浏览器渲染必须对文本和属性编码；Emuera HTML 必须转换为受支持的结构化节点。
 - **SEC-007**：Worker 本地 IPC 端点不得暴露到容器外；Worker 注册必须绑定 API 启动时签发的 Session、Worker 和 epoch 信息，不要求额外的跨实例服务身份挑战协议。
@@ -480,7 +495,8 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 ### 13.1 可用性与恢复
 
 - **NFR-001**：正常负载下，已运行 Session 的重连及初始快照显示目标为 P95 不超过 2 秒，不含用户外部网络异常。
-- **NFR-002**：API 正常停止时必须有界优雅停止其 Worker，超时后强制终止；API 意外退出或控制
+- **NFR-002**：API 正常停止时必须有界优雅停止其 Worker，超时后强制终止；产品默认给所有 Worker
+  共用 5 秒优雅停止预算和 5 秒强制停止预算，Host 停止预算为 15 秒，Compose 停止宽限期为 20 秒；API 意外退出或控制
   通道断开后，Worker 必须立即开始有界退出或由父子进程/进程组兜底回收。受影响的活动 Session 必须对账为
   `CRASHED` 并保留 SessionRoot。
 - **NFR-003**：Session Worker 在控制通道中断后必须停止运行，也不得被新 API 实例接管；

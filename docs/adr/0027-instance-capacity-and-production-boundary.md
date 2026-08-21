@@ -106,12 +106,12 @@ Worker 启动时再次校验 bootstrap 和 binding；API 仍使用 control-plane
 bootstrap 管理员变量以及 API 的 `CloudEmuera__*` 配置；保留显式的非 secret runtime debug 开关。
 
 生产镜像把 API、Worker、Validator、Migrator 分别发布到 `/app/api`、`/app/worker`、`/app/validator`、
-`/app/migrator`，镜像默认以非 root 用户运行，`/app` 只读，只有 `/data` 可写。生产 Compose 的实际
-运行身份与数据目录所有权由 [ADR-0028](0028-production-bind-mount-ownership.md) 冻结：部署者提供
-UID/GID，`CLOUDEMUERA_DATA_PATH` 缺省时使用 named volume，设置后使用部署者目录 bind mount；API、
-Worker、Validator 和 Migrator 使用该同一非 root 身份。不挂 Docker socket、宿主 home、密钥、源码或
-Worker UDS，不使用 `privileged`，并示例 `init: true`、整体 `cpus`、`mem_limit` 和 `pids_limit`。
-这些是部署层整体限制，不进入 `/health/ready`，也不声明成恶意 Worker 沙箱能力。
+`/app/migrator`，由 `/app/start.sh` 在同一容器内先迁移再启动 API；`/app` 只读，只有 `/data` 可写。
+生产 Compose 的实际运行身份与数据目录所有权由 [ADR-0028](0028-production-bind-mount-ownership.md) 冻结：
+named volume 默认使用 root，bind mount 可由部署者提供 UID/GID。容量和实时选项仍由应用代码绑定并校验，
+但生产 Compose 不主动映射 `CloudEmuera__Capacity:*`，不提供这组环境变量的部署模板。不挂 Docker socket、
+宿主 home、密钥、源码或 Worker UDS，不使用 `privileged`，并示例 `init: true`、`mem_limit` 和 `pids_limit`；
+生产 Compose 不设置 CPU 上限。这些是部署层整体限制，不进入 `/health/ready`，也不声明成恶意 Worker 沙箱能力。
 
 ### 5. 旧键兼容
 
@@ -140,7 +140,7 @@ SessionRoot、存档或 epoch；配置错误尽早暴露，生产镜像不会因
 - `InstanceCapacityOptions`、`PresentationAssetOptions`、save list 和 Worker environment 有单元/集成测试；
 - dev Docker 中运行完整 solution build/test、runtime compatibility、`verify-dev-user.sh` 和
   `verify-third-party.sh`；
-- `scripts/test-production-image.sh` 构建最终镜像，检查非 root UID、四类产物、部署者 UID/GID、仅 `/data`
-  bind mount、资源限制和真实 API Worker 生命周期；
+- `scripts/test-production-image.sh` 构建最终镜像，检查单容器入口、四类产物、root named volume、部署者
+  UID/GID bind mount、无 CPU 限制和真实 API Worker 生命周期；
 - `scripts/test-instance-limits.sh` 使用临时 project、DataRoot、端口和小合法配置运行容量/并发回归，不
   触碰人工 `.env`、`./data` 或其他 Compose project。

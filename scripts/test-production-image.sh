@@ -22,7 +22,9 @@ cookie_jar="$temp_root/cookies.txt"
 base_url="http://127.0.0.1:${http_port}"
 
 compose=(docker compose --env-file "$env_file" --project-name "$project_name" --file "$repo_root/docker/compose.yml")
-named_compose=(docker compose --env-file "$named_env_file" --project-name "$named_project_name" --file "$repo_root/docker/compose.yml")
+# dev-env.sh exports the host identity for bind mounts. Explicitly remove it
+# for the named-volume case so Compose exercises the root-default contract.
+named_compose=(env -u CLOUDEMUERA_UID -u CLOUDEMUERA_GID docker compose --env-file "$named_env_file" --project-name "$named_project_name" --file "$repo_root/docker/compose.yml")
 
 cleanup() {
   "${named_compose[@]}" down --remove-orphans --volumes >/dev/null 2>&1 || true
@@ -49,9 +51,9 @@ printf '%s\n' \
   > "$env_file"
 
 # Removing the path variable exercises the user-facing default: a Docker
-# named volume. Keep the bootstrap and resource settings identical to the
-# bind-mount smoke below.
-sed '/^CLOUDEMUERA_DATA_PATH=/d' "$env_file" > "$named_env_file"
+# named volume. Remove the optional UID/GID too: this is the root-default
+# path, while the bind-mount smoke below uses the current host identity.
+sed '/^CLOUDEMUERA_DATA_PATH=/d; /^CLOUDEMUERA_UID=/d; /^CLOUDEMUERA_GID=/d' "$env_file" > "$named_env_file"
 
 config_file="$temp_root/compose-config.json"
 "${compose[@]}" config --format json > "$config_file"
@@ -64,40 +66,48 @@ if jq -e '
   exit 1
 fi
 jq -e --arg data_root "$data_root" --arg uid "$CLOUDEMUERA_UID" --arg gid "$CLOUDEMUERA_GID" '
+  ((.services | keys) == ["api"]) and
   (.services.api.user == ($uid + ":" + $gid)) and
+  (.services.api.init == true) and
+  (.services.api.stop_signal == "SIGTERM") and
+  (.services.api.stop_grace_period == "20s") and
+  ((.services.api | has("cpus")) | not) and
+  (([.services.api.environment // {} | keys[] | select(startswith("CloudEmuera__Capacity__"))] | length) == 0) and
+  ((.services.api.ports // []) | length == 1 and .[0].host_ip == "127.0.0.1") and
   ((.services.api.volumes // []) | length == 1 and .[0].type == "bind" and .[0].target == "/data" and .[0].source == $data_root)
 ' "$config_file" >/dev/null
 
 named_config_file="$temp_root/compose-named-config.json"
 "${named_compose[@]}" config --format json > "$named_config_file"
-jq -e --arg uid "$CLOUDEMUERA_UID" --arg gid "$CLOUDEMUERA_GID" '
-  (.services.api.user == ($uid + ":" + $gid)) and
+jq -e '
+  ((.services | keys) == ["api"]) and
+  (.services.api.user == "0:0") and
+  ((.services.api.ports // []) | length == 1 and .[0].host_ip == "127.0.0.1") and
   ((.services.api.volumes // []) | length == 1 and .[0].type == "volume" and .[0].target == "/data" and .[0].source == "cloudemuera-data")
 ' "$named_config_file" >/dev/null
 
 "${compose[@]}" build api
 
 image_user="$(docker image inspect "$image_name" --format '{{.Config.User}}')"
-case "$image_user" in
-  ""|0|root|0:*|root:*)
-    echo "production image is not configured with a non-root user: $image_user" >&2
-    exit 1
-    ;;
-esac
+[[ -z "$image_user" ]] || { echo "production image must keep the default root identity: $image_user" >&2; exit 1; }
+image_stop_signal="$(docker image inspect "$image_name" --format '{{.Config.StopSignal}}')"
+[[ "$image_stop_signal" == "SIGTERM" ]] || { echo "production image stop signal is not SIGTERM: $image_stop_signal" >&2; exit 1; }
+image_entrypoint="$(docker image inspect "$image_name" --format '{{json .Config.Entrypoint}}')"
+[[ "$image_entrypoint" == '["/app/start.sh"]' ]] || { echo "production image entrypoint is not /app/start.sh: $image_entrypoint" >&2; exit 1; }
+if grep -Eiq 'supervisor|s6|systemd' <<<"$image_entrypoint"; then
+  echo "production image contains a forbidden resident process manager: $image_entrypoint" >&2
+  exit 1
+fi
 
 # The production image must contain all process artifacts without a checkout
-# mount. Verify that the dynamic deployer identity can write a fresh named
-# volume before exercising the bind-mount deployment path.
+# mount. Verify that the root-default named volume and the bind-mount image
+# both remain writable.
 "${named_compose[@]}" run --rm --no-deps --entrypoint sh api -c 'touch /data/.cloudemuera-named-volume-probe && rm /data/.cloudemuera-named-volume-probe'
 "${compose[@]}" run --rm --no-deps --entrypoint sh api -c 'test -f /app/worker/CloudEmuera.Worker.dll -a -f /app/validator/CloudEmuera.Validator.dll -a -f /app/migrator/CloudEmuera.Migrator.dll'
 
-# The only production start command is Compose up. The dependency condition
-# makes API start only after the one-shot Migrator exits successfully.
+# The only production start command is Compose up. The image entrypoint runs
+# Migrator synchronously and then replaces itself with API.
 "${compose[@]}" up --detach
-migrator_id="$("${compose[@]}" ps -aq migrator)"
-[[ -n "$migrator_id" ]] || { echo "production Migrator container was not created" >&2; exit 1; }
-migrator_exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$migrator_id")"
-[[ "$migrator_exit_code" == 0 ]] || { echo "production Migrator exited with $migrator_exit_code" >&2; exit 1; }
 wait_for_http() {
   local path="$1"
   for _ in $(seq 1 45); do
@@ -121,7 +131,7 @@ fi
 
 inspect_file="$temp_root/container-inspect.json"
 docker inspect "$container_id" > "$inspect_file"
-jq -e '.[0].HostConfig.Privileged == false and (.[0].HostConfig.PidsLimit == 512) and (.[0].HostConfig.NanoCpus == 2000000000) and (.[0].HostConfig.Memory == 2147483648)' "$inspect_file" >/dev/null
+jq -e '.[0].HostConfig.Privileged == false and (.[0].HostConfig.PidsLimit == 512) and (.[0].HostConfig.NanoCpus == 0) and (.[0].HostConfig.Memory == 2147483648)' "$inspect_file" >/dev/null
 jq -e --arg data_root "$data_root" '.[0].Mounts | length == 1 and .[0].Type == "bind" and .[0].Source == $data_root and .[0].Destination == "/data"' "$inspect_file" >/dev/null
 jq -e '.[0].NetworkSettings.Ports | has("28647/tcp") and length == 1' "$inspect_file" >/dev/null
 
@@ -241,7 +251,7 @@ worker_probe="$temp_root/worker-probe.txt"
 ' sh "$worker_pid" > "$worker_probe"
 worker_uid="$(sed -n 's/^uid=//p' "$worker_probe")"
 grep -q '^cmdline=.*\/app\/worker\/CloudEmuera\.Worker\.dll.*--bootstrap-file' "$worker_probe"
-[[ "$worker_uid" != 0 && -n "$worker_uid" ]] || { echo "Worker is running as root" >&2; exit 1; }
+[[ "$worker_uid" == "$api_uid" && -n "$worker_uid" ]] || { echo "Worker did not inherit the API identity: $worker_uid vs $api_uid" >&2; exit 1; }
 if grep -Eiq 'CLOUDEMUERA_BOOTSTRAP_ADMIN_|CloudEmuera__DataPath|CloudEmuera__DatabasePath|cloudemuera\.db|/workspace' "$worker_probe"; then
   echo "Worker inherited a control-plane secret/path" >&2
   exit 1
@@ -424,4 +434,4 @@ done
 foreign_owner="$(find "$data_root" -xdev \( ! -uid "$CLOUDEMUERA_UID" -o ! -gid "$CLOUDEMUERA_GID" \) -print -quit)"
 [[ -z "$foreign_owner" ]] || { echo "production data contains a file not owned by deployer $CLOUDEMUERA_UID:$CLOUDEMUERA_GID: $foreign_owner" >&2; exit 1; }
 
-echo "production image boundary and API-owned Worker smoke passed (uid=$api_uid:$api_gid, workerUid=$worker_uid)"
+echo "production single-container image and API-owned Worker smoke passed (uid=$api_uid:$api_gid, workerUid=$worker_uid)"

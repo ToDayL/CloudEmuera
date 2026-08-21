@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using CloudEmuera.Infrastructure.Persistence;
+using CloudEmuera.Infrastructure.Sessions;
 
 internal static class MigratorCommand
 {
@@ -38,6 +39,11 @@ internal static class MigratorCommand
                 }
 
                 return MigrationExitCodes.Success;
+            }
+
+            if (command == Command.RebindSessionRoots)
+            {
+                return await SessionRootRestoreRebinder.RunAsync(options!, Console.WriteLine, cancellation.Token).ConfigureAwait(false);
             }
 
             DatabaseMigrationRunner runner = new(
@@ -87,9 +93,10 @@ internal static class MigratorCommand
             "migrate" => Command.Migrate,
             "check" => Command.Check,
             "plan-game-collapse" => Command.PlanGameCollapse,
+            "rebind-session-roots" => Command.RebindSessionRoots,
             _ => (Command)(-1),
         };
-        if (command is not (Command.Migrate or Command.Check or Command.PlanGameCollapse)) return false;
+        if (command is not (Command.Migrate or Command.Check or Command.PlanGameCollapse or Command.RebindSessionRoots)) return false;
 
         string? dataRoot = null;
         string databaseName = SqliteStorageConventions.DatabaseFileName;
@@ -149,7 +156,7 @@ internal static class MigratorCommand
 
     private static void PrintUsage()
     {
-        Console.Error.WriteLine("usage: CloudEmuera.Migrator migrate|check --data-root <path> [--database <file>] [--game-collapse-plan <file>]");
+        Console.Error.WriteLine("usage: CloudEmuera.Migrator migrate|check|rebind-session-roots --data-root <path> [--database <file>] [--game-collapse-plan <file>]");
         Console.Error.WriteLine("       CloudEmuera.Migrator plan-game-collapse --data-root <path> [--database <file>] [--selection-template <file>]");
     }
 
@@ -158,5 +165,6 @@ internal static class MigratorCommand
         Migrate,
         Check,
         PlanGameCollapse,
+        RebindSessionRoots,
     }
 }

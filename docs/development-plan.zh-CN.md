@@ -875,21 +875,22 @@ Worker 启动校验和迁移回填均不再依赖数据库中的大 JSON 字段�
 实例级配置；API composition root 统一绑定并在监听 HTTP/准备 Worker UDS 前校验跨组关系。SessionRoot
 启动前继续复验 marker、runtime manifest、binding、owner/link/reparse 和路径边界；Worker bootstrap/环境
 不再继承数据库、DataRoot、Validator、容量配置或 bootstrap 管理员变量。根生产镜像显式发布 API、Worker、
-Validator、Migrator，镜像提供非 root 默认用户；`docker/compose.yml` 使用启动服务者 UID/GID，并在
-`CLOUDEMUERA_DATA_PATH` 未设置时使用 named volume、设置后 bind mount 自有 `/data`，同时自动以
-one-shot Migrator 成功作为 API 启动前置条件。新增 save-list、容量选项、asset gate、Worker environment
-和容器边界验证覆盖。
+Validator、Migrator，镜像提供四类产物；P1-14 后续把生产身份收敛为 named volume 默认 root、bind mount
+可选 UID/GID，并把 Migrator 收入同一容器入口脚本，不再使用 one-shot service。新增 save-list、容量选项、
+asset gate、Worker environment 和容器边界验证覆盖。
 
 最终验证：`./scripts/test-production-image.sh`、`./scripts/test-instance-limits.sh`、
 `./scripts/check.sh`、`./scripts/verify-dev-user.sh`、`./scripts/verify-third-party.sh`。
 
-### P1-14 — 单容器生产进程管理与恢复（TODO）
+### P1-14 — 单容器生产进程管理与恢复（DONE）
 
 需求映射：MVP 单容器、AC-003/006/007、OPS-003。
 
-交付物：保留已实现的 Compose Migrator 前置成功检查；API 及其 Worker 子进程启动/停止编排；非 root 用户；
-轻量 PID 1、信号转发、parent-death/进程组回收兜底；数据目录停机备份与恢复说明。不新增完整 s6
-服务树、在线备份编排或滚动升级。
+详细实施方案：[`tasks/P1-14-single-container-process-recovery-plan.zh-CN.md`](tasks/P1-14-single-container-process-recovery-plan.zh-CN.md)。
+
+交付物：单一生产 `api` 容器入口脚本内的 Migrator→API 启动顺序；API 及其 Worker 子进程启动/停止编排；
+named volume 默认 root、bind mount 可选 UID/GID；轻量 PID 1、信号转发、parent-death/进程组回收兜底；
+数据目录停机备份与恢复说明。不新增独立 Migrator service、完整 s6 服务树、在线备份编排或滚动升级。
 
 验证：
 
@@ -898,10 +899,20 @@ one-shot Migrator 成功作为 API 启动前置条件。新增 save-list、容�
 ./scripts/test-process-recovery.sh
 ```
 
-通过条件：全新数据卷可启动；进程均非 root；SIGTERM 在期限内停止 Worker 并把活动 Session 标记
-CRASHED；强制终止 API 或断开控制通道后 Worker 立即开始退出或被回收；新 API 确认旧写权限释放后完成
+通过条件：全新数据卷可由同容器入口启动；named volume 默认 root、bind mount 可配置 UID/GID；SIGTERM
+在期限内停止 Worker 并把活动 Session 标记 CRASHED；强制终止 API 或断开控制通道后 Worker 立即开始退出或被回收；新 API 确认旧写权限释放后完成
 CRASHED 对账，同一 Session 可复用原 SessionRoot 重开；单个无法确认的遗留 Worker 只阻止对应
 Session 的 open/存档写；生产镜像不存在旧独立控制面服务；备份恢复后元数据和文件校验一致。
+
+实施记录（2026-08-22）：生产镜像收敛为单一 `api` 服务，`/app/start.sh` 在同一容器内先独占执行
+Migrator，再 `exec` API；构建后的 SPA 进入 API 静态 web root，由同一 `28647` 应用端口提供 Web、HTTP
+API 和 WebSocket。named volume 默认 root，bind mount 可选部署 UID/GID；生产宿主端口默认只绑定
+`127.0.0.1`，公网访问交给外部 HTTPS 网关；未设置 CPU 限制，也未主动映射 Capacity 配置。
+`test-production-image.sh` 覆盖单容器入口、SPA/API、root named volume、bind mount 身份、Worker 和
+Realtime 纵切；`test-process-recovery.sh` 覆盖 SIGTERM、API/Worker 强制终止、parent-death、SessionRoot
+与原生存档，以及冷 DataRoot 恢复后 Game owner marker 和 SessionRoot marker 重绑定，实测停止耗时
+`15335ms`。`./scripts/dev-up.sh && ./scripts/check.sh`、`verify-dev-user.sh`、`verify-third-party.sh`
+和 `test-instance-limits.sh` 均通过。
 
 ### P1-15 — MVP 验收、安全与性能门（TODO）
 

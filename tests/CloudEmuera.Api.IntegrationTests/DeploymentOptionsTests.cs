@@ -12,6 +12,15 @@ namespace CloudEmuera.Api.IntegrationTests;
 public sealed class DeploymentOptionsTests
 {
     [Fact]
+    [Trait("Category", "WorkerLifecycle")]
+    public void HostShutdownBudgetLeavesContainerExitHeadroom()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(15), WorkerShutdownDefaults.HostShutdownTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(20), WorkerShutdownDefaults.ComposeStopGracePeriod);
+        Assert.True(WorkerShutdownDefaults.ComposeStopGracePeriod > WorkerShutdownDefaults.HostShutdownTimeout);
+    }
+
+    [Fact]
     public void BinderPrefersNewArchiveKeyAndReadsLegacyFreeSpaceKey()
     {
         IConfiguration configuration = new ConfigurationBuilder()

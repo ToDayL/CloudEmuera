@@ -1,5 +1,29 @@
 name: cloudemuera-dev
 
+x-web-common: &web-common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.dev
+    target: web-dev
+    args:
+      DEV_UID: "${CLOUDEMUERA_UID:-1000}"
+      DEV_GID: "${CLOUDEMUERA_GID:-1000}"
+      PNPM_VERSION: "11.20.0"
+  image: cloudemuera/web-dev:${CLOUDEMUERA_UID:-1000}-${CLOUDEMUERA_GID:-1000}
+  user: "${CLOUDEMUERA_UID:-1000}:${CLOUDEMUERA_GID:-1000}"
+  working_dir: /workspace
+  environment:
+    COREPACK_HOME: /var/cache/corepack
+    PNPM_HOME: /var/cache/pnpm
+    pnpm_config_store_dir: /var/cache/pnpm/store
+    CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
+    CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
+  volumes:
+    - ..:/workspace
+    - pnpm-store-v2:/var/cache/pnpm
+    - corepack-cache-v2:/var/cache/corepack
+  init: true
+
 services:
   api:
     build:
@@ -12,15 +36,12 @@ services:
     image: cloudemuera/dotnet-dev:${CLOUDEMUERA_UID:-1000}-${CLOUDEMUERA_GID:-1000}
     user: "${CLOUDEMUERA_UID:-1000}:${CLOUDEMUERA_GID:-1000}"
     working_dir: /workspace
-    # Run the built API directly. A dotnet CLI host (especially dotnet watch)
-    # must not remain above the API/Worker tree and reap a live Worker during
-    # development rebuilds.
     command:
-      - dotnet
-      - /workspace/src/CloudEmuera.Api/bin/Debug/net10.0/CloudEmuera.Api.dll
+      - /workspace/docker/dev-start.sh
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://0.0.0.0:28647
+      ASPNETCORE_WEBROOT: /workspace/src/CloudEmuera.Web/dist
       NUGET_PACKAGES: /var/cache/nuget
       CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
       CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
@@ -75,36 +96,21 @@ services:
     init: true
 
   web:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.dev
-      target: web-dev
-      args:
-        DEV_UID: "${CLOUDEMUERA_UID:-1000}"
-        DEV_GID: "${CLOUDEMUERA_GID:-1000}"
-        PNPM_VERSION: "11.20.0"
-    image: cloudemuera/web-dev:${CLOUDEMUERA_UID:-1000}-${CLOUDEMUERA_GID:-1000}
-    user: "${CLOUDEMUERA_UID:-1000}:${CLOUDEMUERA_GID:-1000}"
-    working_dir: /workspace
+    <<: *web-common
     command:
       - sh
       - -c
-      - pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web dev
-    environment:
-      COREPACK_HOME: /var/cache/corepack
-      PNPM_HOME: /var/cache/pnpm
-      pnpm_config_store_dir: /var/cache/pnpm/store
-      CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
-      CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
+      - pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web build
+
+  web-hmr:
+    <<: *web-common
+    profiles: ["hmr"]
+    command:
+      - sh
+      - -c
+      - pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web dev --host 0.0.0.0
     ports:
       - "${CLOUDEMUERA_WEB_PORT:-5173}:5173"
-    volumes:
-      - ..:/workspace
-      - pnpm-store-v2:/var/cache/pnpm
-      - corepack-cache-v2:/var/cache/corepack
-    depends_on:
-      - api
-    init: true
 
   e2e:
     profiles: ["e2e"]

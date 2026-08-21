@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using CloudEmuera.Api.Realtime;
+using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V5;
 using CloudEmuera.RuntimeAdapter;
@@ -14,6 +15,46 @@ namespace CloudEmuera.Worker.IntegrationTests;
 [Trait("Category", "ProcessIsolation")]
 public sealed class WorkerProcessIsolationTests
 {
+    [Fact]
+    [Trait("Category", "WorkerLifecycle")]
+    public async Task ManagerUsesOneSharedGraceAndForceBudgetForMultipleWorkers()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"cloudemuera-shutdown-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        string workerScript = Path.Combine(root, "sleep-worker.sh");
+        File.WriteAllText(workerScript, "#!/bin/sh\nsleep 30\n");
+        string firstRoot = Path.Combine(root, "session-a");
+        string secondRoot = Path.Combine(root, "session-b");
+        Directory.CreateDirectory(firstRoot);
+        Directory.CreateDirectory(secondRoot);
+
+        var options = new WorkerManagerOptions(root, workerScript)
+        {
+            DotnetPath = "/bin/sh",
+            WorkerShutdownTimeout = TimeSpan.FromSeconds(1),
+        };
+        await using var manager = new WorkerManager(options, Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
+        try
+        {
+            await manager.StartAsync(CreateSleepSpec(options, "sess_shutdown_a", "wrk_shutdown_a", firstRoot));
+            await manager.StartAsync(CreateSleepSpec(options, "sess_shutdown_b", "wrk_shutdown_b", secondRoot));
+            Assert.Equal(2, manager.Workers.Count);
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            await manager.ShutdownAsync("control_plane_stopped");
+            stopwatch.Stop();
+
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(3), $"shutdown was not shared across Workers: {stopwatch.Elapsed}");
+            Assert.All(manager.Workers, worker => Assert.True(worker.HasExited));
+            Assert.True(manager.IsDraining);
+        }
+        finally
+        {
+            await manager.DisposeAsync();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task WorkerSurvivesTheCallingThreadExitingAfterLaunch()
     {
@@ -447,6 +488,32 @@ public sealed class WorkerProcessIsolationTests
             TimeSpan.FromSeconds(15));
         Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
     }
+
+    private static WorkerLaunchSpec CreateSleepSpec(
+        WorkerManagerOptions options,
+        string sessionId,
+        string workerId,
+        string sessionRoot) => new(
+        new SessionRuntimeBinding(
+            sessionId,
+            workerId,
+            1,
+            1,
+            options.ControlPlaneInstanceId,
+            sessionRoot,
+            "v18-compatible",
+            (int)RuntimeSaveLayout.Root,
+            "manifest",
+            "runtime",
+            0),
+        new SessionRootRuntimeDescriptor(sessionRoot, (int)RuntimeSaveLayout.Root, "manifest", "v18-compatible"),
+        DateTimeOffset.UtcNow.AddSeconds(10),
+        TimeSpan.FromMilliseconds(500),
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(1),
+        Timeout.InfiniteTimeSpan,
+        Environment.ProcessId,
+        string.Empty);
 
     private static async Task WaitForDiagnosticsAsync(
         ApiWorkerSession session,

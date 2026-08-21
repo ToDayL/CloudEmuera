@@ -1,91 +1,31 @@
 name: cloudemuera
 
 services:
-  migrator:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: "${CLOUDEMUERA_PRODUCTION_IMAGE:-cloudemuera:local}"
-    user: "${CLOUDEMUERA_UID:?set CLOUDEMUERA_UID in docker/.env}:${CLOUDEMUERA_GID:?set CLOUDEMUERA_GID in docker/.env}"
-    group_add:
-      - "10001"
-    entrypoint:
-      - dotnet
-      - /app/migrator/CloudEmuera.Migrator.dll
-    command:
-      - migrate
-      - --data-root
-      - /data
-    volumes:
-      - "${CLOUDEMUERA_DATA_PATH:-cloudemuera-data}:/data"
-    restart: "no"
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-
   api:
     build:
       context: ..
       dockerfile: docker/Dockerfile
     image: "${CLOUDEMUERA_PRODUCTION_IMAGE:-cloudemuera:local}"
     init: true
-    # The image has a non-root fallback user for direct docker run usage. The
-    # Compose deployment uses the owner of the configured data directory.
-    user: "${CLOUDEMUERA_UID:?set CLOUDEMUERA_UID in docker/.env}:${CLOUDEMUERA_GID:?set CLOUDEMUERA_GID in docker/.env}"
-    group_add:
-      - "10001"
-    depends_on:
-      migrator:
-        condition: service_completed_successfully
+    stop_signal: SIGTERM
+    stop_grace_period: 20s
+    # Named volumes run as root by default. Set CLOUDEMUERA_UID/GID only when
+    # a bind mount must be written as a specific host account.
+    user: "${CLOUDEMUERA_UID:-0}:${CLOUDEMUERA_GID:-0}"
     environment:
       ASPNETCORE_URLS: "http://0.0.0.0:${CLOUDEMUERA_CONTAINER_PORT:-28647}"
       CloudEmuera__DataPath: /data
-      CloudEmuera__Capacity__MaxActiveWorkers: "${CLOUDEMUERA_CAPACITY_MAX_ACTIVE_WORKERS-}"
-      CloudEmuera__Capacity__MaxInactiveSessions: "${CLOUDEMUERA_CAPACITY_MAX_INACTIVE_SESSIONS-}"
-      CloudEmuera__Capacity__MaxArchiveBytes: "${CLOUDEMUERA_CAPACITY_MAX_ARCHIVE_BYTES-}"
-      CloudEmuera__Capacity__MaxGamePackageBytes: "${CLOUDEMUERA_CAPACITY_MAX_GAME_PACKAGE_BYTES-}"
-      CloudEmuera__Capacity__MaxExpandedBytes: "${CLOUDEMUERA_CAPACITY_MAX_EXPANDED_BYTES-}"
-      CloudEmuera__Capacity__MaxArchiveSingleFileBytes: "${CLOUDEMUERA_CAPACITY_MAX_ARCHIVE_SINGLE_FILE_BYTES-}"
-      CloudEmuera__Capacity__MaxArchiveEntryCount: "${CLOUDEMUERA_CAPACITY_MAX_ARCHIVE_ENTRY_COUNT-}"
-      CloudEmuera__Capacity__MaxSessionRootBytes: "${CLOUDEMUERA_CAPACITY_MAX_SESSION_ROOT_BYTES-}"
-      CloudEmuera__Capacity__MaxSessionRootFileCount: "${CLOUDEMUERA_CAPACITY_MAX_SESSION_ROOT_FILE_COUNT-}"
-      CloudEmuera__Capacity__MaxStagingReservedBytes: "${CLOUDEMUERA_CAPACITY_MAX_STAGING_RESERVED_BYTES-}"
-      CloudEmuera__Capacity__MaxSaveFileBytes: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_FILE_BYTES-}"
-      CloudEmuera__Capacity__MaxSaveListedFiles: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_LISTED_FILES-}"
-      CloudEmuera__Capacity__MaxSaveListBytes: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_LIST_BYTES-}"
-      CloudEmuera__Capacity__MinDataRootFreeBytes: "${CLOUDEMUERA_CAPACITY_MIN_DATA_ROOT_FREE_BYTES-}"
-      CloudEmuera__Realtime__SnapshotMaxBytes: "${CLOUDEMUERA_REALTIME_SNAPSHOT_MAX_BYTES-}"
-      CloudEmuera__Realtime__BatchTargetBytes: "${CLOUDEMUERA_REALTIME_BATCH_TARGET_BYTES-}"
-      CloudEmuera__Realtime__BatchMaxTransactions: "${CLOUDEMUERA_REALTIME_BATCH_MAX_TRANSACTIONS-}"
-      CloudEmuera__Realtime__BatchMaxDelayMilliseconds: "${CLOUDEMUERA_REALTIME_BATCH_MAX_DELAY_MILLISECONDS-}"
-      CloudEmuera__Realtime__QueueSoftBytes: "${CLOUDEMUERA_REALTIME_QUEUE_SOFT_BYTES-}"
-      CloudEmuera__Realtime__QueueHardBytes: "${CLOUDEMUERA_REALTIME_QUEUE_HARD_BYTES-}"
-      CloudEmuera__Realtime__QueueSoftMessages: "${CLOUDEMUERA_REALTIME_QUEUE_SOFT_MESSAGES-}"
-      CloudEmuera__Realtime__QueueHardMessages: "${CLOUDEMUERA_REALTIME_QUEUE_HARD_MESSAGES-}"
-      CloudEmuera__Realtime__MaxConnections: "${CLOUDEMUERA_REALTIME_MAX_CONNECTIONS-}"
-      CloudEmuera__Realtime__MaxConnectionsPerSession: "${CLOUDEMUERA_REALTIME_MAX_CONNECTIONS_PER_SESSION-}"
-      CloudEmuera__Realtime__MaxPendingInputsPerConnection: "${CLOUDEMUERA_REALTIME_MAX_PENDING_INPUTS_PER_CONNECTION-}"
-      CloudEmuera__Realtime__MaxPendingInputsPerWorker: "${CLOUDEMUERA_REALTIME_MAX_PENDING_INPUTS_PER_WORKER-}"
-      CloudEmuera__Realtime__ControlQueueMaxBytes: "${CLOUDEMUERA_REALTIME_CONTROL_QUEUE_MAX_BYTES-}"
-      CloudEmuera__Realtime__ControlQueueMaxMessages: "${CLOUDEMUERA_REALTIME_CONTROL_QUEUE_MAX_MESSAGES-}"
-      CloudEmuera__Realtime__EnvelopeMaxBytes: "${CLOUDEMUERA_REALTIME_ENVELOPE_MAX_BYTES-}"
-      CloudEmuera__Worker__PendingEventMaxBytes: "${CLOUDEMUERA_WORKER_PENDING_EVENT_MAX_BYTES-}"
-      CloudEmuera__Worker__PendingEventMaxMessages: "${CLOUDEMUERA_WORKER_PENDING_EVENT_MAX_MESSAGES-}"
-      CloudEmuera__Assets__MaxManifestBytes: "${CLOUDEMUERA_ASSETS_MAX_MANIFEST_BYTES-}"
-      CloudEmuera__Assets__MaxAssetBytes: "${CLOUDEMUERA_ASSETS_MAX_ASSET_BYTES-}"
-      CloudEmuera__Assets__MaxRangeBytes: "${CLOUDEMUERA_ASSETS_MAX_RANGE_BYTES-}"
-      CloudEmuera__Assets__MaxConcurrentReads: "${CLOUDEMUERA_ASSETS_MAX_CONCURRENT_READS-}"
-      CloudEmuera__Assets__MaxInFlightBytes: "${CLOUDEMUERA_ASSETS_MAX_IN_FLIGHT_BYTES-}"
       CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME:?set CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME in docker/.env}"
       CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL:?set CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL in docker/.env}"
       CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD:?set CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD in docker/.env}"
     ports:
-      - "${CLOUDEMUERA_HTTP_PORT:-28647}:${CLOUDEMUERA_CONTAINER_PORT:-28647}"
+      # Keep the application port private to the host by default. Put an
+      # external HTTPS reverse proxy in front of it for public access, or set
+      # CLOUDEMUERA_HTTP_BIND_ADDRESS explicitly when direct exposure is intended.
+      - "${CLOUDEMUERA_HTTP_BIND_ADDRESS:-127.0.0.1}:${CLOUDEMUERA_HTTP_PORT:-28647}:${CLOUDEMUERA_CONTAINER_PORT:-28647}"
     volumes:
       - "${CLOUDEMUERA_DATA_PATH:-cloudemuera-data}:/data"
     restart: unless-stopped
-    cpus: "${CLOUDEMUERA_CPU_LIMIT:-2.00}"
     mem_limit: "${CLOUDEMUERA_MEMORY_LIMIT:-2g}"
     pids_limit: "${CLOUDEMUERA_PIDS_LIMIT:-512}"
     cap_drop:

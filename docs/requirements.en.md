@@ -249,9 +249,11 @@ The system deploys one API process, whose code should contain at least these mod
 - Session Registry & instance capacity gate
 - Administration & Audit
 
-The API process must not keep active Sessions only in memory. It is the only business process that accesses SQLite at runtime and coordinates HTTP operations, background work, and Worker lifecycles through durable Sessions, WorkerLeases, epochs, and state versions. The separate Migrator runs only before API startup, and Session Workers do not access SQLite.
+The API process must not keep active Sessions only in memory. It is the only business process that accesses SQLite at runtime and coordinates HTTP operations, background work, and Worker lifecycles through durable Sessions, WorkerLeases, epochs, and state versions. The same-container entrypoint runs the exclusive Migrator before API startup, and Session Workers do not access SQLite.
 
 The API process directly starts, monitors, and terminates Session Workers and applies only the instance-wide active Worker gate. Exiting the API ends its active Workers. A restarted API does not adopt old Workers; after confirming that they have lost write access to their SessionRoots, it reconciles residual active Sessions to `CRASHED` while preserving each SessionRoot.
+
+In the production single container, the API is the only long-running business process; each Session Worker is an API child process. Docker's lightweight init/PID 1 forwards signals and reaps zombies; the product does not add a resident Supervisor or a second runtime control plane. The container entrypoint runs the exclusive `Migrator` in that same container and starts the API only after it succeeds. The default development topology also keeps only the API long-running and serves the built SPA from it; the Node/Web container only performs one-shot install/build work, while HMR requires an explicit profile.
 
 ### 8.3 Worker layer
 
@@ -394,12 +396,21 @@ The container must mount one host data directory at `/data`. All games, Sessions
 
 Session management must copy every valid regular file and directory in the Game's current manifest and must not discard unknown content through a known-directory allowlist. Symbolic links, hard links, and special files supplied by a game package remain forbidden. A normal byte copy is the baseline; where supported, a reflink preserving copy-on-write semantics may be used with fallback to a normal copy. Hard links are forbidden. Each SessionRoot must be private, persistent, and isolated; Emuera directly reads and writes its complete game copy, configuration, temporary files, and native saves there. Object storage, remote file systems, and external file services must not be runtime or persistence dependencies. Backups must use host-file-system snapshots, directory copies, or equivalent local backup tools.
 
+Production shutdown backups are cold backups: stop the API first, then copy the complete `/data` tree, including
+the SQLite main file and its `-wal`/`-shm` files, Data Protection keys, games, sessions, logs, and backups; start
+the API only after the copy completes. Restore by replacing `/data` as a whole, running the image entrypoint's
+offline `rebind-session-roots` command (which migrates first, validates database markers, and refreshes restored
+Game and SessionRoot directory identities), and starting the API. Restoring only SQLite or one SessionRoot is not
+supported. On normal SIGTERM shutdown, the default
+shared graceful Worker budget is 5 seconds, the shared force-stop budget is 5 seconds, the Host shutdown budget is
+15 seconds, and the Compose stop grace period is 20 seconds.
+
 ## 12. Security Requirements
 
 - **SEC-001**: Game packages, filenames, and display content must be parsed as unsafe data formats. The deployer must run only games they trust; the system does not promise safe execution of malicious ERB or Runtime content.
-- **SEC-002**: The production container must run as non-root and must not mount the container-management interface, host secrets, or unrelated host directories. Workers should not intentionally use the public network; the execution boundary is the container and the application path checks.
+- **SEC-002**: The production container may run as root by default for Docker named-volume compatibility; a bind mount may use a deployer-provided UID/GID. The production host HTTP port binds to loopback by default and public access should terminate at an external HTTPS gateway; direct public binding must be explicit. It must not mount the container-management interface, host secrets, or unrelated host directories. Workers should not intentionally use the public network; the execution boundary is the container and the application path checks.
 - **SEC-003**: Session management passes only the assigned complete SessionRoot path to a Worker, and normal Worker logic must not access the Game library or another SessionRoot. API and Worker may share a UID, so this is not kernel-enforced hostile-Worker tenant isolation.
-- **SEC-004**: ConsoleSnapshot, IPC/WebSocket queues, ZIP expansion, and DataRoot usage must have instance-wide bounds. CPU, memory, and PID limits may be applied to the whole container by the deployer; fine-grained process-resource governance is not required.
+- **SEC-004**: ConsoleSnapshot, IPC/WebSocket queues, ZIP expansion, and DataRoot usage must have instance-wide bounds. The production Compose file imposes no CPU limit; memory and PID limits remain optional whole-container deployment settings, and fine-grained process-resource governance is not required.
 - **SEC-005**: Archive path traversal, symbolic-link escape, case collisions, and decompression overrun must be prevented.
 - **SEC-006**: Browser rendering must encode text and attributes. Emuera HTML must be converted to supported structured nodes.
 - **SEC-007**: Local Worker IPC endpoints must not be exposed outside the container. Worker registration must bind the Session, Worker, and epoch issued at launch; a separate cross-instance service-identity challenge protocol is not required.
@@ -412,7 +423,7 @@ Session management must copy every valid regular file and directory in the Game'
 ### 13.1 Availability and recovery
 
 - **NFR-001**: Under normal load, reconnecting to a running Session and displaying its initial snapshot should complete within 2 seconds at P95, excluding abnormal external user-network conditions.
-- **NFR-002**: During a normal API shutdown, the API must gracefully stop its Workers within a bound and force termination after the bound. After an unexpected API exit or control-channel disconnect, Workers must immediately begin bounded shutdown or be reclaimed by a parent/child or process-group fallback. Affected active Sessions must reconcile to `CRASHED` while preserving their SessionRoots.
+- **NFR-002**: During a normal API shutdown, the API must gracefully stop its Workers within a bound and force termination after the bound. The product defaults are a shared 5-second graceful Worker budget, a shared 5-second force-stop budget, a 15-second Host shutdown budget, and a 20-second Compose stop grace period. After an unexpected API exit or control-channel disconnect, Workers must immediately begin bounded shutdown or be reclaimed by a parent/child or process-group fallback. Affected active Sessions must reconcile to `CRASHED` while preserving their SessionRoots.
 - **NFR-003**: A Session Worker must not continue running after its control channel disconnects, and it must not be adopted by a new API instance. The user may explicitly reopen the same Session after reconciliation.
 - **NFR-004**: A Worker crash must preserve the SessionRoot as found and must not affect current Game content, its workspace, or another Session; the Session must be clearly marked `CRASHED`. A file being overwritten by the native writer is not guaranteed to remain valid.
 - **NFR-005**: Arbitrary execution-point recovery and transactional recovery of every save are not initial-phase SLAs. Only persistence of SessionRoot and diagnostic availability are guaranteed.

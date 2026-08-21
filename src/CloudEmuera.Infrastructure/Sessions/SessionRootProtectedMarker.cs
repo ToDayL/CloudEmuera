@@ -61,6 +61,48 @@ internal static class SessionRootProtectedMarkerStore
         }
     }
 
+    /// <summary>
+    /// Rebinds only the filesystem identity fields after an operator has
+    /// restored a complete, offline DataRoot into a new directory tree. The
+    /// caller must hold the migration lock and must validate the marker
+    /// against the durable Session row before calling this method.
+    /// </summary>
+    internal static SessionRootProtectedMarker RebindRootIdentity(
+        SqliteDatabaseOptions options,
+        string sessionId,
+        string rootPath)
+    {
+        ValidateSessionId(sessionId);
+        SessionRootProtectedMarker current = Read(options, sessionId);
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(rootPath, "restored-session-root", RuntimeFileArea.GameContent);
+        RuntimePathUtilities.ThrowIfReparsePoint(rootPath, "restored-session-root", RuntimeFileArea.GameContent, missingIsAllowed: false);
+
+        SessionRootProtectedMarker rebound;
+        if (OperatingSystem.IsLinux())
+        {
+            using Microsoft.Win32.SafeHandles.SafeFileHandle root = LinuxFileOperations.OpenDirectory(rootPath);
+            LinuxFileOperations.FileIdentity identity = LinuxFileOperations.ReadIdentity(root);
+            if (!identity.IsDirectory || identity.UserId != LinuxFileOperations.CurrentUserId || (identity.Mode & 0x1FF) != 0x1C0)
+                throw new SessionRuntimeException(SessionRuntimeResultCodes.SessionRootInvalid, "The restored SessionRoot is not a private directory.");
+
+            rebound = current with
+            {
+                RootDeviceMajor = identity.DeviceMajor,
+                RootDeviceMinor = identity.DeviceMinor,
+                RootInode = identity.Inode,
+            };
+        }
+        else
+        {
+            if (!Directory.Exists(rootPath))
+                throw new SessionRuntimeException(SessionRuntimeResultCodes.SessionRootInvalid, "The restored SessionRoot does not exist.");
+            rebound = current;
+        }
+
+        WriteReboundMarker(options, sessionId, rebound);
+        return rebound;
+    }
+
     public static SessionRootProtectedMarker Write(
         SqliteDatabaseOptions options,
         string stagingContainer,
@@ -159,6 +201,81 @@ internal static class SessionRootProtectedMarkerStore
         writer.Flush();
         stream.Flush(flushToDisk: true);
         SetPrivateFileMode(path);
+    }
+
+    private static void WriteReboundMarker(
+        SqliteDatabaseOptions options,
+        string sessionId,
+        SessionRootProtectedMarker marker)
+    {
+        string metadataDirectory = Path.Combine(ContainerPath(options, sessionId), "metadata");
+        RuntimePathUtilities.ValidateNoReparsePointsAlongPath(metadataDirectory, "restored-session-metadata", RuntimeFileArea.Configuration);
+        RuntimePathUtilities.ThrowIfReparsePoint(metadataDirectory, "restored-session-metadata", RuntimeFileArea.Configuration, missingIsAllowed: false);
+        string path = Path.Combine(metadataDirectory, "session-root.json");
+
+        if (OperatingSystem.IsLinux())
+        {
+            using Microsoft.Win32.SafeHandles.SafeFileHandle metadata = LinuxFileOperations.OpenDirectory(metadataDirectory);
+            using Microsoft.Win32.SafeHandles.SafeFileHandle existing = LinuxFileOperations.OpenRegularFileAt(
+                metadata,
+                "session-root.json",
+                readOnly: true,
+                create: false,
+                exclusive: false);
+            LinuxFileOperations.FileIdentity existingIdentity = LinuxFileOperations.ReadIdentity(existing);
+            if (existingIdentity.UserId != LinuxFileOperations.CurrentUserId || existingIdentity.LinkCount != 1)
+                throw new SessionRuntimeException(SessionRuntimeResultCodes.SessionRootInvalid, "The protected SessionRoot marker is not private.");
+
+            string temporaryName = $".session-root-{Guid.NewGuid():N}.part";
+            try
+            {
+                using Microsoft.Win32.SafeHandles.SafeFileHandle temporary = LinuxFileOperations.OpenRegularFileAt(
+                    metadata,
+                    temporaryName,
+                    readOnly: false,
+                    create: true,
+                    exclusive: true);
+                LinuxFileOperations.ApplyPrivateMode(temporary);
+                using (FileStream stream = LinuxFileOperations.CreateFileStream(temporary, FileAccess.Write))
+                using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false), 1024, leaveOpen: true))
+                {
+                    writer.Write(JsonSerializer.Serialize(marker, JsonOptions));
+                    writer.Write('\n');
+                    writer.Flush();
+                    stream.Flush(flushToDisk: true);
+                    LinuxFileOperations.Sync(temporary);
+                }
+
+                LinuxFileOperations.RenameAt(metadata, temporaryName, "session-root.json");
+                LinuxFileOperations.Sync(metadata);
+            }
+            finally
+            {
+                LinuxFileOperations.UnlinkAtIfExists(metadata, temporaryName);
+            }
+
+            return;
+        }
+
+        string temporaryPath = path + $".{Guid.NewGuid():N}.part";
+        try
+        {
+            using (FileStream stream = new(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false), 1024, leaveOpen: true))
+            {
+                writer.Write(JsonSerializer.Serialize(marker, JsonOptions));
+                writer.Write('\n');
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+                File.Delete(temporaryPath);
+        }
     }
 
     public static string ReadRuntimeManifest(SqliteDatabaseOptions options, string sessionId)
