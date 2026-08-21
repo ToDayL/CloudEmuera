@@ -88,7 +88,9 @@ services:
       CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL-}"
       CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD-}"
     ports:
-      - "${CLOUDEMUERA_HTTP_PORT:-28647}:28647"
+      # Keep the development host port separate from production's 28647.
+      # The API remains on 28647 inside the Compose network for web/e2e tools.
+      - "${CLOUDEMUERA_DEV_HTTP_PORT:-28648}:28647"
     volumes:
       - ..:/workspace
       - ${CLOUDEMUERA_DATA_PATH:-../data}:/data

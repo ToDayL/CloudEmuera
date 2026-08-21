@@ -234,7 +234,7 @@ stop_grace_period: 20s
 4. 在一次性 `api` 容器中 restore/build API、Worker、Validator、Migrator；
 5. 在一次性 `web` 容器中执行 frozen install 和 production build；
 6. 只执行 `docker compose up --detach api`，由 `dev-start.sh` 在容器内迁移后启动 API；
-7. 输出 API/SPA 地址 `http://localhost:28647` 和可选 HMR 命令。
+7. 输出 API/SPA 地址 `http://localhost:28648` 和可选 HMR 命令；生产默认宿主端口为 `28647`。
 
 停止旧 API 必须发生在替换运行 DLL 前，继续避免 `dotnet watch`/CLI host 改变 API—Worker 直接父子关系。
 

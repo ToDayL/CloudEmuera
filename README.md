@@ -45,8 +45,8 @@ docker compose --env-file docker/.env -f docker/compose.dev.yml --profile hmr up
 
 启动后 API 同时提供前端和后端：
 
-- Web/API：<http://localhost:28647>
-- API 存活检查：<http://localhost:28647/health/live>
+- Web/API：<http://localhost:28648>
+- API 存活检查：<http://localhost:28648/health/live>
 
 默认开发拓扑只有 API 长驻运行。HMR 仅在显式启用 `hmr` profile 时提供：<http://localhost:5173>；HMR
 终端退出不影响 API。需要重新生成前端静态文件时可单独运行 `docker compose --env-file docker/.env

@@ -57,7 +57,7 @@ git diff --check
 ./scripts/verify-dev-user.sh
 ./scripts/verify-third-party.sh
 ./scripts/dev-up.sh
-curl --fail http://localhost:28647/health/live
+curl --fail http://localhost:28648/health/live
 curl --fail http://localhost:5173/
 ./scripts/dev-down.sh
 ```
