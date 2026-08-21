@@ -7,7 +7,7 @@ mkdir -p "$temp_parent"
 temp_root="$(mktemp -d "$temp_parent/identity.XXXXXX")"
 mkdir "$temp_root/data"
 project_name="cloudemuera-identity-${RANDOM}-${RANDOM}"
-cleanup() { docker compose --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/compose.dev.yaml" down --remove-orphans --volumes >/dev/null 2>&1 || true; rm -rf "$temp_root"; }
+cleanup() { docker compose --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml" down --remove-orphans --volumes >/dev/null 2>&1 || true; rm -rf "$temp_root"; }
 trap cleanup EXIT
 cat > "$temp_root/identity.env" <<EOF
 CLOUDEMUERA_UID=$CLOUDEMUERA_UID
@@ -26,6 +26,6 @@ case "$suite" in
   all) project='tests/CloudEmuera.Application.Tests tests/CloudEmuera.Infrastructure.Tests tests/CloudEmuera.Api.IntegrationTests';;
   *) echo 'invalid identity suite' >&2; exit 64;;
 esac
-docker compose --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/compose.dev.yaml" run --rm api \
+docker compose --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml" run --rm api \
   dotnet restore CloudEmuera.slnx --locked-mode
-for test_project in $project; do docker compose --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/compose.dev.yaml" run --rm api dotnet test "$test_project" --no-restore --configuration Release; done
+for test_project in $project; do docker compose --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml" run --rm api dotnet test "$test_project" --no-restore --configuration Release; done

@@ -638,13 +638,13 @@ schema 版本；不得继续用一个含糊数字代表所有协议。
 ```bash
 ./scripts/dev-up.sh
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Realtime.Tests --no-restore --configuration Release \
   --filter 'Category=Reconnect|Category=InputDeduplication|Category=WebSocketProtocol|Category=Authorization|Category=Backpressure'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
   --filter 'Category=Realtime|Category=Authorization|Category=SessionLifecycle'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
   --filter 'Category=Realtime|Category=Input|Category=WorkerDisconnect'
 ./scripts/check.sh

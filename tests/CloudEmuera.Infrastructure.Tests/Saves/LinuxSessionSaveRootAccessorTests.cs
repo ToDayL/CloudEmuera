@@ -2,6 +2,7 @@ using CloudEmuera.Application.Saves;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Infrastructure.Saves;
 using CloudEmuera.Infrastructure.Sessions;
+using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.RuntimeAdapter;
 using System.Runtime.Versioning;
 
@@ -107,6 +108,25 @@ public sealed class LinuxSessionSaveRootAccessorTests
         LinuxSessionSaveRootAccessor accessor = new(fixture.Options);
         SessionSaveException exception = await Assert.ThrowsAsync<SessionSaveException>(() => accessor.ListAsync(fixture.SessionId));
         Assert.Equal(SaveErrorCodes.SessionRootInvalid, exception.Code);
+        Assert.Equal(503, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task SaveListingStopsAtConfiguredFileCount()
+    {
+        using SaveRootFixture fixture = new(RuntimeSaveLayout.Root);
+        foreach (string name in new[] { "global.sav", "save00.sav" })
+        {
+            string path = Path.Combine(fixture.SaveRoot, name);
+            await File.WriteAllTextAsync(path, "0\n0\n");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+
+        InstanceCapacityOptions capacity = new() { MaxSaveListedFiles = 1 };
+        LinuxSessionSaveRootAccessor accessor = new(fixture.Options, capacity);
+
+        SessionSaveException exception = await Assert.ThrowsAsync<SessionSaveException>(() => accessor.ListAsync(fixture.SessionId));
+        Assert.Equal(SaveErrorCodes.ListLimitExceeded, exception.Code);
         Assert.Equal(503, exception.StatusCode);
     }
 

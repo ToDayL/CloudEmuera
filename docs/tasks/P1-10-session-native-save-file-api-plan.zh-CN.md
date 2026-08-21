@@ -514,13 +514,13 @@ tests/CloudEmuera.Api.IntegrationTests/SessionSaveApiContractTests.cs
 ```bash
 ./scripts/dev-up.sh
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
   --filter 'Category=SavePathSecurity'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore --configuration Release \
   --filter 'Category=SaveFormat|Category=SaveOperation|Category=Migration'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
   --filter 'Category=SessionSaves'
 ./scripts/check.sh

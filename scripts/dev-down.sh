@@ -6,4 +6,10 @@ cd "$repo_root"
 
 source "$repo_root/scripts/lib/dev-env.sh"
 
-docker compose -f compose.dev.yaml down
+compose=(docker compose)
+if [[ -f "$repo_root/docker/.env" ]]; then
+  compose+=(--env-file "$repo_root/docker/.env")
+fi
+compose+=(--file "$repo_root/docker/compose.dev.yml")
+
+"${compose[@]}" down

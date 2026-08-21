@@ -698,10 +698,10 @@ P1-11 要求 Chromium desktop/mobile 和至少一个 WebKit mobile smoke；Firef
 ./scripts/dev-up.sh
 
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm web \
+docker compose -f docker/compose.dev.yml run --rm web \
   sh -c 'pnpm install --frozen-lockfile && pnpm verify:contracts && pnpm typecheck:web && pnpm test:web && pnpm build:web'
 
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
   --filter 'Category=SessionAssets|Category=SessionLifecycle|Category=SessionSaves|Category=Realtime'
 

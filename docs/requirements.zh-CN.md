@@ -187,7 +187,7 @@ Session 1 ── 1 私有 SessionRoot
 ### 6.6 管理与运维
 
 - **OPS-001**：管理员必须能够查看 Session 状态、当前 Worker 标识/PID、心跳和最近错误，并能强制停止活动 Worker；MVP 不要求细粒度进程资源指标平台。
-- **OPS-002**：系统必须允许配置实例级最大活动 Worker 数、未启动 Session 数、游戏包/展开内容/文件数量、存档文件、ConsoleSnapshot/WebSocket 队列和 DataRoot 最低剩余空间上限；MVP 不要求按用户或进程拆分资源配额、调度、预留和计费。
+- **OPS-002**：系统必须允许配置实例级最大活动 Worker 数、未启动 Session 数、游戏包 archive/展开/单文件/entry、SessionRoot 文件数/字节、staging、存档文件/列表、ConsoleSnapshot/IPC/WebSocket 队列、presentation asset 和 DataRoot 最低剩余空间上限；MVP 不要求按用户或进程拆分资源配额、调度、预留和计费。
 - **OPS-003**：API 必须提供健康检查、就绪检查和版本信息。
 - **OPS-004**：日志必须包含可关联的 `requestId`、`sessionId`、`workerId` 和 `workerEpoch`，但不得记录密码或默认记录用户输入全文。
 - **OPS-005**：已实现的身份、资源变更、管理员终止、Game 内容启用和存档删除等关键审计事件必须保留；MVP 不要求通用审计界面或为普通连接/只读操作建立完整审计流水。
@@ -439,6 +439,11 @@ Worker 在收到时的单一输入临界区读取当前 prompt；没有 prompt �
 
 容器必须将一个宿主机数据目录挂载到 `/data`。所有游戏、Session、存档、日志和备份都必须使用该目录下的物理文件或目录：
 
+生产 Compose 必须允许部署者以启动服务账号的宿主机 UID/GID 运行 API、Worker、Validator 和
+Migrator；`CLOUDEMUERA_DATA_PATH` 未设置时使用 Docker named volume，设置后将该账号预先创建的
+数据目录 bind mount 到 `/data`。不得要求 bind mount 数据目录归镜像内固定 UID 所有，也不得以
+root entrypoint 自动修改目录所有权。
+
 ```text
 /data/
 ├── cloudemuera.db
@@ -456,9 +461,11 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 ## 12. 安全需求
 
 - **SEC-001**：游戏包、文件名和显示内容必须按不安全数据格式解析；部署者只应运行自己信任的游戏，系统不承诺安全执行恶意 ERB/Runtime 内容。
-- **SEC-002**：生产容器必须以非 root 身份运行，不得挂载容器管理接口、宿主密钥或无关宿主目录；Worker 不应主动使用公网，执行边界以容器整体限制和应用路径校验为准。
+- **SEC-002**：生产容器必须以部署者提供的非 root UID/GID 运行，不得挂载容器管理接口、宿主密钥或无关宿主目录；Worker 不应主动使用公网，执行边界以容器整体限制和应用路径校验为准。
 - **SEC-003**：Session 管理方只把分配的完整 SessionRoot 路径交给 Worker，正常 Worker 逻辑不得访问 Game 库或其他 SessionRoot；API 与 Worker 可以同 UID，故该约束不构成抵御恶意 Worker 的内核强制租户隔离。
-- **SEC-004**：ConsoleSnapshot、IPC/WebSocket 队列、ZIP 展开和 DataRoot 使用必须有实例级上限；CPU、内存和 PID 可由部署者在容器层整体限制，不要求细粒度进程资源治理。
+- **SEC-004**：ConsoleSnapshot、IPC/WebSocket 队列、ZIP archive/expanded/entry/single-file、SessionRoot
+  文件数/字节、存档列表、presentation asset 和 DataRoot 使用必须有实例级上限；CPU、内存和 PID 可由
+  部署者在容器层整体限制，不要求细粒度进程资源治理。
 - **SEC-005**：必须防止归档路径穿越、符号链接逃逸、大小写碰撞和超量解压。
 - **SEC-006**：浏览器渲染必须对文本和属性编码；Emuera HTML 必须转换为受支持的结构化节点。
 - **SEC-007**：Worker 本地 IPC 端点不得暴露到容器外；Worker 注册必须绑定 API 启动时签发的 Session、Worker 和 epoch 信息，不要求额外的跨实例服务身份挑战协议。
@@ -571,7 +578,7 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 ## 17. 待确认事项
 
 身份方案已确认采用本地账户、email 登录、可撤销 Cookie Session，以及仅未初始化实例读取
-`.env` 的首个管理员 bootstrap；切换 OIDC 的触发条件由 ADR-0001 记录。其余待确认事项：
+`docker/.env` 的首个管理员 bootstrap；切换 OIDC 的触发条件由 ADR-0001 记录。其余待确认事项：
 
 1. 多标签页是否需要显式“控制权租约”，还是采用第一个有效输入生效？
 2. MVP 对 Emuera HTML、Sprite、CBG 和音频分别承诺到什么兼容等级？

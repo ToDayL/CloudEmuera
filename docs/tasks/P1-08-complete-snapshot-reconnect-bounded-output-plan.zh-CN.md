@@ -335,13 +335,13 @@ queueBytes、resyncReason 和 closeReason。不得记录文本节点、按钮值
 ```bash
 ./scripts/dev-up.sh
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
   --filter 'Category=Snapshot|Category=ConsoleContract'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Realtime.Tests --no-restore --configuration Release \
   --filter 'Category=Snapshot|Category=Backpressure|Category=Concurrency'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
   --filter 'Category=Snapshot|Category=Backpressure'
 ./scripts/check.sh

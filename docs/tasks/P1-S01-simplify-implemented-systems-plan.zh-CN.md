@@ -72,10 +72,10 @@
 ### 验证
 
 ```bash
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
   --filter "Category=GameLibraryApi|Category=OpenApi"'
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm web \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm web \
   sh -c "pnpm install --frozen-lockfile && pnpm typecheck:web && pnpm test:web && pnpm build:web"'
 ```
 
@@ -105,7 +105,7 @@ bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml ru
 ### 验证
 
 ```bash
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore --configuration Release \
   --filter "Category=ArchiveQuota|Category=SessionLifecycle|Category=Persistence"'
 ```
@@ -133,10 +133,10 @@ bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml ru
 ### 验证
 
 ```bash
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Application.Tests tests/CloudEmuera.Infrastructure.Tests \
   --no-restore --configuration Release --filter "Category=SessionLifecycle|Category=WorkerLease"'
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.Tests --no-restore --configuration Release'
 ```
 
@@ -165,7 +165,7 @@ bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml ru
 ### 验证
 
 ```bash
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests tests/CloudEmuera.Api.IntegrationTests \
   --no-restore --configuration Release --filter "Category=Audit|Category=Health|Category=OpenApi"'
 ```

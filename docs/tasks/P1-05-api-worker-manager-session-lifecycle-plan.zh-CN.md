@@ -533,23 +533,23 @@ reason、PID identity 摘要和 correlation ID。禁止记录 token、输入值�
 ./scripts/dev-up.sh
 
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Domain.Tests --no-restore \
   --configuration Release --filter 'FullyQualifiedName~SessionStateMachineTests'
 
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Application.Tests --no-restore \
   --configuration Release --filter 'Category=SessionLifecycle'
 
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore \
   --configuration Release --filter 'Category=Migration|Category=WorkerLease'
 
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore \
   --configuration Release --filter 'Category=ProcessIsolation'
 
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore \
   --configuration Release --filter 'Category=ConsoleContract'
 

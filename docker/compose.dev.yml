@@ -3,8 +3,8 @@ name: cloudemuera-dev
 services:
   api:
     build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.dev
+      context: ..
+      dockerfile: docker/Dockerfile.dev
       target: dotnet-dev
       args:
         DEV_UID: "${CLOUDEMUERA_UID:-1000}"
@@ -27,11 +27,40 @@ services:
       CloudEmuera__DataPath: /data
       CloudEmuera__Capacity__MaxActiveWorkers: "${CLOUDEMUERA_CAPACITY_MAX_ACTIVE_WORKERS-}"
       CloudEmuera__Capacity__MaxInactiveSessions: "${CLOUDEMUERA_CAPACITY_MAX_INACTIVE_SESSIONS-}"
+      CloudEmuera__Capacity__MaxArchiveBytes: "${CLOUDEMUERA_CAPACITY_MAX_ARCHIVE_BYTES-}"
       CloudEmuera__Capacity__MaxGamePackageBytes: "${CLOUDEMUERA_CAPACITY_MAX_GAME_PACKAGE_BYTES-}"
+      CloudEmuera__Capacity__MaxExpandedBytes: "${CLOUDEMUERA_CAPACITY_MAX_EXPANDED_BYTES-}"
+      CloudEmuera__Capacity__MaxArchiveSingleFileBytes: "${CLOUDEMUERA_CAPACITY_MAX_ARCHIVE_SINGLE_FILE_BYTES-}"
+      CloudEmuera__Capacity__MaxArchiveEntryCount: "${CLOUDEMUERA_CAPACITY_MAX_ARCHIVE_ENTRY_COUNT-}"
       CloudEmuera__Capacity__MaxSessionRootBytes: "${CLOUDEMUERA_CAPACITY_MAX_SESSION_ROOT_BYTES-}"
+      CloudEmuera__Capacity__MaxSessionRootFileCount: "${CLOUDEMUERA_CAPACITY_MAX_SESSION_ROOT_FILE_COUNT-}"
       CloudEmuera__Capacity__MaxStagingReservedBytes: "${CLOUDEMUERA_CAPACITY_MAX_STAGING_RESERVED_BYTES-}"
       CloudEmuera__Capacity__MaxSaveFileBytes: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_FILE_BYTES-}"
+      CloudEmuera__Capacity__MaxSaveListedFiles: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_LISTED_FILES-}"
+      CloudEmuera__Capacity__MaxSaveListBytes: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_LIST_BYTES-}"
       CloudEmuera__Capacity__MinDataRootFreeBytes: "${CLOUDEMUERA_CAPACITY_MIN_DATA_ROOT_FREE_BYTES-}"
+      CloudEmuera__Realtime__SnapshotMaxBytes: "${CLOUDEMUERA_REALTIME_SNAPSHOT_MAX_BYTES-}"
+      CloudEmuera__Realtime__BatchTargetBytes: "${CLOUDEMUERA_REALTIME_BATCH_TARGET_BYTES-}"
+      CloudEmuera__Realtime__BatchMaxTransactions: "${CLOUDEMUERA_REALTIME_BATCH_MAX_TRANSACTIONS-}"
+      CloudEmuera__Realtime__BatchMaxDelayMilliseconds: "${CLOUDEMUERA_REALTIME_BATCH_MAX_DELAY_MILLISECONDS-}"
+      CloudEmuera__Realtime__QueueSoftBytes: "${CLOUDEMUERA_REALTIME_QUEUE_SOFT_BYTES-}"
+      CloudEmuera__Realtime__QueueHardBytes: "${CLOUDEMUERA_REALTIME_QUEUE_HARD_BYTES-}"
+      CloudEmuera__Realtime__QueueSoftMessages: "${CLOUDEMUERA_REALTIME_QUEUE_SOFT_MESSAGES-}"
+      CloudEmuera__Realtime__QueueHardMessages: "${CLOUDEMUERA_REALTIME_QUEUE_HARD_MESSAGES-}"
+      CloudEmuera__Realtime__MaxConnections: "${CLOUDEMUERA_REALTIME_MAX_CONNECTIONS-}"
+      CloudEmuera__Realtime__MaxConnectionsPerSession: "${CLOUDEMUERA_REALTIME_MAX_CONNECTIONS_PER_SESSION-}"
+      CloudEmuera__Realtime__MaxPendingInputsPerConnection: "${CLOUDEMUERA_REALTIME_MAX_PENDING_INPUTS_PER_CONNECTION-}"
+      CloudEmuera__Realtime__MaxPendingInputsPerWorker: "${CLOUDEMUERA_REALTIME_MAX_PENDING_INPUTS_PER_WORKER-}"
+      CloudEmuera__Realtime__ControlQueueMaxBytes: "${CLOUDEMUERA_REALTIME_CONTROL_QUEUE_MAX_BYTES-}"
+      CloudEmuera__Realtime__ControlQueueMaxMessages: "${CLOUDEMUERA_REALTIME_CONTROL_QUEUE_MAX_MESSAGES-}"
+      CloudEmuera__Realtime__EnvelopeMaxBytes: "${CLOUDEMUERA_REALTIME_ENVELOPE_MAX_BYTES-}"
+      CloudEmuera__Worker__PendingEventMaxBytes: "${CLOUDEMUERA_WORKER_PENDING_EVENT_MAX_BYTES-}"
+      CloudEmuera__Worker__PendingEventMaxMessages: "${CLOUDEMUERA_WORKER_PENDING_EVENT_MAX_MESSAGES-}"
+      CloudEmuera__Assets__MaxManifestBytes: "${CLOUDEMUERA_ASSETS_MAX_MANIFEST_BYTES-}"
+      CloudEmuera__Assets__MaxAssetBytes: "${CLOUDEMUERA_ASSETS_MAX_ASSET_BYTES-}"
+      CloudEmuera__Assets__MaxRangeBytes: "${CLOUDEMUERA_ASSETS_MAX_RANGE_BYTES-}"
+      CloudEmuera__Assets__MaxConcurrentReads: "${CLOUDEMUERA_ASSETS_MAX_CONCURRENT_READS-}"
+      CloudEmuera__Assets__MaxInFlightBytes: "${CLOUDEMUERA_ASSETS_MAX_IN_FLIGHT_BYTES-}"
       CLOUDEMUERA_DEV_CONTAINER: "1"
       CLOUDEMUERA_RUNTIME_DEBUG_TRACE: "${CLOUDEMUERA_RUNTIME_DEBUG_TRACE-}"
       CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME: "${CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME-}"
@@ -40,15 +69,15 @@ services:
     ports:
       - "${CLOUDEMUERA_HTTP_PORT:-28647}:28647"
     volumes:
-      - .:/workspace
-      - ${CLOUDEMUERA_DATA_PATH:-./data}:/data
+      - ..:/workspace
+      - ${CLOUDEMUERA_DATA_PATH:-../data}:/data
       - nuget-cache-v2:/var/cache/nuget
     init: true
 
   web:
     build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.dev
+      context: ..
+      dockerfile: docker/Dockerfile.dev
       target: web-dev
       args:
         DEV_UID: "${CLOUDEMUERA_UID:-1000}"
@@ -70,7 +99,7 @@ services:
     ports:
       - "${CLOUDEMUERA_WEB_PORT:-5173}:5173"
     volumes:
-      - .:/workspace
+      - ..:/workspace
       - pnpm-store-v2:/var/cache/pnpm
       - corepack-cache-v2:/var/cache/corepack
     depends_on:
@@ -80,8 +109,8 @@ services:
   e2e:
     profiles: ["e2e"]
     build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.dev
+      context: ..
+      dockerfile: docker/Dockerfile.dev
       target: e2e-dev
       args:
         DEV_UID: "${CLOUDEMUERA_UID:-1000}"
@@ -99,7 +128,7 @@ services:
       CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
       CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
     volumes:
-      - .:/workspace
+      - ..:/workspace
       - pnpm-store-v2:/var/cache/pnpm
       - corepack-cache-v2:/var/cache/corepack
     init: true

@@ -604,15 +604,15 @@ notes
 ```bash
 ./scripts/dev-up.sh
 
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
   --filter "Category=ConsoleContract|Category=RichOutput|Category=Architecture"'
 
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeCompatibility.Tests --no-restore --configuration Release \
   --filter "Category=RuntimeBridge|Category=EmueraFeatureMatrix"'
 
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
   --filter "Category=ConsoleProtocol|Category=Snapshot"'
 

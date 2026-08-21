@@ -729,23 +729,23 @@ UDS 和 Worker stderr 注入唯一 canary，捕获结构化 logger state 和渲�
 ```bash
 ./scripts/dev-up.sh
 
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Domain.Tests --no-restore --configuration Release \
   --filter "Category=SessionLifecycle"'
 
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore --configuration Release \
   --filter "Category=AdminDiagnostics|Category=WorkerLifecycle|Category=Health"'
 
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
   --filter "Category=AdminApi|Category=Health|Category=LoggingPrivacy|Category=OpenApi"'
 
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
   --filter "Category=WorkerLifecycle|Category=AdminForceStop"'
 
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm web \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm web \
   sh -c "pnpm install --frozen-lockfile && pnpm typecheck:web && pnpm test:web && pnpm build:web"'
 
 ./scripts/check.sh

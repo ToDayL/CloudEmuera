@@ -18,7 +18,7 @@ temp_root="$(mktemp -d "$temp_parent/session-ui-e2e.XXXXXX")"
 mkdir "$temp_root/data"
 project_name="cloudemuera-session-ui-e2e-${RANDOM}-${RANDOM}"
 cleanup() {
-  docker compose --profile e2e --env-file "$temp_root/session-ui.env" -p "$project_name" -f "$repo_root/compose.dev.yaml" down --remove-orphans --volumes >/dev/null 2>&1 || true
+  docker compose --profile e2e --env-file "$temp_root/session-ui.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml" down --remove-orphans --volumes >/dev/null 2>&1 || true
   chmod -R u+w "$temp_root" >/dev/null 2>&1 || true
   rm -rf "$temp_root"
 }
@@ -36,7 +36,7 @@ CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL=session-ui-admin@example.test
 CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=session-ui-temporary-password
 EOF
 
-compose=(docker compose --profile e2e --env-file "$temp_root/session-ui.env" -p "$project_name" -f "$repo_root/compose.dev.yaml")
+compose=(docker compose --profile e2e --env-file "$temp_root/session-ui.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml")
 if ! "$skip_build"; then
   "${compose[@]}" run --rm api dotnet restore CloudEmuera.slnx --locked-mode
   "${compose[@]}" run --rm api dotnet run --project src/CloudEmuera.Migrator -- migrate --data-root /data

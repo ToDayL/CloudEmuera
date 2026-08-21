@@ -33,7 +33,7 @@ P1-02 要把当前“任意用户名都能进入”的展示前端变为以邮�
 - 浏览器持有的是加密、HttpOnly 的同源 Cookie；每个 Cookie 对应 SQLite 中可撤销的
   `auth_sessions` 记录，因此注销、禁用账户、修改角色、修改或重置密码后旧 Cookie 失效；
 - API 进程重启后，只要 Data Protection key ring 和 SQLite 仍在，未过期会话继续有效；
-- MVP 不开放匿名注册。全新实例首次启动时从 `.env` bootstrap 配置自动创建首个管理员，
+- MVP 不开放匿名注册。全新实例首次启动时从 `docker/.env` bootstrap 配置自动创建首个管理员，
   并要求该管理员首次登录后修改临时密码；之后只有管理员才能创建玩家账户；
 - 普通玩家不能读取、控制或探测其他用户的私有 Game、Session 和 Save；共享 Game 只扩大
   读取权，不扩大编辑、发布或 Session/Save 权限；
@@ -52,7 +52,7 @@ P1-02 不实现游戏包、Game/Session/Save 正式业务 API，也不实现完�
 
 - MVP 只支持本地邮箱和密码登录；用户名仅作为账户显示名和管理标识，不是登录凭据；
 - 不提供公开注册、邮件找回密码、OAuth/OIDC、API token 或“访客模式”；
-- 部署者在项目根目录、不提交 Git 的 `.env` 中配置：
+- 部署者在 `docker/` 目录、不提交 Git 的 `.env` 中配置：
 
   ```dotenv
   CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME=admin
@@ -69,13 +69,13 @@ P1-02 不实现游戏包、Game/Session/Save 正式业务 API，也不实现完�
 - 即使数据库以后没有 ACTIVE ADMIN，也绝不能重新执行 bootstrap；
 - 后续用户由已登录管理员通过管理 API 创建；管理员设置临时密码，用户首次登录后必须修改；
 - P1-02 不提供管理员密码灾难恢复命令。恢复机制留给后续运维任务，且不得重新启用 bootstrap；
-- `.env` 必须已被 `.gitignore` 排除。应用、脚本和测试不能打印 bootstrap password，也不能把它
+- `docker/.env` 必须已被 `.gitignore` 排除。应用、脚本和测试不能打印 bootstrap password，也不能把它
   写入审计 metadata；用户已明确接受它作为个人部署的简化凭据传递方式；
 - 不创建硬编码 demo 用户或镜像内默认凭据。自动化测试只使用隔离环境变量和临时数据库。
 
 实现阶段必须新增 `ADR-0001-local-identity-and-oidc-trigger.md`，记录：
 
-1. 当前采用本地身份、服务端可撤销 Cookie session、仅首次启动读取 `.env` bootstrap 且无
+1. 当前采用本地身份、服务端可撤销 Cookie session、仅首次启动读取 `docker/.env` bootstrap 且无
    公开注册；
 2. bootstrap 完成后的永久关闭语义、首次登录强制改密，以及管理员恢复为何不得重跑 bootstrap；
 3. 不在 MVP 提前引入 OIDC 的原因；
@@ -135,7 +135,7 @@ token 存储、轮换和浏览器暴露面。未来非浏览器客户端需要 t
 - 不把 CSRF token 当作身份凭据，也不以 CORS 代替 CSRF；
 - 不记录原始密码、password hash、Cookie、Authorization、CSRF token、session ID、输入全文或
   完整邮箱或用户名到日志/审计 metadata；
-- 不在 API 启动时自动运行 migration；schema 已兼容且 instance 未初始化时，API 才按 `.env`
+- 不在 API 启动时自动运行 migration；schema 已兼容且 instance 未初始化时，API 才按 `docker/.env`
   自动创建一次管理员；
 - 不在 P1-02 实现管理员遗失密码后的离线恢复；该能力不能通过检测“无管理员”自动开启；
 - 不在本步骤重构展示页的游戏、Session、存档假数据；只替换身份相关假行为和用户显示。
@@ -280,7 +280,7 @@ password_changed_at INTEGER NULL
   `password_changed_at` 保守回填为原 `updated_at` 并设置 `must_change_password=1`，不能因新增
   CHECK 使带数据升级失败，也不能把来源未验证的旧密码视为已完成首次改密；
 - 管理员创建/重置的临时密码设置 `must_change_password=1`；用户成功自行改密后设为 0；
-- bootstrap 管理员使用 `.env` 临时密码，设置为 1。
+- bootstrap 管理员使用 `docker/.env` 临时密码，设置为 1。
 
 P1-01 已有 User 行回填 email=NULL，数据保持但不能登录；管理员以后为其设置唯一 email 后才能
 使用。migration 不根据 login_name 猜测邮箱。新的 bootstrap/admin-created 用户必须同时提供
@@ -798,7 +798,7 @@ InMemory provider 替代 SQLite 约束。
    确定性迁移为 COMPLETED；
 7. schema 落后/未知、instance singleton 缺失或非法时 ready fail closed；
 8. bootstrap 密码仅产生 Identity hash，首次用 bootstrap email 登录后只能改密闭环；
-9. 测试宿主显式注入配置，不能从仓库根 `.env` 或调用进程的同名变量意外取值；
+9. 测试宿主显式注入配置，不能从 `docker/.env` 或调用进程的同名变量意外取值；
 10. 并行测试各用独立临时 SQLite/DataRoot，清理只触及本测试生成的绝对路径。
 
 `Category=Authentication` 至少覆盖：
@@ -872,15 +872,15 @@ InMemory provider 替代 SQLite 约束。
 5. 管理员登录后显示真实 username/email/角色 → 注销 → 受保护页返回登录；
 6. PLAYER 无管理员入口且访问 admin route 被拒绝；ADMIN 能打开用户管理；
 7. 在一个移动 viewport 完成邮箱登录、改密错误显示和注销；
-8. 测试结束不在仓库 `.env`/`data/` 留修改、用户、Cookie、key 或临时数据库。
+8. 测试结束不在 `docker/.env`/`data/` 留修改、用户、Cookie、key 或临时数据库。
 
 P1-02 不要求五浏览器执行完整业务旅程；完整浏览器矩阵仍在 P1-10/P1-14。
 
-## 14. `.env` 首次管理员 bootstrap
+## 14. `docker/.env` 首次管理员 bootstrap
 
 ### 14.1 配置契约
 
-项目根 `.env` 为个人部署的人工配置入口，示例固定为：
+`docker/.env` 为个人部署的人工配置入口，示例固定为：
 
 ```dotenv
 CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME=admin
@@ -890,14 +890,14 @@ CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password
 
 三个变量仅在持久状态为 BOOTSTRAP_REQUIRED 时全部必需。username 使用 6.2 的显示名规则，email
 使用 6.1 的登录邮箱规则，password 使用 6.3 的密码规则；示例值
-`CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password` 是本项目固定的简化初始值。`.env`
+`CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password` 是本项目固定的简化初始值。`docker/.env`
 不得提交 Git，应用不得打印其内容。首次改密完成后部署者可以删除这三个变量，也可以保留固定的
 `temporary-password` 示例值；COMPLETED 实例无论变量仍在、缺失或变化都必须忽略它们。
 
-`compose.dev.yaml` 的 API service 必须把三个值显式映射进容器，例如
+`docker/compose.dev.yml` 的 API service 必须把三个值显式映射进容器，例如
 `CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL: ${CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL}`；只向 Compose 传
 `--env-file` 不会自动形成容器环境。生产入口也必须显式传入，应用本身不能读取仓库路径或
-`.env.example`。缺值必须保持缺值并触发 readiness 错误，Compose 不能用隐式默认管理员补齐。
+`docker/.env.example`。缺值必须保持缺值并触发 readiness 错误，Compose 不能用隐式默认管理员补齐。
 
 ### 14.2 启动与原子创建
 
@@ -922,8 +922,8 @@ API 在接受登录/业务流量前执行：
 人工开发与自动化校验可以共用同一 checkout，但不能共用配置解析上下文、Compose project、端口
 或持久数据：
 
-- 人工运行 `./scripts/dev-up.sh` 时使用仓库根 `.env`、正常 `./data`、固定开发 project/端口；
-- 自动化脚本绝不能读取、source、修改、覆盖或删除仓库根 `.env`，也不能触碰人工 `./data`；
+- 人工运行 `./scripts/dev-up.sh` 时使用 `docker/.env`、正常 `./data`、固定开发 project/端口；
+- 自动化脚本绝不能读取、source、修改、覆盖或删除 `docker/.env`，也不能触碰人工 `./data`；
 - 每次自动化在 `mktemp -d` 生成专属 env 文件与 DataRoot，并显式传递
   `docker compose --env-file <absolute-temp-env> -p <unique-project>`；不得依赖 Compose 自动加载
   当前目录 `.env`；
@@ -934,16 +934,16 @@ API 在接受登录/业务流量前执行：
 - 并行任务使用唯一 project name、独立 SQLite/key ring/DataRoot；能用 `compose run` 而无需发布
   端口的测试不发布端口，E2E 使用动态空闲端口并写入专属 env；
 - cleanup/trap 只允许对本次已记录且位于临时根下的绝对路径和唯一 Compose project 操作，不能
-  删除根 `.env`、`./data` 或停止人工 project；
+  删除 `docker/.env`、`./data` 或停止人工 project；
 - `scripts/lib/dev-env.sh` 应扩展/配套一个 test-env helper，集中生成和验证上述参数。所有身份 E2E
   和 CI 只能调用 helper，不各自复制容易漂移的 Compose 命令；
-- 静态测试必须证明自动化脚本不引用仓库根 `.env`/`./data`；集成测试在专属 fixture project
+- 静态测试必须证明自动化脚本不引用 `docker/.env`/`./data`；集成测试在专属 fixture project
   directory 中放置 sentinel `.env`，再显式传临时 env 并断言 sentinel 未被读取。若真实 checkout
-  已存在人工 `.env`/SQLite，只做运行前后 fingerprint 比较，测试不得创建或改写它们；另有并行
+  已存在人工 `docker/.env`/SQLite，只做运行前后 fingerprint 比较，测试不得创建或改写它们；另有并行
   启动测试证明两个自动化 project 互不覆盖。
 
-`.env.example` 可以提交上述示例值，但它不是运行时 secret，也不能被 API 自行读取为默认配置。
-若使用者没有复制为 `.env`，全新实例应明确 ready 失败，而不是用示例账户静默启动。
+`docker/.env.example` 可以提交上述示例值，但它不是运行时 secret，也不能被 API 自行读取为默认配置。
+若使用者没有复制为 `docker/.env`，全新实例应明确 ready 失败，而不是用示例账户静默启动。
 
 ### 14.4 管理员遗失访问权
 
@@ -1003,7 +1003,7 @@ bootstrap：
 
 ### 阶段 F：文档与质量门
 
-1. 更新 requirements/design 中实际 Cookie/session、`.env` bootstrap、邮箱登录和 AUTH-005 分工；
+1. 更新 requirements/design 中实际 Cookie/session、`docker/.env` bootstrap、邮箱登录和 AUTH-005 分工；
 2. 更新部署说明，说明 HTTPS、Data Protection key 备份、人工/自动化隔离、首次管理员和恢复边界；
 3. 更新开发计划的实际 migration id、测试数量和命令；
 4. 扫描代码/日志/测试快照，确认没有 demo 密码和 secret；
@@ -1022,7 +1022,7 @@ bootstrap：
 ./scripts/test-identity.sh --suite api
 
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm web \
+docker compose -f docker/compose.dev.yml run --rm web \
   sh -c 'pnpm install --frozen-lockfile && pnpm typecheck:web && pnpm test:web && pnpm build:web'
 ```
 
@@ -1034,7 +1034,7 @@ docker compose -f compose.dev.yaml run --rm web \
 
 脚本必须按 14.3 创建隔离 env/DataRoot/project/端口，运行 Migrator、启动 API/Web，以测试专属
 bootstrap 邮箱和固定临时密码完成登录/强制改密，再执行 Playwright、停止专属 project 并只清理
-专属临时目录。脚本不得读取或改变仓库根 `.env` 与人工 `./data`；密码不能出现在 argv 或输出。
+专属临时目录。脚本不得读取或改变 `docker/.env` 与人工 `./data`；密码不能出现在 argv 或输出。
 `scripts/check.sh` 必须调用 `test-identity.sh`，且不得用默认人工 project 重复执行这些测试。
 
 完整质量门：
@@ -1051,7 +1051,7 @@ git diff --check
 
 P1-02 只有同时满足以下条件才可标记 DONE：
 
-1. ADR-0001 记录本地身份、邮箱登录、可撤销 Cookie session、`.env` bootstrap 和 OIDC 触发条件；
+1. ADR-0001 记录本地身份、邮箱登录、可撤销 Cookie session、`docker/.env` bootstrap 和 OIDC 触发条件；
 2. 新 migration 从 P1-01 带数据升级成功，失败回滚和备份恢复测试通过；
 3. 没有默认 `AspNet*` 表；自定义 instance/users/auth_sessions schema 与模型一致；
 4. 没有公开注册或硬编码运行时用户；首次启动只从三个 bootstrap 变量原子创建一个管理员，
@@ -1075,7 +1075,7 @@ P1-02 只有同时满足以下条件才可标记 DONE：
 20. Application、Infrastructure、API、Web 定向测试以及全量质量门全部通过；P0/P1-01 无回归；
 21. 配置、ADR、部署说明、HTTP 契约、锁文件和开发计划与实现一致；
 22. 自动化使用独立 temp env/DataRoot/Compose project/端口，静态和动态测试证明不会读取或修改
-    同一 checkout 的人工 `.env`、`./data` 或开发容器。
+    同一 checkout 的人工 `docker/.env`、`./data` 或开发容器。
 
 ## 18. 实现交接清单
 
@@ -1089,7 +1089,7 @@ P1-02 只有同时满足以下条件才可标记 DONE：
 - [x] 实现 email-only auth/admin endpoints、Cookie/CSRF/Data Protection/rate limit；
 - [x] 实现资源 authorizer 与 WebSocket 授权接口，不添加生产测试后门；
 - [x] 接通 React 邮箱登录、强制改密、管理员用户管理、guards 和 logout；
-- [x] 实现并验证人工 `.env` 与自动化临时环境的隔离 helper；
+- [x] 实现并验证人工 `docker/.env` 与自动化临时环境的隔离 helper；
 - [x] 完成组件/API/SQLite/并发/进程/E2E 测试；
 - [x] 执行全量质量门并记录实际测试数量（262 .NET、6 Web，另含桌面/移动 E2E）；
 - [x] 全部通过后标记 P1-02 DONE、P1-03 NEXT。

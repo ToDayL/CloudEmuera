@@ -192,14 +192,14 @@ message InputResult {
 
 ```bash
 ./scripts/dev-up.sh
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests tests/CloudEmuera.RuntimeCompatibility.Tests \
   --no-restore --configuration Release --filter "Category=ConsoleContract|Category=RuntimeBridge|Category=InputDeduplication"'
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Ipc.ContractTests tests/CloudEmuera.Realtime.Tests \
   tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
   --filter "Category=InputDeduplication|Category=WebSocketProtocol|Category=Realtime|Category=RuntimeBridge"'
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm web \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm web \
   sh -c "pnpm install --frozen-lockfile && pnpm typecheck:web && pnpm test:web && pnpm build:web"'
 ./scripts/check.sh
 git diff --check

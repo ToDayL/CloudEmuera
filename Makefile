@@ -10,13 +10,13 @@ verify-dev-user:
 	./scripts/verify-dev-user.sh
 
 restore:
-	docker compose -f compose.dev.yaml run --rm api dotnet restore CloudEmuera.slnx
+	docker compose -f docker/compose.dev.yml run --rm api dotnet restore CloudEmuera.slnx
 
 build:
-	docker compose -f compose.dev.yaml run --rm api dotnet build CloudEmuera.slnx --no-restore
+	docker compose -f docker/compose.dev.yml run --rm api dotnet build CloudEmuera.slnx --no-restore
 
 test:
-	docker compose -f compose.dev.yaml run --rm api dotnet test CloudEmuera.slnx --no-restore
+	docker compose -f docker/compose.dev.yml run --rm api dotnet test CloudEmuera.slnx --no-restore
 
 check:
 	./scripts/check.sh

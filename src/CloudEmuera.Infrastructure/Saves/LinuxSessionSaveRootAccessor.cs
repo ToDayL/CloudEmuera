@@ -2,6 +2,7 @@ using System.Text.Json;
 using CloudEmuera.Application.Saves;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Infrastructure.Sessions;
+using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.RuntimeAdapter;
 using Microsoft.Win32.SafeHandles;
@@ -13,11 +14,12 @@ namespace CloudEmuera.Infrastructure.Saves;
 /// save root. User paths are parsed before every operation and are never used
 /// to address a filesystem entry directly.
 /// </summary>
-public sealed class LinuxSessionSaveRootAccessor(SqliteDatabaseOptions databaseOptions) : ISessionSaveRootAccessor
+public sealed class LinuxSessionSaveRootAccessor(
+    SqliteDatabaseOptions databaseOptions,
+    InstanceCapacityOptions? capacityOptions = null) : ISessionSaveRootAccessor
 {
-    private const int MaximumListedFiles = 4096;
-    private const long MaximumListBytes = 8L * 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly InstanceCapacityOptions capacity = capacityOptions ?? InstanceCapacityOptions.Default;
 
     public Task<SessionSaveRootSnapshot> ListAsync(string sessionId, CancellationToken cancellationToken = default)
     {
@@ -393,7 +395,7 @@ public sealed class LinuxSessionSaveRootAccessor(SqliteDatabaseOptions databaseO
         }
     }
 
-    private static void Enumerate(
+    private void Enumerate(
         SafeFileHandle directory,
         RuntimeSaveLayout layout,
         string? prefix,
@@ -441,9 +443,20 @@ public sealed class LinuxSessionSaveRootAccessor(SqliteDatabaseOptions databaseO
                 ToApplicationKind(EmueraSavePathPolicy.ClassifyFileName(leaf)),
                 fixedIdentity.Size,
                 ToDateTimeOffset(fixedIdentity)));
-            if (items.Count > MaximumListedFiles || items.Sum(static item => (long)item.Path.Length) > MaximumListBytes)
-                throw new SessionSaveException(SaveErrorCodes.StorageFailure, "存档列表超过容量限制。", 503);
+            if (items.Count > capacity.MaxSaveListedFiles || GetEncodedListBytes(layout, items) > capacity.MaxSaveListBytes)
+                throw new SessionSaveException(SaveErrorCodes.ListLimitExceeded, "存档列表超过实例容量限制。", 503);
         }
+    }
+
+    private static long GetEncodedListBytes(RuntimeSaveLayout layout, IReadOnlyList<SessionSaveItem> items)
+    {
+        string layoutName = layout == RuntimeSaveLayout.Root ? "ROOT" : "SAV_DIRECTORY";
+        return JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            schemaVersion = 1,
+            layout = layoutName,
+            items,
+        }, JsonOptions).LongLength;
     }
 
     private static SafeFileHandle OpenSaveParent(SafeFileHandle saveRoot, string path, RuntimeSaveLayout layout, out string leaf, out EmueraSavePath parsed)

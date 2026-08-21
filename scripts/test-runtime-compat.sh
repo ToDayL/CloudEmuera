@@ -9,7 +9,7 @@ project="$repo_root/tests/CloudEmuera.RuntimeCompatibility.Tests/CloudEmuera.Run
 # script is already running there, continue below without recursing.
 if [[ "${CLOUDEMUERA_DEV_CONTAINER:-}" != "1" && ! -e /.dockerenv ]]; then
   source "$repo_root/scripts/lib/dev-env.sh"
-  exec docker compose -f "$repo_root/compose.dev.yaml" run --rm --no-deps api \
+  exec docker compose -f "$repo_root/docker/compose.dev.yml" run --rm --no-deps api \
     bash /workspace/scripts/test-runtime-compat.sh "$@"
 fi
 

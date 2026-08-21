@@ -175,7 +175,7 @@ session 与私有 file view；回归测试确认超时后第二个 host 可以�
 ./scripts/test-runtime-compat.sh --scenario save-root
 ./scripts/test-runtime-compat.sh --scenario save-directory
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore \
   --configuration Release --filter 'Category=SessionRoot|Category=SaveIsolation'
 ```
@@ -205,9 +205,9 @@ RuntimeCompatibility 全量 26 项、Domain 4 项通过；新增 `前`/`後` 日
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Ipc.ContractTests --no-restore --configuration Release
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore \
   --configuration Release --filter 'Category=ProcessIsolation'
 ```
@@ -303,7 +303,7 @@ UTC 时间约定；独占 Migrator、迁移前一致性备份和失败回滚。
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore \
   --configuration Release --filter 'Category=Migration|Category=PersistenceConstraint'
 ```
@@ -379,7 +379,7 @@ Protection owner/type/link/mode 校验。新增 P1-01 带数据升级、并发�
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.GamePackages.Tests --no-restore \
   --configuration Release --filter 'Category=ArchiveSecurity|Category=Encoding'
 ```
@@ -476,13 +476,13 @@ HTTP API；P1-06 通过 Application coordinator 接入。
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Application.Tests --no-restore --configuration Release \
   --filter 'Category=SessionLifecycle'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore --configuration Release \
   --filter 'Category=SessionLifecycle|Category=WorkerLease'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
   --filter 'Category=ProcessIsolation'
 ```
@@ -523,7 +523,7 @@ content digest/manifest 固定；API Worker Manager 编排；关闭与输入、o
 
 ```bash
 ./scripts/dev-up.sh
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
   --filter Category=SessionLifecycle'
 ```
@@ -585,10 +585,10 @@ HTML_PRINT 上游解析复用补充方案：[`tasks/P1-07-html-print-upstream-pa
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
   --filter 'Category=ConsoleContract|Category=TimedInput|Category=RichOutput'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeCompatibility.Tests --no-restore --configuration Release \
   --filter 'Category=RuntimeBridge|Category=EmueraFeatureMatrix'
 ./scripts/verify-runtime-fixtures.sh
@@ -653,13 +653,13 @@ ack 补发或 snapshot/subscribe 无丢失屏障。
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Realtime.Tests --no-restore --configuration Release \
   --filter 'Category=Snapshot|Category=Backpressure'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
   --filter 'Category=Snapshot|Category=ConsoleContract'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests --no-restore --configuration Release \
   --filter 'Category=Snapshot|Category=Backpressure'
 ```
@@ -688,7 +688,7 @@ docker compose -f compose.dev.yaml run --rm api \
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Realtime.Tests --no-restore --configuration Release \
   --filter 'Category=Reconnect|Category=InputDeduplication|Category=WebSocketProtocol|Category=Authorization|Category=Backpressure'
 ```
@@ -724,13 +724,13 @@ generation、Session 间直接传输 API、签名 URL 或内容级 Game 摘要�
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore --configuration Release \
   --filter 'Category=SavePathSecurity'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore --configuration Release \
   --filter 'Category=SaveFormat|Category=SaveOperation|Category=Migration'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
   --filter 'Category=SessionSaves'
 ```
@@ -766,7 +766,7 @@ runtime asset/presentation manifest API，以及 P1-07 定义的全部结构化�
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm web \
+docker compose -f docker/compose.dev.yml run --rm web \
   sh -c 'pnpm install --frozen-lockfile && CLOUDEMUERA_OPENAPI_URL=http://api:28647/openapi/v1.json pnpm verify:contracts && pnpm typecheck:web && pnpm test:web && pnpm build:web'
 ./scripts/test-session-ui-e2e.sh
 ```
@@ -838,9 +838,11 @@ force-stop、`/health/live`/`/health/ready`/`/api/v1/version` 契约、数据库
 结构化关联日志和敏感字段策略；Blocked Game 的 UI/门控/SessionRoot 保留行为也已完成回归。验证：
 `./scripts/check.sh`、`./scripts/verify-dev-user.sh`、`./scripts/verify-third-party.sh`。
 
-### P1-13 — 基础 Worker 进程边界与实例级上限（TODO）
+### P1-13 — 基础 Worker 进程边界与实例级上限（DONE）
 
 需求映射：SEC、OPS-002、AC-010、ADR-0017。
+
+详细方案：[`tasks/P1-13-worker-boundary-instance-limits-plan.zh-CN.md`](tasks/P1-13-worker-boundary-instance-limits-plan.zh-CN.md)。
 
 交付物：生产容器非 root；不挂 Docker socket/宿主密钥/无关路径；Worker 只接收已验证 SessionRoot
 与启动 binding；实例级最大活动 Worker、上传/展开/文件数量、存档、Snapshot/队列和最低剩余空间
@@ -868,11 +870,24 @@ Infrastructure 与 Web 回归测试覆盖正常删除、活动态拒绝、崩溃
 Worker 启动校验和迁移回填均不再依赖数据库中的大 JSON 字段。新增旧库删列迁移与最终 schema 字段断言，
 避免 Session runtime manifest 因 SQLite 单字段上限失败。
 
+实施记录（2026-08-21）：新增并接受 [`ADR-0027`](adr/0027-instance-capacity-and-production-boundary.md)，
+把 archive/expanded/single-file/entry、SessionRoot 文件数、存档列表和 presentation asset gate 接入
+实例级配置；API composition root 统一绑定并在监听 HTTP/准备 Worker UDS 前校验跨组关系。SessionRoot
+启动前继续复验 marker、runtime manifest、binding、owner/link/reparse 和路径边界；Worker bootstrap/环境
+不再继承数据库、DataRoot、Validator、容量配置或 bootstrap 管理员变量。根生产镜像显式发布 API、Worker、
+Validator、Migrator，镜像提供非 root 默认用户；`docker/compose.yml` 使用启动服务者 UID/GID，并在
+`CLOUDEMUERA_DATA_PATH` 未设置时使用 named volume、设置后 bind mount 自有 `/data`，同时自动以
+one-shot Migrator 成功作为 API 启动前置条件。新增 save-list、容量选项、asset gate、Worker environment
+和容器边界验证覆盖。
+
+最终验证：`./scripts/test-production-image.sh`、`./scripts/test-instance-limits.sh`、
+`./scripts/check.sh`、`./scripts/verify-dev-user.sh`、`./scripts/verify-third-party.sh`。
+
 ### P1-14 — 单容器生产进程管理与恢复（TODO）
 
 需求映射：MVP 单容器、AC-003/006/007、OPS-003。
 
-交付物：保留已实现的 Migrator 前置检查；API 及其 Worker 子进程启动/停止编排；非 root 用户；
+交付物：保留已实现的 Compose Migrator 前置成功检查；API 及其 Worker 子进程启动/停止编排；非 root 用户；
 轻量 PID 1、信号转发、parent-death/进程组回收兜底；数据目录停机备份与恢复说明。不新增完整 s6
 服务树、在线备份编排或滚动升级。
 

@@ -593,7 +593,7 @@ pending、open/close latency/result、活动配额拒绝、mutation 竞争和 re
 
 ```bash
 ./scripts/dev-up.sh
-bash -lc 'source scripts/lib/dev-env.sh && docker compose -f compose.dev.yaml run --rm api \
+bash -lc 'source scripts/lib/dev-env.sh && docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore --configuration Release \
   --filter Category=SessionLifecycle'
 ./scripts/check.sh

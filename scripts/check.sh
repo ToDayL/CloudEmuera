@@ -6,11 +6,11 @@ cd "$repo_root"
 
 source "$repo_root/scripts/lib/dev-env.sh"
 
-docker compose -f compose.dev.yaml run --rm api dotnet restore CloudEmuera.slnx --locked-mode
-docker compose -f compose.dev.yaml run --rm api bash -lc './scripts/verify-runtime-fixtures.sh'
-docker compose -f compose.dev.yaml run --rm api dotnet build CloudEmuera.slnx --no-restore --configuration Release
+docker compose -f docker/compose.dev.yml run --rm api dotnet restore CloudEmuera.slnx --locked-mode
+docker compose -f docker/compose.dev.yml run --rm api bash -lc './scripts/verify-runtime-fixtures.sh'
+docker compose -f docker/compose.dev.yml run --rm api dotnet build CloudEmuera.slnx --no-restore --configuration Release
 ./scripts/test-identity.sh --suite application
 ./scripts/test-identity.sh --suite api
-docker compose -f compose.dev.yaml run --rm api dotnet test CloudEmuera.slnx --no-build --configuration Release
-docker compose -f compose.dev.yaml run --rm web sh -c \
+docker compose -f docker/compose.dev.yml run --rm api dotnet test CloudEmuera.slnx --no-build --configuration Release
+docker compose -f docker/compose.dev.yml run --rm web sh -c \
   "pnpm install --frozen-lockfile && CLOUDEMUERA_OPENAPI_URL=http://api:28647/openapi/v1.json pnpm verify:contracts && pnpm typecheck:web && pnpm test:web && pnpm build:web"

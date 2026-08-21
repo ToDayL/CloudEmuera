@@ -692,6 +692,8 @@ public sealed partial class SqliteSessionApplicationService(
         long fileCount = files.LongCount(row => row.EntryKind == "FILE");
         long directoryCount = files.LongCount(row => row.EntryKind == "DIRECTORY");
         long contentBytes = files.Where(row => row.EntryKind == "FILE").Sum(row => row.ByteLength);
+        if (fileCount > Capacity.MaxSessionRootFileCount)
+            throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "SessionRoot 文件数量超过实例上限。", 413);
         string sessionId = $"sess_{Guid.CreateVersion7():N}";
         string operationId = $"scop_{Guid.CreateVersion7():N}";
         string stagingPath = $"sessions/.staging/{sessionId}-{operationId}";
@@ -877,6 +879,8 @@ public sealed partial class SqliteSessionApplicationService(
                 .ConfigureAwait(false);
             if (files.Length == 0)
                 throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session source content 清单不可用。", 503);
+            if (files.LongCount(row => row.EntryKind == "FILE") > Capacity.MaxSessionRootFileCount)
+                throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "SessionRoot 文件数量超过实例上限。", 413);
             SessionRootPublishedManifest manifest = CreatePublishedManifest(game, files);
             if (!string.Equals(manifest.ManifestDigest, session.SessionRootManifestDigest, StringComparison.OrdinalIgnoreCase))
                 throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session source manifest 已发生变化。", 503);
@@ -902,8 +906,10 @@ public sealed partial class SqliteSessionApplicationService(
             if (OperatingSystem.IsLinux())
                 File.SetUnixFileMode(stagingContainer, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             SessionRootCopyLimits limits = new(
+                maxFileCount: Capacity.MaxSessionRootFileCount,
+                maxDirectoryCount: Capacity.MaxSessionRootFileCount,
                 maxTotalBytes: Capacity.MaxSessionRootBytes,
-                maxSingleFileBytes: Math.Min(Capacity.MaxSessionRootBytes, 512L * 1024 * 1024));
+                maxSingleFileBytes: Capacity.MaxSessionRootBytes);
             SessionRootLayout layout = new SessionRootLayoutBuilder(lease.ContentRootPath, stagingContainer, saveLayout)
                 .WithPublishedManifest(manifest)
                 .WithCopyLimits(limits)

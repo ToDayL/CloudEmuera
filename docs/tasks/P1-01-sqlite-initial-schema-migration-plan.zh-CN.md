@@ -710,12 +710,12 @@ schema；备份作为人工/后续生产恢复的可靠来源。自动覆盖可�
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore \
   --configuration Release --filter 'Category=Migration|Category=PersistenceConstraint'
 
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore \
   --configuration Release --filter 'Category=MigrationProcess'
 ```

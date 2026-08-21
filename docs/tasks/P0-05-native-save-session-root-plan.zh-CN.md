@@ -510,11 +510,11 @@ dev Docker；若已在 dev 容器内，则直接执行内部命令。
 专项测试：
 
 ```bash
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore \
   --configuration Release --filter 'Category=SessionRoot|Category=SaveIsolation'
 
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeCompatibility.Tests --no-restore \
   --configuration Release --filter 'Category=RuntimeBridge|Category=NativeSave'
 ```

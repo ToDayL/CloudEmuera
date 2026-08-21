@@ -17,6 +17,7 @@ public static class SaveErrorCodes
     public const string DeleteConfirmationRequired = "SAVE_DELETE_CONFIRMATION_REQUIRED";
     public const string TargetExists = "SAVE_TARGET_EXISTS";
     public const string SessionRootInvalid = "SESSION_ROOT_INVALID";
+    public const string ListLimitExceeded = "SAVE_LIST_LIMIT_EXCEEDED";
     public const string DataRootSpaceLow = "DATA_ROOT_SPACE_LOW";
     public const string RecoveryRequired = "SAVE_OPERATION_RECOVERY_REQUIRED";
     public const string StorageFailure = "SAVE_STORAGE_FAILURE";

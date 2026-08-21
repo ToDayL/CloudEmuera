@@ -41,10 +41,24 @@ public sealed class GamePackageIngestionService(
         GamePackageIngestionLimits limits = requestedLimits ?? new();
         limits.Validate();
         storageOptions.Validate();
-        InstanceCapacityOptions capacity = capacityOptions ?? InstanceCapacityOptions.Default;
-        capacity.Validate();
+        InstanceCapacityOptions capacity = EffectiveCapacity;
+        // The API composition root validates the injected deployment-wide
+        // options before opening listeners. Standalone infrastructure callers
+        // intentionally keep the historical StorageOptions seam for staging
+        // and free-space fixtures, so their derived compatibility profile is
+        // not revalidated against the larger production defaults here.
+        if (capacityOptions is not null)
+            capacity.Validate();
+        GamePackageIngestionLimits effectiveLimits = limits with
+        {
+            MaxArchiveBytes = Math.Min(limits.MaxArchiveBytes, capacity.MaxArchiveBytes),
+            MaxExpandedBytes = Math.Min(limits.MaxExpandedBytes, capacity.MaxExpandedBytes),
+            MaxSingleFileBytes = Math.Min(limits.MaxSingleFileBytes, capacity.MaxArchiveSingleFileBytes),
+            MaxEntryCount = Math.Min(limits.MaxEntryCount, capacity.MaxArchiveEntryCount),
+        };
+        effectiveLimits.Validate();
         using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(limits.MaxDuration);
+        deadline.CancelAfter(effectiveLimits.MaxDuration);
         string ingestionId = $"ing_{Guid.CreateVersion7():N}";
         DateTimeOffset now = timeProvider.GetUtcNow();
         DateTimeOffset expiresAt = now + storageOptions.ReadyLifetime;
@@ -58,11 +72,11 @@ public sealed class GamePackageIngestionService(
                 .ConfigureAwait(false);
             if (!ownerActive)
                 throw new GamePackageIngestionException("OWNER_NOT_ACTIVE", "The package owner is unavailable.");
-            effectiveArchiveLimit = Math.Min(limits.MaxArchiveBytes, capacity.MaxGamePackageBytes);
-            effectiveExpandedLimit = Math.Min(limits.MaxExpandedBytes, capacity.MaxSessionRootBytes);
+            effectiveArchiveLimit = effectiveLimits.MaxArchiveBytes;
+            effectiveExpandedLimit = effectiveLimits.MaxExpandedBytes;
             long reservation = checked(effectiveArchiveLimit + effectiveExpandedLimit);
             long active = await db.GamePackageIngestions.SumAsync(row => (long?)row.ReservedBytes, deadline.Token).ConfigureAwait(false) ?? 0;
-            if (active > storageOptions.MaxStagingReservedBytes - reservation)
+            if (active > capacity.MaxStagingReservedBytes - reservation)
                 throw new GamePackageIngestionException(GamePackageRejectionCodes.StagingBudgetExhausted, "The staging budget is exhausted.");
             EnsureFreeSpace(reservation);
             db.GamePackageIngestions.Add(new GamePackageIngestionRow
@@ -72,7 +86,7 @@ public sealed class GamePackageIngestionService(
                 Status = GamePackageIngestionStatus.Reserved,
                 StagingPath = relativePath,
                 ReservedBytes = reservation,
-                LimitsJson = JsonSerializer.Serialize(limits with { MaxArchiveBytes = effectiveArchiveLimit, MaxExpandedBytes = effectiveExpandedLimit }, JsonOptions),
+                LimitsJson = JsonSerializer.Serialize(effectiveLimits, JsonOptions),
                 SummaryJson = "{}",
                 CreatedAt = now,
                 UpdatedAt = now,
@@ -93,7 +107,6 @@ public sealed class GamePackageIngestionService(
                 (long archiveBytes, string archiveDigest) = await ReceiveAsync(request.Content, archiveTarget, effectiveArchiveLimit, deadline.Token).ConfigureAwait(false);
                 await UpdateArchiveAsync(ingestionId, archiveBytes, archiveDigest, deadline.Token).ConfigureAwait(false);
 
-                GamePackageIngestionLimits effectiveLimits = limits with { MaxArchiveBytes = effectiveArchiveLimit, MaxExpandedBytes = effectiveExpandedLimit };
                 using SafeFileHandle archiveSource = LinuxGamePackageStagingStore.OpenFile(ingestionRoot, ArchiveFileName);
                 IReadOnlyList<ValidatedZipEntry> inspected = ZipStructureInspector.Inspect(LinuxGamePackageStagingStore.DescriptorPath(archiveSource), effectiveLimits);
                 string? wrapperPrefix = SingleRootDirectoryPrefix(inspected);
@@ -681,7 +694,7 @@ public sealed class GamePackageIngestionService(
         DateTimeOffset now = timeProvider.GetUtcNow();
         await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, token).ConfigureAwait(false);
         long active = await db.GamePackageIngestions.Where(item => item.Id != ingestionId).SumAsync(item => (long?)item.ReservedBytes, token).ConfigureAwait(false) ?? 0;
-        if (active > storageOptions.MaxStagingReservedBytes - actualReservation)
+        if (active > EffectiveCapacity.MaxStagingReservedBytes - actualReservation)
             throw new GamePackageIngestionException(GamePackageRejectionCodes.StagingBudgetExhausted, "The staging budget is exhausted after the package was received.");
         int changed = await db.GamePackageIngestions
             .Where(item => item.Id == ingestionId && item.Status == GamePackageIngestionStatus.Analyzing)
@@ -757,10 +770,21 @@ public sealed class GamePackageIngestionService(
         string root = Path.GetPathRoot(Path.GetFullPath(storageOptions.DataRoot)) ?? "/";
         DriveInfo drive = new(root);
         long available = drive.AvailableFreeSpace;
-        if (available < storageOptions.MinDataRootFreeBytes
-            || available - storageOptions.MinDataRootFreeBytes < reservation)
+        if (available < EffectiveCapacity.MinDataRootFreeBytes
+            || available - EffectiveCapacity.MinDataRootFreeBytes < reservation)
             throw new GamePackageIngestionException(GamePackageRejectionCodes.DataRootSpaceLow, "DataRoot free space is below the safety threshold.");
     }
+
+    private InstanceCapacityOptions EffectiveCapacity => capacityOptions ??
+        InstanceCapacityOptions.Default with
+        {
+            // Standalone Infrastructure callers historically supplied these
+            // two bounds through GamePackageStorageOptions. Preserve that
+            // test/maintenance seam while the API composition root remains
+            // the authoritative deployment configuration.
+            MaxStagingReservedBytes = storageOptions.MaxStagingReservedBytes,
+            MinDataRootFreeBytes = storageOptions.MinDataRootFreeBytes,
+        };
 
     private static void ValidateStagingPath(GamePackageIngestionRow row, string ingestionId)
     {

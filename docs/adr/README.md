@@ -29,3 +29,5 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0024：HTML_PRINT 使用固定上游解析器并在 headless 边界安全翻译](0024-html-print-upstream-parser-authority.md)
 - [ADR-0025：浏览器输入投递到当前 Runtime 输入槽](0025-current-input-slot-realtime-v2.md)
 - [ADR-0026：显示提交边界与原子 Realtime v3 帧](0026-display-commit-boundary-realtime-v3.md)
+- [ADR-0027：实例级容量上限与生产 Worker 边界](0027-instance-capacity-and-production-boundary.md)
+- [ADR-0028：生产 bind mount 使用部署者 UID/GID](0028-production-bind-mount-ownership.md)

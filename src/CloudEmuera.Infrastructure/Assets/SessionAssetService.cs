@@ -20,7 +20,9 @@ namespace CloudEmuera.Infrastructure.Assets;
 public sealed class SessionAssetService(
     CloudEmueraDbContext db,
     IResourceAuthorizer authorizer,
-    SqliteDatabaseOptions databaseOptions) : ISessionAssetService
+    SqliteDatabaseOptions databaseOptions,
+    PresentationAssetOptions assetOptions,
+    PresentationAssetReadGate readGate) : ISessionAssetService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ReadOnlyDictionary<string, string> MediaTypes = new(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -46,7 +48,10 @@ public sealed class SessionAssetService(
     public async Task<SessionPresentationManifest> GetManifestAsync(CurrentActor actor, string sessionId, CancellationToken cancellationToken = default)
     {
         SessionAssetContext context = await LoadContextAsync(actor, sessionId, cancellationToken).ConfigureAwait(false);
-        return BuildManifest(context.Entries);
+        SessionPresentationManifest manifest = BuildManifest(context.Entries);
+        if (JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions).LongLength > assetOptions.MaxManifestBytes)
+            throw new SessionAssetException(SessionAssetErrorCodes.ManifestTooLarge, "Presentation asset 清单超过实例上限。", 413);
+        return manifest;
     }
 
     public async Task<SessionAssetRead> OpenReadAsync(CurrentActor actor, string sessionId, string assetId, CancellationToken cancellationToken = default)
@@ -55,10 +60,15 @@ public sealed class SessionAssetService(
         SessionAssetContext context = await LoadContextAsync(actor, sessionId, cancellationToken).ConfigureAwait(false);
         ManifestAsset? asset = BuildAssets(context.Entries).FirstOrDefault(item => string.Equals(item.AssetId, assetId, StringComparison.Ordinal));
         if (asset is null) throw NotFound();
+        if (asset.ByteLength <= 0 || asset.ByteLength > assetOptions.MaxAssetBytes)
+            throw CapacityExceeded("Presentation asset 超过实例单资源上限。");
 
         FileStream? stream = null;
+        IDisposable? readLease = null;
         try
         {
+            if (!readGate.TryAcquire(asset.ByteLength, out readLease))
+                throw CapacityExceeded("Presentation asset 并发容量暂时已用尽。");
             stream = OpenSecureRead(context.RootPath, asset.Path);
             if (stream.Length != asset.ByteLength) throw StorageFailure("Presentation asset 长度与冻结清单不一致。");
             if (!HasAllowedSignature(stream, asset.MediaType))
@@ -77,35 +87,44 @@ public sealed class SessionAssetService(
         catch (SessionAssetException)
         {
             stream?.Dispose();
+            readLease?.Dispose();
             throw;
         }
         catch (FileNotFoundException)
         {
             stream?.Dispose();
+            readLease?.Dispose();
             throw NotFound();
         }
         catch (DirectoryNotFoundException)
         {
             stream?.Dispose();
+            readLease?.Dispose();
             throw NotFound();
         }
         catch (UnauthorizedAccessException exception)
         {
             stream?.Dispose();
+            readLease?.Dispose();
             throw new SessionAssetException(SessionAssetErrorCodes.StorageFailure, "Presentation asset 无法安全读取。", 503, exception);
         }
         catch (SqlitePathException exception)
         {
             stream?.Dispose();
+            readLease?.Dispose();
             throw new SessionAssetException(SessionAssetErrorCodes.StorageFailure, "Presentation asset 路径未通过安全校验。", 503, exception);
         }
         catch (IOException exception)
         {
             stream?.Dispose();
+            readLease?.Dispose();
             throw new SessionAssetException(SessionAssetErrorCodes.StorageFailure, "Presentation asset 无法读取。", 503, exception);
         }
 
-        return new SessionAssetRead(asset.AssetId, asset.MediaType, asset.ByteLength, asset.ContentDigest, stream);
+        Stream leasedStream = new LeaseStream(stream, readLease);
+        stream = null;
+        readLease = null;
+        return new SessionAssetRead(asset.AssetId, asset.MediaType, asset.ByteLength, asset.ContentDigest, leasedStream);
     }
 
     private async Task<SessionAssetContext> LoadContextAsync(CurrentActor actor, string sessionId, CancellationToken cancellationToken)
@@ -306,6 +325,7 @@ public sealed class SessionAssetService(
 
     private static bool IsSafeAssetId(string value) => value.Length is > 7 and <= 128 && value.StartsWith("sha256-", StringComparison.Ordinal) && value[7..].All(Uri.IsHexDigit);
     private static SessionAssetException NotFound() => new(SessionAssetErrorCodes.NotFound, "资源不存在。", 404);
+    private static SessionAssetException CapacityExceeded(string message) => new(SessionAssetErrorCodes.CapacityExceeded, message, 503);
     private static SessionAssetException StorageFailure(string message, Exception? inner = null) => new(SessionAssetErrorCodes.StorageFailure, message, 503, inner);
 
     private static bool HasAllowedSignature(Stream stream, string mediaType)
@@ -355,4 +375,47 @@ public sealed class SessionAssetService(
     private sealed record ManifestAsset(string AssetId, string Path, string MediaType, long ByteLength, string ContentDigest);
     private sealed record FrozenManifestEntry(string Path, string EntryKind, long Bytes, string Digest);
     private sealed record FrozenRuntimeManifest(IReadOnlyList<FrozenManifestEntry> Entries);
+
+    private sealed class LeaseStream(Stream inner, IDisposable lease) : Stream
+    {
+        private int disposed;
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override int Read(Span<byte> buffer) => inner.Read(buffer);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => inner.ReadAsync(buffer, cancellationToken);
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => inner.ReadAsync(buffer, offset, count, cancellationToken);
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(ReadOnlySpan<byte> buffer) => throw new NotSupportedException();
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => ValueTask.FromException(new NotSupportedException());
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                try { inner.Dispose(); }
+                finally { lease.Dispose(); }
+            }
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                try { await inner.DisposeAsync().ConfigureAwait(false); }
+                finally { lease.Dispose(); }
+            }
+            await base.DisposeAsync().ConfigureAwait(false);
+            GC.SuppressFinalize(this);
+        }
+    }
 }

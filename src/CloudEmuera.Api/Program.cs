@@ -54,63 +54,23 @@ var builder = WebApplication.CreateBuilder(args);
 string dataRoot = builder.Configuration["CloudEmuera:DataPath"] ?? Path.Combine(AppContext.BaseDirectory, "data");
 string workerAssemblyPath = builder.Configuration["CloudEmuera:WorkerAssemblyPath"]
     ?? ValidatorAssemblyResolver.ResolveSiblingAssembly(builder.Environment.ContentRootPath, "CloudEmuera.Worker", "CloudEmuera.Worker.dll");
-RealtimeOutputOptions realtimeOutputOptions = new()
-{
-    SnapshotMaxBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:SnapshotMaxBytes") ?? RealtimeOutputOptions.DefaultSnapshotMaxBytes,
-    BatchTargetBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:BatchTargetBytes") ?? RealtimeOutputOptions.DefaultBatchTargetBytes,
-    BatchMaxTransactions = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:BatchMaxTransactions") ?? RealtimeOutputOptions.DefaultBatchMaxTransactions,
-    BatchMaxDelay = TimeSpan.FromMilliseconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:BatchMaxDelayMilliseconds") ?? 16),
-    ConnectionQueueSoftBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:QueueSoftBytes") ?? RealtimeOutputOptions.DefaultQueueSoftBytes,
-    ConnectionQueueHardBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:QueueHardBytes") ?? RealtimeOutputOptions.DefaultQueueHardBytes,
-    ConnectionQueueSoftMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:QueueSoftMessages") ?? RealtimeOutputOptions.DefaultQueueSoftMessages,
-    ConnectionQueueHardMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:QueueHardMessages") ?? RealtimeOutputOptions.DefaultQueueHardMessages,
-    MaxSnapshotResyncAttempts = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxSnapshotResyncAttempts") ?? 3,
-    SnapshotResyncWindow = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:SnapshotResyncWindowSeconds") ?? 30),
-};
-RealtimeGatewayOptions realtimeGatewayOptions = new()
-{
-    ClientHelloTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ClientHelloTimeoutSeconds") ?? 5),
-    ClientMessageMaxBytes = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ClientMessageMaxBytes") ?? RealtimeProtocol.DefaultClientMessageMaxBytes,
-    ClientJsonMaxDepth = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ClientJsonMaxDepth") ?? RealtimeProtocol.DefaultClientJsonMaxDepth,
-    MaxConnections = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxConnections") ?? 256,
-    MaxConnectionsPerSession = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxConnectionsPerSession") ?? 16,
-    MaxSubscriptionsPerConnection = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxSubscriptionsPerConnection") ?? 4,
-    MaxPendingInputsPerConnection = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxPendingInputsPerConnection") ?? 32,
-    MaxPendingInputsPerWorker = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:MaxPendingInputsPerWorker") ?? 128,
-    ControlQueueMaxBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:ControlQueueMaxBytes") ?? 256 * 1024,
-    ControlQueueMaxMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ControlQueueMaxMessages") ?? 64,
-    EnvelopeMaxBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Realtime:EnvelopeMaxBytes") ?? 2 * 1024,
-    InputResultTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:InputResultTimeoutSeconds") ?? 10),
-    WebSocketSendTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:WebSocketSendTimeoutSeconds") ?? 10),
-    HeartbeatInterval = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:HeartbeatIntervalSeconds") ?? 20),
-    HeartbeatTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:HeartbeatTimeoutSeconds") ?? 10),
-    IdentityRevalidationInterval = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:IdentityRevalidationIntervalSeconds") ?? 60),
-    ConnectionShutdownTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("CloudEmuera:Realtime:ConnectionShutdownTimeoutSeconds") ?? 5),
-};
-realtimeGatewayOptions.Validate(realtimeOutputOptions);
+RealtimeOutputOptions realtimeOutputOptions = DeploymentOptionsBinder.BindRealtimeOutput(builder.Configuration);
+RealtimeGatewayOptions realtimeGatewayOptions = DeploymentOptionsBinder.BindRealtimeGateway(builder.Configuration);
 var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath)
 {
     RealtimeOutput = realtimeOutputOptions,
-    PendingEventMaxMessages = builder.Configuration.GetValue<int?>("CloudEmuera:Worker:PendingEventMaxMessages") ?? 256,
-    PendingEventMaxBytes = builder.Configuration.GetValue<int?>("CloudEmuera:Worker:PendingEventMaxBytes") ?? 1 * 1024 * 1024,
+    PendingEventMaxMessages = DeploymentOptionsBinder.ReadInt(builder.Configuration, "CloudEmuera:Worker:PendingEventMaxMessages") ?? 256,
+    PendingEventMaxBytes = DeploymentOptionsBinder.ReadInt(builder.Configuration, "CloudEmuera:Worker:PendingEventMaxBytes") ?? 1 * 1024 * 1024,
     PendingInputMaxMessages = realtimeGatewayOptions.MaxPendingInputsPerWorker,
 };
-workerOptions.Validate();
+InstanceCapacityOptions capacityOptions = DeploymentOptionsBinder.BindCapacity(
+    builder.Configuration,
+    out bool usedLegacyArchiveKey,
+    out bool usedLegacyFreeSpaceKey);
+PresentationAssetOptions assetOptions = DeploymentOptionsBinder.BindAssets(builder.Configuration);
+DeploymentOptionsValidator.Validate(capacityOptions, realtimeOutputOptions, realtimeGatewayOptions, workerOptions, assetOptions);
 var workerSocketLifecycle = new WorkerSocketLifecycle(workerOptions);
 workerSocketLifecycle.Prepare();
-InstanceCapacityOptions capacityOptions = new()
-{
-    MaxActiveWorkers = builder.Configuration.GetValue<int?>("CloudEmuera:Capacity:MaxActiveWorkers") ?? InstanceCapacityOptions.DefaultMaxActiveWorkers,
-    MaxInactiveSessions = builder.Configuration.GetValue<int?>("CloudEmuera:Capacity:MaxInactiveSessions") ?? InstanceCapacityOptions.DefaultMaxInactiveSessions,
-    MaxGamePackageBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxGamePackageBytes") ?? InstanceCapacityOptions.DefaultMaxGamePackageBytes,
-    MaxSessionRootBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxSessionRootBytes") ?? InstanceCapacityOptions.DefaultMaxSessionRootBytes,
-    MaxStagingReservedBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxStagingReservedBytes") ?? InstanceCapacityOptions.DefaultMaxStagingReservedBytes,
-    MaxSaveFileBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MaxSaveFileBytes") ?? InstanceCapacityOptions.DefaultMaxSaveFileBytes,
-    MinDataRootFreeBytes = builder.Configuration.GetValue<long?>("CloudEmuera:Capacity:MinDataRootFreeBytes")
-        ?? builder.Configuration.GetValue<long?>("CloudEmuera:MinDataRootFreeBytes")
-        ?? InstanceCapacityOptions.DefaultMinDataRootFreeBytes,
-};
-capacityOptions.Validate();
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
     serverOptions.AddServerHeader = false;
@@ -134,6 +94,8 @@ SqliteDatabaseOptions databaseOptions = new()
 };
 builder.Services.AddSingleton(databaseOptions);
 builder.Services.AddSingleton(capacityOptions);
+builder.Services.AddSingleton(assetOptions);
+builder.Services.AddSingleton<PresentationAssetReadGate>();
 builder.Services.AddScoped<CloudEmueraDbContext>(serviceProvider =>
 {
     SqliteConnectionFactory factory = new(databaseOptions, createDataRoot: true);
@@ -301,7 +263,9 @@ builder.Services.AddHealthChecks()
     .AddCheck<SaveOperationRecoveryHealthCheck>("save_operation_recovery", tags: ["ready"]);
 
 var app = builder.Build();
-if (builder.Configuration.GetValue<long?>("CloudEmuera:MinDataRootFreeBytes") is not null)
+if (usedLegacyArchiveKey)
+    ConfigurationWarnings.LegacyMaxGamePackageBytes(app.Logger);
+if (usedLegacyFreeSpaceKey)
     ConfigurationWarnings.LegacyMinDataRootFreeBytes(app.Logger);
 if (!development)
 {
@@ -818,6 +782,10 @@ sessions.MapGet("/{sessionId}/presentation-manifest", async (string sessionId, H
     }
     catch (SessionAssetException exception)
     {
+        if (exception.Code == SessionAssetErrorCodes.CapacityExceeded)
+        {
+            context.Response.Headers.RetryAfter = "1";
+        }
         return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
     }
 }).RequireRateLimiting("session-read")
@@ -825,7 +793,7 @@ sessions.MapGet("/{sessionId}/presentation-manifest", async (string sessionId, H
   .Produces<ApiError>(StatusCodes.Status404NotFound)
   .Produces<ApiError>(StatusCodes.Status503ServiceUnavailable);
 
-sessions.MapGet("/{sessionId}/assets/{assetId}", async (string sessionId, string assetId, HttpContext context, ISessionAssetService service) =>
+sessions.MapGet("/{sessionId}/assets/{assetId}", async (string sessionId, string assetId, HttpContext context, ISessionAssetService service, PresentationAssetOptions assetOptions) =>
 {
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     try
@@ -848,6 +816,11 @@ sessions.MapGet("/{sessionId}/assets/{assetId}", async (string sessionId, string
             context.Response.Headers.ContentRange = $"bytes */{asset.ByteLength}";
             return Results.StatusCode(StatusCodes.Status416RangeNotSatisfiable);
         }
+        if (!string.IsNullOrWhiteSpace(context.Request.Headers.Range) && length > assetOptions.MaxRangeBytes)
+        {
+            await asset.Content.DisposeAsync().ConfigureAwait(false);
+            return ApiIdentity.Error(SessionAssetErrorCodes.RangeTooLarge, "资源范围超过实例上限。", StatusCodes.Status416RangeNotSatisfiable);
+        }
         if (start > 0 || length != asset.ByteLength)
         {
             asset.Content.Seek(start, SeekOrigin.Begin);
@@ -861,6 +834,10 @@ sessions.MapGet("/{sessionId}/assets/{assetId}", async (string sessionId, string
     }
     catch (SessionAssetException exception)
     {
+        if (exception.Code == SessionAssetErrorCodes.CapacityExceeded)
+        {
+            context.Response.Headers.RetryAfter = "1";
+        }
         return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode);
     }
 }).RequireRateLimiting("session-read")
@@ -1421,6 +1398,7 @@ internal static class ApiIdentity
         SaveErrorCodes.IdempotencyKeyRequired => "需要 Idempotency-Key。",
         SaveErrorCodes.IdempotencyKeyReused => "Idempotency-Key 已用于其他存档请求。",
         SaveErrorCodes.FileTooLarge => "存档文件超过大小上限。",
+        SaveErrorCodes.ListLimitExceeded => "存档列表超过实例容量限制。",
         SaveErrorCodes.FormatInvalid => "存档文件格式无效。",
         SaveErrorCodes.DeleteConfirmationRequired => "删除存档需要显式确认。",
         SaveErrorCodes.TargetExists => "重命名目标已存在。",

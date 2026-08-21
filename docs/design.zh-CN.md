@@ -39,7 +39,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 
 | 事项 | MVP 暂定方案 | 可替换边界 |
 | --- | --- | --- |
-| 身份认证 | 本地账户、email-only 登录、可撤销 HttpOnly Cookie Session；未初始化实例从 `.env` 原子 bootstrap 首个管理员 | `IIdentityProvider` 可替换为单一 OIDC Provider；bootstrap 完成后永久忽略首次配置且不开放注册 |
+| 身份认证 | 本地账户、email-only 登录、可撤销 HttpOnly Cookie Session；未初始化实例从 `docker/.env` 原子 bootstrap 首个管理员 | `IIdentityProvider` 可替换为单一 OIDC Provider；bootstrap 完成后永久忽略首次配置且不开放注册 |
 | 多客户端输入 | 到达当前输入槽的第一个有效输入生效 | 后续可在 Realtime Gateway 前增加控制权租约 |
 | Session 空闲 | 断连不自动关闭，持续占用实例级活动 Worker 名额 | 管理员策略只能通过显式配置启用 |
 | 存档删除 | 无活动 Worker 时显式确认后直接删除 | 历史恢复由 SessionRoot 外部备份提供 |
@@ -669,6 +669,13 @@ P1-01 另外建立 EF history 表 `schema_migrations`，并保留 EF Core SQLite
 └── backups/
 ```
 
+生产 Compose 通过 `CLOUDEMUERA_UID`、`CLOUDEMUERA_GID` 以部署账号运行 API、Worker、Validator 和
+Migrator。`CLOUDEMUERA_DATA_PATH` 未设置时使用 Docker named volume，设置后由部署者预先创建宿主机
+数据目录并 bind mount 到 `/data`；此时持久化文件归启动服务者所有。生产配置不依赖固定镜像 UID，
+也不以 root entrypoint 递归修正目录权限。
+镜像本身仍保留一个非 root 默认用户，供不经 Compose 的直接运行场景使用。具体配置和迁移约束见
+[`ADR-0028`](adr/0028-production-bind-mount-ownership.md)。
+
 `/data/run` 必须设置为仅 API 和 Worker 服务身份可访问；也可以实际放在容器 tmpfs 中，但对外路径保持配置化。
 
 ### 5.4 SessionRoot 构造
@@ -1149,10 +1156,11 @@ API 和 readiness 均保持关闭。该 operation 表只记录 API 管理命令�
 
 MVP 控制为：
 
-- 整个生产容器以非 root UID 运行，API 与 Worker 可以使用相同 UID；
+- 整个生产容器以部署者提供的非 root UID/GID 运行，API 与 Worker 使用相同 UID/GID；
 - Worker 保持每 Session 一个独立子进程，只接收自己的 SessionRoot、binding 和私有 UDS 信息；
 - 容器不得挂载 Docker socket、宿主密钥或无关宿主目录；
-- Snapshot、IPC/WebSocket 队列、ZIP 展开和 DataRoot 空间使用具有实例级上限；
+- Snapshot、IPC/WebSocket 队列、ZIP archive/expanded/entry/single-file、SessionRoot 文件数/字节、存档
+  列表和 DataRoot 空间使用具有实例级上限；Presentation asset 还受 manifest、单资源和并发在途预算限制；
 - 部署者可在 Docker 层为整个容器配置 CPU、内存和 PID 上限；
 - close、API 停止或控制通道断开都必须在期限内结束 Worker，必要时使用进程组强制终止。
 
@@ -1171,7 +1179,7 @@ Worker 从内核视角可能读取 DataRoot 内其他资源；实例不得面向
 - 资源响应使用清单中声明的 MIME、`nosniff` 和下载/内联白名单；
 - 登录、上传、创建 Session 和输入实施轻量实例级速率限制。
 
-全新实例不开放 `/setup` 或注册 API。仅当持久状态为 BOOTSTRAP_REQUIRED 时，API 从 `.env`
+全新实例不开放 `/setup` 或注册 API。仅当持久状态为 BOOTSTRAP_REQUIRED 时，API 从 `docker/.env`
 读取 `CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME`、`CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL` 和
 `CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD`，在一个 SQLite 写事务内提交管理员、现有默认 profile、完成
 标记和审计；并发启动最多一个成功。管理员使用 email 登录且首次登录强制改密。COMPLETED 后
@@ -1303,21 +1311,20 @@ pending clientMessageId → result
   只读验证 migration history、foreign-key check 和 quick check。退出码 `0/10/11/12/13/14/15`
   分别表示成功、配置非法、锁竞争、数据库高于当前 binary、备份失败、migration 失败和完整性
   检查失败。业务 API 和 Worker 不调用 `Database.Migrate()`。
-- `CloudEmuera:Capacity:*` 实例级容量：活动 Worker（默认 8）、未启动 Session（默认 64）、游戏包/SessionRoot/暂存字节、单个存档文件和 DataRoot 最低
-  剩余空间；历史 `CloudEmuera:MinDataRootFreeBytes` 仅兼容读取一个周期并输出弃用 warning，
-  新部署使用带 `Capacity` 前缀的键；`CloudEmuera:Capacity:MaxSaveFileBytes` 默认 64 MiB，且不得超过
-  `MaxSessionRootBytes`；
-- 上传/解压/文件数量/编码限制；
-- 实例级最大活动 Worker 数、未启动 Session 数、上传/展开/文件数量、存档文件和 DataRoot 最低剩余空间上限；
-- Snapshot、IPC 和 WebSocket 队列上限；容器整体 CPU/内存/PID 限制属于部署选项；
+- `CloudEmuera:Capacity:*` 实例级容量：活动 Worker（默认 8）、未启动 Session（默认 64）、archive/expanded/
+  single-file/entry、SessionRoot 文件数/字节、staging、存档文件/列表和 DataRoot 最低剩余空间。默认值、
+  启动交叉关系和 `MaxGamePackageBytes`/旧根 free-space 键的一个周期兼容见
+  [`ADR-0027`](adr/0027-instance-capacity-and-production-boundary.md)；
+- `CloudEmuera:Assets:*` presentation manifest、单资源、Range、并发读取和在途字节预算；
+- Snapshot、IPC 和 WebSocket 队列上限；容器整体 CPU/内存/PID 限制属于部署选项，不进入 ready probe；
 - 心跳、启动、停止、强制终止超时；
 - 存档文件大小、停止态管理操作和 SessionRoot 备份保留；
 - Runtime 基线、兼容配置和禁止能力；
 - 日志级别、轮转和已实现审计保留。
 
-人工开发使用仓库根 `.env` 与 `./data`。自动化身份测试必须生成独立临时 env/DataRoot，使用唯一
+人工开发使用 `docker/.env` 与 `./data`。自动化身份测试必须生成独立临时 env/DataRoot，使用唯一
 Compose project 和动态端口，并通过 `--env-file` 与 API service 的显式 environment mapping 传入
-bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开发容器。所有示例均使用
+bootstrap 配置；不得读取、修改或清理人工 `docker/.env`、`./data` 和开发容器。所有示例均使用
 `CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password`，应用不提供密码文件替代协议。
 
 启动时完成配置模式校验；不安全组合或单位错误直接失败，并给出不含密钥的明确诊断。
@@ -1407,7 +1414,7 @@ bootstrap 配置；不得读取、修改或清理人工 `.env`、`./data` 和开
 7. `ADR-0010`：单一 Game 内容模型和旧 GameVersion schema 迁移（已完成）；
 8. `ADR-0015`：API 直接管理 Session Worker 生命周期（已完成）；
 9. `ADR-0016`：Session 是可反复开启的持久 SessionRoot（已完成）；
-10. 待编号：实例级活动 Worker、上传/展开、存档文件、Snapshot/队列和最低剩余空间默认上限；
+10. `ADR-0027`：实例级容量上限与生产 Worker 边界（P1-13，已接受）；
 11. 待编号：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
 12. 待编号：字体文件保留、服务和授权策略；
 13. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。

@@ -22,12 +22,12 @@ Phase 0 运行时切分与兼容性证明已经完成，当前进入 Phase 1 单
 - React 游戏库、Session、控制台、存档和管理页面展示版；
 - Apache-2.0 项目许可证和第三方许可声明。
 
-Game 库后端纵切、真实 parser-only Validator、dirfd/fsync 存储和恢复加固已经完成；持久 Worker
-管理、浏览器实时协议、正式存档管理和正式 Session UI 仍待实现。P0-06 已提供最小的单 Session
-Worker/Supervisor UDS IPC 历史冒烟链路，P1-01 已完成首版 SQLite 持久化基线，P1-02 已完成本地
-身份、资源授权与审计，P1-03 已完成安全游戏包摄取，P1-04 已完成单一 Game
-workspace/current content 模型。当前任务是 P1-05：依据 ADR-0015 把 Worker 管理迁入 API、移除
-独立 Supervisor，并依据 ADR-0016 建立可反复 open/close/reopen 的持久 SessionRoot 生命周期。
+Game 库后端纵切、真实 parser-only Validator、dirfd/fsync 存储和恢复加固已经完成；P1-05～P1-12
+已完成持久 Worker 管理、浏览器实时协议、正式存档管理和正式 Session UI。P0-06 已提供最小的单
+Session Worker/Supervisor UDS IPC 历史冒烟链路，P1-01 已完成首版 SQLite 持久化基线，P1-02 已完成
+本地身份、资源授权与审计，P1-03 已完成安全游戏包摄取，P1-04 已完成单一 Game workspace/current
+content 模型，P1-13 已完成 Worker 进程边界、实例级容量限制和生产 Docker 部署。当前后续任务是
+P1-14：补齐单容器生产进程管理、信号转发和恢复语义。
 
 ## 已确认技术方案
 
@@ -74,7 +74,7 @@ src/                  产品代码及固定版本的 Emuera 内置源码
 tests/                .NET 单元与集成测试
 e2e/                  Playwright 端到端测试
 docs/                 需求、设计、ADR 和开发计划
-deploy/               容器与部署配置
+docker/               Dockerfile、Compose 与生产环境示例
 scripts/              开发、验证和内置源码维护脚本
 data/                 本地运行数据，不提交 Git
 ```
@@ -123,9 +123,9 @@ data/                 本地运行数据，不提交 Git
 Docker，例如：
 
 ```bash
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test CloudEmuera.slnx --no-restore --configuration Release
-docker compose -f compose.dev.yaml run --rm web \
+docker compose -f docker/compose.dev.yml run --rm web \
   sh -c 'pnpm install --frozen-lockfile && pnpm typecheck:web && pnpm test:web && pnpm build:web'
 ```
 
@@ -134,27 +134,27 @@ docker compose -f compose.dev.yaml run --rm web \
 
 ```bash
 # Domain 全部测试
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Domain.Tests --no-restore --configuration Release
 
 # RuntimeAdapter：路径/架构/Console 契约
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore \
   --configuration Release --filter 'Category=RuntimePaths|Category=Architecture'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore \
   --configuration Release --filter 'Category=ConsoleContract'
 
 # 真实 headless Emuera：RuntimeBridge 或全部兼容性测试
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeCompatibility.Tests --no-restore \
   --configuration Release --filter 'Category=RuntimeBridge'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeCompatibility.Tests --no-restore \
   --configuration Release
 
 # 运行 P0-04 input-roundtrip 兼容性场景（不是 xUnit filter）
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   bash -lc './scripts/test-runtime-compat.sh --scenario input-roundtrip'
 ```
 
@@ -199,10 +199,9 @@ Emuera.EM+EE 以普通 Git 文件位于 `src/CloudEmuera.EmueraRuntime/Upstream`
 
 ## 开发顺序
 
-按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0、P1-01～P1-04 已完成；当前首要工作
-是 P1-05：迁移独立 Supervisor 到 API Worker Manager，实现运行期 SQLite 单进程所有权、API
-生命周期绑定和可重开的持久 Session 状态机。P1-02 自动化身份校验必须继续与人工 `.env`、
-`./data` 和 Compose project 隔离。
+按 `docs/development-plan.zh-CN.md` 的编号顺序推进。Phase 0、P1-01～P1-13 已完成；当前首要工作
+是 P1-14：在已验证的生产镜像和 Compose Migrator 前置门控上补齐 API/Worker 进程管理、信号转发、
+回收和恢复。P1-02 自动化身份校验必须继续与人工 `docker/.env`、`./data` 和 Compose project 隔离。
 
 涉及待决事项时，在实现前创建 ADR，至少记录背景、选项、决策、后果和验证方案。不要以临时代码默默固化产品或安全决策。
 

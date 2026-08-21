@@ -7,6 +7,9 @@ public static class SessionAssetErrorCodes
 {
     public const string NotFound = "SESSION_ASSET_NOT_FOUND";
     public const string Invalid = "SESSION_ASSET_INVALID";
+    public const string CapacityExceeded = "SESSION_ASSET_CAPACITY_EXCEEDED";
+    public const string ManifestTooLarge = "SESSION_ASSET_MANIFEST_TOO_LARGE";
+    public const string RangeTooLarge = "SESSION_ASSET_RANGE_TOO_LARGE";
     public const string StorageFailure = "SESSION_ASSET_STORAGE_FAILURE";
 }
 

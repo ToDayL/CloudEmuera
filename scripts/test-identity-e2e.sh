@@ -18,7 +18,7 @@ temp_root="$(mktemp -d "$temp_parent/identity-e2e.XXXXXX")"
 mkdir "$temp_root/data"
 project_name="cloudemuera-identity-e2e-${RANDOM}-${RANDOM}"
 cleanup() {
-  docker compose --profile e2e --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/compose.dev.yaml" down --remove-orphans --volumes >/dev/null 2>&1 || true
+  docker compose --profile e2e --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml" down --remove-orphans --volumes >/dev/null 2>&1 || true
   rm -rf "$temp_root"
 }
 trap cleanup EXIT
@@ -38,7 +38,7 @@ EOF
 }
 write_identity_env identity-admin identity-admin@example.test temporary-password
 
-compose=(docker compose --profile e2e --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/compose.dev.yaml")
+compose=(docker compose --profile e2e --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml")
 if ! "$skip_build"; then
   "${compose[@]}" run --rm api dotnet restore CloudEmuera.slnx --locked-mode
   "${compose[@]}" run --rm api dotnet run --project src/CloudEmuera.Migrator -- migrate --data-root /data

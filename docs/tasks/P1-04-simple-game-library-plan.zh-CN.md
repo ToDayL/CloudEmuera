@@ -954,13 +954,13 @@ versionLabel（游戏内容语境）
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Infrastructure.Tests --no-restore \
   --configuration Release --filter 'Category=Migration|Category=PersistenceConstraint'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Api.IntegrationTests --no-restore \
   --configuration Release --filter 'Category=GameLibrary'
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.RuntimeAdapter.Tests --no-restore \
   --configuration Release --filter 'Category=RuntimePaths|Category=Architecture'
 ```

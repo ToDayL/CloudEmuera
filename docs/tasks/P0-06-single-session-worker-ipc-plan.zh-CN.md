@@ -631,12 +631,12 @@ P0-04/P0-05 的 in-process harness 仍是解释器兼容性定位工具；P0-06 
 
 ```bash
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Ipc.ContractTests \
   --configuration Release
 
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.Worker.IntegrationTests \
   --configuration Release --filter 'Category=ProcessIsolation'
 ```

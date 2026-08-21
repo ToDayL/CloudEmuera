@@ -676,12 +676,12 @@ README 描述来源、预期 code 和许可证。至少覆盖：
 ./scripts/dev-up.sh
 
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.GamePackages.Tests --no-restore \
   --configuration Release --filter 'Category=ArchiveSecurity|Category=Encoding'
 
 source scripts/lib/dev-env.sh
-docker compose -f compose.dev.yaml run --rm api \
+docker compose -f docker/compose.dev.yml run --rm api \
   dotnet test tests/CloudEmuera.GamePackages.Tests --no-restore \
   --configuration Release
 
