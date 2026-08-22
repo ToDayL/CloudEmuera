@@ -193,13 +193,14 @@ builder.Services.AddHostedService<AuthSessionCleanupService>();
 builder.Services.AddScoped<RealtimeUpgradeValidator>();
 builder.Services.AddDataProtection().PersistKeysToFileSystem(DataProtectionKeyRing.Prepare(dataRoot)).SetApplicationName("CloudEmuera");
 bool development = builder.Environment.IsDevelopment();
-string cookieName = development ? "CloudEmuera.Dev.Session" : "__Host-CloudEmuera.Session";
+bool secureCookies = builder.Configuration.GetValue("CloudEmuera:Security:SecureCookies", false);
+string cookieName = development ? "CloudEmuera.Dev.Session" : secureCookies ? "__Host-CloudEmuera.Session" : "CloudEmuera.Session";
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
 {
     options.Cookie.Name = cookieName;
     options.Cookie.HttpOnly = true;
     options.Cookie.SameSite = SameSiteMode.Lax;
-    options.Cookie.SecurePolicy = development ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+    options.Cookie.SecurePolicy = secureCookies ? CookieSecurePolicy.Always : CookieSecurePolicy.None;
     options.Cookie.Path = "/";
     options.SlidingExpiration = false;
     options.Events = new CookieAuthenticationEvents
@@ -268,11 +269,6 @@ if (usedLegacyArchiveKey)
     ConfigurationWarnings.LegacyMaxGamePackageBytes(app.Logger);
 if (usedLegacyFreeSpaceKey)
     ConfigurationWarnings.LegacyMinDataRootFreeBytes(app.Logger);
-if (!development)
-{
-    app.UseHsts();
-    app.UseHttpsRedirection();
-}
 app.Use((context, next) => RequestCorrelationMiddleware.InvokeAsync(
     context,
     next,

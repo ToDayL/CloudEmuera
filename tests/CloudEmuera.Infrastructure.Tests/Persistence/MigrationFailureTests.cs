@@ -73,6 +73,21 @@ public sealed class MigrationFailureTests
 
     [Fact]
     [Trait("Category", "Migration")]
+    public async Task RepairIndexes_RechecksExistingDatabaseWithoutCreatingBackup()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        int backupsBefore = Directory.EnumerateFiles(database.BackupDirectoryPath, "*.sqlite").Count();
+
+        MigrationResult result = await new DatabaseMigrationRunner(database.Options).RepairIndexesAsync();
+
+        Assert.True(result.Succeeded, result.ErrorCode);
+        Assert.Equal(backupsBefore, Directory.EnumerateFiles(database.BackupDirectoryPath, "*.sqlite").Count());
+        Assert.True((await database.CheckAsync()).Succeeded);
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
     public async Task BusyDatabaseWriteFailsWithinConfiguredTimeout()
     {
         using TemporarySqliteDatabase database = new();

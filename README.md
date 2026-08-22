@@ -83,9 +83,11 @@ docker compose up -d
 作为 `/data` bind mount。使用 bind mount 时请先创建并赋予启动账号权限。容器入口 `/app/start.sh` 会在
 同一个容器内先运行独占 Migrator，成功后以 `exec` 启动 API；后续 schema 变更再次执行 `docker compose up -d`
 即可。生产镜像已经包含构建后的 SPA，不需要独立 web 容器。默认情况下宿主机只在
-`127.0.0.1:28647` 监听，建议由宿主机上的 Nginx、Caddy 或其他 HTTPS 网关代理到该地址；只有明确需要
-直接暴露时才设置 `CLOUDEMUERA_HTTP_BIND_ADDRESS=0.0.0.0`。SPA 和 API 仍然是同一应用端口：浏览器
-加载 `/` 的静态文件后，使用同源 `/api/v1/*` 和 `/api/v1/realtime`。
+`127.0.0.1:28647` 监听；部署者可以让上级 Nginx/Caddy 选择是否使用 HTTPS，也可以直接使用 HTTP。
+应用不推断外部协议、不执行 HTTPS 跳转或 HSTS；只有在公开入口确实使用 HTTPS 时才设置
+`CLOUDEMUERA_SECURITY_SECURE_COOKIES=true`。只有明确需要直接公网暴露时才设置
+`CLOUDEMUERA_HTTP_BIND_ADDRESS=0.0.0.0`。SPA 和 API 仍然是同一应用端口：浏览器加载 `/` 的静态文件后，
+使用同源 `/api/v1/*` 和 `/api/v1/realtime`。
 
 API 使用 Docker `init: true` 作为轻量 PID 1，并把 SIGTERM 传给 API；镜像默认 `STOPSIGNAL` 也是
 SIGTERM。API 收到停机信号后先停止接入，给所有 Worker 共用 5 秒优雅停止预算，再给仍存活的 Worker

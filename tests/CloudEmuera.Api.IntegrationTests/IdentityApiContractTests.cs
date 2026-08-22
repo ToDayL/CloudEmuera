@@ -177,6 +177,24 @@ public sealed class IdentityApiContractTests : IDisposable
 
     [Fact]
     [Trait("Category", "Authentication")]
+    public async Task ProductionHttpCanUseAuthenticationWithoutForcingHttps()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true, secureCookies: false);
+        _factory = new IdentityFactory(_dataRoot, "Production");
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+
+        string csrf = await GetCsrfAsync(client);
+        using HttpResponseMessage login = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        string setCookie = login.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith("CloudEmuera.Session=", StringComparison.Ordinal));
+        Assert.DoesNotContain("secure", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("httponly", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/auth/me")).StatusCode);
+    }
+
+    [Fact]
+    [Trait("Category", "Authentication")]
     public async Task CookieSessionSurvivesHostRestartAndLogoutRevocationRejectsReplay()
     {
         await CreateDatabaseAsync();
@@ -284,11 +302,11 @@ public sealed class IdentityApiContractTests : IDisposable
         return Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     }
 
-    private sealed class IdentityFactory(string dataRoot) : WebApplicationFactory<Program>
+    private sealed class IdentityFactory(string dataRoot, string environment = "Development") : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            builder.UseEnvironment("Development");
+            builder.UseEnvironment(environment);
             builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["CloudEmuera:DataPath"] = dataRoot }));
         }
     }

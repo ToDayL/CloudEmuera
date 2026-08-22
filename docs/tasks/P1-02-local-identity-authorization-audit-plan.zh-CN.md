@@ -402,19 +402,20 @@ username 是稳定的账户显示名/管理标识，不是登录凭据。继续�
 
 ### 7.1 Cookie
 
-固定一个产品 Cookie 名，例如 `__Host-CloudEmuera.Session`，生产配置：
+生产默认使用 `CloudEmuera.Session`；只有部署者明确启用 Secure Cookie 时才使用
+`__Host-CloudEmuera.Session`：
 
 ```text
 Path=/
-Secure=true
+Secure=<CLOUDEMUERA_SECURITY_SECURE_COOKIES>
 HttpOnly=true
 SameSite=Lax
 Domain=<unset>
 ```
 
-`__Host-` 前缀要求 Secure、Path=/ 且无 Domain。开发 HTTP 环境无法发送 Secure Cookie，应使用
-独立开发 Cookie 名并明确 `SecurePolicy=SameAsRequest`；生产环境若不是 HTTPS 必须拒绝 ready，
-不能静默降级生产 Cookie。
+`__Host-` 前缀仅在 `CLOUDEMUERA_SECURITY_SECURE_COOKIES=true` 时使用，并要求 Secure、Path=/ 且无
+Domain。应用不根据请求或 forwarded header 推断外部协议，也不执行 HTTPS 跳转；HTTP 和 HTTPS 是否启用
+由部署者及上级网关选择。默认不启用 Secure Cookie，以便直接使用 HTTP；公开 HTTPS 入口应显式开启该配置。
 
 会话期限建议：
 
@@ -664,8 +665,7 @@ SYSTEM_ADMIN_BOOTSTRAPPED
 ```text
 forwarded headers（仅受信任代理）
 request ID / exception mapping
-HTTPS/HSTS（非 Development）
-security headers
+security headers（不强制 HTTPS/HSTS）
 static files
 routing
 rate limiting
@@ -988,7 +988,7 @@ bootstrap：
 2. 配置 JSON 401/403、统一 error 和安全头；
 3. 实现 bootstrap options、initializer、instance coordinator 和 readiness check；
 4. 映射 auth/admin endpoints 和 policy；不映射 setup/register endpoint；
-5. 验证中间件顺序、production HTTPS/cookie 配置和 trusted proxy；
+5. 验证中间件顺序、HTTP/HTTPS 可选的 cookie 配置和 trusted proxy；
 6. 完成 bootstrap 竞争与配置隔离、真实 Cookie/CSRF/重启/过期/日志脱敏 API 集成测试。
 7. 实现 `scripts/test-identity.sh` 隔离 helper，并让 `scripts/check.sh` 调用它；自动化身份测试不得
    通过默认 Compose project 执行。
@@ -1059,7 +1059,7 @@ P1-02 只有同时满足以下条件才可标记 DONE：
 5. 密码按明确策略校验并使用 ASP.NET Core Identity 自适应 hash；需要时自动 rehash；
 6. 未知邮箱、错误密码、禁用、锁定均返回相同 401，username 不能登录，持久 lockout 和 rate
    limit 生效；
-7. Cookie 在生产使用 Secure/HttpOnly/SameSite/`__Host-`，Data Protection key 持久且权限正确；
+7. Cookie 始终使用 HttpOnly/SameSite，Secure/`__Host-` 仅在显式配置时启用，Data Protection key 持久且权限正确；
 8. 所有 Cookie 写请求验证 CSRF，开发环境使用同源 proxy 而非宽泛 CORS；
 9. auth session 可逐条/全用户撤销；logout、禁用、角色和密码变化后旧 Cookie 无效；
 10. API 重启保留 DB/key ring 后会话仍有效，key ring 不同时安全失效；

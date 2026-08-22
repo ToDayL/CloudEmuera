@@ -1,3 +1,4 @@
+using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Domain.Sessions;
 using Xunit;
@@ -152,6 +153,27 @@ public sealed class SessionRuntimeCoordinatorTests
         Assert.DoesNotContain("complete", trace);
     }
 
+    [Fact]
+    public async Task CloseRefreshesBindingWhenHeartbeatAdvancesStateVersion()
+    {
+        var trace = new List<string>();
+        RecordingStore store = new(trace) { ReturnStaleOnFirstStop = true };
+        RecordingRootInspector inspector = new(trace);
+        RecordingWorkerControl workerControl = new(trace);
+        SessionRuntimeCoordinator coordinator = new(store, workerControl, inspector, TimeProvider.System);
+        SessionRuntimeOpenResult opened = await coordinator.OpenAsync(CreateOpenOptions());
+        trace.Clear();
+        RefreshingWorkerRouter router = new(opened.Lease.Binding, workerControl.Process);
+        SessionLifecycleExecutor executor = new(coordinator, router, new RecordingOpenOptionsFactory());
+
+        SessionRuntimeCloseResult result = await executor.CloseAsync(opened.Lease.Binding.SessionId);
+
+        Assert.True(result.Completion.Applied);
+        Assert.Equal(SessionState.Closed, result.Completion.State);
+        Assert.Equal(2, router.Calls);
+        Assert.Equal(["stale-stopping", "stopping", "request-stop", "exit", "complete"], trace);
+    }
+
     private static SessionRuntimeOpenOptions CreateOpenOptions(int browserWidth = 0) => new(
         "sess_coordinator",
         "ctl_coordinator",
@@ -165,11 +187,14 @@ public sealed class SessionRuntimeCoordinatorTests
 
     private sealed class RecordingStore(List<string> trace) : ISessionRuntimeStore
     {
+        private bool staleStopReturned;
+
         public WorkerProcessIdentity? RecordedIdentity { get; private set; }
         public WorkerReadyInfo? Ready { get; private set; }
         public SessionRuntimeTerminalState? CompletedTerminalState { get; private set; }
         public string? CompletedReason { get; private set; }
         public SessionRuntimeBinding? CompletedBinding { get; private set; }
+        public bool ReturnStaleOnFirstStop { get; init; }
 
         public Task<SessionRuntimeAcquireResult> TryAcquireOpenLeaseAsync(
             SessionRuntimeOpenOptions options,
@@ -234,6 +259,13 @@ public sealed class SessionRuntimeCoordinatorTests
             DateTimeOffset observedAt,
             CancellationToken cancellationToken = default)
         {
+            if (ReturnStaleOnFirstStop && !staleStopReturned)
+            {
+                staleStopReturned = true;
+                trace.Add("stale-stopping");
+                return Task.FromResult(SessionRuntimeWriteResult.Stale());
+            }
+
             trace.Add("stopping");
             return Task.FromResult(SessionRuntimeWriteResult.Accepted(binding with { StateVersion = checked(binding.StateVersion + 1) }));
         }
@@ -366,5 +398,40 @@ public sealed class SessionRuntimeCoordinatorTests
         public void UpdateRuntimeBinding(SessionRuntimeBinding binding, bool persistenceReady = false)
         {
         }
+    }
+
+    private sealed class RefreshingWorkerRouter(
+        SessionRuntimeBinding binding,
+        IWorkerProcessHandle process) : ICurrentWorkerRouter
+    {
+        public int Calls { get; private set; }
+
+        public Task<CurrentWorkerRoute?> GetCurrentAsync(
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            SessionRuntimeBinding current = Calls == 1
+                ? binding
+                : binding with { StateVersion = checked(binding.StateVersion + 1) };
+            return Task.FromResult<CurrentWorkerRoute?>(new CurrentWorkerRoute(current, process));
+        }
+    }
+
+    private sealed class RecordingOpenOptionsFactory : IWorkerOpenOptionsFactory
+    {
+        public SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0, SessionTextMetrics? textMetrics = null) =>
+            CreateOpenOptionsForTest(sessionId, browserWidth);
+
+        private static SessionRuntimeOpenOptions CreateOpenOptionsForTest(string sessionId, int browserWidth) => new(
+            sessionId,
+            "ctl_options",
+            "wrk_options",
+            "headless-test",
+            2,
+            "uds/wrk_options",
+            TimeSpan.FromSeconds(30),
+            DateTimeOffset.UtcNow,
+            browserWidth);
     }
 }

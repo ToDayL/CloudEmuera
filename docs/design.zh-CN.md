@@ -192,7 +192,7 @@ Emuera 解释器；前端只依赖生成的公开契约。
 
 ```text
 Desktop/Mobile Browser
-        │ HTTPS / WebSocket
+        │ HTTP(S) / WebSocket
         ▼
 ┌──────────────────────── Docker container ───────────────────────┐
 │  Web/API                                                        │
@@ -1189,10 +1189,12 @@ Worker 从内核视角可能读取 DataRoot 内其他资源；实例不得面向
 
 ### 12.3 Web 安全
 
-- 生产环境仅使用 HTTPS，Cookie 设置 `Secure`、`HttpOnly`、合适的 `SameSite`；
-- 生产 Compose 的宿主 HTTP 端口默认只绑定 `127.0.0.1`，由外部 HTTPS 网关对外提供同一个 Web/API
-  来源；直接绑定公网地址必须显式配置。SPA 需要调用 API，因此不能把 API 当作浏览器不可达的内部接口，
-  必须依靠认证、逐资源授权、CSRF 和限流保护业务路由；
+- 部署者可以选择 HTTP 或 HTTPS；应用不执行 HTTPS 跳转或 HSTS。Cookie 默认使用 `HttpOnly`、合适的
+  `SameSite` 且不强制 `Secure`；当公开入口使用 HTTPS 时，设置 `CLOUDEMUERA_SECURITY_SECURE_COOKIES=true`
+  以启用 Secure Cookie；
+- 生产 Compose 的宿主 HTTP 端口默认只绑定 `127.0.0.1`，上级网关是否提供 HTTPS 和跳转由部署者决定；直接
+  绑定公网地址必须显式配置。SPA 需要调用 API，因此不能把 API 当作浏览器不可达的内部接口，必须依靠认证、
+  逐资源授权、CSRF 和限流保护业务路由；
 - Cookie 认证的写操作使用 CSRF 防护；Realtime WebSocket 不限制 Origin，但仍校验登录态并在每次资源
   操作时重新授权；部署网络边界不得面向不受信任的站点开放；
 - CSP 默认禁止脚本来源扩张、对象嵌入和任意媒体 URL；

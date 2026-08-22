@@ -19,13 +19,16 @@ public sealed class MigrationProcessTests
         {
             ProcessResult first = await RunAsync(migratorPath, "migrate", dataRoot);
             ProcessResult second = await RunAsync(migratorPath, "migrate", dataRoot);
+            ProcessResult repair = await RunAsync(migratorPath, "repair-indexes", dataRoot);
             ProcessResult check = await RunAsync(migratorPath, "check", dataRoot);
 
             Assert.Equal(0, first.ExitCode);
             Assert.Equal(0, second.ExitCode);
+            Assert.Equal(0, repair.ExitCode);
             Assert.Equal(0, check.ExitCode);
             Assert.Contains("result=succeeded", first.StandardOutput);
             Assert.Contains("result=up_to_date", second.StandardOutput);
+            Assert.Contains("operation=repair-indexes", repair.StandardOutput);
             Assert.Contains("operation=check", check.StandardOutput);
             Assert.DoesNotContain("Data Source=", first.StandardOutput + first.StandardError, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("password_hash", first.StandardOutput + first.StandardError, StringComparison.OrdinalIgnoreCase);

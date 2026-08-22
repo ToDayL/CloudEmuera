@@ -907,7 +907,10 @@ Session 的 open/存档写；生产镜像不存在旧独立控制面服务；备
 实施记录（2026-08-22）：生产镜像收敛为单一 `api` 服务，`/app/start.sh` 在同一容器内先独占执行
 Migrator，再 `exec` API；构建后的 SPA 进入 API 静态 web root，由同一 `28647` 应用端口提供 Web、HTTP
 API 和 WebSocket。named volume 默认 root，bind mount 可选部署 UID/GID；生产宿主端口默认只绑定
-`127.0.0.1`，公网访问交给外部 HTTPS 网关；未设置 CPU 限制，也未主动映射 Capacity 配置。
+`127.0.0.1`，是否使用 HTTPS 由部署者及上级网关选择；公开 HTTPS 入口可显式启用 Secure Cookie。未设置 CPU
+限制，也未主动映射 Capacity 配置。
+close 与 Worker heartbeat 同时推进 `state_version` 时，`SessionLifecycleExecutor` 会在同一 Worker
+绑定上做有界刷新，避免把正常心跳竞态误报为无法关闭；新增 Application 回归测试覆盖该路径。
 `test-production-image.sh` 覆盖单容器入口、SPA/API、root named volume、bind mount 身份、Worker 和
 Realtime 纵切；`test-process-recovery.sh` 覆盖 SIGTERM、API/Worker 强制终止、parent-death、SessionRoot
 与原生存档，以及冷 DataRoot 恢复后 Game owner marker 和 SessionRoot marker 重绑定，实测停止耗时

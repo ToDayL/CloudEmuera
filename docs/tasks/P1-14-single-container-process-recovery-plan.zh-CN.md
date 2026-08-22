@@ -201,8 +201,9 @@ stop_grace_period: 20s
 ```
 
 只保留 `api`、唯一 `/data` volume、`init`、停止信号/宽限期，以及现有安全选项。不设置 CPU 限制，
-不在生产 environment 中主动映射 `CloudEmuera__Capacity:*`。宿主 HTTP 端口默认只绑定 `127.0.0.1`，
-公网访问由外部 HTTPS 网关代理；直接公网绑定必须显式设置 `CLOUDEMUERA_HTTP_BIND_ADDRESS`。健康检查可以继续由外部访问
+不在生产 environment 中主动映射 `CloudEmuera__Capacity:*`。宿主 HTTP 端口默认只绑定 `127.0.0.1`，是否使用
+HTTPS 和跳转由上级网关选择，应用不强制协议；直接公网绑定必须显式设置 `CLOUDEMUERA_HTTP_BIND_ADDRESS`。
+公开入口使用 HTTPS 时可设置 `CLOUDEMUERA_SECURITY_SECURE_COOKIES=true`。健康检查可以继续由外部访问
 `/health/live`/`ready` 验证，不要求为了 P1-14 增加镜像内 curl 等工具。
 
 ### 6.3 ASP.NET Host

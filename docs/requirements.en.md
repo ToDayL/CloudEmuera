@@ -233,7 +233,8 @@ The system uses the following compatibility classifications:
 ### 8.1 Web layer
 
 - Uses resources only through the API.
-- Uses HTTPS for control operations and WebSocket for real-time events and game input.
+- Supports HTTP or HTTPS for control operations and the corresponding WebSocket for real-time events and game input;
+  the deployer and an upstream gateway choose whether HTTPS is used, and the application does not force a redirect.
 - Stores the Session identifier and current epoch locally, but not authoritative game state; reconnect replaces local display state with a server snapshot.
 - Renders structured events through DOM/Canvas/WebAudio and does not execute raw script or HTML supplied by a game.
 
@@ -282,7 +283,8 @@ For legacy games that write `save*.sav` and `global.sav` at the GameRoot level, 
 
 ### 8.4 Communication protocols
 
-- Browser to API: HTTPS + WebSocket.
+- Browser to API: HTTP or HTTPS + WebSocket; external HTTPS termination and redirects are controlled by the deployer's
+  upstream gateway.
 - API to Worker: local IPC inside the container, preferably a Unix domain socket. The protocol model must remain transport-independent for testing.
 - Large static assets: read from the mounted data directory through the API rather than repeatedly transferring them through real-time messages.
 - Every control command must include `sessionId`, `workerEpoch`, a command ID, and a protocol version.
@@ -408,7 +410,7 @@ shared graceful Worker budget is 5 seconds, the shared force-stop budget is 5 se
 ## 12. Security Requirements
 
 - **SEC-001**: Game packages, filenames, and display content must be parsed as unsafe data formats. The deployer must run only games they trust; the system does not promise safe execution of malicious ERB or Runtime content.
-- **SEC-002**: The production container may run as root by default for Docker named-volume compatibility; a bind mount may use a deployer-provided UID/GID. The production host HTTP port binds to loopback by default and public access should terminate at an external HTTPS gateway; direct public binding must be explicit. It must not mount the container-management interface, host secrets, or unrelated host directories. Workers should not intentionally use the public network; the execution boundary is the container and the application path checks.
+- **SEC-002**: The production container may run as root by default for Docker named-volume compatibility; a bind mount may use a deployer-provided UID/GID. The production host HTTP port binds to loopback by default; the deployer and an upstream gateway choose whether HTTPS and redirects are used, and the application does not force a protocol. Cookies are not Secure by default; set `CLOUDEMUERA_SECURITY_SECURE_COOKIES=true` when the public entrypoint is HTTPS. It must not mount the container-management interface, host secrets, or unrelated host directories. Workers should not intentionally use the public network; the execution boundary is the container and the application path checks.
 - **SEC-003**: Session management passes only the assigned complete SessionRoot path to a Worker, and normal Worker logic must not access the Game library or another SessionRoot. API and Worker may share a UID, so this is not kernel-enforced hostile-Worker tenant isolation.
 - **SEC-004**: ConsoleSnapshot, IPC/WebSocket queues, ZIP expansion, and DataRoot usage must have instance-wide bounds. The production Compose file imposes no CPU limit; memory and PID limits remain optional whole-container deployment settings, and fine-grained process-resource governance is not required.
 - **SEC-005**: Archive path traversal, symbolic-link escape, case collisions, and decompression overrun must be prevented.

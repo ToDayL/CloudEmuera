@@ -210,6 +210,76 @@ public sealed class DatabaseMigrationRunner
         }
     }
 
+    /// <summary>
+    /// Rebuilds SQLite indexes after an operator has made a cold copy of the
+    /// complete DataRoot and stopped every API/Worker process. This is an
+    /// explicit recovery operation, not part of normal startup: silently
+    /// repairing a database would hide broader storage corruption.
+    /// </summary>
+    public async Task<MigrationResult> RepairIndexesAsync(CancellationToken cancellationToken = default)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        const string operation = "repair-indexes";
+        try
+        {
+            SqliteDatabasePaths paths = _options.ResolvePaths(createDataRoot: false);
+            if (!File.Exists(paths.DatabasePath))
+            {
+                return Failure(operation, MigrationExitCodes.IntegrityCheckFailed, "database_missing", stopwatch);
+            }
+
+            MigrationLockStatus lockStatus = MigrationLock.TryAcquire(paths.MigrationLockPath, out MigrationLock? migrationLock);
+            if (lockStatus == MigrationLockStatus.Busy)
+            {
+                return Failure(operation, MigrationExitCodes.LockBusy, "migration_lock_busy", stopwatch);
+            }
+
+            if (lockStatus != MigrationLockStatus.Acquired || migrationLock is null)
+            {
+                return Failure(operation, MigrationExitCodes.InvalidConfiguration, "migration_lock_invalid", stopwatch);
+            }
+
+            using (migrationLock)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                MigrationState state = await ReadMigrationStateAsync(paths, existedBeforeOpen: true, readOnly: true, cancellationToken).ConfigureAwait(false);
+                SqliteConnectionFactory connectionFactory = new(_options, createDataRoot: false);
+                await using SqliteConnection connection = connectionFactory.OpenConnection(SqliteConnectionAccess.ReadWrite);
+                await using SqliteCommand reindex = connection.CreateCommand();
+                reindex.CommandText = "REINDEX;";
+                await reindex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                await SqliteIntegrityChecker.VerifyAsync(connection, cancellationToken).ConfigureAwait(false);
+                Log(operation, "succeeded", null, stopwatch);
+                return MigrationResult.SuccessResult(operation, state.AppliedMigrations, state.PendingMigrations);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log(operation, "cancelled", null, stopwatch);
+            return new MigrationResult(MigrationExitCodes.MigrationFailed, operation, "cancelled", [], [], ErrorCode: "cancelled");
+        }
+        catch (DatabaseNewerThanBinaryException)
+        {
+            Log(operation, "database_newer_than_binary", null, stopwatch);
+            return Failure(operation, MigrationExitCodes.DatabaseNewerThanBinary, "database_newer_than_binary", stopwatch);
+        }
+        catch (SqliteIntegrityException)
+        {
+            Log(operation, "integrity_check_failed", null, stopwatch);
+            return Failure(operation, MigrationExitCodes.IntegrityCheckFailed, "integrity_check_failed", stopwatch);
+        }
+        catch (Exception exception) when (exception is SqlitePathException or SqliteConfigurationException or UnauthorizedAccessException)
+        {
+            Log(operation, "invalid_configuration", null, stopwatch);
+            return Failure(operation, MigrationExitCodes.InvalidConfiguration, "invalid_configuration", stopwatch);
+        }
+        catch (Exception)
+        {
+            Log(operation, "repair_failed", null, stopwatch);
+            return Failure(operation, MigrationExitCodes.MigrationFailed, "repair_failed", stopwatch);
+        }
+    }
+
     private async Task<MigrationState> ReadMigrationStateAsync(
         SqliteDatabasePaths paths,
         bool existedBeforeOpen,

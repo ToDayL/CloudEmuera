@@ -49,9 +49,13 @@ internal static class MigratorCommand
             DatabaseMigrationRunner runner = new(
                 options!,
                 log: message => Console.WriteLine(message));
-            MigrationResult result = command == Command.Migrate
-                ? await runner.MigrateAsync(cancellation.Token).ConfigureAwait(false)
-                : await runner.CheckAsync(cancellation.Token).ConfigureAwait(false);
+            MigrationResult result = command switch
+            {
+                Command.Migrate => await runner.MigrateAsync(cancellation.Token).ConfigureAwait(false),
+                Command.Check => await runner.CheckAsync(cancellation.Token).ConfigureAwait(false),
+                Command.RepairIndexes => await runner.RepairIndexesAsync(cancellation.Token).ConfigureAwait(false),
+                _ => throw new InvalidOperationException("Unsupported migrator command."),
+            };
             if (!result.Succeeded)
             {
                 Console.Error.WriteLine($"migrator_error code={result.ErrorCode ?? "operation_failed"} exit_code={result.ExitCode}");
@@ -92,11 +96,12 @@ internal static class MigratorCommand
         {
             "migrate" => Command.Migrate,
             "check" => Command.Check,
+            "repair-indexes" => Command.RepairIndexes,
             "plan-game-collapse" => Command.PlanGameCollapse,
             "rebind-session-roots" => Command.RebindSessionRoots,
             _ => (Command)(-1),
         };
-        if (command is not (Command.Migrate or Command.Check or Command.PlanGameCollapse or Command.RebindSessionRoots)) return false;
+        if (command is not (Command.Migrate or Command.Check or Command.RepairIndexes or Command.PlanGameCollapse or Command.RebindSessionRoots)) return false;
 
         string? dataRoot = null;
         string databaseName = SqliteStorageConventions.DatabaseFileName;
@@ -156,7 +161,7 @@ internal static class MigratorCommand
 
     private static void PrintUsage()
     {
-        Console.Error.WriteLine("usage: CloudEmuera.Migrator migrate|check|rebind-session-roots --data-root <path> [--database <file>] [--game-collapse-plan <file>]");
+        Console.Error.WriteLine("usage: CloudEmuera.Migrator migrate|check|repair-indexes|rebind-session-roots --data-root <path> [--database <file>] [--game-collapse-plan <file>]");
         Console.Error.WriteLine("       CloudEmuera.Migrator plan-game-collapse --data-root <path> [--database <file>] [--selection-template <file>]");
     }
 
@@ -164,6 +169,7 @@ internal static class MigratorCommand
     {
         Migrate,
         Check,
+        RepairIndexes,
         PlanGameCollapse,
         RebindSessionRoots,
     }

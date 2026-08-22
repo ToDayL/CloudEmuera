@@ -239,7 +239,8 @@ Session 1 ── 1 私有 SessionRoot
 ### 8.1 Web 层
 
 - 只通过 API 使用资源。
-- 使用 HTTPS 完成控制操作，使用 WebSocket 接收实时事件和发送游戏输入。
+- 支持通过 HTTP 或 HTTPS 完成控制操作，使用相应协议的 WebSocket 接收实时事件和发送游戏输入；是否启用
+  HTTPS 由部署者及上级网关选择，应用不强制跳转。
 - 保存 Session 标识、最近确认的输出序号和客户端消息标识，但不保存权威游戏状态。
 - 将结构化事件渲染为 DOM/Canvas/WebAudio，不执行游戏提供的原始脚本或 HTML。
 
@@ -297,7 +298,7 @@ SessionRoot/
 
 ### 8.4 通信协议
 
-- 浏览器到 API：HTTPS + WebSocket。
+- 浏览器到 API：HTTP 或 HTTPS + WebSocket；外部 HTTPS 终结和跳转由部署者的上级网关决定。
 - API 到 Worker：容器内本地 IPC，首选 Unix domain socket；协议模型不得依赖特定传输才能测试。
 - 大型静态资源：通过 API 从挂载数据目录读取，不通过实时消息重复传输。
 - 所有控制命令必须包含 `sessionId`、`workerEpoch`、命令 ID 和协议版本。
@@ -474,7 +475,8 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 
 - **SEC-001**：游戏包、文件名和显示内容必须按不安全数据格式解析；部署者只应运行自己信任的游戏，系统不承诺安全执行恶意 ERB/Runtime 内容。
 - **SEC-002**：生产容器默认可使用 root 以兼容 Docker named volume；bind mount 可由部署者提供 UID/GID。生产
-  宿主 HTTP 端口默认只绑定 loopback，公网访问应通过外部 HTTPS 网关；直接绑定公网地址必须显式配置。无论
+  宿主 HTTP 端口默认只绑定 loopback；是否使用 HTTPS、是否由上级网关跳转由部署者选择，应用不强制协议。
+  Cookie 默认不要求 Secure；仅当 `CLOUDEMUERA_SECURITY_SECURE_COOKIES=true` 时使用 Secure Cookie。无论
   身份都不得挂载容器管理接口、宿主密钥或无关宿主目录；Worker 不应主动使用公网，执行边界以容器整体限制
   和应用路径校验为准。
 - **SEC-003**：Session 管理方只把分配的完整 SessionRoot 路径交给 Worker，正常 Worker 逻辑不得访问 Game 库或其他 SessionRoot；API 与 Worker 可以同 UID，故该约束不构成抵御恶意 Worker 的内核强制租户隔离。

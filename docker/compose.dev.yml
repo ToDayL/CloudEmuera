@@ -35,6 +35,8 @@ services:
         DEV_GID: "${CLOUDEMUERA_GID:-1000}"
     image: cloudemuera/dotnet-dev:${CLOUDEMUERA_UID:-1000}-${CLOUDEMUERA_GID:-1000}
     user: "${CLOUDEMUERA_UID:-1000}:${CLOUDEMUERA_GID:-1000}"
+    stop_signal: SIGTERM
+    stop_grace_period: 20s
     working_dir: /workspace
     command:
       - /workspace/docker/dev-start.sh

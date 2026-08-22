@@ -20,6 +20,9 @@ case "$command" in
   check)
     exec dotnet "$migrator" check --data-root "$data_root" "$@"
     ;;
+  repair-indexes)
+    exec dotnet "$migrator" repair-indexes --data-root "$data_root" "$@"
+    ;;
   rebind-session-roots)
     dotnet "$migrator" migrate --data-root "$data_root"
     exec dotnet "$migrator" rebind-session-roots --data-root "$data_root" "$@"

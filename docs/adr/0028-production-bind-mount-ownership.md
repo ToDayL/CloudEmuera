@@ -26,9 +26,10 @@ bind mount 则可能需要让容器进程匹配预先创建数据目录的宿主
    CPU 不设置限制；内存/PID 约束仍可由部署者显式覆盖。
 6. 容器不挂 Docker socket、宿主 home、源码、密钥或 Worker UDS，继续使用 `init: true`、`cap_drop: ALL`
    和 `no-new-privileges`。
-7. 生产 Compose 的宿主 HTTP 端口默认绑定 `127.0.0.1`，由部署者在宿主机上配置 HTTPS 反向代理对外提供
-   Web/API；只有明确设置 `CLOUDEMUERA_HTTP_BIND_ADDRESS` 时才直接绑定其他地址。容器内 API 仍监听
-   `0.0.0.0:28647`，SPA、HTTP API 和 WebSocket 共用该应用端口。
+7. 生产 Compose 的宿主 HTTP 端口默认绑定 `127.0.0.1`；部署者可以让上级 Nginx/Caddy 选择 HTTP 或 HTTPS，
+   应用不执行协议跳转。只有明确设置 `CLOUDEMUERA_HTTP_BIND_ADDRESS` 时才直接绑定其他地址。容器内 API
+   仍监听 `0.0.0.0:28647`，SPA、HTTP API 和 WebSocket 共用该应用端口；`CLOUDEMUERA_SECURITY_SECURE_COOKIES`
+   显式控制是否使用 Secure Cookie。
 
 ## 备选方案
 
@@ -39,8 +40,8 @@ bind mount 则可能需要让容器进程匹配预先创建数据目录的宿主
 ## 后果
 
 默认部署最小且可直接使用 named volume；选择 bind mount 的部署者需要自行创建目录并按需填写 UID/GID。
-默认 loopback 绑定避免把应用端口意外暴露到公网；公网部署需要外部 HTTPS 终结点，直接绑定公网地址是显式
-部署选择。root 默认不代表恶意游戏隔离，当前 MVP 仍是假设可信自托管参与者；路径、SessionRoot、授权和 Worker
+默认 loopback 绑定避免把应用端口意外暴露到公网；公网部署是否使用外部 HTTPS 终结点由部署者选择，直接绑定
+公网地址也是显式部署选择。root 默认不代表恶意游戏隔离，当前 MVP 仍是假设可信自托管参与者；路径、SessionRoot、授权和 Worker
 生命周期边界仍由应用负责。迁移和 API 共用一个容器，但 Migrator 只在 API 进程启动前运行，API 仍是
 运行期间唯一访问 SQLite 的业务进程。
 

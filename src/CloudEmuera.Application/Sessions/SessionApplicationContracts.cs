@@ -200,6 +200,8 @@ public sealed class SessionLifecycleExecutor(
     IWorkerOpenOptionsFactory optionsFactory)
     : ISessionLifecycleExecutor, ISessionCommandGate
 {
+    private const int CloseBindingRefreshAttempts = 3;
+    private static readonly TimeSpan CloseBindingRefreshDelay = TimeSpan.FromMilliseconds(25);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SessionGate> gates = new(StringComparer.Ordinal);
 
     public Task<SessionRuntimeOpenResult> OpenAsync(
@@ -240,20 +242,38 @@ public sealed class SessionLifecycleExecutor(
         SessionGate gate = await AcquireGateAsync(sessionId, cancellationToken).ConfigureAwait(false);
         try
         {
-            CurrentWorkerRoute? route = await workerRouter.GetCurrentAsync(sessionId, cancellationToken).ConfigureAwait(false);
-            if (route is null)
+            for (int attempt = 0; attempt < CloseBindingRefreshAttempts; attempt++)
             {
-                throw new SessionApplicationException(
-                    SessionErrorCodes.SessionTransitionInProgress,
-                    "当前 Session 的 Worker 路由尚未可用。",
-                    409);
+                CurrentWorkerRoute? route = await workerRouter.GetCurrentAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                if (route is null)
+                {
+                    if (attempt > 0)
+                        return new SessionRuntimeCloseResult(SessionRuntimeCompletionResult.Stale());
+
+                    throw new SessionApplicationException(
+                        SessionErrorCodes.SessionTransitionInProgress,
+                        "当前 Session 的 Worker 路由尚未可用。",
+                        409);
+                }
+
+                SessionRuntimeCloseResult result = await coordinator.CloseAsync(
+                    route.Binding,
+                    route.Process,
+                    new SessionRuntimeCloseRequest(sessionId, Force: false, reasonCode),
+                    cancellationToken).ConfigureAwait(false);
+                if (result.Completion.Applied ||
+                    !string.Equals(result.Completion.ReasonCode, SessionRuntimeResultCodes.WorkerStaleEpoch, StringComparison.Ordinal) ||
+                    attempt == CloseBindingRefreshAttempts - 1)
+                    return result;
+
+                // A heartbeat may advance the durable state version between
+                // GetCurrentAsync and BeginStoppingAsync. Refresh the same
+                // Worker route instead of converting that benign race into a
+                // permanently failed close command.
+                await Task.Delay(CloseBindingRefreshDelay, cancellationToken).ConfigureAwait(false);
             }
 
-            return await coordinator.CloseAsync(
-                route.Binding,
-                route.Process,
-                new SessionRuntimeCloseRequest(sessionId, Force: false, reasonCode),
-                cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException("The Session close binding refresh loop did not return.");
         }
         finally
         {
