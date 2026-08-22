@@ -77,14 +77,17 @@ public sealed class MigrationFailureTests
     {
         using TemporarySqliteDatabase database = new();
         Assert.True((await database.MigrateAsync()).Succeeded);
-        int backupsBefore = Directory.EnumerateFiles(database.BackupDirectoryPath, "*.sqlite").Count();
+        int backupsBefore = CountBackups(database.BackupDirectoryPath);
 
         MigrationResult result = await new DatabaseMigrationRunner(database.Options).RepairIndexesAsync();
 
         Assert.True(result.Succeeded, result.ErrorCode);
-        Assert.Equal(backupsBefore, Directory.EnumerateFiles(database.BackupDirectoryPath, "*.sqlite").Count());
+        Assert.Equal(backupsBefore, CountBackups(database.BackupDirectoryPath));
         Assert.True((await database.CheckAsync()).Succeeded);
     }
+
+    private static int CountBackups(string path) =>
+        Directory.Exists(path) ? Directory.EnumerateFiles(path, "*.sqlite").Count() : 0;
 
     [Fact]
     [Trait("Category", "Migration")]

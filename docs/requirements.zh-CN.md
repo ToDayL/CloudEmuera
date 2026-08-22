@@ -266,8 +266,9 @@ API 进程直接创建、监视和终止 Session Worker，并只执行实例级�
 
 生产单容器中只有 API 是长驻业务进程；每个 Session Worker 是 API 的子进程。容器使用 Docker 提供的
 轻量 init/PID 1 转发信号并回收僵尸进程，不新增常驻 Supervisor 或第二个运行期控制面。容器入口脚本
-先在同一容器内独占执行 `Migrator`，成功后才以 API 为主进程启动。开发环境默认同样只有 API 长驻，API
-直接服务构建后的 SPA；Node/Web 容器只执行一次性 install/build，HMR 必须显式启用 profile。
+先在同一容器内独占执行 `Migrator`，成功后才以 API 为主进程启动。开发环境默认由 API 和 Vite `web`
+两个容器组成：API 直接服务构建后的 SPA，`web` 同时提供 `5173` 的 HMR 前端并把 `/api` 代理到 API；
+开发数据始终使用开发专用 named volume，不读取仓库 `./data`。
 
 ### 8.3 Worker 层
 
@@ -443,7 +444,7 @@ Worker 在收到时的单一输入临界区读取当前 prompt；没有 prompt �
 
 ### 11.2 本地物理文件系统
 
-容器必须将一个宿主机数据目录挂载到 `/data`。所有游戏、Session、存档、日志和备份都必须使用该目录下的物理文件或目录：
+生产容器必须将一个宿主机数据目录或 Docker managed volume 挂载到 `/data`。所有游戏、Session、存档、日志和备份都必须使用该目录下的物理文件或目录：
 
 生产 Compose 默认以 root 运行 API、Worker、Validator 和 Migrator，以便 named volume 开箱可写；
 `CLOUDEMUERA_DATA_PATH` 未设置时使用 Docker named volume，设置后可通过 `CLOUDEMUERA_UID/GID`
@@ -521,7 +522,7 @@ Session 管理方必须复制 Game 当前清单中的全部合法普通文件和
 - **NFR-013**：所有消息协议必须包含版本字段，并对未知可选字段向前兼容。
 - **NFR-014**：上游 EM+EE 合并必须生成变更报告并运行 v18 与当前 EM+EE 双测试集。
 - **NFR-018**：在同一 checkout 中运行的自动化身份校验不得读取或修改人工 `.env`、`./data` 或
-  Compose project；必须使用显式临时 env、独立 DataRoot、唯一 project 名和隔离端口。
+  Compose project；必须使用显式临时 env、唯一 project 名、该 project 的隔离 named volume 和隔离端口。
 
 ### 13.4 可访问性与客户端兼容
 

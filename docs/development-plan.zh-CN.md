@@ -334,7 +334,7 @@ timeout、独立 connection 约束和 epoch fencing。Linux 数据库/锁/备份
 交付物：本地账户、email-only 登录、可撤销 Cookie session、密码哈希与锁定、CSRF/Data
 Protection、玩家/管理员策略、资源所有权授权器、敏感操作审计、仅未初始化实例从 `.env`
 原子创建首个管理员并强制首次改密，以及接入真实身份的登录和管理员用户页面；`ADR-0001`
-记录未来 OIDC 触发条件。自动化校验使用独立临时 env/DataRoot/Compose project/端口，不读取或
+记录未来 OIDC 触发条件。自动化校验使用独立临时 env/Compose project/named volume/端口，不读取或
 修改同一 checkout 的人工 `.env`、`./data` 或开发容器。
 
 验证：
@@ -355,7 +355,7 @@ Cookie、session ID 或输入全文；现有前端完成真实登录、强制改
 创建/资料编辑/启停/角色调整/临时密码重置页面，以及服务端 CSRF、会话撤销、审计与资源授权
 边界。`IdentityApiContractTests` 覆盖匿名拒绝、CSRF、首次改密、管理员创建、非管理员管理端点
 拒绝和禁用即时撤销；`e2e/tests/identity.spec.ts` 覆盖 bootstrap 管理员和玩家的浏览器闭环。
-验证入口保持隔离的临时 env、DataRoot、Compose project 和动态端口。
+验证入口保持隔离的临时 env、Compose project/named volume 和动态端口。
 
 复验与加固（2026-08-09）：修复 COMPLETED 实例在移除/改变 bootstrap 变量后重启错误降级、
 授权 action/kind/descriptor 不一致仍可能放行、审计缺少 HTTP request correlation 等问题；补齐适配

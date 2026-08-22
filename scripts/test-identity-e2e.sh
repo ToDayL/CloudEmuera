@@ -15,7 +15,6 @@ fi
 temp_parent="$repo_root/.tmp"
 mkdir -p "$temp_parent"
 temp_root="$(mktemp -d "$temp_parent/identity-e2e.XXXXXX")"
-mkdir "$temp_root/data"
 project_name="cloudemuera-identity-e2e-${RANDOM}-${RANDOM}"
 cleanup() {
   docker compose --profile e2e --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml" down --remove-orphans --volumes >/dev/null 2>&1 || true
@@ -27,7 +26,6 @@ write_identity_env() {
 cat > "$temp_root/identity.env" <<EOF
 CLOUDEMUERA_UID=$CLOUDEMUERA_UID
 CLOUDEMUERA_GID=$CLOUDEMUERA_GID
-CLOUDEMUERA_DATA_PATH=$temp_root/data
 CLOUDEMUERA_DEV_HTTP_PORT=0
 CLOUDEMUERA_WEB_PORT=0
 CLOUDEMUERA_PUBLIC_ORIGIN=http://web:5173

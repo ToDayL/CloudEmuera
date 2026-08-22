@@ -95,20 +95,12 @@ services:
       - "${CLOUDEMUERA_DEV_HTTP_PORT:-28648}:28647"
     volumes:
       - ..:/workspace
-      - ${CLOUDEMUERA_DATA_PATH:-../data}:/data
+      - cloudemuera-dev-data:/data
       - nuget-cache-v2:/var/cache/nuget
     init: true
 
   web:
     <<: *web-common
-    command:
-      - sh
-      - -c
-      - pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web build
-
-  web-hmr:
-    <<: *web-common
-    profiles: ["hmr"]
     command:
       - sh
       - -c
@@ -144,6 +136,7 @@ services:
     init: true
 
 volumes:
+  cloudemuera-dev-data:
   nuget-cache-v2:
   pnpm-store-v2:
   corepack-cache-v2:

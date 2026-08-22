@@ -325,8 +325,9 @@ readiness，不执行 I/O；随后由宿主停止流程并行处理所有 Worker
 生产备份是冷备份：停止 API 后复制整个 `/data`，包括 SQLite 主文件及 WAL/SHM、keys、games、sessions、
 logs 和 backups，复制完成后再启动。恢复时整体替换 `/data`，执行入口脚本的离线
 `rebind-session-roots`（先迁移并校验数据库 marker，再刷新恢复后 Game 目录和 SessionRoot 的目录 identity），
-再启动 API；不能只恢复 SQLite 或单个 SessionRoot。默认开发环境把 SPA 构建输出挂到 API 的 web root，只有 API 长驻；`web` 是一次性
-frozen install/build 工具，`web-hmr` 仅通过 `hmr` profile 显式启用。
+再启动 API；不能只恢复 SQLite 或单个 SessionRoot。默认开发环境把 SPA 构建输出挂到 API 的 web root，API
+和 `web` Vite 服务同时长驻；API 使用 `28648`，`web` 使用 `5173` 并通过 Compose 网络代理 `/api`。
+开发 `/data` 始终使用 Compose 管理的 `cloudemuera-dev-data` named volume，不读取 checkout 的 `./data`。
 
 ## 4. 领域模型与状态约束
 
@@ -1346,8 +1347,9 @@ pending clientMessageId → result
 - Runtime 基线、兼容配置和禁止能力；
 - 日志级别、轮转和已实现审计保留。
 
-人工开发使用 `docker/.env` 与 `./data`。自动化身份测试必须生成独立临时 env/DataRoot，使用唯一
-Compose project 和动态端口，并通过 `--env-file` 与 API service 的显式 environment mapping 传入
+人工开发使用 `docker/.env` 中的身份和端口配置，但开发数据使用固定开发专用 named volume，不使用
+`./data`。自动化身份测试必须生成独立临时 env 和唯一 Compose project；Compose 会为每个测试 project
+创建隔离的 named volume 和动态端口，并通过 `--env-file` 与 API service 的显式 environment mapping 传入
 bootstrap 配置；不得读取、修改或清理人工 `docker/.env`、`./data` 和开发容器。所有示例均使用
 `CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password`，应用不提供密码文件替代协议。
 

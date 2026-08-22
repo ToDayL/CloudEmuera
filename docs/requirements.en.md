@@ -254,7 +254,7 @@ The API process must not keep active Sessions only in memory. It is the only bus
 
 The API process directly starts, monitors, and terminates Session Workers and applies only the instance-wide active Worker gate. Exiting the API ends its active Workers. A restarted API does not adopt old Workers; after confirming that they have lost write access to their SessionRoots, it reconciles residual active Sessions to `CRASHED` while preserving each SessionRoot.
 
-In the production single container, the API is the only long-running business process; each Session Worker is an API child process. Docker's lightweight init/PID 1 forwards signals and reaps zombies; the product does not add a resident Supervisor or a second runtime control plane. The container entrypoint runs the exclusive `Migrator` in that same container and starts the API only after it succeeds. The default development topology also keeps only the API long-running and serves the built SPA from it; the Node/Web container only performs one-shot install/build work, while HMR requires an explicit profile.
+In the production single container, the API is the only long-running business process; each Session Worker is an API child process. Docker's lightweight init/PID 1 forwards signals and reaps zombies; the product does not add a resident Supervisor or a second runtime control plane. The container entrypoint runs the exclusive `Migrator` in that same container and starts the API only after it succeeds. The default development topology runs the API and a Vite `web` container; the API serves the built SPA on the API port, while `web` serves HMR on port 5173 and proxies `/api` to the API. Development data always uses a dedicated named volume and never the checkout's `./data` directory.
 
 ### 8.3 Worker layer
 
@@ -382,7 +382,7 @@ The database file must be backed up together with game files and complete Sessio
 
 ### 11.2 Local physical file system
 
-The container must mount one host data directory at `/data`. All games, Sessions, saves, logs, and backups must use physical files or directories under this directory:
+The production container must mount one host data directory or managed Docker volume at `/data`. All games, Sessions, saves, logs, and backups must use physical files or directories under this directory:
 
 ```text
 /data/
@@ -444,7 +444,7 @@ shared graceful Worker budget is 5 seconds, the shared force-stop budget is 5 se
 - **NFR-012**: The Chinese and English requirements must retain identical requirement identifiers. Changes to one document must trigger a parity check against the other.
 - **NFR-013**: Every message protocol must include a version field and be forward-compatible with unknown optional fields.
 - **NFR-014**: Merging upstream EM+EE changes must generate a change report and run both the v18 and current EM+EE suites.
-- **NFR-018**: Automated identity checks running in the same checkout must not read or modify the manual `.env`, `./data`, or Compose project. They must use an explicit temporary env file, an isolated DataRoot, a unique project name, and isolated ports.
+- **NFR-018**: Automated identity checks running in the same checkout must not read or modify the manual `.env`, `./data`, or Compose project. They must use an explicit temporary env file, a unique project name with its isolated named volume, and isolated ports.
 
 ### 13.4 Accessibility and client compatibility
 

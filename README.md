@@ -29,13 +29,7 @@ P1-02 身份功能已落地。首次使用前可在 `docker/.env` 修改管理�
 登录仅使用 email，首次登录必须修改临时密码。初始化完成后后续启动忽略这三个 bootstrap 变量。
 `docker/.env` 不得提交 Git。
 
-启动脚本会先停止可能仍在运行的旧 API，在 API 容器内由 `dev-start.sh` 先执行 Migrator，再以 API 为唯一长驻进程启动服务；前端由一次性的 `web` frozen install/build 工具容器构建，API 直接服务 `dist` 中的 SPA。开发脚本仍读取宿主机的 `id -u` 和 `id -g`，保证 bind mount 产生的 `node_modules`、`bin` 和 `obj` 归当前开发用户所有。不要直接运行未构建 DLL/SPA 的裸 `docker compose up`；日常开发请使用 `./scripts/dev-up.sh`。需要浏览器 HMR 时，另开终端执行：
-
-```bash
-export CLOUDEMUERA_UID="$(id -u)"
-export CLOUDEMUERA_GID="$(id -g)"
-docker compose --env-file docker/.env -f docker/compose.dev.yml --profile hmr up --build api web-hmr
-```
+启动脚本会先停止可能仍在运行的旧 API，在 API 容器内由 `dev-start.sh` 先执行 Migrator，再以 API 为唯一业务长驻进程启动服务；`web` 容器同时运行 Vite 开发服务器。脚本还会在启动前通过一次性 `web` 命令生成 API 所服务的 `dist`。开发脚本读取宿主机的 `id -u` 和 `id -g`，保证 bind mount 产生的 `node_modules`、`bin` 和 `obj` 归当前开发用户所有。日常开发请使用 `./scripts/dev-up.sh`，它会同时启动 API 和前端。
 
 可独立验证两个开发镜像的运行身份和 bind mount 写入归属：
 
@@ -43,14 +37,23 @@ docker compose --env-file docker/.env -f docker/compose.dev.yml --profile hmr up
 ./scripts/verify-dev-user.sh
 ```
 
-启动后 API 同时提供前端和后端：
+启动后默认有两个开发服务：
 
-- Web/API：<http://localhost:28648>
+- API/构建后的 SPA：<http://localhost:28648>
+- Vite 前端（代理 `/api` 到 API）：<http://localhost:5173>
 - API 存活检查：<http://localhost:28648/health/live>
 
-默认开发拓扑只有 API 长驻运行。HMR 仅在显式启用 `hmr` profile 时提供：<http://localhost:5173>；HMR
-终端退出不影响 API。需要重新生成前端静态文件时可单独运行 `docker compose --env-file docker/.env
--f docker/compose.dev.yml run --rm web`。
+开发数据始终保存在 Compose 管理的 `cloudemuera-dev-data` named volume 中，不读取或写入仓库的
+`./data`；`docker/.env` 中的生产 `CLOUDEMUERA_DATA_PATH` 对开发 Compose 无效。`./scripts/dev-down.sh`
+只停止服务并保留该卷。需要清空开发数据库时，确认不再需要其中数据后执行：
+
+```bash
+docker compose --env-file docker/.env -f docker/compose.dev.yml down --volumes
+```
+
+需要单独重新生成前端静态文件时可执行 `docker compose --env-file docker/.env -f docker/compose.dev.yml
+run --rm web sh -euc 'pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web build'`；该命令会覆盖
+默认的 Vite 启动命令。
 
 停止环境：
 
@@ -64,7 +67,7 @@ docker compose --env-file docker/.env -f docker/compose.dev.yml --profile hmr up
 ./scripts/check.sh
 ```
 
-身份 E2E/CI 必须使用测试脚本生成的临时 env、DataRoot、Compose project 和端口；它们不得读取或
+身份 E2E/CI 必须使用测试脚本生成的临时 env、Compose project、named volume 和端口；它们不得读取或
 修改当前 checkout 的人工 `docker/.env`、`./data`，也不得停止人工开发容器。
 
 ## 生产 Docker 部署

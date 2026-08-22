@@ -30,10 +30,11 @@ compose+=(--file "$repo_root/docker/compose.dev.yml")
 # keeps development aligned with the production single-container topology.
 "${compose[@]}" run --rm web \
   sh -euc 'pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web build'
-"${compose[@]}" up --detach api
+"${compose[@]}" up --detach api web
 running_services="$("${compose[@]}" ps --services --filter status=running | sed '/^$/d')"
-if [[ "$running_services" != "api" ]]; then
-  echo "default development topology must have only api running; got: $running_services" >&2
+running_service_count="$(printf '%s\n' "$running_services" | wc -l | tr -d ' ')"
+if [[ "$running_service_count" != "2" ]] || ! grep -Fxq api <<<"$running_services" || ! grep -Fxq web <<<"$running_services"; then
+  echo "default development topology must have api and web running; got: $running_services" >&2
   exit 1
 fi
 "${compose[@]}" ps

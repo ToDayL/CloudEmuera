@@ -26,9 +26,10 @@ P1-14 不重新设计 Worker 沙箱或 Session 生命周期，而是把 P1-05/P1
    Worker 脱离控制面继续运行；新 API 根据持久进程身份确认旧写者消失后完成故障对账。
 4. `CLOSED`/`CRASHED` Session 都能用同一 Session ID 和 SessionRoot 重新开启；重新开启只递增 epoch，
    不重新复制 Game current content，也不宣称恢复崩溃前的解释器内存。
-5. 默认开发环境也只有一个长期 API 容器，并由该 API 服务已构建的 SPA；Node、Migrator、测试和
-   Playwright 容器只作为一次性工具运行。需要 Vite HMR 时才显式启用可选 profile。
-6. 文档提供简单、可执行的停机备份和恢复步骤；自动化以临时 DataRoot 验证停机复制后元数据、
+5. 默认开发环境由 API 和 Vite `web` 两个长期容器组成；API 服务已构建的 SPA，`web` 在 `5173`
+   提供 HMR 并代理 API。Migrator、测试和 Playwright 容器只作为一次性工具运行，开发数据使用专用
+   named volume。
+6. 文档提供简单、可执行的停机备份和恢复步骤；自动化以隔离 named volume 中的临时 DataRoot 验证停机复制后元数据、
    SessionRoot 和存档仍可使用。
 
 完成标准不是增加新的进程管理框架，而是现有轻量机制在真实 Docker Compose 中具有明确时间预算、
@@ -215,12 +216,15 @@ HTTPS 和跳转由上级网关选择，应用不强制协议；直接公网绑�
 
 ### 7.1 Compose 服务
 
-保留 `api` 服务名，避免修改全部既有命令；调整为默认唯一长期服务：
+保留 `api` 服务名，避免修改全部既有命令；调整为默认 API + Vite 前端的开发拓扑：
 
 - `api`：构建后的 ASP.NET API，直接管理 Worker，并服务 Vite 构建产物；
-- `web`：一次性 pnpm 工具服务，不默认 `up`；
-- `web-hmr`：可选 `profiles: ["hmr"]`，仅显式启用时运行 Vite；
+- `web`：默认长驻的 Vite pnpm 服务，监听宿主 `5173` 并通过 Compose 网络代理 API；
 - `e2e`：继续是 profile 下的一次性 Playwright 工具服务。
+
+开发 API 的 `/data` 始终挂载 Compose 管理的 `cloudemuera-dev-data` named volume；开发 Compose 不读取
+`CLOUDEMUERA_DATA_PATH`，因此不会自动使用 checkout 的 `./data`。使用唯一 Compose project 的自动化测试
+会获得隔离的 named volume，并由 `down --volumes` 清理。
 
 开发 API 设置 `ASPNETCORE_WEBROOT=/workspace/src/CloudEmuera.Web/dist`。不要把 Vite 构建结果复制进
 受 Git 跟踪的 `src/CloudEmuera.Api/wwwroot/index.html`，也不在 API 容器内安装 Node。
@@ -234,18 +238,18 @@ HTTPS 和跳转由上级网关选择，应用不强制协议；直接公网绑�
 3. 优雅停止可能运行的旧 API；
 4. 在一次性 `api` 容器中 restore/build API、Worker、Validator、Migrator；
 5. 在一次性 `web` 容器中执行 frozen install 和 production build；
-6. 只执行 `docker compose up --detach api`，由 `dev-start.sh` 在容器内迁移后启动 API；
-7. 输出 API/SPA 地址 `http://localhost:28648` 和可选 HMR 命令；生产默认宿主端口为 `28647`。
+6. 执行 `docker compose up --detach api web`，由 `dev-start.sh` 在容器内迁移后启动 API，同时启动 Vite；
+7. 输出 API/构建 SPA 地址 `http://localhost:28648` 和 Vite 地址 `http://localhost:5173`；生产默认宿主端口为 `28647`。
 
 停止旧 API 必须发生在替换运行 DLL 前，继续避免 `dotnet watch`/CLI host 改变 API—Worker 直接父子关系。
 
 ### 7.3 检查与身份验证
 
-- `scripts/check.sh` 继续用一次性 `api` 容器运行 .NET，用一次性 `web` 容器运行 pnpm；
+- `scripts/check.sh` 继续用一次性 `api` 容器运行 .NET，用命令覆盖让 `web` 容器运行 pnpm 检查；
 - 前端契约验证通过 Docker 网络访问当前 API，或由脚本显式启动临时 API；
-- `scripts/verify-dev-user.sh` 验证 `api`、一次性 `web` 和 `e2e` 都使用宿主 UID/GID；
-- 增加默认 `dev-up` 后只有 `api` 一个长期 service 的检查；
-- 可选 HMR 不进入 `./scripts/check.sh` 完成门。
+- `scripts/verify-dev-user.sh` 验证 `api`、Vite `web` 和 `e2e` 都使用宿主 UID/GID；
+- 增加默认 `dev-up` 后 `api` 和 `web` 两个长期 service 都在运行的检查；
+- `dev-up` 的 Vite 前端不额外引入 profile，`./scripts/check.sh` 仍不依赖前端长驻进程。
 
 ## 8. 停机备份与恢复
 
@@ -274,7 +278,7 @@ P1-14 只提供冷备份说明，不增加产品备份 API 或常驻任务。
 7. 检查 Game、Session 和存档；原活动 Session 经对账后应为 `CRASHED`，可显式 reopen。
 
 文档同时给出 bind mount 和 named volume 的 Compose 命令示例。恢复涉及替换数据目录，自动化只在
-`mktemp` 创建的隔离目录执行；项目脚本不得默认覆盖人工 `./data`。
+`mktemp` 创建的隔离目录或隔离 named volume 执行；项目脚本不得默认覆盖人工 `./data`。
 
 ## 9. 文件级改动
 
@@ -295,14 +299,14 @@ P1-14 只提供冷备份说明，不增加产品备份 API 或常驻任务。
 
 - `docker/Dockerfile`：声明 `STOPSIGNAL SIGTERM`；
 - `docker/compose.yml`：显式 stop signal/grace period；
-- `docker/compose.dev.yml`：默认只长期运行 API，web 变为工具/可选 HMR；
+- `docker/compose.dev.yml`：默认运行 API 和 Vite `web`，API 使用开发专用 named volume；
 - `scripts/dev-up.sh`、`dev-down.sh`、`check.sh`、`verify-dev-user.sh`：适配单长期容器；
 - `scripts/test-production-image.sh`：保留现有正常生产纵切并补充拓扑/停止配置断言；
 - `scripts/test-process-recovery.sh`：新增真实 SIGTERM/SIGKILL/恢复纵切。
 
 ### 9.3 文档
 
-- `README.md`：默认 dev 地址、可选 HMR、生产停止、备份和恢复；
+- `README.md`：默认 dev 地址、Vite 前端、开发数据卷、生产停止、备份和恢复；
 - `docs/requirements.zh-CN.md`、`requirements.en.md`：只在现有编号下同步单长期容器和冷备份表述；
 - `docs/design.zh-CN.md`：启动/停止顺序、时间预算、dev 拓扑；
 - `docs/development-plan.zh-CN.md`：完成后记录命令、结果和日期；

@@ -8,8 +8,6 @@ source "$repo_root/scripts/lib/dev-env.sh"
 command -v curl >/dev/null || { echo "test-instance-limits.sh requires curl" >&2; exit 127; }
 
 temp_root="$(mktemp -d "${TMPDIR:-/tmp}/cloudemuera-limits.XXXXXX")"
-data_root="$temp_root/data"
-mkdir -m 700 "$data_root"
 project_name="cloudemuera-limits-${RANDOM}-${RANDOM}"
 http_port="${CLOUDEMUERA_LIMITS_TEST_PORT:-$((29000 + RANDOM % 1000))}"
 env_file="$temp_root/limits.env"
@@ -30,7 +28,6 @@ trap cleanup EXIT
 printf '%s\n' \
   "CLOUDEMUERA_UID=$CLOUDEMUERA_UID" \
   "CLOUDEMUERA_GID=$CLOUDEMUERA_GID" \
-  "CLOUDEMUERA_DATA_PATH=$data_root" \
   "CLOUDEMUERA_DEV_HTTP_PORT=$http_port" \
   "CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME=limits-admin" \
   "CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL=limits-admin@example.test" \
@@ -97,7 +94,6 @@ wait_for_http /health/ready
 printf '%s\n' \
   "CLOUDEMUERA_UID=$CLOUDEMUERA_UID" \
   "CLOUDEMUERA_GID=$CLOUDEMUERA_GID" \
-  "CLOUDEMUERA_DATA_PATH=$temp_root/invalid-data" \
   "CLOUDEMUERA_CAPACITY_MAX_ARCHIVE_BYTES=8192" \
   "CLOUDEMUERA_CAPACITY_MAX_EXPANDED_BYTES=8192" \
   "CLOUDEMUERA_CAPACITY_MAX_SESSION_ROOT_BYTES=4096" \
@@ -107,7 +103,6 @@ printf '%s\n' \
   "CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL=invalid-admin@example.test" \
   "CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password" \
   > "$bad_env_file"
-mkdir -m 700 "$temp_root/invalid-data"
 bad_project="${project_name}-invalid"
 bad_output="$temp_root/invalid-startup.log"
 set +e

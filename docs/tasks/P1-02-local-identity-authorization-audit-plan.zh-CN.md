@@ -865,7 +865,7 @@ InMemory provider 替代 SQLite 约束。
 
 新增最小真实身份 E2E：
 
-1. 测试以专属临时 env、DataRoot 和 SQLite 运行 Migrator/API，启动时自动创建首个管理员；
+1. 测试以专属临时 env、Compose project named volume 中的 DataRoot 和 SQLite 运行 Migrator/API，启动时自动创建首个管理员；
 2. 管理员用 bootstrap email 与 `temporary-password` 登录，被强制改密后进入应用；
 3. 重启 API 并改变 bootstrap 变量，确认现有管理员未被覆盖且旧临时密码已失效；
 4. 管理员创建玩家；玩家用 email 和临时密码登录 → 强制改密 → 进入展示游戏库；
@@ -922,16 +922,16 @@ API 在接受登录/业务流量前执行：
 人工开发与自动化校验可以共用同一 checkout，但不能共用配置解析上下文、Compose project、端口
 或持久数据：
 
-- 人工运行 `./scripts/dev-up.sh` 时使用 `docker/.env`、正常 `./data`、固定开发 project/端口；
+- 人工运行 `./scripts/dev-up.sh` 时使用 `docker/.env`、开发专用 named volume、固定开发 project/端口；
 - 自动化脚本绝不能读取、source、修改、覆盖或删除 `docker/.env`，也不能触碰人工 `./data`；
-- 每次自动化在 `mktemp -d` 生成专属 env 文件与 DataRoot，并显式传递
+- 每次自动化在 `mktemp -d` 生成专属 env 文件，并使用唯一 Compose project 获得隔离 named volume，同时显式传递
   `docker compose --env-file <absolute-temp-env> -p <unique-project>`；不得依赖 Compose 自动加载
   当前目录 `.env`；
 - 临时 env 必须显式写入测试专属 username/email、
-  `CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password`、UID/GID、DataRoot 和端口，并由
+  `CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=temporary-password`、UID/GID 和端口，并由
   Compose service 显式映射进对应容器。调用脚本应
   清除继承的同名配置后再加载该文件，防止 shell 环境优先级让人工值渗入测试；
-- 并行任务使用唯一 project name、独立 SQLite/key ring/DataRoot；能用 `compose run` 而无需发布
+- 并行任务使用唯一 project name、独立 named volume/SQLite/key ring/DataRoot；能用 `compose run` 而无需发布
   端口的测试不发布端口，E2E 使用动态空闲端口并写入专属 env；
 - cleanup/trap 只允许对本次已记录且位于临时根下的绝对路径和唯一 Compose project 操作，不能
   删除 `docker/.env`、`./data` 或停止人工 project；
@@ -1032,7 +1032,7 @@ docker compose -f docker/compose.dev.yml run --rm web \
 ./scripts/test-identity-e2e.sh
 ```
 
-脚本必须按 14.3 创建隔离 env/DataRoot/project/端口，运行 Migrator、启动 API/Web，以测试专属
+脚本必须按 14.3 创建隔离 env/project/named volume/端口，运行 Migrator、启动 API/Web，以测试专属
 bootstrap 邮箱和固定临时密码完成登录/强制改密，再执行 Playwright、停止专属 project 并只清理
 专属临时目录。脚本不得读取或改变 `docker/.env` 与人工 `./data`；密码不能出现在 argv 或输出。
 `scripts/check.sh` 必须调用 `test-identity.sh`，且不得用默认人工 project 重复执行这些测试。
@@ -1074,7 +1074,7 @@ P1-02 只有同时满足以下条件才可标记 DONE：
 19. 桌面和至少一个移动 viewport 的真实 bootstrap 后邮箱登录/改密/注销 E2E 通过；
 20. Application、Infrastructure、API、Web 定向测试以及全量质量门全部通过；P0/P1-01 无回归；
 21. 配置、ADR、部署说明、HTTP 契约、锁文件和开发计划与实现一致；
-22. 自动化使用独立 temp env/DataRoot/Compose project/端口，静态和动态测试证明不会读取或修改
+22. 自动化使用独立 temp env/Compose project/named volume/端口，静态和动态测试证明不会读取或修改
     同一 checkout 的人工 `docker/.env`、`./data` 或开发容器。
 
 ## 18. 实现交接清单

@@ -5,14 +5,12 @@ source "$repo_root/scripts/lib/dev-env.sh"
 temp_parent="$repo_root/.tmp"
 mkdir -p "$temp_parent"
 temp_root="$(mktemp -d "$temp_parent/identity.XXXXXX")"
-mkdir "$temp_root/data"
 project_name="cloudemuera-identity-${RANDOM}-${RANDOM}"
 cleanup() { docker compose --env-file "$temp_root/identity.env" -p "$project_name" -f "$repo_root/docker/compose.dev.yml" down --remove-orphans --volumes >/dev/null 2>&1 || true; rm -rf "$temp_root"; }
 trap cleanup EXIT
 cat > "$temp_root/identity.env" <<EOF
 CLOUDEMUERA_UID=$CLOUDEMUERA_UID
 CLOUDEMUERA_GID=$CLOUDEMUERA_GID
-CLOUDEMUERA_DATA_PATH=$temp_root/data
 CLOUDEMUERA_DEV_HTTP_PORT=0
 CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME=identity-admin
 CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL=identity-admin@example.test
