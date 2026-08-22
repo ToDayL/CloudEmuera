@@ -17,6 +17,37 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-22 — Literal fast path for direct ESCAPE in FINDELEMENT
+
+- Modified the upstream expression/function path and `VariableEvaluator` so a
+  direct `ESCAPE(...)` argument to `FINDELEMENT` or `FINDLASTELEMENT` retains
+  its literal provenance. Exact searches use ordinal equality and partial
+  searches use ordinal substring lookup without constructing or executing a
+  Regex instance.
+- Arbitrary EM+EE regular-expression arguments continue through
+  `RegexFactory`, including patterns composed from an escaped value and other
+  regex syntax. Constant-folded `ESCAPE` terms retain the same marker and
+  continue to expose the escaped string to other functions.
+- Scope: runtime implementation only; no game ERB files are changed.
+- Verification: `docker compose -f docker/compose.dev.yml run --rm api dotnet
+  test tests/CloudEmuera.RuntimeCompatibility.Tests --no-restore
+  --configuration Release --filter
+  'FullyQualifiedName~FindElementEscapedLiteralUsesLiteralPathAndKeepsRegexFallback'`.
+
+## 2026-08-22 — Recognize plain literal patterns in FINDELEMENT
+
+- Modified `RegexFactory` and the `FINDELEMENT`/`FINDLASTELEMENT` function
+  path so an evaluated pattern containing no regex metacharacters uses the
+  existing ordinal string-search implementation. The classifier is
+  conservative and leaves patterns containing escapes, anchors, wildcards,
+  groups, character classes or alternation on the regular-expression path.
+- Scope: runtime implementation only; no game ERB files are changed. This
+  complements the explicit `ESCAPE(...)` provenance fast path and avoids
+  requiring scripts to add `ESCAPE` around already-literal patterns.
+- Verification: the
+  `FindElementEscapedLiteralUsesLiteralPathAndKeepsRegexFallback` test also
+  covers plain literal exact/partial searches and regex fallback patterns.
+
 ## 2026-08-20 — Reuse structured line identity for immediate CLEARLINE reprints
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` defers a single-line delete until

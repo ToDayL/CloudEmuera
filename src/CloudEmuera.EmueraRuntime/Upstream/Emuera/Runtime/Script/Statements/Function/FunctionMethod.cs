@@ -309,6 +309,14 @@ internal abstract class FunctionMethod
 			return new SingleStrTerm(GetStrValue(exm, arguments));
 	}
 
+	// CloudEmuera: retain the proven literal provenance of ESCAPE for
+	// regex-aware functions without changing the value exposed as a string.
+	internal virtual bool TryGetEscapedLiteral(ExpressionMediator exm, List<AExpression> arguments, out string literal)
+	{
+		literal = null;
+		return false;
+	}
+
 	/// <summary>
 	/// 戻り値は全体をRestructureできるかどうか
 	/// </summary>

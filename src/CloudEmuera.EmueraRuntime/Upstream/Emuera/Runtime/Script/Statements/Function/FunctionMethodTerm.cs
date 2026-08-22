@@ -28,6 +28,13 @@ internal sealed class FunctionMethodTerm : AExpression
 		return method.GetReturnValue(exm, arguments);
 	}
 
+	// CloudEmuera: allow the caller to recognize a direct ESCAPE expression
+	// before it is converted to a compiled Regex instance.
+	internal bool TryGetEscapedLiteral(ExpressionMediator exm, out string literal)
+	{
+		return method.TryGetEscapedLiteral(exm, arguments, out literal);
+	}
+
 	public override AExpression Restructure(ExpressionMediator exm)
 	{
 		if (method.HasUniqueRestructure)

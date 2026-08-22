@@ -3937,10 +3937,22 @@ internal static partial class FunctionMethodCreator
 			}
 			else
 			{
+				// CloudEmuera: ESCAPE(expr) is a proof that the pattern is a
+				// literal. Keep arbitrary EM+EE regex expressions on the path below.
+				if (TryGetEscapedLiteral(arguments[1], exm, out string literal))
+					return VariableEvaluator.FindElement(p, literal, start, end, isExact, isLast);
+
+				// CloudEmuera: cover plain regex patterns as well. The classifier is
+				// deliberately conservative; any regex syntax remains on the regex
+				// path below.
+				string pattern = arguments[1].GetStrValue(exm);
+				if (RegexFactory.TryGetLiteralPattern(pattern, out literal))
+					return VariableEvaluator.FindElement(p, literal, start, end, isExact, isLast);
+
 				Regex targetString;
 				try
 				{
-					targetString = RegexFactory.GetRegex(arguments[1].GetStrValue(exm));
+					targetString = RegexFactory.GetRegex(pattern);
 				}
 				catch (ArgumentException e)
 				{
@@ -3966,6 +3978,21 @@ internal static partial class FunctionMethodCreator
 					isConst = false;
 			}
 			return isConst;
+		}
+
+		private static bool TryGetEscapedLiteral(AExpression expression, ExpressionMediator exm, out string literal)
+		{
+			if (expression is EscapedLiteralTerm escapedLiteral)
+			{
+				literal = escapedLiteral.Literal;
+				return true;
+			}
+
+			if (expression is FunctionMethodTerm functionTerm)
+				return functionTerm.TryGetEscapedLiteral(exm, out literal);
+
+			literal = null;
+			return false;
 		}
 	}
 
@@ -4816,6 +4843,39 @@ internal static partial class FunctionMethodCreator
 		public override string GetStrValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
 			return Regex.Escape(arguments[0].GetStrValue(exm));
+		}
+		internal override bool TryGetEscapedLiteral(ExpressionMediator exm, List<AExpression> arguments, out string literal)
+		{
+			literal = arguments[0].GetStrValue(exm);
+			return literal != null;
+		}
+		public override SingleTerm GetReturnValue(ExpressionMediator exm, List<AExpression> arguments)
+		{
+			return new EscapedLiteralTerm(arguments[0].GetStrValue(exm));
+		}
+	}
+
+	// CloudEmuera: constant-folded ESCAPE values retain their literal meaning
+	// so FINDELEMENT does not have to infer it from an already escaped string.
+	private sealed class EscapedLiteralTerm : SingleTerm
+	{
+		public EscapedLiteralTerm(string literal)
+			: base(typeof(string))
+		{
+			Literal = literal;
+			escaped = Regex.Escape(literal);
+		}
+
+		private readonly string escaped;
+		public string Literal { get; }
+
+		public override string GetStrValue(ExpressionMediator exm)
+		{
+			return escaped;
+		}
+		public override SingleTerm GetValue(ExpressionMediator exm)
+		{
+			return this;
 		}
 	}
 

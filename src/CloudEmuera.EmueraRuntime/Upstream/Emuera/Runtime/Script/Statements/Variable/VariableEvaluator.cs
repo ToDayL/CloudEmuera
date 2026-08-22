@@ -396,6 +396,45 @@ internal sealed class VariableEvaluator : IDisposable
 		return -1;
 	}
 
+	// CloudEmuera: a direct ESCAPE(...) pattern is already a literal. This
+	// overload avoids Regex.Match/IsMatch for both exact and partial searches.
+	public static long FindElement(FixedVariableTerm p, string target, long start, long end, bool isExact, bool isLast)
+	{
+		string[] array;
+
+		if (start >= end)
+			return -1;
+
+		if (p.Identifier.IsCharacterData)
+			array = (string[])p.Identifier.GetArrayChara((int)p.Index1);
+		else
+			array = (string[])p.Identifier.GetArray();
+
+		if (isLast)
+		{
+			for (int i = (int)end - 1; i >= (int)start; i--)
+			{
+				string value = array[i] ?? "";
+				if (isExact
+					? string.Equals(value, target, StringComparison.Ordinal)
+					: value.IndexOf(target, StringComparison.Ordinal) >= 0)
+					return i;
+			}
+		}
+		else
+		{
+			for (int i = (int)start; i < (int)end; i++)
+			{
+				string value = array[i] ?? "";
+				if (isExact
+					? string.Equals(value, target, StringComparison.Ordinal)
+					: value.IndexOf(target, StringComparison.Ordinal) >= 0)
+					return i;
+			}
+		}
+		return -1;
+	}
+
 	public static long FindElement(FixedVariableTerm p, Regex target, long start, long end, bool isExact, bool isLast)
 	{
 		string[] array;

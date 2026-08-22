@@ -55,6 +55,47 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task FindElementEscapedLiteralUsesLiteralPathAndKeepsRegexFallback()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "#DIMS values, 6\n" +
+            "#DIMS query\n" +
+            "values:0 = aXb\n" +
+            "values:1 = a.b\n" +
+            "values:2 = prefix a.b suffix\n" +
+            "values:3 = a.b\n" +
+            "values:4 = plain\n" +
+            "values:5 = \n" +
+            "query = a.b\n" +
+            "PRINTFORML ESCAPED-DYNAMIC-EXACT={FINDELEMENT(values, ESCAPE(query), 0, 6, 1)}\n" +
+            "PRINTFORML ESCAPED-CONSTANT-EXACT={FINDELEMENT(values, ESCAPE(\"a.b\"), 0, 6, 1)}\n" +
+            "PRINTFORML ESCAPED-PARTIAL={FINDELEMENT(values, ESCAPE(query), 0, 6, 0)}\n" +
+            "PRINTFORML ESCAPED-LAST={FINDLASTELEMENT(values, ESCAPE(query), 0, 6, 1)}\n" +
+            "PRINTFORML PLAIN-LITERAL-EXACT={FINDELEMENT(values, \"aXb\", 0, 6, 1)}\n" +
+            "PRINTFORML PLAIN-LITERAL-PARTIAL={FINDELEMENT(values, \"aXb\", 0, 6, 0)}\n" +
+            "PRINTFORML REGEX-EXACT={FINDELEMENT(values, \"a.b\", 0, 6, 1)}\n" +
+            "PRINTFORML REGEX-CLASS={FINDELEMENT(values, \"a[.]b\", 0, 6, 1)}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("ESCAPED-DYNAMIC-EXACT=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("ESCAPED-CONSTANT-EXACT=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("ESCAPED-PARTIAL=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("ESCAPED-LAST=3", transcript, StringComparison.Ordinal);
+        Assert.Contains("PLAIN-LITERAL-EXACT=0", transcript, StringComparison.Ordinal);
+        Assert.Contains("PLAIN-LITERAL-PARTIAL=0", transcript, StringComparison.Ordinal);
+        Assert.Contains("REGEX-EXACT=0", transcript, StringComparison.Ordinal);
+        Assert.Contains("REGEX-CLASS=1", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
     [Trait("Category", "EmueraFeatureMatrix")]
     public async Task DynamicGraphicsRunsThroughPinnedInterpreterAndPublishesScene()
     {
