@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { backgroundStyle, hasCanvasContent, orderCanvasDrawables, orderHitRegions, topmostRasterAtPoint } from "./CanvasRenderer";
+import { backgroundStyle, CanvasRenderer, hasCanvasContent, orderCanvasDrawables, orderHitRegions, topmostRasterAtPoint } from "./CanvasRenderer";
 import { render } from "@testing-library/react";
 import { ShapeSvg } from "./ScrollbackRenderer";
 import type { RealtimeDrawable } from "../realtime/protocol";
+import { AssetResolver } from "./AssetResolver";
 
 const bounds = { x: 0, y: 0, width: 10, height: 10 };
+const spriteAssets = new AssetResolver("s1", { schemaVersion: 1, assets: [{ assetId: "asset", mediaType: "image/png", byteLength: 1, contentDigest: `sha256:${"a".repeat(64)}`, eTag: null }], fonts: [], fontDiagnostics: [] });
 
 describe("CanvasRenderer scene ordering", () => {
   it("does not treat an empty scene as a visible canvas", () => {
@@ -56,5 +58,10 @@ describe("CanvasRenderer scene ordering", () => {
     expect(view.container.querySelector("svg")).toHaveClass("is-space");
     expect(view.container.querySelector("rect")).toHaveAttribute("fill", "none");
     expect(view.container.querySelector("rect")).toHaveAttribute("stroke", "none");
+  });
+
+  it("scales SpriteCanvas with its responsive drawable instead of clipping its logical bitmap", () => {
+    const view = render(<CanvasRenderer scene={{ drawables: [{ type: "sprite", drawableId: "portrait", bounds: { x: 0, y: 0, width: 180, height: 360 }, zIndex: 1, opacity: 1, assetId: "asset", sourceRect: { x: 0, y: 0, width: 180, height: 360 }, frame: 0, animationFrames: [] }], hitRegions: [] }} backgroundLayers={[]} windowMetadata={{ title: "Game", viewportWidth: 800, viewportHeight: 600, defaultFont: { family: "default", size: 16, lineHeight: 19 } }} assets={spriteAssets} onInput={() => undefined} />);
+    expect(view.container.querySelector(".canvas-sprite-drawable canvas")).toHaveStyle({ width: "100%", height: "100%" });
   });
 });

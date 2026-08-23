@@ -174,7 +174,10 @@ export function SpriteCanvas({ sprite, assets, width, height, alt, className, st
     context.restore();
   }, [assets, animationFrame, hovered, imageRevision, onRenderError, sprite.assetId, sourceRectSignature, sprite.frame, sprite.opacity, sprite.hoverAssetId, hoverSourceSignature, animationSignature, width, height]);
 
-  return <canvas ref={canvasRef} className={className} style={{ ...style, width, height, opacity: sprite.opacity }} role="img" aria-label={alt} onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)} />;
+  // `width`/`height` are logical pixels used for the backing bitmap. A
+  // canvas scene is responsive, so its caller may override the CSS size with
+  // 100% while retaining these logical dimensions for drawImage.
+  return <canvas ref={canvasRef} className={className} style={{ width, height, opacity: sprite.opacity, ...style }} role="img" aria-label={alt} onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)} />;
 }
 
 function rectKey(rect: RealtimeRect): string {

@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, ty
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
-import type { RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode } from "../realtime/protocol";
+import type { RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode, RealtimeRect } from "../realtime/protocol";
 
 export interface ConsoleInputEvent {
   value: string;
@@ -15,6 +15,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
   const displayLines = trimTrailingEmptyLines(lines);
+  const visualOverflow = trailingVisualOverflow(displayLines);
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     const container = scrollContainerRef?.current;
     if (!container) return;
@@ -46,6 +47,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
       {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} style={physicalLineStyle(line)} key={line.lineId}>
         {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
       </div>)}
+      {visualOverflow > 0 && <div className="console-overflow-reserve" style={{ height: visualOverflow }} aria-hidden="true" />}
     </div>
     {!atLatest && <button className="scrollback-latest" type="button" onClick={scrollToLatest}>↓ 回到最新</button>}
   </div>;
@@ -123,6 +125,7 @@ export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: R
     }
     case "positionedInlineSegment": {
       const children = node.children.map((child, index) => <NodeRenderer key={`positioned-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
+      const hasEscapedVisual = node.children.some(containsEscapedVisual);
       const style: CSSProperties = {
         position: "absolute",
         left: node.positionX,
@@ -131,6 +134,7 @@ export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: R
         height: "100%",
         boxSizing: "border-box",
         whiteSpace: "pre",
+        ...(hasEscapedVisual ? { overflow: "visible" } : {}),
       };
       if (!node.action) return <span className="positioned-inline-segment" style={style}>{children}</span>;
       return <button className="console-choice positioned-inline-action" style={style} type="button" disabled={!node.action.enabled} title={node.action.tooltip ?? undefined} onClick={() => onInput({ value: node.action!.value, source: "BUTTON" })}>{children}</button>;
@@ -161,6 +165,70 @@ function physicalLineStyle(line: RealtimeLine): CSSProperties {
     style.lineHeight = `${line.lineHeight}px`;
   }
   return style;
+}
+
+/**
+ * Inline image parts keep the upstream fixed line height and paint outside
+ * that line like ConsoleImagePart. The browser scroll container still needs
+ * ordinary flow height after the last line, otherwise overflow:hidden on the
+ * scrollback clips the lower part of a portrait (or the whole portrait).
+ */
+export function trailingVisualOverflow(lines: readonly RealtimeLine[]): number {
+  let flowHeight = 0;
+  let visualBottom = 0;
+  for (const line of lines) {
+    const lineHeight = effectiveLineFlowHeight(line);
+    visualBottom = Math.max(visualBottom, flowHeight + nodeVisualBottom(line.nodes));
+    flowHeight += lineHeight;
+  }
+  return Math.max(0, Math.ceil(visualBottom - flowHeight));
+}
+
+function effectiveLineFlowHeight(line: RealtimeLine): number {
+  if (line.lineHeight && line.lineHeight > 0) return line.lineHeight;
+  return Math.max(0, ...line.nodes.map(nodeTextLineHeight));
+}
+
+function nodeTextLineHeight(node: RealtimeNode): number {
+  switch (node.type) {
+    case "text": return node.style.lineHeight > 0 ? node.style.lineHeight : 0;
+    case "button":
+    case "positionedInlineSegment":
+    case "div": return Math.max(0, ...node.children.map(nodeTextLineHeight));
+    case "htmlIsland": return node.nodes ? Math.max(0, ...node.nodes.map(nodeTextLineHeight)) : 0;
+    default: return 0;
+  }
+}
+
+function nodeVisualBottom(nodes: readonly RealtimeNode[]): number {
+  return Math.max(0, ...nodes.map(node => {
+    switch (node.type) {
+      case "image": return rectBottom(node.destination ?? node.sourceRect);
+      case "sprite": return rectBottom(node.destination);
+      case "shape": return rectBottom(node.bounds);
+      case "div": return Math.max(rectBottom(node.bounds), nodeVisualBottom(node.children));
+      case "button":
+      case "positionedInlineSegment": return nodeVisualBottom(node.children);
+      case "htmlIsland": return node.layout ? rectBottom(node.layout) : node.nodes ? nodeVisualBottom(node.nodes) : 0;
+      default: return 0;
+    }
+  }));
+}
+
+function rectBottom(rect: RealtimeRect | null | undefined): number {
+  return rect ? Math.max(0, rect.y + rect.height) : 0;
+}
+
+function containsEscapedVisual(node: RealtimeNode): boolean {
+  switch (node.type) {
+    case "image":
+    case "sprite": return true;
+    case "button":
+    case "positionedInlineSegment":
+    case "div": return node.children.some(containsEscapedVisual);
+    case "htmlIsland": return node.nodes?.some(containsEscapedVisual) ?? false;
+    default: return false;
+  }
 }
 
 function positionStyle(positionX: number | null | undefined): CSSProperties {

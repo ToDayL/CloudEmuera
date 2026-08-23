@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AssetResolver } from "./AssetResolver";
-import { ScrollbackRenderer, trimTrailingEmptyLines } from "./ScrollbackRenderer";
+import { ScrollbackRenderer, trailingVisualOverflow, trimTrailingEmptyLines } from "./ScrollbackRenderer";
 import type { RealtimeLine } from "../realtime/protocol";
 
 const assets = new AssetResolver("s1", { schemaVersion: 1, assets: [], fonts: [], fontDiagnostics: [] });
@@ -63,6 +63,25 @@ describe("ScrollbackRenderer", () => {
     const element = document.querySelector<HTMLElement>(".console-line");
     expect(element).not.toBeNull();
     expect(element).toHaveStyle({ width: "760px", height: "19px", minHeight: "19px", lineHeight: "19px" });
+  });
+
+  it("keeps escaped portrait pixels inside the scrollable scrollback extent", () => {
+    const portraitLine: RealtimeLine = {
+      lineId: "portrait-line",
+      nodes: [{ type: "sprite", assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRect: { x: 0, y: 0, width: 180, height: 180 }, destination: { x: 0, y: 32, width: 180, height: 180 }, frame: 0, zIndex: 0, opacity: 1, altText: "portrait", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
+      alignment: "left",
+      temporary: false,
+      lineHeight: 20,
+    };
+    const positionedPortraitLine = {
+      ...portraitLine,
+      nodes: [{ type: "positionedInlineSegment" as const, positionX: 0, measuredWidth: 180, action: null, children: portraitLine.nodes }],
+    };
+
+    expect(trailingVisualOverflow([portraitLine])).toBe(192);
+    render(<ScrollbackRenderer lines={[positionedPortraitLine]} assets={clockAssets} onInput={() => undefined} />);
+    expect(document.querySelector<HTMLElement>(".console-overflow-reserve")).toHaveStyle({ height: "192px" });
+    expect(document.querySelector<HTMLElement>(".positioned-inline-segment")).toHaveStyle({ overflow: "visible" });
   });
 
   it("submits enabled choice buttons from old display frames to the current input slot", () => {

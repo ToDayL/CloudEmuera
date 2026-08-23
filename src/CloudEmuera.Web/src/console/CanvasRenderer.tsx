@@ -40,7 +40,7 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
     </div>
     {ordered.map((drawable, index) => {
       const layer = 100 + index;
-      if (drawable.type === "sprite") return <div key={drawable.drawableId} className="canvas-sprite-drawable" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }} aria-hidden="true"><SpriteCanvas sprite={drawable} assets={assets} alt="游戏精灵" width={drawable.bounds.width} height={drawable.bounds.height} onRenderError={onRenderError} /></div>;
+      if (drawable.type === "sprite") return <div key={drawable.drawableId} className="canvas-sprite-drawable" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }} aria-hidden="true"><SpriteCanvas sprite={drawable} assets={assets} alt="游戏精灵" width={drawable.bounds.width} height={drawable.bounds.height} style={{ width: "100%", height: "100%" }} onRenderError={onRenderError} /></div>;
       if (drawable.type === "htmlIsland") {
         const islandNodes = drawable.nodes;
         return <div key={drawable.drawableId} className="canvas-html-island" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }}>
