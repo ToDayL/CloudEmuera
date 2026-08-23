@@ -14,6 +14,7 @@ export interface ConsoleInputEvent {
 export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion }: { lines: RealtimeLine[]; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void; scrollContainerRef?: RefObject<HTMLElement | null>; scrollVersion?: string | number }) {
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
+  const scrollbackShellRef = useRef<HTMLDivElement>(null);
   const displayLines = trimTrailingEmptyLines(lines);
   const visualOverflow = trailingVisualOverflow(displayLines);
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
@@ -22,6 +23,10 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     const top = Math.max(0, container.scrollHeight - container.clientHeight);
     atLatestRef.current = true;
     setAtLatest(true);
+    // Assigning scrollTop first makes the initial connection deterministic on
+    // browsers where an element scrollTo call can be deferred until after the
+    // first layout. Keep scrollTo for smooth user-invoked navigation.
+    if (behavior === "auto") container.scrollTop = top;
     if (typeof container.scrollTo === "function") container.scrollTo({ top, behavior });
     else container.scrollTop = top;
   }, [scrollContainerRef]);
@@ -39,10 +44,25 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   }, [scrollContainerRef]);
   useLayoutEffect(() => {
     scrollToBottom("auto");
+    // The connection snapshot can complete one more layout after React's
+    // layout effects (for example when a late image measurement changes the
+    // scroll height). Re-apply the initial position on the next frame.
+    if (typeof requestAnimationFrame !== "function") return;
+    const frame = requestAnimationFrame(() => scrollToBottom("auto"));
+    return () => cancelAnimationFrame(frame);
     // New output is authoritative for the reading position: the console always follows it.
   }, [lines, scrollToBottom, scrollVersion]);
+  useEffect(() => {
+    const shell = scrollbackShellRef.current;
+    if (!shell || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (atLatestRef.current) scrollToBottom("auto");
+    });
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
   const scrollToLatest = useCallback(() => scrollToBottom("smooth"), [scrollToBottom]);
-  return <div className="scrollback-shell">
+  return <div ref={scrollbackShellRef} className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
       {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} style={physicalLineStyle(line)} key={line.lineId}>
         {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}

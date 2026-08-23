@@ -39,6 +39,37 @@ describe("ScrollbackRenderer", () => {
     expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: "auto" });
   });
 
+  it("re-synchronizes the bottom when a reconnect changes the session phase without changing the snapshot", () => {
+    const { ref, element } = scrollContainer(false);
+    const view = render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} scrollVersion="ready:live:1:12" />);
+    element.scrollTop = 10;
+    fireEvent.scroll(element);
+    view.rerender(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} scrollVersion="ready:resuming:1:12" />);
+    expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: "auto" });
+  });
+
+  it("re-synchronizes after the connected snapshot changes its measured height", () => {
+    let notifyResize: (() => void) | undefined;
+    class ResizeObserverStub {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = () => callback([], this as unknown as ResizeObserver);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    try {
+      const { ref, element } = scrollContainer(true);
+      render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+      (element as HTMLElement & { scrollHeight: number }).scrollHeight = 500;
+      notifyResize?.();
+      expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 400, behavior: "auto" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows a back-to-latest control after the reader scrolls upward", () => {
     const { ref, element } = scrollContainer(true);
     render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
