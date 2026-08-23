@@ -33,3 +33,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0028：生产 bind mount 使用部署者 UID/GID](0028-production-bind-mount-ownership.md)
 - [ADR-0029：内置字体目录与 Worker 权威物理排版](0029-bundled-font-authoritative-headless-layout.md)
 - [ADR-0030：Session 持久宽度模式与启动时 CSS 宽度上限](0030-session-runtime-width-modes.md)
+- [ADR-0031：Session 展示文本反斜杠转换为半角日元符号](0031-session-backslash-to-halfwidth-yen-display.md)

@@ -36,6 +36,7 @@ internal sealed class EmueraConsole
     private readonly string fontFaceId;
     private readonly string fontCatalogDigest;
     private readonly string webFontAssetDigest;
+    private readonly bool convertBackslashToYen;
     private readonly StringMeasure stringMeasure;
     private readonly PrintStringBuffer printBuffer;
     private string barString = "-";
@@ -99,7 +100,8 @@ internal sealed class EmueraConsole
         Func<string, RuntimeSpriteDefinition> imageResolver = null,
         int viewportWidth = 800,
         int viewportHeight = 600,
-        string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "", string webFontAssetDigest = "")
+        string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "", string webFontAssetDigest = "",
+        bool convertBackslashToYen = true)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -112,6 +114,7 @@ internal sealed class EmueraConsole
         this.fontFaceId = fontFaceId ?? string.Empty;
         this.fontCatalogDigest = fontCatalogDigest ?? string.Empty;
         this.webFontAssetDigest = webFontAssetDigest ?? string.Empty;
+        this.convertBackslashToYen = convertBackslashToYen;
         stringStyle = new StringStyle(Config.ForeColor, FontStyle.Regular, string.Empty);
         if (Config.DefaultFont is not null)
         {
@@ -215,7 +218,7 @@ internal sealed class EmueraConsole
             return;
         // Upstream PRINTC appends a fixed-width field to PrintStringBuffer. It
         // does not commit a display line; PRINTL/PrintFlush owns that boundary.
-        pendingLine.Add(new TextNode(FormatPrintCValue(value, alignmentRight), ToConsoleTextStyle()));
+        pendingLine.Add(new TextNode(DisplayText(FormatPrintCValue(value, alignmentRight)), ToConsoleTextStyle()));
         pendingLineEnd = true;
     }
     public void PrintButton(string value, string input) => EmitButton(value, input);
@@ -332,7 +335,8 @@ internal sealed class EmueraConsole
                 ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.FocusColor),
                 generation,
                 imageResolver,
-                mode));
+                mode,
+                convertBackslashToYen));
         }
         catch (UpstreamHtmlBudgetExceededException exception)
         {
@@ -457,7 +461,7 @@ internal sealed class EmueraConsole
             systemInput: request.IsSystemInput,
             stopMessageSkip: request.StopMesskip,
             displayTime: request.DisplayTime,
-            timeoutMessage: request.TimeUpMes,
+            timeoutMessage: request.TimeUpMes is null ? null : DisplayText(request.TimeUpMes),
             allowedSources: ConsoleInputSource.All);
         if (request.DisplayTime && timeout is not null)
             EmitTimeoutCountdown(timeout.Value);
@@ -469,7 +473,7 @@ internal sealed class EmueraConsole
             {
                 EmitStructured(ConsoleOperation.ReplaceLine(new ConsoleLine(
                     lastLineId,
-                    [new TextNode(request.TimeUpMes)],
+                    [new TextNode(DisplayText(request.TimeUpMes))],
                     ConsoleLineAlignment.Left,
                     temporary: false)));
                 lastLineTemporary = false;
@@ -825,7 +829,7 @@ internal sealed class EmueraConsole
     private void AppendText(string value)
     {
         if (outputEnabled && !string.IsNullOrEmpty(value))
-            pendingLine.Add(new TextNode(value, ToConsoleTextStyle()));
+            pendingLine.Add(new TextNode(DisplayText(value), ToConsoleTextStyle()));
     }
 
     private void EmitText(string value) => AppendText(value);
@@ -834,7 +838,7 @@ internal sealed class EmueraConsole
     {
         if (outputEnabled && !string.IsNullOrEmpty(label))
             AppendNode(new ButtonNode(
-                [new TextNode(label, ToConsoleTextStyle())],
+                [new TextNode(DisplayText(label), ToConsoleTextStyle())],
                 input,
                 generation: generation));
     }
@@ -1078,7 +1082,7 @@ internal sealed class EmueraConsole
                         button.Children.All(child => child is TextNode),
                         button.Children.OfType<TextNode>().Any() ? string.Concat(button.Children.OfType<TextNode>().Select(child => child.Text)) : null,
                         button.Children.OfType<TextNode>().Select(child => child.Style).Distinct().Count() == 1 ? button.Children.OfType<TextNode>().First().Style : null,
-                        new ConsoleInlineAction(button.Value, button.Tooltip, button.Enabled, button.Generation),
+                        new ConsoleInlineAction(button.Value, button.Tooltip is null ? null : DisplayText(button.Tooltip), button.Enabled, button.Generation),
                         button.PositionX));
                     break;
                 case PositionedInlineSegmentNode segment:
@@ -1665,7 +1669,7 @@ internal sealed class EmueraConsole
     }
 
     private WindowMetadata CurrentWindowMetadata() => new(
-        windowTitle,
+        DisplayText(windowTitle),
         viewportWidth,
         viewportHeight,
         defaultBackground: ToConsoleColor(bgColor),
@@ -1675,6 +1679,11 @@ internal sealed class EmueraConsole
             Math.Max(MinorShift.Emuera.Runtime.Config.Config.FontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight)),
         fontFaceId: fontFaceId,
         webFontAssetDigest: webFontAssetDigest);
+
+    private string DisplayText(string value) =>
+        convertBackslashToYen && value.Contains('\\', StringComparison.Ordinal)
+            ? value.Replace('\\', '\u00a5')
+            : value;
 
     private ConsoleContractLimits HtmlContractLimits => adapter is StructuredGameConsole structured
         ? structured.StateStore.Options.ContractLimits

@@ -15,7 +15,7 @@ namespace CloudEmuera.Ipc;
 public static class IpcProtocol
 {
     public const uint CurrentVersion = 2;
-    public const int BootstrapSchemaVersion = 5;
+    public const int BootstrapSchemaVersion = 6;
 
     public static string NewMessageId(string prefix = "msg")
     {
@@ -149,6 +149,7 @@ public sealed record WorkerBootstrapDocument
     public string FontCatalogDigest { get; init; } = string.Empty;
     public string WidthMode { get; init; } = "ORIGIN";
     public int? CustomWidth { get; init; }
+    public bool ConvertBackslashToYen { get; init; } = true;
 
     public int SaveLayout { get; init; }
 

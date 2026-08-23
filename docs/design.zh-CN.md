@@ -912,6 +912,11 @@ Session 持久化产品内置的不可变 `fontFaceId`；Worker 在 `Config.SetC
 WOFF2 加载完成后按 `positionX/measuredWidth` 绘制，禁用 CSS 自动换行。详细实施见
 [`P1-S04`](tasks/P1-S04-font-measurement-authoritative-layout-plan.zh-CN.md)。
 
+依据 [`ADR-0031`](adr/0031-session-backslash-to-halfwidth-yen-display.md)，历史 Era 的日元字形兼容属于
+展示投影而非源文本转换。Session 默认开启 `convertBackslashToYen`；Worker 在普通/HTML/按钮标签等
+可见文本进入 `StringMeasure` 前执行 U+005C → U+00A5，使转换后的字形直接参与权威换行和按钮盒计算。
+按钮值、输入、prompt 默认值、脚本字符串和路径不经过该映射；浏览器不得再次猜测或替换字符。
+
 P1-11 将这条边界落为两个只读 HTTP 端点：
 
 - `GET /api/v1/sessions/{id}/presentation-manifest` 只返回浏览器可安全表达的图片和音频摘要，不返回

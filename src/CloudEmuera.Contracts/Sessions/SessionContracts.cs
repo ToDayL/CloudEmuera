@@ -9,7 +9,8 @@ public sealed record CreateSessionRequest(
     int FontSize = 18,
     int LineHeight = 19,
     string WidthMode = "ORIGIN",
-    int? CustomWidth = null);
+    int? CustomWidth = null,
+    bool ConvertBackslashToYen = true);
 
 public sealed record UpdateSessionConfigurationRequest(
     string Name,
@@ -17,7 +18,8 @@ public sealed record UpdateSessionConfigurationRequest(
     int FontSize = 18,
     int LineHeight = 19,
     string WidthMode = "ORIGIN",
-    int? CustomWidth = null);
+    int? CustomWidth = null,
+    bool ConvertBackslashToYen = true);
 
 /// <summary>
 /// The lifecycle endpoints intentionally accept only an empty JSON object.
@@ -41,6 +43,7 @@ public sealed record SessionResponse(
     int LineHeight,
     string WidthMode,
     int? CustomWidth,
+    bool ConvertBackslashToYen,
     string State,
     int StateVersion,
     long WorkerEpoch,

@@ -1558,6 +1558,12 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("custom_width");
 
+                    b.Property<bool>("ConvertBackslashToYen")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true)
+                        .HasColumnName("convert_backslash_to_yen");
+
                     b.Property<string>("GameId")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -1698,6 +1704,8 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_sessions_close_reason", "close_reason IS NULL OR (length(close_reason) BETWEEN 1 AND 256 AND instr(close_reason, char(0)) = 0)");
 
                             t.HasCheckConstraint("ck_sessions_closed_fields", "((state IN ('CLOSED', 'CRASHED') AND closed_at IS NOT NULL) OR (state NOT IN ('CLOSED', 'CRASHED') AND closed_at IS NULL)) AND ((state IN ('CREATING', 'CLOSED', 'CRASHED') AND waiting_for_input = 0 AND current_prompt_id IS NULL) OR state NOT IN ('CREATING', 'CLOSED', 'CRASHED'))");
+
+                            t.HasCheckConstraint("ck_sessions_convert_backslash_to_yen", "convert_backslash_to_yen IN (0, 1)");
 
                             t.HasCheckConstraint("ck_sessions_counters", "state_version >= 0 AND worker_epoch >= 0 AND last_output_sequence >= 0");
 

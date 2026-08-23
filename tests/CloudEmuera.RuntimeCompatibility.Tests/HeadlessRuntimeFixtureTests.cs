@@ -18,6 +18,31 @@ namespace CloudEmuera.RuntimeCompatibility.Tests;
 public sealed class HeadlessRuntimeFixtureTests
 {
     [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void EraYenCompatibilityTransformsOnlyVisibleTextAndCanBeDisabled()
+    {
+        // PLAY-016: the compatibility seam runs before authoritative layout,
+        // while button input values remain exact runtime data.
+        var enabledAdapter = new StructuredGameConsole();
+        var enabled = new EmueraConsole(enabledAdapter, enabledAdapter.Clock, CancellationToken.None, convertBackslashToYen: true);
+        enabled.BeginExecutionOutput();
+        enabled.PrintButton("price\\100", "route\\keep");
+        enabled.NewLine();
+
+        ButtonNode button = Assert.IsType<ButtonNode>(Assert.Single(Assert.Single(enabledAdapter.Snapshot.Scrollback).Nodes));
+        Assert.Equal("price\u00a5100", Assert.IsType<TextNode>(Assert.Single(button.Children)).Text);
+        Assert.Equal("route\\keep", button.Value);
+
+        var disabledAdapter = new StructuredGameConsole();
+        var disabled = new EmueraConsole(disabledAdapter, disabledAdapter.Clock, CancellationToken.None, convertBackslashToYen: false);
+        disabled.BeginExecutionOutput();
+        disabled.Print("price\\100");
+        disabled.NewLine();
+
+        Assert.Equal("price\\100", Assert.IsType<TextNode>(Assert.Single(Assert.Single(disabledAdapter.Snapshot.Scrollback).Nodes)).Text);
+    }
+
+    [Fact]
     [Trait("Category", "EmueraFeatureMatrix")]
     public void DynamicGraphicsPublishesBoundedBrowserRasterDrawable()
     {
@@ -2536,7 +2561,8 @@ public sealed class HeadlessRuntimeFixtureTests
             string fontCatalogDigest = "",
             string runtimeFontPath = "",
             string runtimeFontFamilyName = "",
-            string webFontAssetDigest = "")
+            string webFontAssetDigest = "",
+            bool convertBackslashToYen = true)
             => CreateHost(
                 Console,
                 runtimeClock,
@@ -2550,7 +2576,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 fontCatalogDigest,
                 runtimeFontPath,
                 runtimeFontFamilyName,
-                webFontAssetDigest);
+                webFontAssetDigest,
+                convertBackslashToYen);
 
         public EmueraRuntimeHost CreateHost(
             StructuredGameConsole console,
@@ -2565,7 +2592,8 @@ public sealed class HeadlessRuntimeFixtureTests
             string fontCatalogDigest = "",
             string runtimeFontPath = "",
             string runtimeFontFamilyName = "",
-            string webFontAssetDigest = "")
+            string webFontAssetDigest = "",
+            bool convertBackslashToYen = true)
         {
             var fileSystem = new LocalRuntimeFileSystem(Paths);
             var options = new EmueraRuntimeOptions(
@@ -2585,7 +2613,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 fontCatalogDigest: fontCatalogDigest,
                 runtimeFontPath: runtimeFontPath,
                 runtimeFontFamilyName: runtimeFontFamilyName,
-                webFontAssetDigest: webFontAssetDigest);
+                webFontAssetDigest: webFontAssetDigest,
+                convertBackslashToYen: convertBackslashToYen);
             return EmueraRuntimeHost.Create(options with { UpstreamGateAcquired = upstreamGateAcquired });
         }
 

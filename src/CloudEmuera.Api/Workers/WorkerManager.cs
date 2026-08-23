@@ -322,7 +322,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 spec.Binding.InitialOutputSequence,
                 spec.BrowserWidth, spec.FontSize, spec.LineHeight,
                 spec.FontFaceId, spec.FontCatalogDigest,
-                spec.WidthMode, spec.CustomWidth),
+                spec.WidthMode, spec.CustomWidth, spec.ConvertBackslashToYen),
             spec.Binding,
             waitForRegistration: false,
             cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -381,6 +381,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             FontCatalogDigest = request.FontCatalogDigest,
             WidthMode = request.WidthMode.ToString().ToUpperInvariant(),
             CustomWidth = request.CustomWidth,
+            ConvertBackslashToYen = request.ConvertBackslashToYen,
         };
         session.SetBootstrapToken(bootstrap.BootstrapToken);
         WorkerBootstrapDocument bootstrapToWrite = options.BootstrapTransformForTest?.Invoke(bootstrap) ?? bootstrap;

@@ -8,6 +8,7 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
 {
     internal const string ExcludeRuntimeFontFaceSchemaAnnotation = "CloudEmuera:ExcludeRuntimeFontFaceSchema";
     internal const string ExcludeRuntimeWidthSchemaAnnotation = "CloudEmuera:ExcludeRuntimeWidthSchema";
+    internal const string ExcludeBackslashToYenSchemaAnnotation = "CloudEmuera:ExcludeBackslashToYenSchema";
 
     public void Configure(EntityTypeBuilder<SessionRow> builder)
     {
@@ -16,6 +17,9 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             true);
         bool includeRuntimeWidthSchema = !Equals(
             builder.Metadata.Model.FindAnnotation(ExcludeRuntimeWidthSchemaAnnotation)?.Value,
+            true);
+        bool includeBackslashToYenSchema = !Equals(
+            builder.Metadata.Model.FindAnnotation(ExcludeBackslashToYenSchemaAnnotation)?.Value,
             true);
         builder.ToTable(SqliteStorageConventions.SessionsTable, table =>
         {
@@ -34,6 +38,8 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
                 table.HasCheckConstraint("ck_sessions_font_face_id", "length(font_face_id) BETWEEN 1 AND 128 AND instr(font_face_id, char(0)) = 0");
             if (includeRuntimeWidthSchema)
                 table.HasCheckConstraint("ck_sessions_width_configuration", "width_mode IN ('ORIGIN', 'MAX', 'CUSTOM') AND ((width_mode = 'CUSTOM' AND custom_width BETWEEN 240 AND 16384) OR (width_mode <> 'CUSTOM' AND custom_width IS NULL))");
+            if (includeBackslashToYenSchema)
+                table.HasCheckConstraint("ck_sessions_convert_backslash_to_yen", "convert_backslash_to_yen IN (0, 1)");
             table.HasCheckConstraint("ck_sessions_counters", "state_version >= 0 AND worker_epoch >= 0 AND last_output_sequence >= 0");
             table.HasCheckConstraint("ck_sessions_waiting_prompt", "waiting_for_input IN (0, 1) AND ((waiting_for_input = 1 AND current_prompt_id IS NOT NULL AND length(current_prompt_id) BETWEEN 1 AND 256) OR (waiting_for_input = 0 AND current_prompt_id IS NULL))");
             table.HasCheckConstraint("ck_sessions_close_reason", "close_reason IS NULL OR (length(close_reason) BETWEEN 1 AND 256 AND instr(close_reason, char(0)) = 0)");
@@ -66,6 +72,10 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             builder.Ignore(row => row.WidthMode);
             builder.Ignore(row => row.CustomWidth);
         }
+        if (includeBackslashToYenSchema)
+            builder.Property(row => row.ConvertBackslashToYen).HasColumnName("convert_backslash_to_yen").HasColumnType("INTEGER").HasDefaultValue(true).IsRequired();
+        else
+            builder.Ignore(row => row.ConvertBackslashToYen);
         builder.Property(row => row.State).HasColumnName("state").HasColumnType("TEXT").HasConversion(SqliteValueConverters.CreateEnumConverter<SessionState>(), SqliteValueConverters.CreateEnumComparer<SessionState>()).IsRequired();
         builder.Property(row => row.StateVersion).HasColumnName("state_version").HasColumnType("INTEGER").HasDefaultValue(0).IsRequired();
         builder.Property(row => row.WorkerEpoch).HasColumnName("worker_epoch").HasColumnType("INTEGER").HasDefaultValue(0).IsRequired();

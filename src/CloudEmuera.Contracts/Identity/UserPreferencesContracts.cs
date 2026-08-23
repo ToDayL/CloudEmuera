@@ -5,11 +5,13 @@ public sealed record SessionStartupDefaultsResponse(
     int FontSize,
     int LineHeight,
     string WidthMode,
-    int? CustomWidth);
+    int? CustomWidth,
+    bool ConvertBackslashToYen);
 
 public sealed record UpdateSessionStartupDefaultsRequest(
     string FontFaceId,
     int FontSize,
     int LineHeight,
     string WidthMode = "ORIGIN",
-    int? CustomWidth = null);
+    int? CustomWidth = null,
+    bool ConvertBackslashToYen = true);

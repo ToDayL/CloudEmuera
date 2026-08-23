@@ -34,6 +34,8 @@ public sealed class SessionRow
 
     public int? CustomWidth { get; set; }
 
+    public bool ConvertBackslashToYen { get; set; } = true;
+
     public SessionState State { get; set; }
 
     public int StateVersion { get; set; }

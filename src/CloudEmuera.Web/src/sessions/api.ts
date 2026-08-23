@@ -61,12 +61,12 @@ export async function getSession(sessionId: string): Promise<SessionView> {
   return apiRequest<SessionView>(`/sessions/${encodeURIComponent(sessionId)}`);
 }
 
-export async function createSession(gameId: string, name: string, fontSize = 18, lineHeight = 19, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular", widthMode: RuntimeWidthMode = "ORIGIN", customWidth: number | null = null): Promise<SessionView> {
+export async function createSession(gameId: string, name: string, fontSize = 18, lineHeight = 19, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular", widthMode: RuntimeWidthMode = "ORIGIN", customWidth: number | null = null, convertBackslashToYen = true): Promise<SessionView> {
   const token = await getCsrfToken();
   return (await apiRequestWithMeta<SessionView>("/sessions", {
     method: "POST",
     headers: jsonMutationHeaders(token, idempotencyKey),
-    body: JSON.stringify({ gameId, name, fontFaceId, fontSize, lineHeight, widthMode, customWidth }),
+    body: JSON.stringify({ gameId, name, fontFaceId, fontSize, lineHeight, widthMode, customWidth, convertBackslashToYen }),
   })).value;
 }
 
@@ -74,9 +74,9 @@ export async function openSession(sessionId: string, browserWidth = typeof windo
   return lifecycleRequest(sessionId, "open", browserWidth, idempotencyKey);
 }
 
-export async function updateSessionConfiguration(sessionId: string, name: string, fontSize: number, lineHeight: number, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular", widthMode: RuntimeWidthMode = "ORIGIN", customWidth: number | null = null): Promise<SessionView> {
+export async function updateSessionConfiguration(sessionId: string, name: string, fontSize: number, lineHeight: number, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular", widthMode: RuntimeWidthMode = "ORIGIN", customWidth: number | null = null, convertBackslashToYen = true): Promise<SessionView> {
   const token = await getCsrfToken();
-  return (await apiRequestWithMeta<SessionView>(`/sessions/${encodeURIComponent(sessionId)}/configuration`, { method: "PUT", headers: jsonMutationHeaders(token, idempotencyKey), body: JSON.stringify({ name, fontFaceId, fontSize, lineHeight, widthMode, customWidth }) })).value;
+  return (await apiRequestWithMeta<SessionView>(`/sessions/${encodeURIComponent(sessionId)}/configuration`, { method: "PUT", headers: jsonMutationHeaders(token, idempotencyKey), body: JSON.stringify({ name, fontFaceId, fontSize, lineHeight, widthMode, customWidth, convertBackslashToYen }) })).value;
 }
 
 export async function listRuntimeFonts(): Promise<RuntimeFontCatalog> {

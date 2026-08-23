@@ -3,6 +3,9 @@
 - Added a Session-bound width policy at the headless configuration seam: Origin caps game `WindowX` by the startup
   browser CSS width, Max overrides it up to 2000px, and Custom overrides it up to the persisted user width. All modes
   remain capped by the startup browser width and do not reflow during a Worker run (SESS-014/PLAY-015, ADR-0030).
+- Added a Session-bound display projection that maps U+005C to U+00A5 before headless font measurement when enabled.
+  The default-on mapping affects visible text only; runtime strings, button values, input and paths remain unchanged
+  (SESS-015/PLAY-016, ADR-0031).
 
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
@@ -20,6 +23,14 @@ inside modified upstream files and does not replace Git history or review.
 
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
+
+## 2026-08-24 — Era halfwidth yen display compatibility
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` and `UpstreamHtmlTranslator.cs` map visible U+005C text to U+00A5
+  before authoritative measurement and physical layout when the persistent Session option is enabled.
+- The mapping deliberately excludes button submission values, prompt defaults, user input, parser data and paths.
+- Scope: SESS-015, PLAY-016 and ADR-0031. Verification covers enabled/disabled display and unchanged button values,
+  API/persistence propagation, migration defaults and the complete dev-Docker check.
 
 ## 2026-08-23 — Bundled session font measurement and authoritative physical layout
 

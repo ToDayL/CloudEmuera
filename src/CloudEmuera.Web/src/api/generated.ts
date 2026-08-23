@@ -29,6 +29,7 @@ export interface SessionResponseDto {
   lineHeight: number;
   widthMode: RuntimeWidthModeDto;
   customWidth: number | null;
+  convertBackslashToYen: boolean;
   state: SessionStateDto;
   stateVersion: number;
   workerEpoch: number;

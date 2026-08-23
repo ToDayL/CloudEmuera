@@ -128,7 +128,8 @@ public sealed record WorkerLaunchRequest
         long initialOutputSequence = 0,
         int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
         string fontFaceId = RuntimeFontDefaults.DefaultFaceId, string fontCatalogDigest = "",
-        SessionWidthMode widthMode = SessionWidthMode.Origin, int? customWidth = null)
+        SessionWidthMode widthMode = SessionWidthMode.Origin, int? customWidth = null,
+        bool convertBackslashToYen = true)
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));
         SessionRoot = Path.GetFullPath(sessionRoot ?? throw new ArgumentNullException(nameof(sessionRoot)));
@@ -157,6 +158,7 @@ public sealed record WorkerLaunchRequest
             throw new ArgumentException("The runtime width configuration is invalid.", nameof(customWidth));
         WidthMode = widthMode;
         CustomWidth = customWidth;
+        ConvertBackslashToYen = convertBackslashToYen;
     }
 
     public WorkerBinding Binding { get; }
@@ -178,4 +180,5 @@ public sealed record WorkerLaunchRequest
     public string FontCatalogDigest { get; }
     public SessionWidthMode WidthMode { get; }
     public int? CustomWidth { get; }
+    public bool ConvertBackslashToYen { get; }
 }

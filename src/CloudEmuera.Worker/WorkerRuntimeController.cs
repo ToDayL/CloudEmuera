@@ -391,7 +391,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 fontCatalogDigest: runtimeFont.CatalogDigest,
                 runtimeFontPath: runtimeFont.RuntimeTtfPath,
                 runtimeFontFamilyName: runtimeFont.RuntimeFamilyName,
-                webFontAssetDigest: runtimeFont.WebWoff2Sha256));
+                webFontAssetDigest: runtimeFont.WebWoff2Sha256,
+                convertBackslashToYen: bootstrap.ConvertBackslashToYen));
             runtimeCancellation = new CancellationTokenSource();
             console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
 

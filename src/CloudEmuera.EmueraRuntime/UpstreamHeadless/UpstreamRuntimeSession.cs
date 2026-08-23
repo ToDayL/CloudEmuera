@@ -60,6 +60,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly string runtimeFontPath;
     private readonly string runtimeFontFamilyName;
     private readonly string webFontAssetDigest;
+    private readonly bool convertBackslashToYen;
     private RuntimeDebugTrace debugTrace;
     private EmueraConsole console;
     private Process process;
@@ -76,7 +77,8 @@ public sealed class UpstreamRuntimeSession : IDisposable
         int browserWidth = 0, int fontSize = 16, int lineHeight = 16,
         RuntimeWidthMode widthMode = RuntimeWidthMode.Origin, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
-        string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "")
+        string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "",
+        bool convertBackslashToYen = true)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -97,6 +99,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         this.runtimeFontPath = runtimeFontPath ?? string.Empty;
         this.runtimeFontFamilyName = runtimeFontFamilyName ?? string.Empty;
         this.webFontAssetDigest = webFontAssetDigest ?? string.Empty;
+        this.convertBackslashToYen = convertBackslashToYen;
     }
 
     public async Task<bool> InitializeAsync(RuntimePaths paths)
@@ -176,7 +179,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         await Preload.Load(MinorShift.Emuera.Program.CsvDir, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         console = new EmueraConsole(adapter, clock, cancellationToken, imageResolver, Config.WindowX, Config.WindowY,
-            fontFaceId, fontCatalogDigest, webFontAssetDigest);
+            fontFaceId, fontCatalogDigest, webFontAssetDigest, convertBackslashToYen);
         process = new Process(console);
         process.SetHeadlessCancellationToken(cancellationToken);
         MinorShift.Emuera.GlobalStatic.Process = process;

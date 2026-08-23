@@ -312,12 +312,12 @@ public sealed class LocalIdentityService(
         {
             if (!string.Equals(command.FontFaceId, RuntimeFontDefaults.DefaultFaceId, StringComparison.Ordinal))
                 throw new IdentityValidationException("INVALID_SESSION_STARTUP_FONT");
-            return new SessionStartupDefaults(RuntimeFontDefaults.DefaultFaceId, command.FontSize, command.LineHeight, command.WidthMode, command.CustomWidth);
+            return new SessionStartupDefaults(RuntimeFontDefaults.DefaultFaceId, command.FontSize, command.LineHeight, command.WidthMode, command.CustomWidth, command.ConvertBackslashToYen);
         }
         try
         {
             string faceId = fontCatalog.Require(command.FontFaceId).FaceId;
-            return new SessionStartupDefaults(faceId, command.FontSize, command.LineHeight, command.WidthMode, command.CustomWidth);
+            return new SessionStartupDefaults(faceId, command.FontSize, command.LineHeight, command.WidthMode, command.CustomWidth, command.ConvertBackslashToYen);
         }
         catch (RuntimeFontCatalogException)
         {
@@ -333,10 +333,13 @@ public sealed class LocalIdentityService(
             SessionStartupDefaults? stored = preferences?[SessionStartupDefaultsKey]?.Deserialize<SessionStartupDefaults>(PreferencesJsonOptions);
             if (stored is null || stored.FontSize is < 8 or > 72 || stored.LineHeight < stored.FontSize || stored.LineHeight > 128 || !SessionWidthConfiguration.IsValid(stored.WidthMode, stored.CustomWidth))
                 return SessionStartupDefaults.Default;
+            bool convertBackslashToYen = preferences?[SessionStartupDefaultsKey]?["convertBackslashToYen"]?.GetValue<bool>() ?? true;
             if (fontCatalog is null)
-                return string.Equals(stored.FontFaceId, RuntimeFontDefaults.DefaultFaceId, StringComparison.Ordinal) ? stored : SessionStartupDefaults.Default;
+                return string.Equals(stored.FontFaceId, RuntimeFontDefaults.DefaultFaceId, StringComparison.Ordinal)
+                    ? stored with { ConvertBackslashToYen = convertBackslashToYen }
+                    : SessionStartupDefaults.Default;
             string faceId = fontCatalog.Require(stored.FontFaceId).FaceId;
-            return new SessionStartupDefaults(faceId, stored.FontSize, stored.LineHeight, stored.WidthMode, stored.CustomWidth);
+            return new SessionStartupDefaults(faceId, stored.FontSize, stored.LineHeight, stored.WidthMode, stored.CustomWidth, convertBackslashToYen);
         }
         catch (JsonException)
         {

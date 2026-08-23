@@ -79,6 +79,7 @@ function session(overrides: Record<string, unknown> = {}) {
     fontFaceId: runtimeFontFaceId,
     fontSize: 18,
     lineHeight: 19,
+    convertBackslashToYen: true,
     ...overrides,
   };
 }
@@ -103,10 +104,10 @@ describe("App", () => {
   }
 
   it("loads and saves Session startup defaults from the settings page", async () => {
-    const savedDefaults = { fontFaceId: runtimeFontFaceId, fontSize: 24, lineHeight: 28, widthMode: "CUSTOM", customWidth: 1280 };
+    const savedDefaults = { fontFaceId: runtimeFontFaceId, fontSize: 24, lineHeight: 28, widthMode: "CUSTOM", customWidth: 1280, convertBackslashToYen: false };
     const fetchMock = mockFetch((url, init) => {
       if (url === "/api/v1/preferences/session-startup-defaults" && init?.method === "PUT") return jsonResponse(savedDefaults);
-      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse({ fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19, widthMode: "ORIGIN", customWidth: null });
+      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse({ fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19, widthMode: "ORIGIN", customWidth: null, convertBackslashToYen: true });
       if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
       if (url === `/api/v1/runtime-fonts/assets/${runtimeFontDigest}.woff2`) return new Response(new TextEncoder().encode("font-test"), { headers: { "Content-Type": "font/woff2", "Content-Length": "9" } });
       if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
@@ -126,12 +127,14 @@ describe("App", () => {
       expect(screen.getByLabelText("字号（px）")).toHaveValue(18);
       expect(screen.getByLabelText("行高（px）")).toHaveValue(19);
       expect(screen.getByLabelText("运行宽度")).toHaveValue("ORIGIN");
+      expect(screen.getByRole("checkbox")).toBeChecked();
       expect(screen.queryByText("Sarasa Fixed SC Regular 已通过 WOFF2 校验")).not.toBeInTheDocument();
 
       fireEvent.change(screen.getByLabelText("字号（px）"), { target: { value: "24" } });
       fireEvent.change(screen.getByLabelText("行高（px）"), { target: { value: "28" } });
       fireEvent.change(screen.getByLabelText("运行宽度"), { target: { value: "CUSTOM" } });
       fireEvent.change(screen.getByLabelText("自定义宽度（CSS px）"), { target: { value: "1280" } });
+      fireEvent.click(screen.getByRole("checkbox"));
       fireEvent.click(screen.getByRole("button", { name: "保存默认值" }));
 
       expect(await screen.findByText("已保存。之后创建的 Session 将使用这些默认值。"))

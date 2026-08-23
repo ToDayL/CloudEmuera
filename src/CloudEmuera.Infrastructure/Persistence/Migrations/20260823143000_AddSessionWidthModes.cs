@@ -12,6 +12,7 @@ public partial class AddSessionWidthModes : Migration
 {
     protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasAnnotation(SessionConfiguration.ExcludeBackslashToYenSchemaAnnotation, true);
         modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(CloudEmueraDbContext).Assembly);
     }

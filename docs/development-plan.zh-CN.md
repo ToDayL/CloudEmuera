@@ -979,7 +979,20 @@ Worker 26/26，以及 Web 99/99 类型检查/测试/生产构建均通过；真�
 验证：migration/SQLite CHECK、默认值与 Session HTTP 契约、静止态配置、RuntimeBridge 四种 cap 组合、
 Web 表单/请求、完整 `./scripts/check.sh`。
 
-### P1-15 — MVP 验收、安全与性能门（TODO；依赖 P1-S04、P1-S05）
+### P1-S06 — Era 半角日元符号展示兼容（DONE）
+
+需求映射：SESS-015、PLAY-016、PLAY-014。
+
+关联决策：[`ADR-0031`](adr/0031-session-backslash-to-halfwidth-yen-display.md)。
+
+交付物：账户启动默认值、Session 创建与停止态配置新增默认开启的 `convertBackslashToYen`；选项持久化
+并进入 Worker bootstrap。headless Console 在可见文本参与权威字体测量前执行 U+005C → U+00A5，按钮
+输入值、用户输入、prompt 默认值、脚本字符串和路径保持原值；关闭选项后原样显示反斜杠。
+
+验证：SQLite migration/default、偏好与 Session HTTP 契约、RuntimeBridge 可见文本/按钮值边界、Web
+表单与请求，以及完整 `./scripts/check.sh`。
+
+### P1-15 — MVP 验收、安全与性能门（TODO；依赖 P1-S04、P1-S05、P1-S06）
 
 需求映射：AC-001～014、设计第 17 章全部测试层级。
 

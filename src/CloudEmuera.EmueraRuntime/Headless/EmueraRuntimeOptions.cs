@@ -27,7 +27,8 @@ public sealed record EmueraRuntimeOptions
         int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
         RuntimeWidthMode widthMode = RuntimeWidthMode.Origin, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
-        string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "")
+        string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "",
+        bool convertBackslashToYen = true)
     {
         Paths = paths ?? throw new ArgumentNullException(nameof(paths));
         Console = console ?? throw new ArgumentNullException(nameof(console));
@@ -69,6 +70,7 @@ public sealed record EmueraRuntimeOptions
         if (!string.IsNullOrEmpty(webFontAssetDigest) && (webFontAssetDigest.Length != 64 || webFontAssetDigest.Any(character => character is < '0' or > '9' and < 'a' or > 'f')))
             throw new ArgumentException("The runtime web font asset digest is invalid.", nameof(webFontAssetDigest));
         WebFontAssetDigest = webFontAssetDigest ?? string.Empty;
+        ConvertBackslashToYen = convertBackslashToYen;
     }
 
     public RuntimePaths Paths { get; }
@@ -91,6 +93,7 @@ public sealed record EmueraRuntimeOptions
     public string RuntimeFontPath { get; }
     public string RuntimeFontFamilyName { get; }
     public string WebFontAssetDigest { get; }
+    public bool ConvertBackslashToYen { get; }
     internal Action? UpstreamGateAcquired { get; init; }
 
     private static void ValidateDeadline(TimeSpan value, string parameterName)

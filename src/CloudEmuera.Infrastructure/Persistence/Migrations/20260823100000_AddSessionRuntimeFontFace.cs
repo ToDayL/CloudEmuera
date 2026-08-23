@@ -12,6 +12,7 @@ public partial class AddSessionRuntimeFontFace : Migration
 {
     protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasAnnotation(SessionConfiguration.ExcludeBackslashToYenSchemaAnnotation, true);
         modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
         modelBuilder.HasAnnotation(SessionConfiguration.ExcludeRuntimeWidthSchemaAnnotation, true);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(CloudEmueraDbContext).Assembly);

@@ -23,7 +23,8 @@ internal sealed class UpstreamHtmlTranslationContext
         ConsoleColor? defaultButtonColor,
         long buttonGeneration,
         Func<string, RuntimeSpriteDefinition> imageResolver,
-        UpstreamHtmlParseMode mode)
+        UpstreamHtmlParseMode mode,
+        bool convertBackslashToYen = true)
     {
         Limits = limits ?? throw new ArgumentNullException(nameof(limits));
         Limits.Validate();
@@ -40,6 +41,7 @@ internal sealed class UpstreamHtmlTranslationContext
         ButtonGeneration = buttonGeneration;
         ImageResolver = imageResolver;
         Mode = mode;
+        ConvertBackslashToYen = convertBackslashToYen;
     }
 
     public ConsoleContractLimits Limits { get; }
@@ -50,6 +52,12 @@ internal sealed class UpstreamHtmlTranslationContext
     public long ButtonGeneration { get; }
     public Func<string, RuntimeSpriteDefinition> ImageResolver { get; }
     public UpstreamHtmlParseMode Mode { get; }
+    public bool ConvertBackslashToYen { get; }
+
+    public string DisplayText(string value) =>
+        ConvertBackslashToYen && value.Contains('\\', StringComparison.Ordinal)
+            ? value.Replace('\\', '\u00a5')
+            : value;
 }
 
 internal sealed class UpstreamHtmlTranslationResult
@@ -144,7 +152,7 @@ internal static class UpstreamHtmlTranslator
                 new ButtonNode(
                     children,
                     value,
-                    segment.Title,
+                    segment.Title is null ? null : context.DisplayText(segment.Title),
                     enabled: true,
                     generation: context.ButtonGeneration,
                     positionX: segment.PositionX)
@@ -162,7 +170,7 @@ internal static class UpstreamHtmlTranslator
                 new ButtonNode(
                     children,
                     string.Empty,
-                    segment.Title,
+                    segment.Title is null ? null : context.DisplayText(segment.Title),
                     enabled: false,
                     generation: context.ButtonGeneration,
                     positionX: segment.PositionX)
@@ -198,7 +206,7 @@ internal static class UpstreamHtmlTranslator
     {
         counter.Text(text.Text);
         counter.Node();
-        return new TextNode(text.Text, ToTextStyle(text.Style, context));
+        return new TextNode(context.DisplayText(text.Text), ToTextStyle(text.Style, context));
     }
 
     private static ConsoleNode TranslateImage(
@@ -217,7 +225,7 @@ internal static class UpstreamHtmlTranslator
             // equivalent safe behavior; it is never interpreted by the Web UI.
             counter.Text(image.Source);
             counter.Node();
-            return new TextNode(SafeImageFallback(image.Source, context.Limits), ConsoleTextStyle.Default);
+            return new TextNode(context.DisplayText(SafeImageFallback(image.Source, context.Limits)), ConsoleTextStyle.Default);
         }
 
         int height = ResolveLength(image.Height, context.FontSize, context.FontSize);
@@ -241,7 +249,7 @@ internal static class UpstreamHtmlTranslator
         {
             counter.Text(shape.ErrorText);
             counter.Node();
-            return new TextNode(shape.ErrorText);
+            return new TextNode(context.DisplayText(shape.ErrorText));
         }
 
         string type = shape.Type.ToLowerInvariant();

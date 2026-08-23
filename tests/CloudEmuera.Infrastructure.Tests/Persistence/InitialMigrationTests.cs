@@ -59,7 +59,8 @@ public sealed class InitialMigrationTests
         Assert.Contains("save_layout", sessionColumns);
         Assert.Contains("width_mode", sessionColumns);
         Assert.Contains("custom_width", sessionColumns);
-        Assert.Equal(21, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Contains("convert_backslash_to_yen", sessionColumns);
+        Assert.Equal(22, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -83,7 +84,7 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(21, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(22, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -108,7 +109,7 @@ public sealed class InitialMigrationTests
         Assert.Null(user.PasswordChangedAt);
         Assert.False(user.MustChangePassword);
         Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
-        Assert.Equal(21, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(22, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -149,18 +150,33 @@ public sealed class InitialMigrationTests
             CloudEmueraUser user = PersistenceFixtures.CreateUser();
             user.PreferencesJson = """{"sessionStartupDefaults":{"fontFaceId":"lxgw-wenkai-mono-1.522-medium","fontSize":18,"lineHeight":19,"widthMode":"ORIGIN","customWidth":null},"unrelated":true}""";
             GameRow game = PersistenceFixtures.CreateGame();
-            SessionRow light = PersistenceFixtures.CreateSession("sess_lxgw_light");
-            light.FontFaceId = "lxgw-wenkai-mono-1.522-light";
-            SessionRow regular = PersistenceFixtures.CreateSession("sess_lxgw_regular");
-            regular.FontFaceId = "lxgw-wenkai-mono-1.522-regular";
-            SessionRow medium = PersistenceFixtures.CreateSession("sess_lxgw_medium");
-            medium.FontFaceId = "lxgw-wenkai-mono-1.522-medium";
             IdempotencyRecordRow idempotency = PersistenceFixtures.CreateIdempotency("lxgw-replay");
             idempotency.Status = IdempotencyRecordStatus.Succeeded;
             idempotency.ResponseJson = """{"fontFaceId":"lxgw-wenkai-mono-1.522-regular","other":"kept"}""";
             idempotency.CompletedAt = PersistenceFixtures.CreatedAt;
-            initial.Context.AddRange(quota, user, game, light, regular, medium, idempotency);
+            initial.Context.AddRange(quota, user, game, idempotency);
             await initial.Context.SaveChangesAsync();
+            foreach ((string id, string face) in new[]
+            {
+                ("sess_lxgw_light", "lxgw-wenkai-mono-1.522-light"),
+                ("sess_lxgw_regular", "lxgw-wenkai-mono-1.522-regular"),
+                ("sess_lxgw_medium", "lxgw-wenkai-mono-1.522-medium"),
+            })
+            {
+                await ExecuteAsync(initial.Connection, $"""
+                    INSERT INTO sessions (
+                        id, owner_user_id, game_id, source_content_digest, source_content_revision,
+                        session_root_manifest_digest, save_layout, runtime_version, session_root_path, name,
+                        font_size, line_height, font_face_id, width_mode, custom_width, state, state_version,
+                        worker_epoch, waiting_for_input, current_prompt_id, last_output_sequence, close_reason,
+                        created_at, started_at, last_activity_at, closed_at)
+                    VALUES (
+                        '{id}', 'usr_fixture', 'game_fixture', 'sha256:{new string('a', 64)}', 1,
+                        'sha256:{new string('a', 64)}', 0, 'headless-test', 'sessions/{id}/root', 'Fixture Session',
+                        18, 19, '{face}', 'ORIGIN', NULL, 'CREATING', 0,
+                        0, 0, NULL, 0, NULL, 1, NULL, 1, NULL);
+                    """);
+            }
         }
 
         MigrationResult result = await database.MigrateAsync();
@@ -173,7 +189,9 @@ public sealed class InitialMigrationTests
             Assert.Equal("lxgw-bright-code-2.922-extralight", faces["sess_lxgw_light"]);
             Assert.Equal("lxgw-bright-code-2.922-light", faces["sess_lxgw_regular"]);
             Assert.Equal("lxgw-bright-code-2.922-regular", faces["sess_lxgw_medium"]);
+            Assert.All(await verify.Context.Sessions.Select(session => session.ConvertBackslashToYen).ToArrayAsync(), Assert.True);
             Assert.Contains("\"fontFaceId\":\"lxgw-bright-code-2.922-regular\"", (await verify.Context.Users.SingleAsync()).PreferencesJson, StringComparison.Ordinal);
+            Assert.Contains("\"convertBackslashToYen\":true", (await verify.Context.Users.SingleAsync()).PreferencesJson, StringComparison.Ordinal);
             Assert.Contains("\"unrelated\":true", (await verify.Context.Users.SingleAsync()).PreferencesJson, StringComparison.Ordinal);
             Assert.Contains("\"fontFaceId\":\"lxgw-bright-code-2.922-light\"", (await verify.Context.IdempotencyRecords.SingleAsync()).ResponseJson, StringComparison.Ordinal);
             Assert.Contains("\"other\":\"kept\"", (await verify.Context.IdempotencyRecords.SingleAsync()).ResponseJson, StringComparison.Ordinal);
@@ -290,7 +308,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(22, await CountHistoryRowsAsync(database));
+        Assert.Equal(23, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>

@@ -106,15 +106,17 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.Equal(19, initial.LineHeight);
         Assert.Equal("ORIGIN", initial.WidthMode);
         Assert.Null(initial.CustomWidth);
+        Assert.True(initial.ConvertBackslashToYen);
 
         csrf = await GetCsrfAsync(client);
         SessionStartupDefaultsResponse saved = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
-            new UpdateSessionStartupDefaultsRequest("lxgw-bright-code-2.922-regular", 24, 28, "CUSTOM", 1200), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Saved Session startup preferences were missing.");
+            new UpdateSessionStartupDefaultsRequest("lxgw-bright-code-2.922-regular", 24, 28, "CUSTOM", 1200, false), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Saved Session startup preferences were missing.");
         Assert.Equal("lxgw-bright-code-2.922-regular", saved.FontFaceId);
         Assert.Equal(24, saved.FontSize);
         Assert.Equal(28, saved.LineHeight);
         Assert.Equal("CUSTOM", saved.WidthMode);
         Assert.Equal(1200, saved.CustomWidth);
+        Assert.False(saved.ConvertBackslashToYen);
 
         SessionStartupDefaultsResponse persisted = await (await client.GetAsync("/api/v1/preferences/session-startup-defaults")).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Persisted Session startup preferences were missing.");
         Assert.Equal(saved, persisted);

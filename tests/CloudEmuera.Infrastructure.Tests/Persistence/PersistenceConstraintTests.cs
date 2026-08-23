@@ -283,6 +283,7 @@ public sealed class PersistenceConstraintTests
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET state = 'CLOSED' WHERE id = 'sess_fixture';"));
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET waiting_for_input = 1 WHERE id = 'sess_fixture';"));
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET last_activity_at = created_at - 1 WHERE id = 'sess_fixture';"));
+        await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET convert_backslash_to_yen = 2 WHERE id = 'sess_fixture';"));
     }
 
     [Fact]

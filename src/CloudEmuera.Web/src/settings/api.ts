@@ -8,6 +8,7 @@ export interface SessionStartupDefaults {
   lineHeight: number;
   widthMode: RuntimeWidthModeDto;
   customWidth: number | null;
+  convertBackslashToYen: boolean;
 }
 
 export const DEFAULT_SESSION_STARTUP_DEFAULTS: SessionStartupDefaults = {
@@ -16,6 +17,7 @@ export const DEFAULT_SESSION_STARTUP_DEFAULTS: SessionStartupDefaults = {
   lineHeight: 19,
   widthMode: "ORIGIN",
   customWidth: null,
+  convertBackslashToYen: true,
 };
 
 export function sessionStartupDefaultsQueryKey(userId: string | undefined) {
