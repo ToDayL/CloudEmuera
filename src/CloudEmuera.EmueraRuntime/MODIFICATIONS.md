@@ -54,25 +54,14 @@ requirements/ADR references, and verification commands.
   mobile Chromium positioned-button geometry/pixel regression, and the full
   dev-Docker check.
 
-## 2026-08-23 — LXGW half-width bar glyph compatibility
+## 2026-08-23 — Preserve single-line PRINTSINGLE output
 
-- `UpstreamHeadless/HeadlessFontMetrics.cs` applies the eraTW compatibility
-  advance for U+2585 (LOWER FIVE EIGHTHS BLOCK, `▅`) only when the selected
-  face is `LXGW WenKai Mono`. Its bundled font table exposes a full-cell
-  advance for this glyph, while Sarasa Fixed SC and the other faces retain
-  their native metrics.
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` keeps `PRINTSINGLE*` output on
   one physical line and truncates the measured prefix at the drawable width;
   ordinary wrapping and no-wrap bar output remain separate paths.
-- The Web scrollback projects the same LXGW-only glyph correction so the
-  browser's visual cell width stays aligned with the Worker's positioned
-  segments. This is a face-specific compatibility rule, not a Unicode-wide
-  half-width override.
-- Scope: PRINT_COLORBAR/`BAR_LENGTH` compatibility, PLAY-002/014,
-  COMP-007/010 and ADR-0029.
-- Verification: `LowerFiveEighthsBlockUsesTheOriginalHalfWidthAdvance`,
-  `PrintSingleFormsTruncatesInsteadOfWrapping`, the ScrollbackRenderer glyph
-  test, and the full dev-Docker check.
+- Scope: PLAY-002/014 and COMP-007/010 structured-console compatibility.
+- Verification: `PrintSingleFormsTruncatesInsteadOfWrapping` and the full
+  dev-Docker check.
 
 ## 2026-08-23 — Delete complete physical groups for wrapped CLEARLINE output
 

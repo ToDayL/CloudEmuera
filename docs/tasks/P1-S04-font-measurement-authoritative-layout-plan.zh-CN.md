@@ -652,8 +652,3 @@ Session 字体选择预览。游戏字体请求保持受控诊断，不参与 Ru
 - `./scripts/check.sh` 通过，包含 Release 构建、锁定还原、Web 类型检查、Web 99/99 测试和生产构建；
   真实 Chromium 在 `http://web` 非安全上下文中验证了无 `SubtleCrypto` 时的字体摘要回退与 FontFace 加载；
   P1-S04 像素级 E2E 还验证了物理行中的文字实际出现在 PNG 截图像素中，避免仅凭 DOM 可见性误判。
-
-补充兼容性约束：`PRINT_COLORBAR` 是游戏 ERB helper，`BAR_LENGTH` 的格数取决于
-helper 使用的字符 advance，不能仅按 Unicode code point 数量推断。固定字体验证表明
-LXGW WenKai Mono 的 U+2585（`▅`）原始 advance 接近整格，需要在 Worker 和 Web 两端
-按选中的 face 应用半格兼容修正；Sarasa Fixed SC 等 face 的原始 advance 保持不变。

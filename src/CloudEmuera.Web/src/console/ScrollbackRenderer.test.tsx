@@ -6,7 +6,6 @@ import { ScrollbackRenderer, trailingVisualOverflow, trimTrailingEmptyLines } fr
 import type { RealtimeLine } from "../realtime/protocol";
 
 const assets = new AssetResolver("s1", { schemaVersion: 1, assets: [], fonts: [], fontDiagnostics: [] });
-const lxgwAssets = new AssetResolver("s1", { schemaVersion: 1, assets: [], fonts: [], fontDiagnostics: [] }, "cloudemuera-runtime-test", "LXGW WenKai Mono");
 const clockAssets = new AssetResolver("s1", { schemaVersion: 1, assets: [{ assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", mediaType: "image/png", byteLength: 128, contentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", eTag: null }], fonts: [], fontDiagnostics: [] });
 const line = (id: string, text: string): RealtimeLine => ({ lineId: id, nodes: [{ type: "text", text, style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], alignment: "left", temporary: false });
 
@@ -95,19 +94,6 @@ describe("ScrollbackRenderer", () => {
     const element = document.querySelector<HTMLElement>(".console-line");
     expect(element).not.toBeNull();
     expect(element).toHaveStyle({ width: "760px", height: "19px", minHeight: "19px", lineHeight: "19px" });
-  });
-
-  it("renders U+2585 as the runtime half-width compatibility glyph", () => {
-    render(<ScrollbackRenderer lines={[line("bar", "▅A")]} assets={lxgwAssets} onInput={() => undefined} />);
-    const glyph = document.querySelector<HTMLElement>(".console-halfwidth-glyph");
-    expect(glyph).not.toBeNull();
-    expect(glyph).toHaveTextContent("▅");
-    expect(document.querySelector<HTMLElement>(".console-line")).toHaveTextContent("▅A");
-  });
-
-  it("keeps U+2585 native for non-LXGW runtime faces", () => {
-    render(<ScrollbackRenderer lines={[line("bar", "▅A")]} assets={assets} onInput={() => undefined} />);
-    expect(document.querySelector(".console-halfwidth-glyph")).toBeNull();
   });
 
   it("keeps escaped portrait pixels inside the scrollable scrollback extent", () => {

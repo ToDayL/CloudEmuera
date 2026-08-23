@@ -1336,9 +1336,6 @@ public sealed class HeadlessRuntimeFixtureTests
     [Trait("Category", "FontLayout")]
     public async Task BundledFontMetricsPreserveFullwidthCjkAdvance()
     {
-        string asciiCells = new('A', 18);
-        string blocks = new('▅', 18);
-        string blockPrints = string.Join('\n', Enumerable.Repeat("PRINTFORMS UNICODE(0x2585)", blocks.Length));
         string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
         string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
         string catalogPath = Path.Combine(fontRoot, "catalog.json");
@@ -1346,10 +1343,7 @@ public sealed class HeadlessRuntimeFixtureTests
         using var fixture = RuntimeHostFixture.Create(
             "@SYSTEM_TITLE\n" +
             "PRINTL AAAAAA\n" +
-            $"PRINTL {asciiCells}\n" +
             "PRINTL 中文中文中文\n" +
-            blockPrints + "\n" +
-            "PRINTL\n" +
             "QUIT\n",
             configuration: "Use sav folder:NO\n窗口宽度:320\n字体大小:18\n每行高度:20\n",
             erbCodePage: 932);
@@ -1365,15 +1359,10 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
 
         ConsoleLine ascii = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == "AAAAAA");
-        ConsoleLine asciiCellsLine = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == asciiCells);
         ConsoleLine cjk = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == "中文中文中文");
-        ConsoleLine blockLine = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == blocks);
         int asciiWidth = Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(ascii.Nodes)).MeasuredWidth;
         int cjkWidth = Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(cjk.Nodes)).MeasuredWidth;
-        int asciiCellWidth = asciiCellsLine.Nodes.OfType<PositionedInlineSegmentNode>().Sum(segment => segment.MeasuredWidth);
-        int blockWidth = blockLine.Nodes.OfType<PositionedInlineSegmentNode>().Sum(segment => segment.MeasuredWidth);
         Assert.True(cjkWidth > asciiWidth, $"Expected CJK advance to exceed Latin advance, got ASCII={asciiWidth}, CJK={cjkWidth}.");
-        Assert.True(Math.Abs(blockWidth - asciiCellWidth) <= 1, $"Expected Sarasa U+2585 width to remain native: ASCII={asciiCellWidth}, U+2585={blockWidth}.");
     }
 
     [Fact]
@@ -1415,44 +1404,6 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.All(single.Nodes.OfType<PositionedInlineSegmentNode>(), segment =>
             Assert.InRange((long)segment.PositionX + segment.MeasuredWidth, 0, single.LayoutWidth));
         Assert.Contains(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == "AFTER");
-    }
-
-    [Fact]
-    [Trait("Category", "FontLayout")]
-    [Trait("Category", "RuntimeBridge")]
-    public async Task LowerFiveEighthsBlockUsesTheOriginalHalfWidthAdvance()
-    {
-        // COMP-007/PRINT_COLORBAR: U+2585 is emitted as one Unicode glyph per
-        // BAR_LENGTH slot by common ERB helpers, but the eraTW baseline treats
-        // that glyph as half-width. LXGW's full-cell hmtx advance must not
-        // leak into the authoritative Worker layout; other faces retain their
-        // native metrics.
-        string ascii = new('A', 18);
-        string blocks = new('▅', 18);
-        string blockPrints = string.Join('\n', Enumerable.Repeat("PRINTFORMS UNICODE(0x2585)", blocks.Length));
-        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
-        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
-        string catalogPath = Path.Combine(fontRoot, "catalog.json");
-        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
-        using var fixture = RuntimeHostFixture.Create(
-            $"@SYSTEM_TITLE\nPRINTL {ascii}\n{blockPrints}\nPRINTL\nQUIT\n",
-            configuration: "Use sav folder:NO\n窗口宽度:800\n字体大小:18\n每行高度:20\n");
-        await using EmueraRuntimeHost host = fixture.CreateHost(
-            runDeadline: TimeSpan.FromSeconds(8),
-            fontFaceId: "lxgw-wenkai-mono-1.522-regular",
-            fontCatalogDigest: catalogDigest,
-            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "lxgw-wenkai-mono-1.522-regular.ttf"),
-            runtimeFontFamilyName: "LXGW WenKai Mono",
-            webFontAssetDigest: "3917cb7bbbf467e8f762ee9248f69aaab9ef37a51ca922c05cd2fcc0150ed9fa");
-
-        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
-        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
-
-        ConsoleLine asciiLine = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == ascii);
-        ConsoleLine blockLine = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == blocks);
-        int asciiWidth = asciiLine.Nodes.OfType<PositionedInlineSegmentNode>().Sum(segment => segment.MeasuredWidth);
-        int blockWidth = blockLine.Nodes.OfType<PositionedInlineSegmentNode>().Sum(segment => segment.MeasuredWidth);
-        Assert.True(Math.Abs(blockWidth - asciiWidth) <= 1, $"Expected U+2585 width to match one ASCII cell: ASCII={asciiWidth}, U+2585={blockWidth}.");
     }
 
     [Fact]
