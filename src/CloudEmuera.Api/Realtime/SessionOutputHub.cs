@@ -1,5 +1,5 @@
 using CloudEmuera.Contracts.Realtime;
-using W = CloudEmuera.Ipc.V5;
+using W = CloudEmuera.Ipc.V6;
 using R = CloudEmuera.RuntimeAdapter;
 
 namespace CloudEmuera.Api.Realtime;

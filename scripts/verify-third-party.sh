@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"$repo_root/scripts/verify-runtime-fonts.sh"
 expected_commit="2175f8a629257efb08214e093704b3a3d3d06d05"
 expected_tree="a3c96867e3a5b5d5f90877a4e7c6f8056d5f5b9b"
 expected_license_sha256="8770a79e679a354cffc4005cee99403d609c31ce88dd2b79e4a50325317beb77"

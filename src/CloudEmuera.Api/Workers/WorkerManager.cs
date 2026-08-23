@@ -9,7 +9,7 @@ using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Api.Security;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V5;
+using CloudEmuera.Ipc.V6;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Grpc.AspNetCore.Server;
@@ -320,7 +320,8 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 (RuntimeSaveLayout)spec.SessionRoot.SaveLayout,
                 spec.SessionRoot.ManifestDigest,
                 spec.Binding.InitialOutputSequence,
-                spec.BrowserWidth, spec.FontSize, spec.LineHeight, spec.TextMetrics?.HalfWidthPx ?? 0, spec.TextMetrics?.FullWidthPx ?? 0),
+                spec.BrowserWidth, spec.FontSize, spec.LineHeight,
+                spec.FontFaceId, spec.FontCatalogDigest),
             spec.Binding,
             waitForRegistration: false,
             cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -375,8 +376,8 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             BrowserWidth = request.BrowserWidth,
             FontSize = request.FontSize,
             LineHeight = request.LineHeight,
-            HalfWidthPx = request.HalfWidthPx,
-            FullWidthPx = request.FullWidthPx,
+            FontFaceId = request.FontFaceId,
+            FontCatalogDigest = request.FontCatalogDigest,
         };
         session.SetBootstrapToken(bootstrap.BootstrapToken);
         WorkerBootstrapDocument bootstrapToWrite = options.BootstrapTransformForTest?.Invoke(bootstrap) ?? bootstrap;
@@ -764,6 +765,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             RedirectStandardError = true,
         };
         WorkerProcessEnvironment.RemoveHostOrchestratorVariables(startInfo);
+        startInfo.Environment["CLOUDEMUERA_RUNTIME_FONT_ROOT"] = options.RuntimeFontRoot;
         startInfo.ArgumentList.Add(options.WorkerAssemblyPath);
         startInfo.ArgumentList.Add("--bootstrap-file");
         startInfo.ArgumentList.Add(bootstrapPath);

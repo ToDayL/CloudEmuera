@@ -13,7 +13,9 @@ public partial class AddSessionDisplayConfiguration : Migration
     protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
+        modelBuilder.HasAnnotation(SessionConfiguration.ExcludeRuntimeFontFaceSchemaAnnotation, true);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(CloudEmueraDbContext).Assembly);
+        modelBuilder.Entity<SessionRow>().Ignore(row => row.FontFaceId);
     }
 
     protected override void Up(MigrationBuilder migrationBuilder)

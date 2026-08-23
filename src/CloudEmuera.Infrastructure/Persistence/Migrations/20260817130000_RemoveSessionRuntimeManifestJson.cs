@@ -13,8 +13,9 @@ public partial class RemoveSessionRuntimeManifestJson : Migration
     protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
+        modelBuilder.HasAnnotation(SessionConfiguration.ExcludeRuntimeFontFaceSchemaAnnotation, true);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(CloudEmueraDbContext).Assembly);
-        modelBuilder.Entity<SessionRow>().Ignore(row => row.FontSize).Ignore(row => row.LineHeight);
+        modelBuilder.Entity<SessionRow>().Ignore(row => row.FontSize).Ignore(row => row.LineHeight).Ignore(row => row.FontFaceId);
     }
 
     protected override void Up(MigrationBuilder migrationBuilder)

@@ -1,4 +1,5 @@
 using CloudEmuera.Application.Sessions;
+using CloudEmuera.Application.Fonts;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Games;
 using CloudEmuera.Domain.Sessions;
@@ -19,7 +20,8 @@ namespace CloudEmuera.Infrastructure.Sessions;
 public sealed class SqliteSessionRuntimeStore(
     SqliteDatabaseOptions databaseOptions,
     TimeProvider timeProvider,
-    InstanceCapacityOptions? capacityOptions = null) : ISessionRuntimeStore, ICurrentSessionRuntimeLeaseReader
+    InstanceCapacityOptions? capacityOptions = null,
+    IRuntimeFontCatalog? fontCatalog = null) : ISessionRuntimeStore, ICurrentSessionRuntimeLeaseReader
 {
     public async Task<SessionRuntimeAcquireResult> TryAcquireOpenLeaseAsync(
         SessionRuntimeOpenOptions options,
@@ -142,8 +144,10 @@ public sealed class SqliteSessionRuntimeStore(
             session.OwnerUserId,
             session.GameId,
             session.SourceContentRevision,
-            session.SourceContentDigest);
-        return SessionRuntimeAcquireResult.Success(new SessionRuntimeLease(binding, session.OwnerUserId, session.State, now, lease.ExpiresAt, session.FontSize, session.LineHeight));
+            session.SourceContentDigest,
+            session.FontFaceId,
+            fontCatalog?.CatalogDigest ?? string.Empty);
+        return SessionRuntimeAcquireResult.Success(new SessionRuntimeLease(binding, session.OwnerUserId, session.State, now, lease.ExpiresAt, session.FontSize, session.LineHeight, session.FontFaceId, fontCatalog?.CatalogDigest ?? string.Empty));
         }
     }
 
@@ -364,6 +368,7 @@ public sealed class SqliteSessionRuntimeStore(
 
     public async Task<IReadOnlyList<PersistedWorkerLease>> ListPersistedLeasesAsync(CancellationToken cancellationToken = default)
     {
+        string catalogDigest = fontCatalog?.CatalogDigest ?? string.Empty;
         await using SqliteConnection connection = OpenConnection(SqliteConnectionAccess.ReadOnly);
         await using CloudEmueraDbContext db = CreateContext(connection);
         return await db.WorkerLeases.AsNoTracking()
@@ -383,7 +388,9 @@ public sealed class SqliteSessionRuntimeStore(
                     session.OwnerUserId,
                     session.GameId,
                     session.SourceContentRevision,
-                    session.SourceContentDigest),
+                    session.SourceContentDigest,
+                    session.FontFaceId,
+                    catalogDigest),
                 lease.Pid != null && lease.ProcessBootId != null && lease.ProcessStartTicks != null
                     ? new WorkerProcessIdentity(lease.Pid.Value, lease.ProcessBootId, lease.ProcessStartTicks.Value)
                     : null,
@@ -428,8 +435,10 @@ public sealed class SqliteSessionRuntimeStore(
             session.OwnerUserId,
             session.GameId,
             session.SourceContentRevision,
-            session.SourceContentDigest);
-        return new SessionRuntimeLease(binding, session.OwnerUserId, session.State, lease.AcquiredAt, lease.ExpiresAt, session.FontSize, session.LineHeight);
+            session.SourceContentDigest,
+            session.FontFaceId,
+            fontCatalog?.CatalogDigest ?? string.Empty);
+        return new SessionRuntimeLease(binding, session.OwnerUserId, session.State, lease.AcquiredAt, lease.ExpiresAt, session.FontSize, session.LineHeight, session.FontFaceId, fontCatalog?.CatalogDigest ?? string.Empty);
     }
 
     public async Task<bool> ReconcileAsync(

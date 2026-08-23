@@ -3,7 +3,7 @@ using System.Linq;
 using System.Text;
 using CloudEmuera.Api.Realtime;
 using RuntimeColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
-using W = CloudEmuera.Ipc.V5;
+using W = CloudEmuera.Ipc.V6;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Realtime;
 using Xunit;
@@ -357,7 +357,7 @@ public sealed class RealtimeOutputTests
         var options = RealtimeOutputOptions.Default with
         {
             BatchMaxDelay = TimeSpan.FromMilliseconds(16),
-            BatchTargetBytes = 1_000
+            BatchTargetBytes = 1_500
         };
         var batcher = new RealtimeBatcher(options, clock);
 

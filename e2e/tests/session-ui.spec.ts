@@ -1,10 +1,82 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 
 const temporaryPassword = "session-ui-temporary-password";
 const administratorPassword = "session-ui-administrator-password";
 const adminEmail = "session-ui-admin@example.test";
+
+function countBrightPngPixels(png: Buffer, cssRect: { x: number; y: number; width: number; height: number }, cssViewportWidth: number): number {
+  if (png.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new Error("The browser screenshot is not a PNG.");
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
+  const imageData: Buffer[] = [];
+  for (let offset = 8; offset + 12 <= png.length;) {
+    const length = png.readUInt32BE(offset);
+    const type = png.toString("ascii", offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > png.length) throw new Error("The browser screenshot contains a truncated PNG chunk.");
+    if (type === "IHDR") {
+      width = png.readUInt32BE(dataStart);
+      height = png.readUInt32BE(dataStart + 4);
+      bitDepth = png[dataStart + 8];
+      colorType = png[dataStart + 9];
+      interlace = png[dataStart + 12];
+    } else if (type === "IDAT") {
+      imageData.push(png.subarray(dataStart, dataEnd));
+    }
+    offset = dataEnd + 4;
+    if (type === "IEND") break;
+  }
+  if (width <= 0 || height <= 0 || bitDepth !== 8 || ![2, 6].includes(colorType) || interlace !== 0 || imageData.length === 0)
+    throw new Error("The browser screenshot uses an unsupported PNG pixel format.");
+  if (!Number.isFinite(cssViewportWidth) || cssViewportWidth <= 0) throw new Error("The browser viewport width is invalid.");
+
+  const bytesPerPixel = colorType === 6 ? 4 : 3;
+  const rowLength = width * bytesPerPixel;
+  const decoded = inflateSync(Buffer.concat(imageData));
+  const scale = width / cssViewportWidth;
+  const left = Math.max(0, Math.floor(cssRect.x * scale));
+  const right = Math.min(width, Math.ceil((cssRect.x + cssRect.width) * scale));
+  const top = Math.max(0, Math.floor(cssRect.y * scale));
+  const bottom = Math.min(height, Math.ceil((cssRect.y + cssRect.height) * scale));
+  let decodedOffset = 0;
+  let brightPixels = 0;
+  let previous = Buffer.alloc(rowLength);
+  for (let y = 0; y < height; y++) {
+    const filter = decoded[decodedOffset++];
+    const row = Buffer.from(decoded.subarray(decodedOffset, decodedOffset + rowLength));
+    decodedOffset += rowLength;
+    for (let index = 0; index < row.length; index++) {
+      const leftByte = index >= bytesPerPixel ? row[index - bytesPerPixel] : 0;
+      const upperByte = previous[index];
+      const upperLeftByte = index >= bytesPerPixel ? previous[index - bytesPerPixel] : 0;
+      if (filter === 1) row[index] = (row[index] + leftByte) & 0xff;
+      else if (filter === 2) row[index] = (row[index] + upperByte) & 0xff;
+      else if (filter === 3) row[index] = (row[index] + Math.floor((leftByte + upperByte) / 2)) & 0xff;
+      else if (filter === 4) {
+        const estimate = leftByte + upperByte - upperLeftByte;
+        const pa = Math.abs(estimate - leftByte);
+        const pb = Math.abs(estimate - upperByte);
+        const pc = Math.abs(estimate - upperLeftByte);
+        row[index] = (row[index] + (pa <= pb && pa <= pc ? leftByte : pb <= pc ? upperByte : upperLeftByte)) & 0xff;
+      } else if (filter !== 0) throw new Error(`The browser screenshot uses an unsupported PNG filter: ${filter}.`);
+    }
+    if (y >= top && y < bottom) {
+      for (let x = left; x < right; x++) {
+        const pixel = x * bytesPerPixel;
+        if (row[pixel] > 90 || row[pixel + 1] > 90 || row[pixel + 2] > 90) brightPixels++;
+      }
+    }
+    previous = row;
+  }
+  return brightPixels;
+}
 
 function crc32(bytes: Uint8Array): number {
   let value = 0xffffffff;
@@ -74,6 +146,20 @@ const fixturePng = new Uint8Array(readFileSync(fileURLToPath(new URL("../../test
 type FixtureKind = "basic" | "timed" | "rich";
 type PreparedGame = { id: string; name: string; stateVersion?: number; status?: string; hasCurrentContent?: boolean };
 
+function encodeCp932Fixture(text: string): Uint8Array {
+  const multibyte: Record<string, number[]> = {
+    中: [0x92, 0x86], 文: [0x95, 0xb6], 日: [0x93, 0xfa], 本: [0x96, 0x7b], 語: [0x8c, 0xea],
+  };
+  const bytes: number[] = [];
+  for (const character of text) {
+    const pair = multibyte[character];
+    if (pair) bytes.push(...pair);
+    else if (character.codePointAt(0)! <= 0x7f) bytes.push(character.charCodeAt(0));
+    else throw new Error(`The CP932 fixture has no mapping for '${character}'.`);
+  }
+  return new Uint8Array(bytes);
+}
+
 async function prepareGame(page: import("@playwright/test").Page, suffix: string, kind: FixtureKind = "basic"): Promise<PreparedGame> {
   const gameName = `P1-11 Session Fixture ${suffix}`;
   const existing = await findPreparedGame(page, gameName);
@@ -89,10 +175,10 @@ async function prepareGame(page: import("@playwright/test").Page, suffix: string
     ? "@SYSTEM_TITLE\nPRINTL TIMED-READY\nTINPUT 20000, 7, 1, \"TIME-UP\"\nPRINTFORML TIMED-RESULT={RESULT}\nPRINTL TIMED-AFTER\nQUIT\n"
     : kind === "rich"
       ? "@SYSTEM_TITLE\nPRINTL RICH-READY\nHTML_PRINT \"<b>RICH-HTML</b><i>RICH-ITALIC</i>\"\nHTML_PRINT_ISLAND \"<strong>RICH-ISLAND</strong>\"\nPRINT_IMG \"RICH\"\nPRINT_RECT 10,10,40,40\nSETBGIMAGE RICH,0,128\nPRINTL RICH-INPUT\nINPUT\nIF RESULT == 13\nPRINT_RECT 10px,10px,40px,40px\nENDIF\nPRINTL RICH-AFTER\nQUIT\n"
-      : "@SYSTEM_TITLE\nPRINTL SESSION-READY\nINPUT\nPRINTL SESSION-INPUT\nQUIT\n";
+      : "@SYSTEM_TITLE\nPRINTL SESSION-READY\nPRINTBUTTON \"LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語\", 7\nINPUT\nPRINTL SESSION-INPUT\nQUIT\n";
   const entries: ZipEntry[] = [
     ["CSV/GAMEBASE.CSV", "title,session-ui\n"],
-    ["ERB/START.ERB", script],
+    ["ERB/START.ERB", encodeCp932Fixture(script)],
     ["emuera.config", "Use sav folder:NO\n"],
   ];
   if (kind === "rich") entries.push(["resources/sprites.csv", "RICH,rich.png,0,0,2,2\n"], ["resources/rich.png", fixturePng]);
@@ -121,15 +207,6 @@ async function findPreparedGame(page: import("@playwright/test").Page, namePrefi
   if (result.status !== 200) return null;
   const game = result.body?.items?.find(item => typeof item.id === "string" && typeof item.name === "string" && item.name.startsWith(namePrefix));
   return game?.id && game.name ? { id: game.id, name: game.name, stateVersion: game.stateVersion, status: game.status, hasCurrentContent: game.hasCurrentContent } : null;
-}
-
-async function waitForPreparedGame(page: import("@playwright/test").Page, namePrefix: string): Promise<PreparedGame | null> {
-  for (let attempt = 0; attempt < 90; attempt++) {
-    const game = await findPreparedGame(page, namePrefix);
-    if (game) return game;
-    await new Promise(resolve => setTimeout(resolve, 1_000));
-  }
-  return null;
 }
 
 async function createSession(page: import("@playwright/test").Page, game: PreparedGame, suffix: string): Promise<string> {
@@ -191,11 +268,8 @@ test.beforeAll(async ({ browser }, testInfo) => {
   try {
     await login(page);
     const project = testInfo.project.name;
-    let basic: PreparedGame | null = preparedGames.get("chromium:basic") ?? null;
-    if (!basic && project !== "chromium") {
-      basic = await waitForPreparedGame(page, "P1-11 Session Fixture shared-basic-chromium-");
-    }
-    preparedGames.set(`${project}:basic`, basic ?? await prepareGame(page, `shared-basic-${project}`));
+    const basic = preparedGames.get(`${project}:basic`) ?? await prepareGame(page, `shared-basic-${project}`);
+    preparedGames.set(`${project}:basic`, basic);
     if (project === "chromium") {
       preparedGames.set(`${project}:timed`, await prepareGame(page, `shared-timed-${project}`, "timed"));
       preparedGames.set(`${project}:rich`, await prepareGame(page, `shared-rich-${project}`, "rich"));
@@ -243,6 +317,78 @@ test("P1-11 real Session create, console input, close, save, and reopen", async 
   await sessionRow.getByRole("button", { name: "继续游戏" }).click();
   await expect(page).toHaveURL(new RegExp(`/sessions/${sessionId}$`));
   await expect(page.getByRole("main", { name: "游戏控制台" })).toBeVisible({ timeout: 30_000 });
+  await leaveSessionPage(page);
+});
+
+test("P1-S04 authoritative physical line box paints visible pixels", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(testInfo.project.name !== "chromium", "The pixel-level renderer regression runs once in desktop Chromium.");
+  await login(page);
+  const game = preparedGame(testInfo.project.name);
+  await createSession(page, game, `visual-pixels-${testInfo.project.name}`);
+  await expect(page.locator(".scrollback")).toContainText("SESSION-READY", { timeout: 30_000 });
+  const geometry = await page.evaluate(() => {
+    const line = document.querySelector<HTMLElement>(".console-line");
+    const text = document.querySelector<HTMLElement>(".console-text");
+    if (!line || !text) throw new Error("The basic console fixture did not render a text line.");
+    const lineRect = line.getBoundingClientRect();
+    const textRect = text.getBoundingClientRect();
+    return {
+      lineRect: { x: lineRect.x, y: lineRect.y, width: lineRect.width, height: lineRect.height },
+      textRect: { x: textRect.x, y: textRect.y, width: textRect.width, height: textRect.height },
+      lineHeight: getComputedStyle(line).lineHeight,
+      viewportWidth: window.innerWidth,
+    };
+  });
+  expect(geometry.lineHeight).toBe("19px");
+  expect(geometry.textRect.y).toBeLessThan(geometry.lineRect.y + geometry.lineRect.height);
+  expect(geometry.textRect.y + geometry.textRect.height).toBeGreaterThan(geometry.lineRect.y);
+  const screenshot = await page.screenshot();
+  expect(countBrightPngPixels(screenshot, geometry.textRect, geometry.viewportWidth)).toBeGreaterThan(0);
+  await leaveSessionPage(page);
+});
+
+test("P1-S04 physical button label stays inside its measured segment box", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(!["chromium", "mobile-chrome"].includes(testInfo.project.name), "The physical button pixel regression runs in Chromium engines.");
+  await login(page);
+  const game = preparedGame(testInfo.project.name);
+  await createSession(page, game, `button-segment-pixels-${testInfo.project.name}`);
+  await expect(page.locator(".scrollback")).toContainText("LONG-BUTTON-ABC", { timeout: 30_000 });
+  const geometry = await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll<HTMLElement>(".positioned-inline-action")];
+    if (buttons.length === 0) throw new Error("The CJK PRINTBUTTON did not render a positioned label.");
+    return {
+      texts: buttons.map(button => button.textContent ?? ""),
+      buttons: buttons.map(button => {
+        const rect = button.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(button);
+        const textRect = range.getBoundingClientRect();
+        return {
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          textRect: { x: textRect.x, y: textRect.y, width: textRect.width, height: textRect.height },
+          scrollWidth: button.scrollWidth,
+          clientWidth: button.clientWidth,
+          overflow: getComputedStyle(button).overflow,
+        };
+      }),
+    };
+  });
+  expect(geometry.texts.join("")).toBe("LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語");
+  expect(geometry.buttons.length).toBeGreaterThan(1);
+  expect(geometry.buttons.every(button => button.textRect.width <= button.rect.width + 1.5), JSON.stringify(geometry.buttons)).toBe(true);
+  expect(geometry.buttons.every(button => button.overflow === "hidden")).toBe(true);
+  const screenshot = await page.screenshot();
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  const lastButton = geometry.buttons.at(-1)!;
+  const tail = {
+    x: lastButton.textRect.x + Math.max(0, lastButton.textRect.width - 24),
+    y: lastButton.textRect.y,
+    width: Math.min(24, lastButton.textRect.width),
+    height: lastButton.textRect.height,
+  };
+  expect(countBrightPngPixels(screenshot, tail, viewportWidth)).toBeGreaterThan(0);
   await leaveSessionPage(page);
 });
 

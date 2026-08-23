@@ -39,6 +39,7 @@ internal static class ConsoleSizeEstimator
                 EstimatedBytes: checked(48L + text.Text.Length * 2L + MeasureStyle(text.Style))),
             LineBreakNode => new(1, 0, 16),
             ButtonNode button => MeasureButton(button),
+            PositionedInlineSegmentNode segment => MeasurePositionedSegment(segment),
             ImageNode image => MeasureImage(image),
             SpriteNode sprite => MeasureSprite(sprite),
             ShapeNode shape => MeasureShape(shape),
@@ -121,6 +122,15 @@ internal static class ConsoleSizeEstimator
             result += MeasureNode(child);
         }
 
+        return result;
+    }
+
+    private static ConsoleNodeMetrics MeasurePositionedSegment(PositionedInlineSegmentNode segment)
+    {
+        ConsoleNodeMetrics result = new(1, 0, checked(80L + segment.PositionX + segment.MeasuredWidth +
+            (segment.Action is null ? 0 : 48L + segment.Action.Value.Length * 2L + (segment.Action.Tooltip?.Length ?? 0) * 2L)));
+        foreach (ConsoleNode child in segment.Children)
+            result += MeasureNode(child);
         return result;
     }
 

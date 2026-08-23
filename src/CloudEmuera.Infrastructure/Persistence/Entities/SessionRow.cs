@@ -28,6 +28,8 @@ public sealed class SessionRow
 
     public int LineHeight { get; set; } = 19;
 
+    public string FontFaceId { get; set; } = "sarasa-fixed-sc-1.0.40-regular";
+
     public SessionState State { get; set; }
 
     public int StateVersion { get; set; }

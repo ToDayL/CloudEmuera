@@ -4,6 +4,10 @@
 
 日期：2026-08-12
 
+字体排版修订（2026-08-23）：本文的逻辑字体/manifest family 描述中涉及游戏字体加载的部分已被
+[`ADR-0029`](0029-bundled-font-authoritative-headless-layout.md) 收窄。MVP 只使用 Session 选择的内置
+受支持 face；Worker 输出权威物理行和 positioned segment，浏览器不再自行断行。
+
 ## 背景
 
 P0 的 Console/Input 契约只覆盖了文本、按钮、基础图片和有限输入。固定上游
@@ -44,8 +48,8 @@ scrollback 只按最旧的完整行裁剪，scene、background、media 和 promp
 
 ### 2. 富内容和资源边界
 
-- 文本只携带无控制字符的 `TextNode` 和封闭 `ConsoleTextStyle`；字体是逻辑 manifest family，
-  不是服务器字体名。
+- 文本只携带无控制字符的 `TextNode` 和封闭 `ConsoleTextStyle`；当前字体逻辑名固定映射到
+  ADR-0029 的 Session 内置 face，不是游戏 manifest 或服务器字体名。
 - 图片/Sprite 只携带 Session manifest 的 `assetId`、经过验证的 source/destination rect、
   frame、z-index、opacity 和 alt/decorative 标记。
 - Shape 只允许 rectangle、ellipse、line、polygon、space；坐标、尺寸和点数均有硬上限。
@@ -92,12 +96,13 @@ scrollback 分离；诊断不能伪装成玩家文本。
 
 ### 5. IPC major 和清单
 
-P1-07 引入新的 `cloudemuera.ipc.v3`/C# namespace，协议版本为 `3`。v3 使用显式
-`ConsoleTransaction`、完整 `ConsoleSnapshot`、Prompt timing、Input source/payload、媒体和
-capability digest；旧 v2 不原位重解释字段，也不能通过丢弃 v3 operation 进入 RUNNING。
+P1-07/S04 引入新的 `cloudemuera.ipc.v6`/C# namespace，协议版本为 `6`。v6 使用显式
+`ConsoleTransaction`、完整 `ConsoleSnapshot`、物理行/positioned segment、Prompt timing、Input
+source/payload、媒体和 capability digest；旧 v2/v5 不原位重解释字段，也不能通过丢弃 v6
+operation 进入 RUNNING。
 
 registration、registration result、ready 和 runtime manifest 都必须携带相同的 capability set
-digest。当前矩阵版本为 `p1-07`，上游 commit 和 digest 由 `RuntimeBaseline`、v3 handshake 和
+digest。当前矩阵版本为 `p1-s04`，上游 commit 和 digest 由 `RuntimeBaseline`、v6 handshake 和
 Session runtime manifest 同步声明。任何 protocol/version/digest/upstream mismatch 均拒绝。
 
 ## 备选方案
@@ -111,8 +116,8 @@ Session runtime manifest 同步声明。任何 protocol/version/digest/upstream 
 ## 后果
 
 RuntimeAdapter 和 v3 wire model 变得更严格、更冗长，但 P1-08/P1-09/P1-11 可以直接消费稳定的
-Snapshot/transaction/prompt/media 语义，不需要重新猜测上游行边界。字体的逻辑 family 和布局参数
-已冻结，浏览器实际 shaping、DOM/Canvas/WebAudio 渲染留给后续任务。动态 Graphics 依据 ADR-0019
+Snapshot/transaction/prompt/media 语义，不需要重新猜测上游行边界。字体 face 与 Worker 物理排版
+由 ADR-0029/P1-S04 冻结，浏览器只按权威几何执行 DOM/Canvas/WebAudio 渲染。动态 Graphics 依据 ADR-0019
 转换为有界 Raster/Scene 状态；桌面 shim 和外部能力不会被误报为兼容。
 
 ## 验证

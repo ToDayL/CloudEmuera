@@ -1,7 +1,9 @@
 using System.Data;
+using CloudEmuera.Application.Fonts;
 using CloudEmuera.Api.Bootstrap;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Infrastructure.Capacity;
+using CloudEmuera.Infrastructure.Fonts;
 using CloudEmuera.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +16,7 @@ public static class ReadinessHealthCheckNames
     public static readonly string[] Ordered =
     [
         "identity_bootstrap",
+        "runtime_fonts",
         "database",
         "schema",
         "data_root",
@@ -22,6 +25,27 @@ public static class ReadinessHealthCheckNames
         "session_operation_recovery",
         "save_operation_recovery",
     ];
+}
+
+public sealed class RuntimeFontReadinessHealthCheck(FileRuntimeFontCatalog catalog) : IHealthCheck
+{
+    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            catalog.VerifyAllAssets();
+            return Task.FromResult(HealthCheckResult.Healthy("READY"));
+        }
+        catch (RuntimeFontCatalogException)
+        {
+            return Task.FromResult(HealthCheckResult.Unhealthy("RUNTIME_FONTS_UNAVAILABLE"));
+        }
+        catch (IOException)
+        {
+            return Task.FromResult(HealthCheckResult.Unhealthy("RUNTIME_FONTS_UNAVAILABLE"));
+        }
+    }
 }
 
 public sealed partial class DatabaseReadinessHealthCheck(

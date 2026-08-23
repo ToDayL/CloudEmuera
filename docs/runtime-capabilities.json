@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "matrixVersion": "p1-07",
+  "matrixVersion": "p1-s04",
   "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
   "runtimeIntegrationVersion": "headless-p0.5.1",
-  "protocolVersion": 5,
-  "capabilitySetDigest": "906354201ae69d3564dfad8c117a905af640f12a5d3523ec17aa7626e5b8a653",
+  "protocolVersion": 6,
+  "capabilitySetDigest": "9a5d4b9b8eef946adc5566bc9ae2aa88881bbfd9f1ec27628c52564956de6ef8",
   "capabilities": [
     {
       "capabilityId": "console.text-lines",
@@ -16,8 +16,8 @@
       "category": "console",
       "classification": "Supported",
       "reasonCode": "STRUCTURED_LINE_STATE",
-      "adapterTypes": ["ConsoleLine", "TextNode", "ConsoleTextStyle", "ConsoleStateStore"],
-      "ipcTypes": ["ConsoleLine", "ConsoleNode", "AppendLine", "AppendInline", "ReplaceLine", "DeleteLines", "ClearScrollback"],
+      "adapterTypes": ["ConsoleLine", "TextNode", "PositionedInlineSegmentNode", "ConsoleTextStyle", "ConsoleStateStore"],
+      "ipcTypes": ["ConsoleLine", "ConsoleNode", "PositionedInlineSegmentNode", "AppendLine", "AppendInline", "ReplaceLine", "DeleteLines", "ClearScrollback"],
       "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip"],
       "testNames": ["StructuredConsoleContractTests.RichTransactionIsAtomicAndPublishesOneSequence", "StructuredConsoleContractTests.ScrollbackTrimsOldCompleteLinesAndReportsDroppedCounts"],
       "securityNotes": ["Only bounded text/style nodes cross the boundary; raw HTML and host paths are excluded.", "Scrollback is trimmed by complete lines and never by renderer-side guessing."]
@@ -42,8 +42,8 @@
       "category": "font",
       "classification": "Supported",
       "reasonCode": "LOGICAL_FONT_AND_ALIGNMENT",
-      "adapterTypes": ["ConsoleTextStyle", "ConsoleFontSpec", "ConsoleLineAlignment", "WindowMetadata"],
-      "ipcTypes": ["TextStyle", "LineAlignment", "WindowMetadata"],
+      "adapterTypes": ["ConsoleTextStyle", "ConsoleFontSpec", "ConsoleLineAlignment", "ConsoleLine.LayoutWidth", "WindowMetadata.FontFaceId"],
+      "ipcTypes": ["TextStyle", "LineAlignment", "WindowMetadata", "PositionedInlineSegmentNode"],
       "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip"],
       "testNames": ["StructuredConsoleContractTests.RichTransactionIsAtomicAndPublishesOneSequence"],
       "securityNotes": ["Font names are logical manifest identifiers, never host font lookup names.", "Coordinates and metrics are finite and bounded."]

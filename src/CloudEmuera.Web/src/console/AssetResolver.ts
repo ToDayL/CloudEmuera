@@ -20,7 +20,7 @@ export class AssetResolver {
   private readonly fonts: readonly ResolvedPresentationFont[];
   private readonly fontDiagnostics: readonly string[];
 
-  constructor(private readonly sessionId: string, manifest: PresentationManifest | null | undefined) {
+  constructor(private readonly sessionId: string, manifest: PresentationManifest | null | undefined, private readonly runtimeFontFamily?: string) {
     this.assets = new Map((manifest?.assets ?? []).filter(asset => safeAssetId.test(asset.assetId) && allowedMedia.test(asset.mediaType) && Number.isSafeInteger(asset.byteLength) && asset.byteLength >= 0 && /^sha256:[0-9A-Fa-f]{64}$/.test(asset.contentDigest)).map(asset => [asset.assetId, asset]));
     this.fonts = (manifest?.fonts ?? [])
       .filter(font => safeFamily.test(font.family) && safeAssetId.test(font.assetId))
@@ -47,6 +47,10 @@ export class AssetResolver {
   }
 
   fontFamily(logicalFamily: string): string {
+    // Runtime output is measured against the selected bundled face. A game
+    // presentation manifest may still contain legacy font metadata for old
+    // resources, but it must never become a CSS or Runtime font choice.
+    if (this.runtimeFontFamily) return this.runtimeFontFamily;
     const font = this.manifestFonts().find(item => item.family === logicalFamily || item.aliases.includes(logicalFamily));
     // p1-11 originally shipped the compatibility family game-default while
     // RuntimeAdapter emitted default. Keep old frozen Sessions readable while
@@ -55,7 +59,7 @@ export class AssetResolver {
       const legacy = this.manifestFonts().find(item => item.family === "game-default");
       if (legacy) return legacy.cssFamily;
     }
-    return font?.cssFamily ?? "sans-serif";
+    return font?.cssFamily ?? this.runtimeFontFamily ?? "sans-serif";
   }
 
   manifestFonts(): readonly ResolvedPresentationFont[] {

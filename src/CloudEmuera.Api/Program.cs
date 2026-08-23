@@ -28,8 +28,10 @@ using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Infrastructure.Saves;
 using CloudEmuera.Infrastructure.Assets;
+using CloudEmuera.Infrastructure.Fonts;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Application.Sessions;
+using CloudEmuera.Application.Fonts;
 using CloudEmuera.Domain.Sessions;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Ipc;
@@ -55,9 +57,12 @@ builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = Wor
 string dataRoot = builder.Configuration["CloudEmuera:DataPath"] ?? Path.Combine(AppContext.BaseDirectory, "data");
 string workerAssemblyPath = builder.Configuration["CloudEmuera:WorkerAssemblyPath"]
     ?? ValidatorAssemblyResolver.ResolveSiblingAssembly(builder.Environment.ContentRootPath, "CloudEmuera.Worker", "CloudEmuera.Worker.dll");
+string runtimeFontRoot = builder.Configuration["CloudEmuera:RuntimeFontRoot"]
+    ?? Environment.GetEnvironmentVariable("CLOUDEMUERA_RUNTIME_FONT_ROOT")
+    ?? FileRuntimeFontCatalog.ResolveDefaultRoot();
 RealtimeOutputOptions realtimeOutputOptions = DeploymentOptionsBinder.BindRealtimeOutput(builder.Configuration);
 RealtimeGatewayOptions realtimeGatewayOptions = DeploymentOptionsBinder.BindRealtimeGateway(builder.Configuration);
-var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath)
+var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath, runtimeFontRoot)
 {
     RealtimeOutput = realtimeOutputOptions,
     PendingEventMaxMessages = DeploymentOptionsBinder.ReadInt(builder.Configuration, "CloudEmuera:Worker:PendingEventMaxMessages") ?? 256,
@@ -96,6 +101,10 @@ SqliteDatabaseOptions databaseOptions = new()
 builder.Services.AddSingleton(databaseOptions);
 builder.Services.AddSingleton(capacityOptions);
 builder.Services.AddSingleton(assetOptions);
+FileRuntimeFontCatalog runtimeFontCatalog = new(runtimeFontRoot);
+runtimeFontCatalog.VerifyAllAssets();
+builder.Services.AddSingleton<IRuntimeFontCatalog>(runtimeFontCatalog);
+builder.Services.AddSingleton(runtimeFontCatalog);
 builder.Services.AddSingleton<PresentationAssetReadGate>();
 builder.Services.AddScoped<CloudEmueraDbContext>(serviceProvider =>
 {
@@ -256,6 +265,7 @@ builder.Services.AddAntiforgery(options => options.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks()
     .AddCheck<BootstrapHealthCheck>("identity_bootstrap", tags: ["ready"])
+    .AddCheck<RuntimeFontReadinessHealthCheck>("runtime_fonts", tags: ["ready"])
     .AddCheck<DatabaseReadinessHealthCheck>("database", tags: ["ready"])
     .AddCheck<SchemaReadinessHealthCheck>("schema", tags: ["ready"])
     .AddCheck<DataRootReadinessHealthCheck>("data_root", tags: ["ready"])
@@ -324,8 +334,46 @@ app.MapGet("/api/v1/version", (HttpContext context) =>
         checked((int)StructuredIpcProtocol.CurrentVersion),
         RuntimeBaseline.CloudEmueraIntegrationVersion,
         RuntimeBaseline.UpstreamCommit,
-        SqliteStorageConventions.CurrentSchemaCompatibilityVersion));
+        SqliteStorageConventions.CurrentSchemaCompatibilityVersion,
+        runtimeFontCatalog.CatalogDigest));
 });
+
+app.MapGet("/api/v1/runtime-fonts", (FileRuntimeFontCatalog catalog) => Results.Ok(new
+{
+    schemaVersion = 1,
+    catalogDigest = catalog.CatalogDigest,
+    defaultFaceId = RuntimeFontDefaults.DefaultFaceId,
+    items = catalog.ListAvailable().Select(face => new
+    {
+        faceId = face.FaceId,
+        displayName = face.DisplayName,
+        family = face.Family,
+        sourceVersion = face.SourceVersion,
+        weight = face.Weight,
+        runtimeFamilyName = face.RuntimeFamilyName,
+        webAssetDigest = face.WebWoff2Sha256,
+        webAssetByteLength = face.WebWoff2ByteLength,
+        webAssetUrl = $"/api/v1/runtime-fonts/assets/{face.WebWoff2Sha256}.woff2",
+        licenseId = face.LicenseId,
+    }),
+})).Produces(StatusCodes.Status200OK);
+
+app.MapGet("/api/v1/runtime-fonts/assets/{digest}.woff2", (string digest, HttpContext context, FileRuntimeFontCatalog catalog) =>
+{
+    try
+    {
+        FileStream stream = catalog.OpenWebWoff2(digest);
+        context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+        context.Response.Headers.ETag = $"\"sha256-{digest}\"";
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return Results.Stream(stream, "font/woff2");
+    }
+    catch (RuntimeFontCatalogException)
+    {
+        return Results.NotFound();
+    }
+}).Produces(StatusCodes.Status200OK).Produces(StatusCodes.Status404NotFound);
+
 app.MapGet("/health/live", (HttpContext context) =>
 {
     context.Response.Headers.CacheControl = "no-store";
@@ -663,7 +711,7 @@ sessions.MapPost("", async (HttpContext context, CreateSessionRequest? request, 
     if (!ApiIdentity.TryIdempotencyKey(idempotencyKey, out string key)) return ApiIdentity.Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
     try
     {
-        SessionCommandResult result = await service.CreateAsync(actor, new CreateSessionCommand(request.GameId, request.Name, key, request.FontSize, request.LineHeight), context.RequestAborted).ConfigureAwait(false);
+        SessionCommandResult result = await service.CreateAsync(actor, new CreateSessionCommand(request.GameId, request.Name, key, request.FontSize, request.LineHeight, request.FontFaceId), context.RequestAborted).ConfigureAwait(false);
         return ApiIdentity.SessionCommand(context, result);
     }
     catch (SessionApplicationException exception)
@@ -715,7 +763,7 @@ sessions.MapPut("/{sessionId}/configuration", async (string sessionId, HttpConte
     if (request is null) return ApiIdentity.Error(SessionErrorCodes.ValidationFailed, "请求体无效。", 400);
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
     if (!ApiIdentity.TryIdempotencyKey(idempotencyKey, out string key)) return ApiIdentity.Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
-    try { return ApiIdentity.SessionCommand(context, await service.UpdateConfigurationAsync(actor, new SessionConfigurationCommand(sessionId, request.Name, request.FontSize, request.LineHeight, key), context.RequestAborted).ConfigureAwait(false)); }
+    try { return ApiIdentity.SessionCommand(context, await service.UpdateConfigurationAsync(actor, new SessionConfigurationCommand(sessionId, request.Name, request.FontSize, request.LineHeight, key, request.FontFaceId), context.RequestAborted).ConfigureAwait(false)); }
     catch (SessionApplicationException exception) { return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode); }
 }).RequireRateLimiting("session-write");
 
@@ -1077,6 +1125,7 @@ internal static class ApiIdentity
         value.SourceContentDigest,
         value.SourceContentRevision,
         value.RuntimeVersion,
+        value.FontFaceId,
         value.FontSize,
         value.LineHeight,
         value.State.ToString().ToUpperInvariant(),
@@ -1192,17 +1241,13 @@ internal static class ApiIdentity
         if (GameActor(context) is not CurrentActor actor) return GameActorError(context);
         if (!readiness.IsReady) return Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", StatusCodes.Status503ServiceUnavailable);
         int browserWidth = 0;
-        SessionTextMetrics? textMetrics = null;
         if (body.ValueKind != JsonValueKind.Object)
             return Error(SessionErrorCodes.ValidationFailed, "生命周期请求体必须是 JSON 对象。", 400);
         foreach (JsonProperty property in body.EnumerateObject())
         {
             if (string.Equals(property.Name, "browserWidth", StringComparison.Ordinal) && property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out browserWidth) && browserWidth is >= 240 and <= 16_384)
                 continue;
-            if (string.Equals(property.Name, "textMetrics", StringComparison.Ordinal) && property.Value.ValueKind == JsonValueKind.Object && property.Value.TryGetProperty("halfWidthPx", out JsonElement half) && property.Value.TryGetProperty("fullWidthPx", out JsonElement full) && half.TryGetDouble(out double halfWidth) && full.TryGetDouble(out double fullWidth) && double.IsFinite(halfWidth) && double.IsFinite(fullWidth) && halfWidth > 0 && halfWidth <= 128 && fullWidth >= halfWidth && fullWidth <= 256)
-            { textMetrics = new SessionTextMetrics(halfWidth, fullWidth); continue; }
-            else
-                return Error(SessionErrorCodes.ValidationFailed, "启动宽度必须是 240 到 16384 之间的 CSS 像素。", 400);
+            return Error(SessionErrorCodes.ValidationFailed, "生命周期请求只能包含 240 到 16384 之间的 browserWidth。", 400);
         }
         if (body.EnumerateObject().Any() && !body.TryGetProperty("browserWidth", out _))
             return Error(SessionErrorCodes.ValidationFailed, "生命周期请求体字段无效。", 400);
@@ -1214,7 +1259,7 @@ internal static class ApiIdentity
             return Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
         try
         {
-            SessionCommandResult result = await operation(actor, new SessionLifecycleCommand(sessionId, key, browserWidth, textMetrics), context.RequestAborted).ConfigureAwait(false);
+            SessionCommandResult result = await operation(actor, new SessionLifecycleCommand(sessionId, key, browserWidth), context.RequestAborted).ConfigureAwait(false);
             return SessionCommand(context, result);
         }
         catch (SessionApplicationException exception)

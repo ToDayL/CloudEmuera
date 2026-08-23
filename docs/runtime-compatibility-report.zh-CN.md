@@ -1,11 +1,11 @@
-# Emuera 结构化运行时兼容性报告（P1-07）
+# Emuera 结构化运行时兼容性报告（P1-S04）
 
-日期：2026-08-12
+日期：2026-08-23
 固定上游：`2175f8a629257efb08214e093704b3a3d3d06d05`
 Runtime integration：`headless-p0.5.1`
-结构化 IPC：`cloudemuera.ipc.v4` / protocol `4`
-能力矩阵：`p1-07`
-能力集合摘要：`7f0003c99e6f86f383b6cb018a894338bead34c502ab9a71a87d8eb2e9e2c86e`
+结构化 IPC：`cloudemuera.ipc.v6` / protocol `6`
+能力矩阵：`p1-s04`
+能力集合摘要：`9a5d4b9b8eef946adc5566bc9ae2aa88881bbfd9f1ec27628c52564956de6ef8`
 
 本报告描述固定上游与 CloudEmuera headless adapter 之间的入口级边界。机器可读的完整记录在
 [`docs/runtime-capabilities.json`](runtime-capabilities.json)，结构由
@@ -61,7 +61,7 @@ Runtime integration：`headless-p0.5.1`
 | 层级 | 证据 |
 | --- | --- |
 | RuntimeAdapter | `StructuredConsoleContractTests`：事务原子性、整行裁剪、HTML allowlist、媒体 revision、OneInput、来源和单调 timeout |
-| IPC | `StructuredIpcContractTests`：v3 handshake digest、完整 transaction/snapshot round-trip、版本/摘要/未知结构拒绝 |
+| IPC | `StructuredIpcContractTests`：v6 handshake digest、物理行 transaction/snapshot round-trip、版本/摘要/未知结构拒绝 |
 | Worker mapper | `StructuredConsoleWireMapperTests`：scrollback、scene、media、window、prompt 双向保真 |
 | 真实解释器 | `HeadlessRuntimeFixtureTests`：v18-core、em-ee-core、输入、存档、取消、clock、动态 Graphics/CBG、动画 Sprite、诊断和 Blocked 入口 |
 | 静态能力门 | `verify-emuera-capabilities.sh`：19 个能力、入口唯一映射、精确测试类/方法证据、源码存在性、baseline/protocol/digest/manifest 一致性和生产 audio port |

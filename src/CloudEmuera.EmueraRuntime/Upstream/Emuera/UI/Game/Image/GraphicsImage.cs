@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using MinorShift.Emuera.UI;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -171,7 +172,8 @@ internal sealed class GraphicsImage : AbstractImage
 		Font usingFont = font;
 		var format = new StringFormat(StringFormat.GenericTypographic);
 		if (usingFont == null)
-			usingFont = new(Config.FontName, 100, GlobalStatic.Console.StringStyle.FontStyle, GraphicsUnit.Pixel);
+			usingFont = FontFactory.GetFont(Config.FontName, GlobalStatic.Console.StringStyle.FontStyle, 100)
+				?? throw new InvalidOperationException("The bound Session font could not create a graphics font.");
 		GraphicsPath gp =
 			new();
 		//一部のフォントで描画がずれる問題修正

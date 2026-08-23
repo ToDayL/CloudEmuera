@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CloudEmuera.Application.Identity;
+using CloudEmuera.Application.Fonts;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Domain.Sessions;
 
@@ -31,6 +32,7 @@ public static class SessionErrorCodes
     public const string IdempotencyKeyRequired = "IDEMPOTENCY_KEY_REQUIRED";
     public const string SessionNotAcceptingInput = "SESSION_NOT_ACCEPTING_INPUT";
     public const string MutationInProgress = "SESSION_MUTATION_IN_PROGRESS";
+    public const string RuntimeFontFaceNotFound = "FONT_FACE_NOT_FOUND";
 }
 
 public sealed class SessionApplicationException(
@@ -45,13 +47,23 @@ public sealed class SessionApplicationException(
     public bool PersistFailure { get; } = persistFailure;
 }
 
-public sealed record CreateSessionCommand(string GameId, string Name, string IdempotencyKey, int FontSize = 18, int LineHeight = 19);
+public sealed record CreateSessionCommand(
+    string GameId,
+    string Name,
+    string IdempotencyKey,
+    int FontSize = 18,
+    int LineHeight = 19,
+    string FontFaceId = RuntimeFontDefaults.DefaultFaceId);
 
-public sealed record SessionTextMetrics(double HalfWidthPx, double FullWidthPx);
+public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey, int BrowserWidth = 0);
 
-public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey, int BrowserWidth = 0, SessionTextMetrics? TextMetrics = null);
-
-public sealed record SessionConfigurationCommand(string SessionId, string Name, int FontSize, int LineHeight, string IdempotencyKey);
+public sealed record SessionConfigurationCommand(
+    string SessionId,
+    string Name,
+    int FontSize,
+    int LineHeight,
+    string IdempotencyKey,
+    string FontFaceId = RuntimeFontDefaults.DefaultFaceId);
 
 public sealed record SessionDeleteCommand(string SessionId, string IdempotencyKey);
 
@@ -81,7 +93,11 @@ public sealed record SessionView(
     DateTimeOffset? StartedAt,
     DateTimeOffset LastActivityAt,
     DateTimeOffset? ClosedAt,
-    string? CloseReason);
+    string? CloseReason)
+{
+    /// <summary>Exact catalog face selected for this persistent Session.</summary>
+    public string FontFaceId { get; init; } = RuntimeFontDefaults.DefaultFaceId;
+}
 
 public sealed record SessionListPage(IReadOnlyList<SessionView> Items, string? NextCursor);
 
@@ -164,18 +180,12 @@ public interface ICurrentWorkerRouter
 
 public interface IWorkerOpenOptionsFactory
 {
-    SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0, SessionTextMetrics? textMetrics = null);
+    SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0);
 }
 
 public interface ISessionLifecycleExecutor
 {
     Task<SessionRuntimeOpenResult> OpenAsync(string sessionId, int browserWidth, CancellationToken cancellationToken = default);
-    Task<SessionRuntimeOpenResult> OpenAsync(
-        string sessionId,
-        int browserWidth,
-        SessionTextMetrics? textMetrics,
-        CancellationToken cancellationToken = default) => OpenAsync(sessionId, browserWidth, cancellationToken);
-
     Task<SessionRuntimeCloseResult> CloseAsync(
         string sessionId,
         string reasonCode = "requested",
@@ -206,15 +216,11 @@ public sealed class SessionLifecycleExecutor(
 
     public Task<SessionRuntimeOpenResult> OpenAsync(
         string sessionId,
-        CancellationToken cancellationToken = default) => OpenAsync(sessionId, 0, null, cancellationToken);
-
-    public Task<SessionRuntimeOpenResult> OpenAsync(string sessionId, int browserWidth, CancellationToken cancellationToken = default) =>
-        OpenAsync(sessionId, browserWidth, null, cancellationToken);
+        CancellationToken cancellationToken = default) => OpenAsync(sessionId, 0, cancellationToken);
 
     public async Task<SessionRuntimeOpenResult> OpenAsync(
         string sessionId,
         int browserWidth,
-        SessionTextMetrics? textMetrics,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
@@ -225,7 +231,7 @@ public sealed class SessionLifecycleExecutor(
             // continue even if the HTTP request disconnects.  The service uses
             // WaitAsync for the HTTP budget and calls this operation with a
             // non-request token after its durable begin record is committed.
-            return await coordinator.OpenAsync(optionsFactory.Create(sessionId, browserWidth, textMetrics), cancellationToken).ConfigureAwait(false);
+            return await coordinator.OpenAsync(optionsFactory.Create(sessionId, browserWidth), cancellationToken).ConfigureAwait(false);
         }
         finally
         {

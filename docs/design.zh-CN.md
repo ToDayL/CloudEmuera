@@ -47,7 +47,9 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
 | HTML/媒体兼容 | 固定上游中浏览器可安全表达的能力全部结构化支持；宿主禁止能力 fail closed | 能力由运行时清单和机器可校验兼容性矩阵声明 |
 | 跨服务器迁移 | MVP 不定义可移植整包格式 | 数据备份不依赖该格式 |
 
-实例级容量数值、测试游戏集、字体授权和具体媒体兼容等级不在本文中硬编码，统一从部署配置和运行时能力清单读取。MVP 不定义按用户或进程拆分的资源配额。
+实例级容量数值、测试游戏集和具体媒体兼容等级不在本文中硬编码，统一从部署配置和运行时能力清单读取。
+字体例外由 ADR-0029 固定为随产品分发的版本化 OFL face 目录，不从部署或游戏内容动态发现。MVP 不定义
+按用户或进程拆分的资源配额。
 
 ### 2.3 关键设计原则
 
@@ -270,6 +272,8 @@ Application 定义 `IWorkerManager` 等端口；进程和 UDS 实现留在外部
 | Runtime Host | 初始化、运行和终止 Emuera 解释器 |
 | RuntimePaths | 注入 SessionRoot、资源、配置、临时文件与两种存档布局 |
 | Console Adapter | 将解释器绘制调用转换为结构化显示操作 |
+| Runtime Font Catalog | 按不可变 face ID 校验并加载产品内置字体；拒绝宿主、用户和游戏字体 fallback |
+| Headless Layout Engine | 使用 Config.DefaultFont、StringMeasure、DrawableWidth 形成物理行与按钮几何 |
 | Snapshot Store | 维护当前 ConsoleSnapshot、序号和实时发送所需的有界批次队列 |
 | Input Coordinator | 生成 prompt、验证输入、去重并唤醒 Runtime |
 | Capability Guard | 禁止 DLL、进程、非允许网络和不安全路径操作 |
@@ -879,6 +883,7 @@ Worker 输出的是结构化操作，不是 HTML 字符串。`HTML_PRINT`/`HTML_
 
 ```text
 TextRun(text, foreground, background, buttonColor, fontStyle)
+PositionedInlineSegment(positionX, measuredWidth, children, action?)
 LineBreak
 Button(labelNodes, value, tooltip, enabled, positionX)
 Image(assetId, sourceRect, size, altText)
@@ -891,14 +896,22 @@ Prompt(promptId, inputType, timeoutAt, defaultValue, constraints)
 Clear(scope)
 ```
 
-所有颜色、尺寸、枚举、文本长度、资源 ID 和层级深度在 Worker 与浏览器两端校验。资源只使用由
+所有颜色、尺寸、枚举、文本长度、资源 ID 和层级深度在 Worker 与浏览器两端校验。图片和音频只使用由
 Session 创建时保存于受保护 metadata 的 Game runtime manifest 解析出的 `assetId`，不能使用游戏提供的任意 URL。
+
+字体与游戏 presentation asset 分离。依据 [`ADR-0029`](adr/0029-bundled-font-authoritative-headless-layout.md)，
+Session 持久化产品内置的不可变 `fontFaceId`；Worker 在 `Config.SetConfig` 前加载该 TTF 并覆盖
+`Config.FontName`，再以 `Config.DefaultFont`、`StringMeasure`、`Config.DrawableWidth` 和
+`Config.ButtonWrap` 形成完整物理 ConsoleLine。游戏包字体、宿主字体和用户字体不加载；游戏字体请求
+统一映射到 Session face 并有界诊断。浏览器等待由同一规范 TTF 构建、度量等价且独立摘要校验的完整
+WOFF2 加载完成后按 `positionX/measuredWidth` 绘制，禁用 CSS 自动换行。详细实施见
+[`P1-S04`](tasks/P1-S04-font-measurement-authoritative-layout-plan.zh-CN.md)。
 
 P1-11 将这条边界落为两个只读 HTTP 端点：
 
-- `GET /api/v1/sessions/{id}/presentation-manifest` 只返回浏览器可安全表达的图片、音频、字体摘要和
-  固定逻辑字体 fallback，不返回原始 manifest、逻辑路径或 SessionRoot；
-- `GET /api/v1/sessions/{id}/assets/{assetId}` 只凭 Session-scoped 摘要读取冻结普通文件，先 owner-first
+- `GET /api/v1/sessions/{id}/presentation-manifest` 只返回浏览器可安全表达的图片和音频摘要，不返回
+  游戏字体、原始 manifest、逻辑路径或 SessionRoot；
+- `GET /api/v1/sessions/{id}/assets/{assetId}` 只凭 Session-scoped 摘要读取冻结图片/音频普通文件，先 owner-first
   授权，再执行 protected dirfd/no-follow、打开后 digest/长度和 MIME signature 交集校验；支持私有
   ETag/immutable cache、单 Range 和 `nosniff`，多 Range/无效 Range fail closed。
 
@@ -908,6 +921,10 @@ P1-11 将这条边界落为两个只读 HTTP 端点：
 'self' blob:`、`media-src 'self'`、`font-src 'self'`，禁止 `unsafe-eval`、object/frame/base 和外部
 form；动态 Raster 的 Blob URL 只由校验后的 PNG 创建并在 drawable 生命周期结束时 revoke。具体冻结见
 [`ADR-0023`](adr/0023-session-presentation-assets-and-csp.md)。
+
+产品字体另由 `GET /api/v1/runtime-fonts` 和按内容摘要寻址的同源只读 WOFF2 端点提供。Worker 读取
+catalog 中的规范 TTF，浏览器只按需读取当前 face 的完整 WOFF2；两种资产分别校验 digest，并在构建期
+验证度量表等价。不得经过 CDN fallback、运行时子集化或浏览器本机替代。
 
 ### 8.2 序号与快照
 
@@ -1048,8 +1065,10 @@ Session 或 Worker 生命周期。
 | `POST /sessions/{id}:open` | 启动或重新启动 Worker | 幂等、`CLOSED/CRASHED`、检查实例级 Worker 上限、递增 epoch |
 | `POST /sessions/{id}:close` | 优雅关闭 Worker | 幂等，不删除 SessionRoot |
 | `DELETE /sessions/{id}` | 删除 SessionRoot 与 Session 元数据 | 幂等，仅 `CLOSED/CRASHED` 且无 Worker/文件操作，安全清理并审计 |
+| `GET /runtime-fonts` | 列出产品内置字体 face | 有界固定目录、不可变 face ID/digest |
+| `GET /runtime-fonts/assets/{webAssetDigest}.woff2` | 读取当前 face 的 Web 字体 | 内容寻址、强 ETag、一年 public immutable、`font/woff2`、`nosniff` |
 | `GET /sessions/{id}/presentation-manifest` | 读取 Session 浏览器资源清单 | 所有者，opaque asset ID、只读 |
-| `GET /sessions/{id}/assets/{assetId}` | 流式读取图片/音频/字体 | 所有者，MIME/摘要/Range/ETag 校验 |
+| `GET /sessions/{id}/assets/{assetId}` | 流式读取图片/音频 | 所有者，MIME/摘要/Range/ETag 校验 |
 | `GET /sessions/{id}/saves` | 列出存档 | 所有者 |
 | `PUT /sessions/{id}/saves/{path}` | 导入/替换原生存档 | Session 停止、严格路径校验 |
 | `GET /sessions/{id}/saves/{path}` | 下载原生存档 | 所有者、流式响应 |
@@ -1442,7 +1461,7 @@ bootstrap 配置；不得读取、修改或清理人工 `docker/.env`、`./data`
 9. `ADR-0016`：Session 是可反复开启的持久 SessionRoot（已完成）；
 10. `ADR-0027`：实例级容量上限与生产 Worker 边界（P1-13，已接受）；
 11. 待编号：合法可纳入 CI 的 v18 与 EM+EE 代表性游戏集；
-12. 待编号：字体文件保留、服务和授权策略；
+12. `ADR-0029`：内置字体目录、服务、授权与 Worker 权威物理排版（P1-S04，已接受）；
 13. 待编号：SessionRoot 备份恢复点目标、保留期和升级回滚流程。
 14. `ADR-0018`：Emuera 完整结构化交互状态、能力矩阵、计时语义和 IPC major 升级（P1-07 首个切片）。
 15. `ADR-0020`：API 快照镜像、订阅竞态和逐连接有界输出（P1-08，已接受）。

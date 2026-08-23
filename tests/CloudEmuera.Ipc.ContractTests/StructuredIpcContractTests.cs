@@ -1,7 +1,7 @@
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using CloudEmuera.Ipc;
-using W = CloudEmuera.Ipc.V5;
+using W = CloudEmuera.Ipc.V6;
 using Xunit;
 
 namespace CloudEmuera.Ipc.ContractTests;
@@ -52,7 +52,7 @@ public sealed class StructuredIpcContractTests
             Binding,
             "registration-1",
             "startup_token_1",
-            "structured-p1-07",
+            "headless-p0.5.1",
             Environment.ProcessId);
         W.WorkerEnvelope parsed = W.WorkerEnvelope.Parser.ParseFrom(original.ToByteArray());
 

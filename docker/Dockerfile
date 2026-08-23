@@ -12,6 +12,7 @@ WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props CloudEmuera.slnx ./
 COPY src ./src
 COPY tests ./tests
+COPY assets ./assets
 COPY --from=web-build /src/src/CloudEmuera.Web/dist src/CloudEmuera.Api/wwwroot
 RUN dotnet restore CloudEmuera.slnx --locked-mode
 RUN dotnet publish src/CloudEmuera.Api/CloudEmuera.Api.csproj --no-restore -c Release -o /out/api
@@ -28,11 +29,13 @@ WORKDIR /app/api
 ENV ASPNETCORE_URLS=http://0.0.0.0:28647 \
     CloudEmuera__DataPath=/data \
     CloudEmuera__WorkerAssemblyPath=/app/worker/CloudEmuera.Worker.dll \
-    CloudEmuera__ValidatorAssembly=/app/validator/CloudEmuera.Validator.dll
+    CloudEmuera__ValidatorAssembly=/app/validator/CloudEmuera.Validator.dll \
+    CloudEmuera__RuntimeFontRoot=/app/runtime-fonts
 COPY --from=dotnet-build /out/api /app/api/
 COPY --from=dotnet-build /out/worker /app/worker/
 COPY --from=dotnet-build /out/validator /app/validator/
 COPY --from=dotnet-build /out/migrator /app/migrator/
+COPY --from=dotnet-build /src/assets/runtime-fonts /app/runtime-fonts/
 COPY docker/start.sh /app/start.sh
 RUN mkdir -p /data && \
     chown -R root:root /app && \

@@ -458,10 +458,11 @@ internal static class UpstreamHtmlTranslator
 
     private static string ResolveFontName(string value, ConsoleContractLimits limits)
     {
-        if (string.IsNullOrEmpty(value) || value.Length > limits.MaxFontFamilyLength ||
-            value.Any(character => char.IsControl(character) || character is '<' or '>' or '\'' or '"'))
-            return "default";
-        return value;
+        // CloudEmuera S04: preserve the upstream font-face scope but do not
+        // expose a game/package family to the structured contract. The
+        // headless FontFactory measures every scope with the bound Session
+        // face, and the browser must use the same family.
+        return "session-default";
     }
 
     private static string SafeImageFallback(string value, ConsoleContractLimits limits)

@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, apiRequest } from "../api";
-import { closeSession, useSession, waitForSession, type SessionState } from "../sessions/api";
+import { closeSession, useRuntimeFontCatalog, useSession, waitForSession, type SessionState } from "../sessions/api";
 import { presentationManifestUrl, AssetResolver, type PresentationManifest } from "./AssetResolver";
 import { CanvasRenderer } from "./CanvasRenderer";
 import { MediaController } from "./media";
@@ -12,6 +12,7 @@ import { ScrollbackRenderer, type ConsoleInputEvent } from "./ScrollbackRenderer
 import { getRealtimeConnectionManager, type ConnectionPhase } from "../realtime/connection";
 import type { RealtimeColor } from "../realtime/protocol";
 import { createSessionStoreState, type SessionStoreState } from "../realtime/sessionStore";
+import { loadRuntimeFont, runtimeFontCssFamily } from "./RuntimeFontLoader";
 
 function connectionLabel(phase: ConnectionPhase): string {
   return ({ disconnected: "未连接", connecting: "连接中", hello_pending: "校验中", ready: "实时连接", backing_off: "正在重连", auth_required: "需要重新登录", incompatible: "版本不兼容", disposed: "已结束" } as Record<ConnectionPhase, string>)[phase];
@@ -32,11 +33,10 @@ export function ConsolePage() {
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [rendererError, setRendererError] = useState<string | null>(null);
-  const [fontLoadFailed, setFontLoadFailed] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
-  const [screenWidth, setScreenWidth] = useState(() => typeof window === "undefined" ? 0 : window.innerWidth);
   const [visualViewport, setVisualViewport] = useState(() => currentVisualViewport());
   const session = useSession(sessionId);
+  const runtimeFonts = useRuntimeFontCatalog();
   const gameConsoleRef = useRef<HTMLElement>(null);
   const promptControllerRef = useRef<PromptControllerHandle>(null);
   const endedSessionRef = useRef<string | null>(null);
@@ -49,7 +49,6 @@ export function ConsolePage() {
   });
   useEffect(() => {
     const update = () => {
-      setScreenWidth(window.innerWidth);
       setVisualViewport(currentVisualViewport());
     };
     window.addEventListener("resize", update);
@@ -61,7 +60,11 @@ export function ConsolePage() {
       window.visualViewport?.removeEventListener("scroll", update);
     };
   }, []);
-  const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", manifest.data), [manifest.data, sessionId]);
+  const runtimeFont = useMemo(() => session.data && runtimeFonts.data?.items.find(font => font.faceId === session.data!.fontFaceId), [runtimeFonts.data, session.data]);
+  const runtimeCssFamily = useMemo(() => runtimeFont ? runtimeFontCssFamily(runtimeFont) : undefined, [runtimeFont]);
+  const [runtimeFontReady, setRuntimeFontReady] = useState(false);
+  const [runtimeFontFailed, setRuntimeFontFailed] = useState(false);
+  const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", manifest.data, runtimeCssFamily), [manifest.data, runtimeCssFamily, sessionId]);
   const media = useRef<MediaController | null>(null);
 
   if (!media.current) media.current = new MediaController(message => setRendererError(message));
@@ -91,18 +94,26 @@ export function ConsolePage() {
     if (stream.workerEpoch !== null) media.current?.reset();
   }, [stream.workerEpoch]);
   useEffect(() => {
-    if (!manifest.data || typeof FontFace === "undefined" || !document.fonts) return;
-    let cancelled = false;
-    setFontLoadFailed(false);
-    const loaded: FontFace[] = [];
-    for (const font of assets.manifestFonts()) {
-      const url = assets.url(font.assetId);
-      if (!url) continue;
-      const face = new FontFace(font.cssFamily, `url("${url}")`);
-      void face.load().then(ready => { if (!cancelled) { document.fonts.add(ready); loaded.push(ready); } }).catch(() => { if (!cancelled) setFontLoadFailed(true); });
+    if (!session.data) return;
+    if (typeof FontFace === "undefined" || !document.fonts) {
+      setRuntimeFontReady(false);
+      setRuntimeFontFailed(true);
+      return;
     }
-    return () => { cancelled = true; for (const face of loaded) document.fonts.delete(face); };
-  }, [assets, manifest.data]);
+    if (!runtimeFont || !runtimeCssFamily) {
+      setRuntimeFontReady(runtimeFonts.isError);
+      setRuntimeFontFailed(runtimeFonts.isError);
+      return;
+    }
+    let cancelled = false;
+    setRuntimeFontReady(false);
+    setRuntimeFontFailed(false);
+    void loadRuntimeFont(runtimeFont, runtimeCssFamily).then(() => {
+      if (cancelled) return;
+      setRuntimeFontReady(true);
+    }).catch(() => { if (!cancelled) { setRuntimeFontFailed(true); setRuntimeFontReady(false); } });
+    return () => { cancelled = true; };
+  }, [runtimeFont, runtimeFonts.isError, runtimeCssFamily, session.data]);
   useEffect(() => {
     if (!stream.consoleState) return;
     media.current?.sync(stream.consoleState.mediaState.channels, assets);
@@ -144,6 +155,8 @@ export function ConsolePage() {
   if (!sessionId) return <div className="console-error" role="alert">缺少 Session ID。</div>;
   if (session.isPending) return <div className="console-loading" aria-busy="true">正在读取 Session…</div>;
   if (session.isError || !session.data) return <div className="console-error" role="alert"><h1>Session 不可用</h1><p>{session.error instanceof Error ? session.error.message : "资源不存在或你没有访问权限。"}</p><Link className="secondary-button" to="/sessions">返回 Session</Link></div>;
+  if (runtimeFontFailed) return <div className="console-error" role="alert"><h1>字体不可用</h1><p>运行时字体未能通过校验，已停止渲染以避免布局漂移。</p><Link className="secondary-button" to="/sessions">返回 Session</Link></div>;
+  if (!runtimeFontReady) return <div className="console-loading" aria-busy="true">正在加载 Session 字体…</div>;
 
   const state = stream.consoleState;
   const terminalSession = session.data.state === "CLOSED" || session.data.state === "CRASHED";
@@ -156,7 +169,7 @@ export function ConsolePage() {
     </div>
     <div className="console-layout">
       <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台">
-        <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, screenWidth, session.data.fontSize, session.data.lineHeight)} onClick={handleConsoleSurfaceClick}>
+        <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, undefined, session.data.fontSize, session.data.lineHeight, runtimeCssFamily)} onClick={handleConsoleSurfaceClick}>
         <h1 className="sr-only">{session.data.name}</h1>
         <p className="sr-only">Session 状态：<span>{sessionStateLabel(session.data.state)}</span></p>
         {(!networkOnline || (connectionPhase !== "ready" && connectionPhase !== "disconnected")) && <div className="reconnect-banner" role="status" aria-live="polite"><span className="mini-spinner"/><p><strong>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</strong><small>{networkOnline ? "游戏仍在服务器上运行；浏览器连接恢复后会按 epoch 和序号重新同步。" : "浏览器离线只影响当前显示；Session 和 Worker 不会被关闭。"}</small></p></div>}
@@ -165,7 +178,7 @@ export function ConsolePage() {
         {(closeError || stream.pendingInput?.status === "unknown") && <div className="error-banner" role="alert"><strong>实时操作提示</strong><small>{closeError ?? "上次输入的结果未知；服务端可能已经处理，请确认当前提示后再决定是否重试。"}</small>{stream.pendingInput?.status === "unknown" && <button className="secondary-button" onClick={() => manager.retryUnknownInput(sessionId)}>重试上次输入</button>}</div>}
         {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
-        {(assets.diagnostics().length > 0 || fontLoadFailed) && <div className="console-compat-warning" role="status"><strong>字体兼容提示</strong><small>{[...assets.diagnostics(), ...(fontLoadFailed ? ["FONT_LOAD_FAILED"] : [])].map(fontDiagnosticLabel).join("；")}</small></div>}
+        {assets.diagnostics().length > 0 && <div className="console-compat-warning" role="status"><strong>兼容性提示</strong><small>{assets.diagnostics().map(fontDiagnosticLabel).join("；")}</small></div>}
         {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${stream.workerEpoch ?? "none"}:${stream.sequence}`} /></> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
         </div>
@@ -181,20 +194,20 @@ export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean
   return target instanceof Element && !target.closest("button, a, input, select, textarea, [role=\"button\"]");
 }
 
-export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, screenWidth?: number, fontSize?: number, lineHeight?: number): CSSProperties {
-  const width = effectiveConsoleWidth(viewportWidth, screenWidth);
+export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, _screenWidth?: number, fontSize?: number, lineHeight?: number, runtimeCssFamily?: string): CSSProperties {
+  const width = effectiveConsoleWidth(viewportWidth);
   return {
     ...(background ? { backgroundColor: colorToCss(background) } : {}),
-    ...(width > 0 ? { width: `${width}px`, maxWidth: "100%" } : {}),
+    ...(width > 0 ? { width: `${width}px` } : {}),
     ...(fontSize && fontSize > 0 ? { "--runtime-font-size": `${fontSize}px` } : {}),
     ...(lineHeight && lineHeight > 0 ? { "--runtime-line-height": `${lineHeight}px` } : {}),
+    ...(runtimeCssFamily ? { "--runtime-font-family": `"${runtimeCssFamily}"`, fontFamily: `"${runtimeCssFamily}"` } : {}),
   };
 }
 
-export function effectiveConsoleWidth(runtimeWidth?: number, screenWidth?: number): number {
+export function effectiveConsoleWidth(runtimeWidth?: number, _screenWidth?: number): number {
   if (!runtimeWidth || runtimeWidth <= 0) return 0;
-  if (!screenWidth || screenWidth <= 0) return runtimeWidth;
-  return Math.min(runtimeWidth, screenWidth);
+  return runtimeWidth;
 }
 
 export function consoleViewportStyle(height: number, offsetTop = 0): CSSProperties {

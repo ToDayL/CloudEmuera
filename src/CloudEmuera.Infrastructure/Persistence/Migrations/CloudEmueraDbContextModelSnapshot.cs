@@ -1566,6 +1566,13 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(18)
                         .HasColumnName("font_size");
 
+                    b.Property<string>("FontFaceId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("sarasa-fixed-sc-1.0.40-regular")
+                        .HasColumnName("font_face_id");
+
                     b.Property<long>("LastActivityAt")
                         .HasColumnType("INTEGER")
                         .HasColumnName("last_activity_at");
@@ -1688,6 +1695,8 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_sessions_id", "substr(id, 1, 5) = 'sess_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_sessions_name", "length(name) BETWEEN 1 AND 200 AND instr(name, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_sessions_font_face_id", "length(font_face_id) BETWEEN 1 AND 128 AND instr(font_face_id, char(0)) = 0");
 
 
                             t.HasCheckConstraint("ck_sessions_owner_id", "substr(owner_user_id, 1, 4) = 'usr_' AND length(owner_user_id) BETWEEN 5 AND 64 AND instr(owner_user_id, char(0)) = 0");

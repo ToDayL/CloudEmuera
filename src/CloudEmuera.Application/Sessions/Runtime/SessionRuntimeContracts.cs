@@ -1,4 +1,5 @@
 using CloudEmuera.Domain.Sessions;
+using CloudEmuera.Application.Fonts;
 
 namespace CloudEmuera.Application.Sessions.Runtime;
 
@@ -53,8 +54,7 @@ public sealed record SessionRuntimeOpenOptions(
     string IpcEndpoint,
     TimeSpan LeaseDuration,
     DateTimeOffset Now,
-    int BrowserWidth = 0,
-    SessionTextMetrics? TextMetrics = null);
+    int BrowserWidth = 0);
 
 public sealed record SessionRuntimeBinding(
     string SessionId,
@@ -71,7 +71,9 @@ public sealed record SessionRuntimeBinding(
     string OwnerUserId = "",
     string GameId = "",
     long SourceContentRevision = 0,
-    string SourceContentDigest = "");
+    string SourceContentDigest = "",
+    string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
+    string FontCatalogDigest = "");
 
 public sealed record SessionRuntimeLease(
     SessionRuntimeBinding Binding,
@@ -80,7 +82,9 @@ public sealed record SessionRuntimeLease(
     DateTimeOffset AcquiredAt,
     DateTimeOffset ExpiresAt,
     int FontSize = 18,
-    int LineHeight = 19);
+    int LineHeight = 19,
+    string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
+    string FontCatalogDigest = "");
 
 public enum SessionRuntimeAcquireFailure
 {
@@ -165,7 +169,8 @@ public sealed record WorkerLaunchSpec(
     int BrowserWidth = 0,
     int FontSize = 18,
     int LineHeight = 19,
-    SessionTextMetrics? TextMetrics = null);
+    string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
+    string FontCatalogDigest = "");
 
 public interface ISessionRuntimeStore
 {
@@ -318,7 +323,8 @@ public sealed class SessionRuntimeCoordinator(
                     options.BrowserWidth,
                     lease.FontSize,
                     lease.LineHeight,
-                    options.TextMetrics),
+                    lease.FontFaceId,
+                    lease.FontCatalogDigest),
                 operationCancellationToken).ConfigureAwait(false);
             SessionRuntimeWriteResult identityResult = await store.RecordProcessIdentityAsync(
                 binding,

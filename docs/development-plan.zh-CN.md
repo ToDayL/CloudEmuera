@@ -802,6 +802,10 @@ download→reopen 纵切。完整七场景发布矩阵、Firefox/WebKit desktop 
 
 实施记录（2026-08-17）：为移动端页面固定 `text-size-adjust: 100%`，避免竖屏与横屏触发不同的浏览器文字自动放大规则，保持普通 Console 文本与按钮使用一致的运行时字号。
 
+范围修订（2026-08-23）：上述 SessionRoot 字体 manifest、浏览器 fallback 和 CSS 流式布局已由
+[`ADR-0029`](adr/0029-bundled-font-authoritative-headless-layout.md) 收窄。P1-S04 将只使用产品内置字体，
+由 Worker 输出物理行和 positioned segment；图片、音频及其 Session-scoped asset 规则继续有效。
+
 实施记录（2026-08-17）：依据 `eraTW` Session 的实际输出修复 Console 兼容性：按钮标签保留 ERB 当前前景色/按钮高亮色，`PRINT`/`PRINTL`/`DRAWLINEFORM` 恢复上游物理行边界与 inline 合并，`SpriteCanvas` 补充缓存图片完成态触发绘制；`shape type=space` 继续作为透明布局占位，不误绘成黄色图形。新增 RuntimeBridge、Scrollback/Canvas/Sprite 回归覆盖，未改变 realtime/IPC 协议。
 
 实施记录（2026-08-16）：开发环境的 API/Worker 改为直接运行显式构建的 DLL，并清理 dotnet watch、
@@ -917,7 +921,47 @@ Realtime 纵切；`test-process-recovery.sh` 覆盖 SIGTERM、API/Worker 强制�
 `15335ms`。`./scripts/dev-up.sh && ./scripts/check.sh`、`verify-dev-user.sh`、`verify-third-party.sh`
 和 `test-instance-limits.sh` 均通过。
 
-### P1-15 — MVP 验收、安全与性能门（TODO）
+### P1-S04 — 内置字体测量与 Worker 权威物理排版（DONE）
+
+需求映射：SESS-013、PLAY-013/014、COMP-007/010、SEC-008、NFR-006/007/013。
+
+关联决策：[`ADR-0029`](adr/0029-bundled-font-authoritative-headless-layout.md)。
+
+详细方案：
+[`tasks/P1-S04-font-measurement-authoritative-layout-plan.zh-CN.md`](tasks/P1-S04-font-measurement-authoritative-layout-plan.zh-CN.md)。
+
+交付物：固定并分发 Sarasa Fixed SC 与霞鹜文楷 Mono 的 Light/Regular/Medium 六个 face；Session
+创建/停止态配置选择不可变 face ID；Worker 在 `Config.SetConfig` 前加载并覆盖 `Config.FontName`，删除
+浏览器 textMetrics；新增基于 `Config.DefaultFont`、`StringMeasure`、`Config.DrawableWidth` 的 headless
+layout engine，输出物理 ConsoleLine、positionX/measuredWidth、ButtonWrap 和超宽策略；浏览器按需加载
+由同一规范 TTF 构建且度量等价的完整 WOFF2，以内容摘要长期缓存，并按权威几何绘制且不自动换行；
+完整保留 PRINTC/PRINTLC 的 Shift-JIS 半角格与 N/N+1 兼容语义。
+游戏字体、宿主字体和用户字体不进入首期 Runtime。
+
+验证：
+
+```bash
+./scripts/verify-runtime-fonts.sh
+./scripts/verify-third-party.sh
+./scripts/test-session-ui-e2e.sh
+./scripts/test-production-image.sh
+./scripts/check.sh
+```
+
+通过条件：六 face 的来源、TTF/WOFF2 双摘要、度量等价、内部 family 和 OFL 声明可离线复核；宿主
+字体集合变化不改变结构化物理行；真实 Runtime fixture 覆盖 PRINTC、ButtonWrap、超宽拆分/整行、
+PointX 和逻辑/物理行更新；
+structured IPC v6、Realtime v4、HTTP/migration/Web contract 完整且旧 major fail closed；浏览器字体加载
+失败时阻断而非 fallback，三桌面引擎和移动 viewport 的 DOM 行数、按钮坐标/命中与 Worker 输出一致。
+
+实施记录（2026-08-23）：已交付六个固定 Runtime face 的 TTF/WOFF2 目录与离线验证、Session 字体持久化和
+选择 UI、Worker catalog binding/真实 `Config.DefaultFont` 测量、物理行与 positioned segment 输出、PRINTC
+兼容语义、IPC v6/Realtime v4 合约及 Web 字体加载屏障。验证：`verify-runtime-fonts.sh`、
+`verify-third-party.sh`、`verify-emuera-capabilities.sh`、专项 FontLayout/PrintCCompatibility 8/8，
+Worker 26/26，以及 Web 99/99 类型检查/测试/生产构建均通过；真实 Chromium 在非安全 `http://web` origin
+验证了无 `SubtleCrypto` 时的 SHA-256 回退和 FontFace 加载。
+
+### P1-15 — MVP 验收、安全与性能门（TODO；依赖 P1-S04）
 
 需求映射：AC-001～014、设计第 17 章全部测试层级。
 
@@ -954,5 +998,7 @@ SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在�
 4. ~~完成 P1-06 幂等 Session 创建、开启、关闭与恢复验收。~~ 已于 2026-08-12 完成。
 5. ~~按 P1-07 先完成 Emuera 运行时语义、能力矩阵和完整结构化交互协议，再进入 P1-08～P1-15。~~
    已于 2026-08-12 完成，并按 ADR-0019 补齐 libgdiplus 动态 Graphics/CBG 支持。
+6. ~~按 ADR-0029 完成 P1-S04 的内置字体、Worker 权威物理排版和 PRINTC 兼容测试，再执行 P1-15 统一
+   验收；不得用浏览器自动换行或用户字体替代该步骤。~~ 已于 2026-08-23 完成。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

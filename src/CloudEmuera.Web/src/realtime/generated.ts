@@ -1,7 +1,7 @@
-/* GENERATED CONTRACT SNAPSHOT — source: realtime-v3.schema.json. */
-export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v3.schema.json" as const;
-export const REALTIME_PROTOCOL_VERSION = 3 as const;
-export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-s03-display-commit" as const;
+/* GENERATED CONTRACT SNAPSHOT — source: realtime-v4.schema.json. */
+export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v4.schema.json" as const;
+export const REALTIME_PROTOCOL_VERSION = 4 as const;
+export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-s04-authoritative-layout" as const;
 export const REALTIME_MESSAGE_TYPES = ["client.hello","server.hello","connection.ping","connection.pong","session.resume","session.resume.result","session.unsubscribe","session.snapshot","display.frame","resync.required","session.stream.ended","session.input","session.input.result","protocol.error"] as const;
 
 export type EmptyPayload = Record<never, never>;
@@ -13,8 +13,8 @@ export interface ClientHelloPayload {
 }
 
 export interface ServerHelloPayload {
-  protocolVersion: 3;
-  payloadSchemaVersion: "p1-s03-display-commit";
+  protocolVersion: 4;
+  payloadSchemaVersion: "p1-s04-authoritative-layout";
   connectionId: string;
   serverNowUnixMilliseconds: number;
   heartbeatIntervalMilliseconds: number;
@@ -232,6 +232,23 @@ export interface WindowMetadata {
   size: number;
   lineHeight: number;
 };
+  fontFaceId?: string;
+  webFontAssetDigest?: string;
+}
+
+export interface ConsoleInlineAction {
+  value: string;
+  tooltip?: string | null;
+  enabled: boolean;
+  generation: number;
+}
+
+export interface PositionedInlineSegmentNode {
+  type: "positionedInlineSegment";
+  children: RealtimeNode[];
+  positionX: number;
+  measuredWidth: number;
+  action?: ConsoleInlineAction | null;
 }
 
 export interface Truncation {
@@ -247,6 +264,11 @@ export interface RealtimeLine {
   alignment: "left" | "center" | "right";
   temporary: boolean;
   noWrap?: boolean;
+  layoutWidth?: number;
+  lineHeight?: number;
+  logicalLineId?: string | null;
+  physicalIndex?: number;
+  isLogicalStart?: boolean;
 }
 
 export interface ConsoleState {
@@ -358,7 +380,7 @@ export interface DivNode {
   box?: RealtimeBoxModel | null;
 }
 
-export type RealtimeNode = TextNode | LineBreakNode | ButtonNode | ImageNode | SpriteNode | ShapeNode | HtmlIslandNode | DivNode;
+export type RealtimeNode = TextNode | LineBreakNode | ButtonNode | PositionedInlineSegmentNode | ImageNode | SpriteNode | ShapeNode | HtmlIslandNode | DivNode;
 
 export interface SpriteDrawable {
   type: "sprite";
@@ -503,7 +525,7 @@ export type ShapeKind = "rectangle" | "ellipse" | "line" | "polygon" | "space";
 export type InputType = "enterKey" | "anyKey" | "integer" | "text" | "anyValue" | "integerButton" | "textButton" | "primitivePointerKey" | "waitOnly";
 
 export interface RealtimeEnvelope<TType extends string, TPayload> {
-  protocolVersion: 3;
+  protocolVersion: 4;
   type: TType;
   messageId: string;
   correlationId?: string;

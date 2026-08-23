@@ -18,20 +18,15 @@ internal sealed class ConsoleStyledString : AConsoleColoredPart
 		//    str = str.Replace("\t", "");
 		Text = str;
 		StringStyle = style;
-		// CloudEmuera headless parser extraction: semantic parsing must not create
-		// a host Font/GDI object merely to snapshot an upstream StringStyle. The
-		// desktop path below remains unchanged; the headless materializer never
-		// calls DrawTo and maps the value fields directly.
-#if CLOUDEMUERA_HEADLESS
-		Font = null;
-#else
+		// CloudEmuera S04: every headless styled segment is measured with the
+		// already-loaded session face. FontFactory deliberately ignores game
+		// supplied family names and has no host-font fallback.
 		Font = FontFactory.GetFont(style.Fontname, style.FontStyle);
 		if (Font == null)
 		{
 			Error = true;
 			return;
 		}
-#endif
 		Color = style.Color;
 		ButtonColor = style.ButtonColor;
 		colorChanged = style.ColorChanged;
@@ -86,14 +81,13 @@ internal sealed class ConsoleStyledString : AConsoleColoredPart
 			Width = 0;
 			return;
 		}
-#if CLOUDEMUERA_HEADLESS
-		if (sm == null)
+		if (sm == null || Font == null)
 		{
-			Width = (Text?.Length ?? 0) * (Config.FontSize > 0 ? Config.FontSize : 16) / 2;
+			Error = true;
+			Width = 0;
 			XsubPixel = subPixel;
 			return;
 		}
-#endif
 		Width = sm.GetDisplayLength(Text, Font);
 		XsubPixel = subPixel;
 

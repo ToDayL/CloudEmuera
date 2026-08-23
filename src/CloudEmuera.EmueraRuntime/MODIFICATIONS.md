@@ -17,6 +17,54 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-23 — Bundled session font measurement and authoritative physical layout
+
+- Modified `Upstream/Emuera/UI/FontFactory.cs`,
+  `Upstream/Emuera/Runtime/Config/ConfigData.cs`,
+  `Upstream/Emuera/Runtime/Script/Statements/Function/Creator.Method.cs`,
+  `Upstream/Emuera/UI/Game/EmueraConsole.Print.cs` and
+  `Upstream/Emuera/UI/Game/Image/GraphicsImage.cs` so headless measurement and
+  graphics text use the selected image-owned `PrivateFontCollection`. Game
+  font names are retained only as bounded diagnostics; they never trigger
+  host font discovery or a package-font load.
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now uses the real
+  `StringMeasure`/`PrintStringBuffer` metrics for physical lines and applies
+  the pinned Shift-JIS `PRINTC`/`PRINTLC` padding correction. It emits
+  positioned segments and button actions while keeping `PrintCPerLine` as the
+  upstream flush trigger.
+- Scope: P1-S04, ADR-0029, SESS-013, PLAY-013/014 and COMP-007/010. The
+  six-face catalog and web conversions are verified by
+  `scripts/verify-runtime-fonts.sh`; no SessionRoot font is loaded.
+- Verification: `./scripts/verify-runtime-fonts.sh`, RuntimeCompatibility
+  font/layout and PRINTC tests, structured IPC v6/realtime v4 contract tests,
+  and the complete dev-Docker check.
+
+- `UpstreamHeadless/HeadlessFontMetrics.cs` reads the selected catalogued TTF's
+  Unicode `cmap`, `head` and horizontal `hmtx` advance tables. This replaces
+  the headless placeholder/libgdiplus CJK width path at the `TextRenderer`
+  compatibility seam, so physical segment widths, alignment and PRINTC padding
+  use the same face metrics as the browser's verified WOFF2. The browser keeps
+  each segment/action clipped to that authoritative box; it does not use ink
+  overflow to compensate for a measurement mismatch.
+- Verification: `FontLayout|PrintCCompatibility` RuntimeCompatibility tests,
+  mobile Chromium positioned-button geometry/pixel regression, and the full
+  dev-Docker check.
+
+## 2026-08-23 — Delete complete physical groups for wrapped CLEARLINE output
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now treats `CLEARLINE` as a
+  logical-line operation. A measured logical line may have several physical
+  `ConsoleLine` rows after wrapping, so deferred replacement and visibility
+  cleanup replace or delete the complete logical group instead of retaining
+  whitespace-only prefix rows. Immediate reprints continue to reuse the
+  logical line identity; obsolete physical suffixes are deleted in the same
+  transaction.
+- Scope: P1-S04 authoritative layout, GAME-007/COMP-002 structured-console
+  compatibility. This covers eraTW's fullwidth-space movement status line
+  followed by `CLEARLINE 1`.
+- Verification: `ClearLineRemovesAllPhysicalRowsOfWrappedLogicalLine` and the
+  RuntimeCompatibility suite in the dev Docker environment.
+
 ## 2026-08-22 — Literal fast path for direct ESCAPE in FINDELEMENT
 
 - Modified the upstream expression/function path and `VariableEvaluator` so a
@@ -407,7 +455,7 @@ requirements/ADR references, and verification commands.
   `RuntimeCompatibility.Tests` (83 passed), and the existing malformed
   rectangle regression test.
 
-## 2026-08-20 — Headless CHKFONT private-font fallback
+## 2026-08-20 — Headless CHKFONT private-font fallback (superseded by S04)
 
 - Modified upstream file:
   `Upstream/Emuera/Runtime/Script/Statements/Function/Creator.Method.cs`.
@@ -415,8 +463,8 @@ requirements/ADR references, and verification commands.
   avoid loading desktop private font files. `CHKFONT` and the related graphics
   font lookup now treat that optional collection as empty instead of dereferencing
   it.
-- Scope: COMP-002. `CHKFONT` continues to query installed system fonts, while a
-  font available only through the unsupported private-font path returns `0`, as
-  an unavailable font would on desktop.
+- Scope: historical COMP-002 behavior. The S04 binding above supersedes the
+  system-font query for production Sessions: `CHKFONT` now recognizes only the
+  selected bundled face and its controlled aliases.
 - Verification:
   `HeadlessRuntimeFixtureTests.CheckfontTreatsUnavailablePrivateFontsAsNotInstalled`.

@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-option csharp_namespace = "CloudEmuera.Ipc.V5";
+option csharp_namespace = "CloudEmuera.Ipc.V6";
 
-package cloudemuera.ipc.v5;
+package cloudemuera.ipc.v6;
 
 service WorkerControl {
   rpc Connect(stream WorkerEnvelope) returns (stream WorkerCommandEnvelope);
@@ -243,6 +243,11 @@ message ConsoleLine {
   LineAlignment alignment = 3;
   bool temporary = 4;
   bool no_wrap = 5;
+  int32 layout_width = 6;
+  int32 line_height = 7;
+  string logical_line_id = 8;
+  int32 physical_index = 9;
+  bool is_logical_start = 10;
 }
 
 message ConsoleNode {
@@ -255,6 +260,7 @@ message ConsoleNode {
     ShapeNode shape = 6;
     HtmlIslandNode html_island = 7;
     DivNode div = 8;
+    PositionedInlineSegmentNode positioned_inline_segment = 9;
   }
 }
 
@@ -268,6 +274,19 @@ message ButtonNode {
   int64 generation = 5;
   int32 position_x = 6;
   bool has_position_x = 7;
+}
+message PositionedInlineSegmentNode {
+  int32 position_x = 1;
+  int32 measured_width = 2;
+  repeated ConsoleNode children = 3;
+  ConsoleInlineAction action = 4;
+  bool has_action = 5;
+}
+message ConsoleInlineAction {
+  string value = 1;
+  string tooltip = 2;
+  bool enabled = 3;
+  int64 generation = 4;
 }
 message ImageNode {
   string asset_id = 1;
@@ -399,7 +418,7 @@ message RasterDrawable { string drawable_id = 1; bytes png_data = 2; Rect bounds
 message HitRegion { string region_id = 1; Rect bounds = 2; string input_value = 3; bool enabled = 4; string tooltip = 5; }
 message MediaState { repeated MediaChannelState channels = 1; }
 message MediaChannelState { string channel = 1; string asset_id = 2; bool has_asset_id = 3; MediaPlaybackState playback_state = 4; bool loop = 5; float volume = 6; int64 revision = 7; MediaStartPolicy start_policy = 8; }
-message WindowMetadata { string title = 1; int32 viewport_width = 2; int32 viewport_height = 3; ConsoleColor default_foreground = 4; bool has_default_foreground = 5; ConsoleColor default_background = 6; bool has_default_background = 7; TextStyle default_font = 8; }
+message WindowMetadata { string title = 1; int32 viewport_width = 2; int32 viewport_height = 3; ConsoleColor default_foreground = 4; bool has_default_foreground = 5; ConsoleColor default_background = 6; bool has_default_background = 7; TextStyle default_font = 8; string font_face_id = 9; string web_font_asset_digest = 10; }
 message TruncationMetadata { bool was_truncated = 1; int64 dropped_node_count = 2; int64 dropped_line_count = 3; int64 dropped_text_length = 4; }
 
 message ConsolePrompt {

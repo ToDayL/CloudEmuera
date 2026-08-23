@@ -885,7 +885,7 @@ public sealed class ConsoleStateStore
     }
 
     /// <summary>
-    /// Reads the lossless structured transaction stream used by the v3 Worker
+    /// Reads the lossless structured transaction stream used by the v6 Worker
     /// protocol. Legacy <see cref="ReadSince"/> intentionally remains a
     /// compatibility API for the historical v2 tests and cannot represent
     /// scenes, media or window metadata without flattening them.

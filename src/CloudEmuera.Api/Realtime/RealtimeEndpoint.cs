@@ -11,7 +11,7 @@ using System.Net.WebSockets;
 
 namespace CloudEmuera.Api.Realtime;
 
-/// <summary>HTTP upgrade boundary for the native realtime v3 protocol.</summary>
+/// <summary>HTTP upgrade boundary for the native realtime v4 protocol.</summary>
 public sealed class RealtimeEndpoint(
     IServiceScopeFactory scopeFactory,
     RealtimeAuthorizationGate authorization,
@@ -35,7 +35,7 @@ public sealed class RealtimeEndpoint(
         if (!HasRequestedSubprotocol(context))
         {
             context.Response.Headers[HeaderNames.SecWebSocketProtocol] = RealtimeProtocol.Subprotocol;
-            await RejectAsync(context, StatusCodes.Status426UpgradeRequired, "REALTIME_PROTOCOL_REQUIRED", "The realtime v3 subprotocol is required.").ConfigureAwait(false);
+            await RejectAsync(context, StatusCodes.Status426UpgradeRequired, "REALTIME_PROTOCOL_REQUIRED", "The realtime v4 subprotocol is required.").ConfigureAwait(false);
             return;
         }
 

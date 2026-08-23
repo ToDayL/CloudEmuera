@@ -127,7 +127,12 @@ public sealed class ConsoleLine
         IEnumerable<ConsoleNode> nodes,
         ConsoleLineAlignment alignment = ConsoleLineAlignment.Left,
         bool temporary = false,
-        bool noWrap = false)
+        bool noWrap = false,
+        int layoutWidth = 0,
+        int lineHeight = 0,
+        string? logicalLineId = null,
+        int physicalIndex = 0,
+        bool isLogicalStart = true)
     {
         ConsoleContractValidation.ValidateIdentifier(lineId, nameof(lineId), ConsoleContractLimits.Default.MaxLineIdLength);
         ArgumentNullException.ThrowIfNull(nodes);
@@ -136,11 +141,25 @@ public sealed class ConsoleLine
             throw new ConsoleContractException(ConsoleContractViolationReason.LineTooLarge, "A console line has too many nodes.");
         ConsoleNodeValidation.ValidateBatchIfNotEmpty(copy, ConsoleContractLimits.Default);
         ValidateAlignment(alignment);
+        if (layoutWidth < 0 || layoutWidth > 8_192 || lineHeight < 0 || lineHeight > 512)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A physical line size is outside its limit.");
+        if (layoutWidth > 0 && (copy.Length > ConsoleContractLimits.Default.MaxSegmentsPerPhysicalLine ||
+            copy.Any(node => node is not PositionedInlineSegmentNode and not LineBreakNode)))
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A physical line must contain positioned inline segments.");
+        if (physicalIndex < 0 || physicalIndex > ConsoleContractLimits.Default.MaxPhysicalLineIndex)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A physical line index is outside its limit.");
+        logicalLineId ??= lineId;
+        ConsoleContractValidation.ValidateIdentifier(logicalLineId, nameof(logicalLineId), ConsoleContractLimits.Default.MaxLineIdLength);
         LineId = lineId;
         Nodes = Array.AsReadOnly(copy);
         Alignment = alignment;
         Temporary = temporary;
         NoWrap = noWrap;
+        LayoutWidth = layoutWidth;
+        LineHeight = lineHeight;
+        LogicalLineId = logicalLineId;
+        PhysicalIndex = physicalIndex;
+        IsLogicalStart = isLogicalStart;
     }
 
     public string LineId { get; }
@@ -154,12 +173,26 @@ public sealed class ConsoleLine
     /// <summary>Preserves Emuera's line-head &lt;nobr&gt; layout semantic.</summary>
     public bool NoWrap { get; }
 
+    /// <summary>Authoritative physical layout width in runtime pixels.</summary>
+    public int LayoutWidth { get; }
+
+    /// <summary>Authoritative physical line height in runtime pixels.</summary>
+    public int LineHeight { get; }
+
+    /// <summary>The logical line group that owns this physical line.</summary>
+    public string LogicalLineId { get; }
+
+    public int PhysicalIndex { get; }
+
+    public bool IsLogicalStart { get; }
+
     public ConsoleLine WithNodes(
         IEnumerable<ConsoleNode> nodes,
         bool? temporary = null,
         ConsoleLineAlignment? alignment = null,
         bool? noWrap = null) =>
-        new(LineId, nodes, alignment ?? Alignment, temporary ?? Temporary, noWrap ?? NoWrap);
+        new(LineId, nodes, alignment ?? Alignment, temporary ?? Temporary, noWrap ?? NoWrap,
+            LayoutWidth, LineHeight, LogicalLineId, PhysicalIndex, IsLogicalStart);
 
     private static void ValidateAlignment(ConsoleLineAlignment alignment)
     {
@@ -488,17 +521,25 @@ public sealed class WindowMetadata
         int viewportHeight = 0,
         ConsoleColor? defaultForeground = null,
         ConsoleColor? defaultBackground = null,
-        ConsoleFontSpec? defaultFont = null)
+        ConsoleFontSpec? defaultFont = null,
+        string fontFaceId = "default",
+        string webFontAssetDigest = "")
     {
         ConsoleContractValidation.ValidateText(title, nameof(title), ConsoleContractLimits.Default.MaxWindowTitleLength, ConsoleContractViolationReason.WindowMetadataTooLong);
         if (viewportWidth < 0 || viewportHeight < 0 || viewportWidth > 8_192 || viewportHeight > 8_192)
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidViewport, "The logical viewport is outside its limit.");
+        ConsoleContractValidation.ValidateLogicalName(fontFaceId, nameof(fontFaceId), ConsoleContractLimits.Default.MaxFontFamilyLength);
+        if (webFontAssetDigest.Length != 0 &&
+            (webFontAssetDigest.Length != 64 || webFontAssetDigest.Any(character => !char.IsAsciiHexDigit(character))))
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidFont, "The web font asset digest is invalid.");
         Title = title;
         ViewportWidth = viewportWidth;
         ViewportHeight = viewportHeight;
         DefaultForeground = defaultForeground;
         DefaultBackground = defaultBackground;
         DefaultFont = defaultFont ?? new ConsoleFontSpec();
+        FontFaceId = fontFaceId;
+        WebFontAssetDigest = webFontAssetDigest;
     }
 
     public string Title { get; }
@@ -512,6 +553,10 @@ public sealed class WindowMetadata
     public ConsoleColor? DefaultBackground { get; }
 
     public ConsoleFontSpec DefaultFont { get; }
+
+    public string FontFaceId { get; }
+
+    public string WebFontAssetDigest { get; }
 }
 
 /// <summary>Parsed, executable-free HTML island tree.</summary>

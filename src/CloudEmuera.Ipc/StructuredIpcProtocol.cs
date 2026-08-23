@@ -1,24 +1,24 @@
 using System.Security.Cryptography;
 using System.Text;
-using CloudEmuera.Ipc.V5;
-using ProtoConsoleColor = CloudEmuera.Ipc.V5.ConsoleColor;
+using CloudEmuera.Ipc.V6;
+using ProtoConsoleColor = CloudEmuera.Ipc.V6.ConsoleColor;
 
 namespace CloudEmuera.Ipc;
 
 /// <summary>Versioned constants for the lossless structured Worker protocol.</summary>
 public static class StructuredIpcProtocol
 {
-    public const uint CurrentVersion = 5;
-    public const string CapabilityMatrixVersion = "p1-07";
+    public const uint CurrentVersion = 6;
+    public const string CapabilityMatrixVersion = "p1-s04";
     public const string UpstreamCommit = "2175f8a629257efb08214e093704b3a3d3d06d05";
 
     public static string CapabilitySetDigest { get; } = Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v5-display-commit")))
+        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v6-authoritative-layout")))
         .ToLowerInvariant();
 }
 
 /// <summary>
-/// Builds and checks the v5 bootstrap handshake. Registration carries the
+/// Builds and checks the v6 bootstrap handshake. Registration carries the
 /// same capability digest in the envelope and payload so a peer cannot
 /// silently downgrade by dropping the new contract metadata.
 /// </summary>
@@ -117,6 +117,8 @@ public static class StructuredIpcLimits
     public const int MaxHtmlDepth = 16;
     public const int MaxHtmlChildren = 256;
     public const int MaxGeometryPoints = 256;
+    public const int MaxPhysicalLinesPerLogicalLine = 4_096;
+    public const int MaxSegmentsPerPhysicalLine = 512;
     public const int MaxProtocolErrorMessageLength = 512;
     public const int MaxInlineRasterBytes = 8 * 1024 * 1024;
 }
@@ -340,7 +342,7 @@ public static class StructuredIpcValidator
         int nodes = 0;
         foreach (ConsoleLine line in value.Scrollback)
         {
-            if (!IsIdentifier(line.LineId) || line.Alignment == LineAlignment.Unspecified)
+            if (!ValidateLineMetadata(line))
                 return false;
             foreach (ConsoleNode node in line.Nodes)
                 if (!ValidateNode(node, ref nodes, 1)) return false;
@@ -413,8 +415,15 @@ public static class StructuredIpcValidator
     }
 
     private static bool ValidateLine(ConsoleLine line, ref int nodeCount) =>
+        ValidateLineMetadata(line) && ValidateNodeList(line.Nodes, ref nodeCount) &&
+        (line.LayoutWidth == 0 || line.Nodes.All(node => node.KindCase is ConsoleNode.KindOneofCase.PositionedInlineSegment or ConsoleNode.KindOneofCase.LineBreak));
+
+    private static bool ValidateLineMetadata(ConsoleLine line) =>
         IsIdentifier(line.LineId) && line.Alignment != LineAlignment.Unspecified &&
-        ValidateNodeList(line.Nodes, ref nodeCount);
+        line.LayoutWidth is >= 0 and <= 8_192 && line.LineHeight is >= 0 and <= 512 &&
+        line.PhysicalIndex is >= 0 and < StructuredIpcLimits.MaxPhysicalLinesPerLogicalLine &&
+        (string.IsNullOrEmpty(line.LogicalLineId) || IsIdentifier(line.LogicalLineId)) &&
+        (!line.IsLogicalStart || line.PhysicalIndex == 0);
 
     private static bool ValidateNodeList(IEnumerable<ConsoleNode> nodes, ref int nodeCount)
     {
@@ -439,6 +448,13 @@ public static class StructuredIpcValidator
                 node.Button.Label.Count <= StructuredIpcLimits.MaxButtonLabelNodes && ValidateChildNodes(node.Button.Label, ref nodeCount, depth + 1) &&
                 IsText(node.Button.Tooltip) && node.Button.Generation >= 0 &&
                 (!node.Button.HasPositionX || node.Button.PositionX is >= -1_000_000 and <= 1_000_000),
+            ConsoleNode.KindOneofCase.PositionedInlineSegment =>
+                node.PositionedInlineSegment.PositionX >= 0 && node.PositionedInlineSegment.MeasuredWidth >= 0 &&
+                (long)node.PositionedInlineSegment.PositionX + node.PositionedInlineSegment.MeasuredWidth <= 1_000_000 &&
+                node.PositionedInlineSegment.Children.Count > 0 &&
+                node.PositionedInlineSegment.Children.Count <= StructuredIpcLimits.MaxSegmentsPerPhysicalLine &&
+                (!node.PositionedInlineSegment.HasAction || ValidateInlineAction(node.PositionedInlineSegment.Action)) &&
+                ValidateChildNodes(node.PositionedInlineSegment.Children, ref nodeCount, depth + 1),
             ConsoleNode.KindOneofCase.Image => IsAsset(node.Image.AssetId) &&
                 (!node.Image.HasSourceRect || ValidateRect(node.Image.SourceRect)) &&
                 (!node.Image.HasDestination || ValidateRect(node.Image.Destination)) && IsText(node.Image.AltText),
@@ -597,7 +613,12 @@ public static class StructuredIpcValidator
         IsText(metadata.Title) && metadata.ViewportWidth >= 0 && metadata.ViewportHeight >= 0 &&
         (!metadata.HasDefaultForeground || ValidateColor(metadata.DefaultForeground)) &&
         (!metadata.HasDefaultBackground || ValidateColor(metadata.DefaultBackground)) &&
-        metadata.DefaultFont is not null && ValidateStyle(metadata.DefaultFont);
+        metadata.DefaultFont is not null && ValidateStyle(metadata.DefaultFont) &&
+        (string.IsNullOrEmpty(metadata.FontFaceId) || IsIdentifier(metadata.FontFaceId)) &&
+        (string.IsNullOrEmpty(metadata.WebFontAssetDigest) || IsDigest(metadata.WebFontAssetDigest));
+
+    private static bool ValidateInlineAction(ConsoleInlineAction? action) => action is not null &&
+        IsText(action.Value) && IsText(action.Tooltip) && action.Generation >= 0;
 
     private static bool ValidateTruncation(TruncationMetadata metadata) =>
         metadata.DroppedNodeCount >= 0 && metadata.DroppedLineCount >= 0 && metadata.DroppedTextLength >= 0;

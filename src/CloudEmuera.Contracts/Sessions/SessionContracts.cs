@@ -2,8 +2,18 @@ using System.Text.Json;
 
 namespace CloudEmuera.Contracts.Sessions;
 
-public sealed record CreateSessionRequest(string GameId, string Name, int FontSize = 18, int LineHeight = 19);
-public sealed record UpdateSessionConfigurationRequest(string Name, int FontSize, int LineHeight);
+public sealed record CreateSessionRequest(
+    string GameId,
+    string Name,
+    string FontFaceId = "sarasa-fixed-sc-1.0.40-regular",
+    int FontSize = 18,
+    int LineHeight = 19);
+
+public sealed record UpdateSessionConfigurationRequest(
+    string Name,
+    string FontFaceId = "sarasa-fixed-sc-1.0.40-regular",
+    int FontSize = 18,
+    int LineHeight = 19);
 
 /// <summary>
 /// The lifecycle endpoints intentionally accept only an empty JSON object.
@@ -22,6 +32,7 @@ public sealed record SessionResponse(
     string SourceContentDigest,
     long SourceContentRevision,
     string RuntimeVersion,
+    string FontFaceId,
     int FontSize,
     int LineHeight,
     string State,

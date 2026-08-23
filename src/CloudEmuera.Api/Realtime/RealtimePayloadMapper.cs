@@ -1,6 +1,6 @@
 using System.Text.Json;
 using CloudEmuera.Contracts.Realtime;
-using CloudEmuera.Ipc.V5;
+using CloudEmuera.Ipc.V6;
 using R = CloudEmuera.RuntimeAdapter;
 using RuntimeMapper = CloudEmuera.Realtime.StructuredConsoleWireMapper;
 
@@ -94,7 +94,12 @@ public static class RealtimePayloadMapper
         line.Nodes.Select(ToNode).ToArray(),
         ToAlignment(line.Alignment),
         line.Temporary,
-        line.NoWrap);
+        line.NoWrap,
+        line.LayoutWidth,
+        line.LineHeight,
+        line.LogicalLineId,
+        line.PhysicalIndex,
+        line.IsLogicalStart);
 
     private static RealtimeNode ToNode(R.ConsoleNode node) => node switch
     {
@@ -108,6 +113,14 @@ public static class RealtimePayloadMapper
             Enabled: button.Enabled,
             Generation: button.Generation,
             PositionX: button.PositionX),
+        R.PositionedInlineSegmentNode segment => new(
+            "positionedInlineSegment",
+            Children: segment.Children.Select(ToNode).ToArray(),
+            PositionX: segment.PositionX,
+            MeasuredWidth: segment.MeasuredWidth,
+            Action: segment.Action is { } action
+                ? new ConsoleInlineActionPayload(action.Value, action.Tooltip, action.Enabled, action.Generation)
+                : null),
         R.ImageNode image => new(
             "image",
             AssetId: image.AssetId.Value,
@@ -318,7 +331,9 @@ public static class RealtimePayloadMapper
         metadata.ViewportHeight,
         ToColor(metadata.DefaultForeground),
         ToColor(metadata.DefaultBackground),
-        new RealtimeFontSpec(metadata.DefaultFont.Family, metadata.DefaultFont.Size, metadata.DefaultFont.LineHeight));
+        new RealtimeFontSpec(metadata.DefaultFont.Family, metadata.DefaultFont.Size, metadata.DefaultFont.LineHeight),
+        metadata.FontFaceId,
+        metadata.WebFontAssetDigest);
 
     private static RealtimeTransaction ToTransaction(R.SequencedConsoleTransaction transaction) => new(
         transaction.Sequence,

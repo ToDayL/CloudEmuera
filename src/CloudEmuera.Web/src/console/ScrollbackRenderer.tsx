@@ -43,7 +43,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   const scrollToLatest = useCallback(() => scrollToBottom("smooth"), [scrollToBottom]);
   return <div className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
-      {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} key={line.lineId}>
+      {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} style={physicalLineStyle(line)} key={line.lineId}>
         {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
       </div>)}
     </div>
@@ -121,6 +121,20 @@ export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: R
         {renderChildren(parts.trailing, "trailing")}
       </Fragment>;
     }
+    case "positionedInlineSegment": {
+      const children = node.children.map((child, index) => <NodeRenderer key={`positioned-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
+      const style: CSSProperties = {
+        position: "absolute",
+        left: node.positionX,
+        top: 0,
+        width: node.measuredWidth,
+        height: "100%",
+        boxSizing: "border-box",
+        whiteSpace: "pre",
+      };
+      if (!node.action) return <span className="positioned-inline-segment" style={style}>{children}</span>;
+      return <button className="console-choice positioned-inline-action" style={style} type="button" disabled={!node.action.enabled} title={node.action.tooltip ?? undefined} onClick={() => onInput({ value: node.action!.value, source: "BUTTON" })}>{children}</button>;
+    }
     case "image": {
       const destination = node.destination ?? node.sourceRect;
       if (node.sourceRect && destination) return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(destination)}><SpriteCanvas sprite={{ assetId: node.assetId, sourceRect: node.sourceRect, frame: 0, animationFrames: [], opacity: 1 }} assets={assets} alt={node.decorative ? "" : node.altText ?? "游戏图片"} className="console-image" width={destination.width} height={destination.height} style={inlineSpriteStyle(destination)} onRenderError={onRenderError} /></span>;
@@ -133,6 +147,20 @@ export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: R
       ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)
       : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
+}
+
+function physicalLineStyle(line: RealtimeLine): CSSProperties {
+  const style: CSSProperties = {};
+  if (line.layoutWidth && line.layoutWidth > 0) style.width = line.layoutWidth;
+  if (line.lineHeight && line.lineHeight > 0) {
+    style.height = line.lineHeight;
+    style.minHeight = line.lineHeight;
+    // React treats numeric lineHeight values as unitless multipliers.  The
+    // protocol value is an authoritative physical pixel height, so it must
+    // stay a CSS length or an 18px font with a 19px line would become 342px.
+    style.lineHeight = `${line.lineHeight}px`;
+  }
+  return style;
 }
 
 function positionStyle(positionX: number | null | undefined): CSSProperties {

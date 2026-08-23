@@ -43,7 +43,12 @@ public sealed record RealtimeLine(
     IReadOnlyList<RealtimeNode> Nodes,
     string Alignment,
     bool Temporary,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool NoWrap = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool NoWrap = false,
+    int LayoutWidth = 0,
+    int LineHeight = 0,
+    string? LogicalLineId = null,
+    int PhysicalIndex = 0,
+    bool IsLogicalStart = true);
 
 /// <summary>
 /// Closed display union. Type is a protocol discriminator, not CLR type
@@ -84,7 +89,15 @@ public sealed record RealtimeNode(
     bool? IsRelative = null,
     RealtimeBoxModel? Box = null,
     /// <summary>Structured HTML-island nodes from the pinned upstream parser.</summary>
-    IReadOnlyList<RealtimeNode>? Nodes = null);
+    IReadOnlyList<RealtimeNode>? Nodes = null,
+    int? MeasuredWidth = null,
+    ConsoleInlineActionPayload? Action = null);
+
+public sealed record ConsoleInlineActionPayload(
+    string Value,
+    string? Tooltip,
+    bool Enabled,
+    long Generation);
 
 public sealed record RealtimeSpriteAnimationFrame(
     string AssetId,
@@ -206,7 +219,9 @@ public sealed record RealtimeWindowMetadata(
     int ViewportHeight,
     RealtimeColor? DefaultForeground,
     RealtimeColor? DefaultBackground,
-    RealtimeFontSpec DefaultFont);
+    RealtimeFontSpec DefaultFont,
+    string FontFaceId = "default",
+    string WebFontAssetDigest = "");
 
 public sealed record RealtimeFontSpec(string Family, int Size, int LineHeight);
 

@@ -6,6 +6,10 @@
 `promptId`、按 prompt 取消 pending 的描述已由 P1-S02/ADR-0025 取代。实现和后续维护以 P1-S02 的
 Realtime v2 当前输入槽语义为准。
 
+字体排版替代说明（2026-08-23）：SessionRoot 字体 manifest、浏览器 fallback 和 CSS 自动换行部分已
+由 P1-S04/ADR-0029 取代。浏览器只按需加载产品内置 face 的内容寻址 WOFF2，并按 Worker 物理行与
+positioned segment 渲染；图片、音频及存档 UI 设计继续有效。
+
 设计日期：2026-08-15
 
 对应开发步骤：`P1-11 — 浏览器 Session 控制台和存档界面`

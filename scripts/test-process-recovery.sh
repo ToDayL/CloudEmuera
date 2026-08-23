@@ -183,7 +183,7 @@ session_id="$(jq -er '.id' "$temp_root/session.json")"
 
 csrf="$(get_csrf)"
 status="$(request_json POST "/api/v1/sessions/$session_id:open" \
-  '{"browserWidth":1024,"textMetrics":{"halfWidthPx":9,"fullWidthPx":18}}' \
+  '{"browserWidth":1024}' \
   "$csrf" "$temp_root/open.json" '' recovery-session-open)"
 [[ "$status" == 200 || "$status" == 202 ]] || { cat "$temp_root/open.json" >&2; exit 1; }
 wait_for_session_state RUNNING
@@ -222,7 +222,7 @@ save_hash="$(sha256sum "$session_root/global.sav" | awk '{print $1}')"
 
 csrf="$(get_csrf)"
 status="$(request_json POST "/api/v1/sessions/$session_id:open" \
-  '{"browserWidth":1024,"textMetrics":{"halfWidthPx":9,"fullWidthPx":18}}' \
+  '{"browserWidth":1024}' \
   "$csrf" "$temp_root/reopen.json" '' recovery-session-reopen)"
 [[ "$status" == 200 || "$status" == 202 ]] || { cat "$temp_root/reopen.json" >&2; exit 1; }
 wait_for_session_state RUNNING
@@ -236,7 +236,7 @@ wait_for_session_state CRASHED
 
 csrf="$(get_csrf)"
 status="$(request_json POST "/api/v1/sessions/$session_id:open" \
-  '{"browserWidth":1024,"textMetrics":{"halfWidthPx":9,"fullWidthPx":18}}' \
+  '{"browserWidth":1024}' \
   "$csrf" "$temp_root/reopen-after-worker-kill.json" '' recovery-session-reopen-worker-kill)"
 [[ "$status" == 200 || "$status" == 202 ]] || { cat "$temp_root/reopen-after-worker-kill.json" >&2; exit 1; }
 wait_for_session_state RUNNING
@@ -291,7 +291,7 @@ restore_open_status=''
 for attempt in $(seq 1 20); do
   csrf="$(get_csrf)"
   restore_open_status="$(request_json POST "/api/v1/sessions/$session_id:open" \
-    '{"browserWidth":1024,"textMetrics":{"halfWidthPx":9,"fullWidthPx":18}}' \
+    '{"browserWidth":1024}' \
     "$csrf" "$temp_root/restore-reopen.json" '' "recovery-restore-reopen-$attempt")"
   if [[ "$restore_open_status" == 200 || "$restore_open_status" == 202 ]]; then
     break

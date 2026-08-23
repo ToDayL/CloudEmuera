@@ -4,9 +4,13 @@
 - 日期：2026-08-15
 - 关联任务：P1-11
 
+字体范围修订（2026-08-23）：本文关于 SessionRoot 游戏字体的 manifest/HTTP 映射已被
+[`ADR-0029`](0029-bundled-font-authoritative-headless-layout.md) 取代。图片和音频的 Session-scoped
+asset 规则继续有效；MVP 字体改由产品内置目录按 digest 提供，游戏字体不加载、不发布。
+
 ## 背景
 
-P1-11 的浏览器需要读取 SessionRoot 中冻结的图片、Sprite、背景、字体和音频，但不能接触逻辑
+P1-11 的浏览器需要读取 SessionRoot 中冻结的图片、Sprite、背景和音频，但不能接触逻辑
 路径、Game workspace 或其他用户的文件。旧 Session 也必须可以只读适配，且媒体需要正确 MIME、
 Range 和缓存语义。浏览器的动态结构化样式还需要 CSP 明确允许的最小范围。
 
@@ -23,7 +27,7 @@ Range 和缓存语义。浏览器的动态结构化样式还需要 CSP 明确允
 采用选项 3。
 
 - 资源身份为 `sha256-<64 位小写十六进制>`；清单同时返回 `mediaType`、`byteLength`、
-  `contentDigest` 和 ETag。只投影 allowlist 中的图片、音频和字体；不公开路径或原始 manifest。
+  `contentDigest` 和 ETag。只投影 allowlist 中的图片和音频；不公开路径或原始 manifest。
 - `GET /api/v1/sessions/{id}/presentation-manifest` 和
   `GET /api/v1/sessions/{id}/assets/{assetId}` 先按 owner 过滤，再执行 `SessionRead` 授权；不存在、
   越权和未知 ID 都使用 not-found 语义。活动 Worker 仍允许只读读取。
@@ -32,17 +36,15 @@ Range 和缓存语义。浏览器的动态结构化样式还需要 CSP 明确允
 - 资源支持完整响应和单一 byte range；多 range 或无效 range 返回 `416`，成功 partial response
   返回 `206`、`Content-Range`、`Accept-Ranges: bytes`。响应使用 `private` cache、内容摘要 ETag、
   `immutable`（asset）或短缓存（manifest）和 `nosniff`。
-- `fonts` 只允许逻辑 family、清单中的字体 asset 和 `sans-serif`/`serif`/`monospace` fallback；服务端按
-  字体文件 stem 确定逻辑 family，family 缺失或碰撞时使用 asset 摘要派生的独立 family，并在
-  `fontDiagnostics` 返回 `FONT_*` 诊断码。浏览器只把 `cssFamily` 用作 Session 页面内的固定前缀，
-  不把逻辑名当作 CSS family；旧清单仍兼容 `default`→`game-default` 映射。
+- 字体不再属于本清单。ADR-0029 的产品内置字体目录、不可变 face ID 和内容寻址 WOFF2 端点是唯一
+  Runtime/Web 字体来源；SessionRoot 字体条目即使存在也不投影。
 - 生产 CSP 固定为同源 `script-src`、`style-src`、`connect-src`、`img-src 'self' blob:`、
   `media-src 'self'`、`font-src 'self'`，并禁止 `base`、`object`、`frame`、外部 form 和 frame ancestor。
   结构化游戏样式只使用 React 的受控 style 属性，因此通过 `style-src-attr 'unsafe-inline'` 单独放行；
   不允许 `unsafe-eval`、raw HTML、外部 URL 或任意 `data:`。动态 Raster 仅由已校验 PNG bytes 创建
   renderer 管理并及时 revoke 的 Blob URL。
-- 缺少或损坏的旧 frozen manifest 不重建 SessionRoot；manifest/asset 服务 fail closed，字体使用
-  固定 fallback，并由页面显示兼容阻断信息。
+- 缺少或损坏的旧 frozen manifest 不重建 SessionRoot；图片/音频 manifest/asset 服务 fail closed，
+  并由页面显示兼容阻断信息。
 
 ## 后果
 

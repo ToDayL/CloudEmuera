@@ -5,6 +5,7 @@ public enum ConsoleNodeKind
     Text,
     LineBreak,
     Button,
+    PositionedInlineSegment,
     Image,
     Sprite,
     Shape,
@@ -139,6 +140,64 @@ public sealed class ButtonNode : ConsoleNode
 
     /// <summary>Emuera <c>button pos</c> x coordinate in pixels.</summary>
     public int? PositionX { get; }
+}
+
+/// <summary>
+/// A physical, already-measured inline segment produced by the authoritative
+/// headless layout engine. The browser must position this segment as supplied;
+/// it must not discover a new line break from CSS metrics.
+/// </summary>
+public sealed class PositionedInlineSegmentNode : ConsoleNode
+{
+    public PositionedInlineSegmentNode(
+        int positionX,
+        int measuredWidth,
+        IEnumerable<ConsoleNode> children,
+        ConsoleInlineAction? action = null)
+    {
+        if (positionX < 0 || positionX > 1_000_000 || measuredWidth < 0 || measuredWidth > 1_000_000 ||
+            (long)positionX + measuredWidth > 1_000_000)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A positioned inline segment is outside its limit.");
+        ArgumentNullException.ThrowIfNull(children);
+        ConsoleNode[] copy = children.ToArray();
+        if (copy.Length == 0 || copy.Length > ConsoleContractLimits.Default.MaxBatchNodeCount)
+            throw new ConsoleContractException(ConsoleContractViolationReason.EmptyBatch, "A positioned inline segment needs children.");
+        Children = Array.AsReadOnly(copy);
+        PositionX = positionX;
+        MeasuredWidth = measuredWidth;
+        Action = action;
+    }
+
+    public override ConsoleNodeKind Kind => ConsoleNodeKind.PositionedInlineSegment;
+
+    public int PositionX { get; }
+
+    public int MeasuredWidth { get; }
+
+    public IReadOnlyList<ConsoleNode> Children { get; }
+
+    public ConsoleInlineAction? Action { get; }
+}
+
+public sealed record ConsoleInlineAction
+{
+    public ConsoleInlineAction(string value, string? tooltip = null, bool enabled = true, long generation = 0)
+    {
+        ConsoleContractValidation.ValidateText(value, nameof(value), ConsoleContractLimits.Default.MaxButtonValueLength, ConsoleContractViolationReason.ButtonValueTooLong);
+        if (tooltip is not null)
+            ConsoleContractValidation.ValidateText(tooltip, nameof(tooltip), ConsoleContractLimits.Default.MaxTooltipLength, ConsoleContractViolationReason.TooltipTooLong);
+        if (generation < 0)
+            throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Inline action generation cannot be negative.");
+        Value = value;
+        Tooltip = tooltip;
+        Enabled = enabled;
+        Generation = generation;
+    }
+
+    public string Value { get; }
+    public string? Tooltip { get; }
+    public bool Enabled { get; }
+    public long Generation { get; }
 }
 
 public sealed class ImageNode : ConsoleNode
@@ -340,6 +399,22 @@ internal static class ConsoleNodeValidation
                     ValidateNode(child, limits, depth + 1);
                 }
 
+                break;
+            case PositionedInlineSegmentNode segment:
+                if (segment.PositionX < 0 || segment.MeasuredWidth < 0 || (long)segment.PositionX + segment.MeasuredWidth > 1_000_000)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A positioned inline segment is outside its limit.");
+                if (segment.Children.Count == 0 || segment.Children.Count > limits.MaxBatchNodeCount)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.EmptyBatch, "A positioned inline segment needs children.");
+                if (segment.Action is { } action)
+                {
+                    ConsoleContractValidation.ValidateText(action.Value, nameof(action.Value), limits.MaxButtonValueLength, ConsoleContractViolationReason.ButtonValueTooLong);
+                    if (action.Tooltip is not null)
+                        ConsoleContractValidation.ValidateText(action.Tooltip, nameof(action.Tooltip), limits.MaxTooltipLength, ConsoleContractViolationReason.TooltipTooLong);
+                    if (action.Generation < 0)
+                        throw new ConsoleContractException(ConsoleContractViolationReason.InvalidPrompt, "Inline action generation cannot be negative.");
+                }
+                foreach (ConsoleNode child in segment.Children)
+                    ValidateNode(child, limits, depth + 1);
                 break;
             case ImageNode image:
                 image.AssetId.Validate(limits);

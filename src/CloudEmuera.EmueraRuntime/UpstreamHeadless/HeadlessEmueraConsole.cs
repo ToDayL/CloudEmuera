@@ -17,6 +17,7 @@ using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.UI.Game;
 using MinorShift.Emuera.UI.Game.Image;
+using MinorShift.Emuera.UI;
 using static MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
 
 namespace MinorShift.Emuera.GameView;
@@ -32,8 +33,11 @@ internal sealed class EmueraConsole
     private readonly Func<string, RuntimeSpriteDefinition> imageResolver;
     private readonly int viewportWidth;
     private readonly int viewportHeight;
-    private readonly double halfWidthPx;
-    private readonly double fullWidthPx;
+    private readonly string fontFaceId;
+    private readonly string fontCatalogDigest;
+    private readonly string webFontAssetDigest;
+    private readonly StringMeasure stringMeasure;
+    private readonly PrintStringBuffer printBuffer;
     private string barString = "-";
     private bool isRunning = true;
     private bool hasFatalError;
@@ -44,10 +48,11 @@ internal sealed class EmueraConsole
     private long logicalLineCount;
     private long deletedLines;
     private string? lastLineId;
+    private string? lastPhysicalLineId;
     // CLEARLINE 1 is commonly followed immediately by a reprint for
     // animation. Keep the physical line identity until that replacement is
     // available so the browser can update its existing Canvas nodes.
-    private string? deferredReplacementLineId;
+    private string? deferredReplacementLogicalLineId;
     private bool lastLineCanAppend;
     private bool lastLineTemporary;
     private string? htmlIslandDrawableId;
@@ -61,6 +66,7 @@ internal sealed class EmueraConsole
     private StringStyle stringStyle;
     private readonly List<string> runtimeMessages = [];
     private readonly List<string> runtimeWarnings = [];
+    private readonly HashSet<string> ignoredGameFonts = new(StringComparer.Ordinal);
     private readonly List<string> runtimeSystemMessages = [];
     private readonly List<string> runtimeDebugMessages = [];
     private readonly List<string> pendingDiagnosticLines = [];
@@ -72,13 +78,27 @@ internal sealed class EmueraConsole
         bool NoWrap,
         bool LineEnd);
 
+    private sealed record LayoutAtom(
+        IReadOnlyList<ConsoleNode> Children,
+        int Width,
+        bool CanDivide,
+        string? Text,
+        ConsoleTextStyle? TextStyle,
+        ConsoleInlineAction? Action,
+        int? LockedX);
+
+    private sealed record PhysicalLineDraft(
+        IReadOnlyList<PositionedInlineSegmentNode> Segments,
+        int ContentWidth);
+
     public EmueraConsole(
         IGameConsole adapter,
         IRuntimeClock clock,
         CancellationToken cancellationToken,
         Func<string, RuntimeSpriteDefinition> imageResolver = null,
         int viewportWidth = 800,
-        int viewportHeight = 600, double halfWidthPx = 0, double fullWidthPx = 0)
+        int viewportHeight = 600,
+        string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "", string webFontAssetDigest = "")
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -88,9 +108,15 @@ internal sealed class EmueraConsole
             throw new ArgumentOutOfRangeException(nameof(viewportWidth), "The logical headless viewport is outside its limit.");
         this.viewportWidth = viewportWidth;
         this.viewportHeight = viewportHeight;
-        this.halfWidthPx = halfWidthPx;
-        this.fullWidthPx = fullWidthPx;
+        this.fontFaceId = fontFaceId ?? string.Empty;
+        this.fontCatalogDigest = fontCatalogDigest ?? string.Empty;
+        this.webFontAssetDigest = webFontAssetDigest ?? string.Empty;
         stringStyle = new StringStyle(Config.ForeColor, FontStyle.Regular, string.Empty);
+        if (Config.DefaultFont is not null)
+        {
+            stringMeasure = new StringMeasure();
+            printBuffer = new PrintStringBuffer(this);
+        }
         GlobalStatic.Console = this;
     }
 
@@ -121,8 +147,8 @@ internal sealed class EmueraConsole
     public MainWindow Window { get; } = new();
     public List<ConsoleDisplayLine> DisplayLineList { get; } = [];
     public Dictionary<int, List<AConsoleDisplayNode>> EscapedParts { get; } = [];
-    public PrintStringBuffer PrintBuffer => null;
-    public StringMeasure StrMeasure => null;
+    public PrintStringBuffer PrintBuffer => printBuffer;
+    public StringMeasure StrMeasure => stringMeasure;
     public ConsoleButtonString SelectingButton => null;
     public ConsoleButtonString PointingSring => null;
     public ConsoleButtonString[] bitmapCacheArray = new ConsoleButtonString[256];
@@ -193,8 +219,8 @@ internal sealed class EmueraConsole
     }
     public void PrintButton(string value, string input) => EmitButton(value, input);
     public void PrintButton(string value, long input) => EmitButton(value, input.ToString(CultureInfo.InvariantCulture));
-    public void PrintButtonC(string value, string input, bool isRight) => EmitButton(FormatPrintCValue(value, isRight), input);
-    public void PrintButtonC(string value, long input, bool isRight) => EmitButton(FormatPrintCValue(value, isRight), input.ToString(CultureInfo.InvariantCulture));
+    public void PrintButtonC(string value, string input, bool isRight) => EmitPrintCButton(value, input, isRight);
+    public void PrintButtonC(string value, long input, bool isRight) => EmitPrintCButton(value, input.ToString(CultureInfo.InvariantCulture), isRight);
     public void NewLine()
     {
         if (outputEnabled)
@@ -214,6 +240,7 @@ internal sealed class EmueraConsole
         FlushDeferredReplacementDelete();
         EmitStructured(ConsoleOperation.ClearConsole());
         lastLineId = null;
+        lastPhysicalLineId = null;
         lastLineCanAppend = false;
         lastLineTemporary = false;
     }
@@ -222,35 +249,60 @@ internal sealed class EmueraConsole
     {
         if (count <= 0 || adapter is not StructuredGameConsole structured)
             return;
-        string[] ids = structured.Snapshot.Scrollback
-            .TakeLast(Math.Min(count, structured.Snapshot.Scrollback.Count))
+        // CLEARLINE counts upstream logical display lines. Font-authoritative
+        // layout can represent one such line with several physical rows, so
+        // deleting only the last physical id leaves whitespace-only wrapped
+        // fragments in the browser scrollback.
+        List<List<ConsoleLine>> logicalGroups = structured.Snapshot.Scrollback
+            .GroupBy(line => line.LogicalLineId, StringComparer.Ordinal)
+            .Select(group => group
+                .OrderBy(line => line.PhysicalIndex)
+                .ThenBy(line => line.LineId, StringComparer.Ordinal)
+                .ToList())
+            .ToList();
+        int groupCount = Math.Min(count, logicalGroups.Count);
+        if (groupCount == 0)
+            return;
+        List<List<ConsoleLine>> groupsToDelete = logicalGroups.TakeLast(groupCount).ToList();
+        string[] ids = groupsToDelete
+            .SelectMany(group => group)
             .Select(line => line.LineId)
             .ToArray();
-        if (ids.Length == 0)
-            return;
-        if (count == 1 && ids.Length == 1)
+        if (count == 1 && groupsToDelete.Count == 1)
         {
-            deferredReplacementLineId = ids[0];
-            lastLineId = ids[0];
+            List<ConsoleLine> group = groupsToDelete[0];
+            deferredReplacementLogicalLineId = group[0].LogicalLineId;
+            lastLineId = group[^1].LineId;
+            lastPhysicalLineId = group[^1].LineId;
             lastLineCanAppend = false;
-            lastLineTemporary = structured.Snapshot.Scrollback[^1].Temporary;
+            lastLineTemporary = group[^1].Temporary;
             return;
         }
         try
         {
+            deferredReplacementLogicalLineId = null;
             EmitStructured(ConsoleOperation.DeleteLines(ids));
-            deletedLines = checked(deletedLines + ids.Length);
+            deletedLines = checked(deletedLines + groupsToDelete.Count);
             ConsoleLine? remaining = structured.Snapshot.Scrollback.LastOrDefault();
             lastLineId = remaining?.LineId;
+            lastPhysicalLineId = remaining?.LineId;
             lastLineCanAppend = false;
             lastLineTemporary = remaining?.Temporary ?? false;
-            logicalLineCount = Math.Max(0, logicalLineCount - ids.Length);
+            logicalLineCount = Math.Max(0, logicalLineCount - groupsToDelete.Count);
         }
         catch (ConsoleContractException)
         {
             // A line trimmed by the bounded scrollback is already absent.
         }
     }
+
+    private static IReadOnlyList<ConsoleLine> GetLogicalLineGroup(
+        StructuredGameConsole console,
+        string logicalLineId) => console.Snapshot.Scrollback
+            .Where(line => string.Equals(line.LogicalLineId, logicalLineId, StringComparison.Ordinal))
+            .OrderBy(line => line.PhysicalIndex)
+            .ThenBy(line => line.LineId, StringComparer.Ordinal)
+            .ToArray();
 
     private UpstreamHtmlTranslationResult TranslateHtmlFragment(
         string fragment,
@@ -524,7 +576,12 @@ internal sealed class EmueraConsole
         stringStyle.Color = color;
         stringStyle.ColorChanged = color != Config.ForeColor;
     }
-    public void SetFont(string fontName) => stringStyle.Fontname = fontName;
+    public void SetFont(string fontName)
+    {
+        if (!string.IsNullOrWhiteSpace(fontName) && !string.Equals(fontName, Config.FontName, StringComparison.Ordinal) && ignoredGameFonts.Add(fontName))
+            RecordWarning($"game_font_ignored:{fontName[..Math.Min(fontName.Length, 128)]}");
+        stringStyle.Fontname = Config.FontName;
+    }
     public void SetBgColor(Color color)
     {
         bgColor = color;
@@ -559,11 +616,6 @@ internal sealed class EmueraConsole
         if (string.IsNullOrEmpty(value))
             return value;
 
-        // Upstream StringMeasure.GetDisplayLength measures the real fixed-pitch
-        // font; the headless runtime has no GDI text meter, so the same
-        // DrawableWidth loop is reproduced with a deterministic em-based
-        // estimate (wide/fullwidth glyph = one em, everything else = half em).
-        int fontSize = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize);
         int target = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.DrawableWidth > 0
             ? MinorShift.Emuera.Runtime.Config.Config.DrawableWidth
             : viewportWidth);
@@ -572,12 +624,12 @@ internal sealed class EmueraConsole
         while (width < target)
         {
             builder.Append(value);
-            width = BarDisplayWidth(builder, fontSize, halfWidthPx, fullWidthPx);
+            width = Measure(builder.ToString());
         }
         while (width > target && builder.Length > 0)
         {
             builder.Length--;
-            width = BarDisplayWidth(builder, fontSize, halfWidthPx, fullWidthPx);
+            width = Measure(builder.ToString());
         }
         return builder.ToString();
     }
@@ -786,6 +838,32 @@ internal sealed class EmueraConsole
                 generation: generation));
     }
 
+    private void EmitPrintCButton(string value, string input, bool alignmentRight)
+    {
+        if (!outputEnabled || string.IsNullOrEmpty(value))
+            return;
+
+        string formatted = FormatPrintCValue(value, alignmentRight);
+        // The real layout path keeps PRINTBUTTONC/PRINTBUTTONLC padding out of
+        // the action box. The compatibility path without a bound runtime font
+        // retains the old logical ButtonNode projection used by legacy host
+        // fixtures; Workers always bind a catalogued face before reaching this
+        // branch.
+        if (stringMeasure is null || Config.DefaultFont is null)
+        {
+            EmitButton(formatted, input);
+            return;
+        }
+
+        int labelStart = alignmentRight ? formatted.Length - value.Length : 0;
+        string leading = formatted[..labelStart];
+        string trailing = formatted[(labelStart + value.Length)..];
+        AppendText(leading);
+        EmitButton(value, input);
+        AppendText(trailing);
+        pendingLineEnd = true;
+    }
+
     private void EmitLine(string value) => EmitLine(value, temporary: false);
 
     private void EmitLine(string value, bool temporary)
@@ -817,27 +895,300 @@ internal sealed class EmueraConsole
         stringStyle = previous;
     }
 
-    private static int BarDisplayWidth(System.Text.StringBuilder builder, int fontSize, double halfWidthPx, double fullWidthPx)
+    private int Measure(string value)
     {
-        int width = 0;
-        for (int index = 0; index < builder.Length; index++)
-            width += (int)Math.Ceiling(IsWideBarCharacter(builder[index]) && fullWidthPx > 0 ? fullWidthPx : !IsWideBarCharacter(builder[index]) && halfWidthPx > 0 ? halfWidthPx : IsWideBarCharacter(builder[index]) ? fontSize : Math.Max(1, fontSize / 2));
-        return width;
+        if (stringMeasure is not null && Config.DefaultFont is not null)
+            return stringMeasure.GetDisplayLength(value, Config.DefaultFont);
+        return checked(value.Length * Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize / 2));
     }
 
-    private static bool IsWideBarCharacter(char value)
+    private int MeasureWithStyle(string value, ConsoleTextStyle style)
     {
-        int code = value;
-        return code >= 0x1100 && (
-            code <= 0x115F ||
-            code == 0x2329 || code == 0x232A ||
-            (code >= 0x2E80 && code <= 0xA4CF && code != 0x303F) ||
-            (code >= 0xAC00 && code <= 0xD7A3) ||
-            (code >= 0xF900 && code <= 0xFAFF) ||
-            (code >= 0xFE10 && code <= 0xFE19) ||
-            (code >= 0xFE30 && code <= 0xFE6F) ||
-            (code >= 0xFF00 && code <= 0xFF60) ||
-            (code >= 0xFFE0 && code <= 0xFFE6));
+        if (string.IsNullOrEmpty(value))
+            return 0;
+        if (stringMeasure is null)
+            return Measure(value);
+
+        FontStyle fontStyle = FontStyle.Regular;
+        if ((style.Decorations & ConsoleFontStyle.Bold) != 0) fontStyle |= FontStyle.Bold;
+        if ((style.Decorations & ConsoleFontStyle.Italic) != 0) fontStyle |= FontStyle.Italic;
+        Font? font = FontFactory.GetFont(Config.FontName, fontStyle);
+        if (font is null)
+            throw new InvalidOperationException("The selected runtime font could not create a measurement font.");
+        return stringMeasure.GetDisplayLength(value, font);
+    }
+
+    private IReadOnlyList<ConsoleLine> LayoutPhysicalLines(
+        string logicalLineId,
+        IReadOnlyList<ConsoleNode> nodes,
+        ConsoleLineAlignment alignment,
+        bool temporary,
+        bool noWrap,
+        bool lineEnd)
+    {
+        int layoutWidth = Config.DrawableWidth > 0 ? Config.DrawableWidth : viewportWidth;
+        int lineHeight = Math.Max(Config.FontSize, Config.LineHeight);
+        var atoms = CreateLayoutAtoms(nodes);
+        var drafts = new List<PhysicalLineDraft>();
+        var current = new List<PositionedInlineSegmentNode>();
+        int cursor = 0;
+
+        void FlushDraft()
+        {
+            drafts.Add(new PhysicalLineDraft(current.ToArray(), cursor));
+            current.Clear();
+            cursor = 0;
+        }
+
+        foreach (LayoutAtom original in atoms)
+        {
+            LayoutAtom remaining = original;
+            while (true)
+            {
+                int position = remaining.LockedX is { } locked ? Math.Max(cursor, locked) : cursor;
+                bool fits = noWrap || layoutWidth <= 0 || position + remaining.Width <= layoutWidth;
+                if (fits)
+                {
+                    current.Add(new PositionedInlineSegmentNode(position, remaining.Width, remaining.Children, remaining.Action));
+                    cursor = Math.Max(cursor, checked(position + remaining.Width));
+                    break;
+                }
+
+                if (current.Count > 0 && remaining.Action is not null && Config.ButtonWrap)
+                {
+                    FlushDraft();
+                    continue;
+                }
+
+                if (remaining.CanDivide)
+                {
+                    int available = Math.Max(0, layoutWidth - cursor);
+                    int fittingCharacters = FindFittingCharacters(remaining, available);
+                    if (fittingCharacters > 0 && TrySplitAtom(remaining, fittingCharacters, out LayoutAtom? prefix, out LayoutAtom? suffix))
+                    {
+                        current.Add(new PositionedInlineSegmentNode(cursor, prefix.Width, prefix.Children, prefix.Action));
+                        cursor = checked(cursor + prefix.Width);
+                        FlushDraft();
+                        remaining = suffix;
+                        continue;
+                    }
+                }
+
+                if (current.Count > 0)
+                {
+                    FlushDraft();
+                    continue;
+                }
+
+                // A non-dividable image/shape or a single glyph wider than the
+                // drawable area remains on its own physical line, matching the
+                // upstream overflow rule instead of looping forever.
+                current.Add(new PositionedInlineSegmentNode(0, remaining.Width, remaining.Children, remaining.Action));
+                cursor = remaining.Width;
+                break;
+            }
+        }
+
+        if (current.Count > 0 || drafts.Count == 0 || lineEnd)
+            FlushDraft();
+
+        var result = new List<ConsoleLine>(drafts.Count);
+        for (int index = 0; index < drafts.Count; index++)
+        {
+            PhysicalLineDraft draft = drafts[index];
+            int shift = alignment switch
+            {
+                ConsoleLineAlignment.Center => Math.Max(0, (layoutWidth - draft.ContentWidth) / 2),
+                ConsoleLineAlignment.Right => Math.Max(0, layoutWidth - draft.ContentWidth),
+                _ => 0
+            };
+            IReadOnlyList<ConsoleNode> positioned = draft.Segments
+                .Select(segment => (ConsoleNode)new PositionedInlineSegmentNode(
+                    checked(segment.PositionX + shift),
+                    segment.MeasuredWidth,
+                    segment.Children,
+                    segment.Action))
+                .ToArray();
+            string physicalId = index == 0 ? logicalLineId : $"{logicalLineId}-p{index}";
+            result.Add(new ConsoleLine(
+                physicalId,
+                positioned,
+                alignment,
+                temporary,
+                noWrap,
+                layoutWidth,
+                lineHeight,
+                logicalLineId,
+                index,
+                index == 0));
+        }
+        return result;
+    }
+
+    private IReadOnlyList<LayoutAtom> CreateLayoutAtoms(IReadOnlyList<ConsoleNode> nodes)
+    {
+        var atoms = new List<LayoutAtom>(nodes.Count);
+        foreach (ConsoleNode node in nodes)
+        {
+            switch (node)
+            {
+                case TextNode text:
+                    atoms.Add(new LayoutAtom([text], MeasureWithStyle(text.Text, text.Style), true, text.Text, text.Style, null, null));
+                    break;
+                case ButtonNode button:
+                    atoms.Add(new LayoutAtom(
+                        button.Children,
+                        MeasureInlineNodes(button.Children),
+                        button.Children.All(child => child is TextNode),
+                        button.Children.OfType<TextNode>().Any() ? string.Concat(button.Children.OfType<TextNode>().Select(child => child.Text)) : null,
+                        button.Children.OfType<TextNode>().Select(child => child.Style).Distinct().Count() == 1 ? button.Children.OfType<TextNode>().First().Style : null,
+                        new ConsoleInlineAction(button.Value, button.Tooltip, button.Enabled, button.Generation),
+                        button.PositionX));
+                    break;
+                case PositionedInlineSegmentNode segment:
+                    atoms.Add(new LayoutAtom(segment.Children, segment.MeasuredWidth, false, null, null, segment.Action, segment.PositionX));
+                    break;
+                default:
+                    atoms.Add(new LayoutAtom([node], MeasureInlineNode(node), false, null, null, null, null));
+                    break;
+            }
+        }
+        return atoms;
+    }
+
+    private int MeasureInlineNodes(IEnumerable<ConsoleNode> nodes) => checked(nodes.Sum(MeasureInlineNode));
+
+    private int MeasureInlineNode(ConsoleNode node) => node switch
+    {
+        TextNode text => MeasureWithStyle(text.Text, text.Style),
+        ButtonNode button => MeasureInlineNodes(button.Children),
+        PositionedInlineSegmentNode segment => segment.MeasuredWidth,
+        ImageNode image => image.Destination?.Width ?? image.Width ?? (image.AltText is null ? 0 : Measure(image.AltText)),
+        SpriteNode sprite => sprite.Destination.Width,
+        ShapeNode shape => shape.Bounds.Width,
+        DivNode div => div.Bounds.Width,
+        HtmlIslandNode island when island.StructuredNodes is { } structured => MeasureInlineNodes(structured),
+        HtmlIslandNode island when island.Layout is { } layout => layout.Width,
+        HtmlIslandNode => 0,
+        LineBreakNode => 0,
+        _ => 0
+    };
+
+    private int FindFittingCharacters(LayoutAtom atom, int available)
+    {
+        if (!atom.CanDivide || atom.Text is null || atom.Text.Length == 0 || available <= 0)
+            return 0;
+        int low = 0;
+        int high = atom.Text.Length;
+        while (low < high)
+        {
+            int middle = (low + high + 1) / 2;
+            if (MeasureTextPrefix(atom, middle) <= available)
+                low = middle;
+            else
+                high = middle - 1;
+        }
+        return low;
+    }
+
+    private bool TrySplitAtom(LayoutAtom atom, int characterCount, out LayoutAtom prefix, out LayoutAtom suffix)
+    {
+        prefix = null!;
+        suffix = null!;
+        if (!atom.CanDivide || atom.Text is null || characterCount <= 0 || characterCount >= atom.Text.Length)
+            return false;
+
+        IReadOnlyList<ConsoleNode> prefixChildren;
+        IReadOnlyList<ConsoleNode> suffixChildren;
+        if (atom.Children.All(child => child is TextNode))
+        {
+            TextNode[] textChildren = atom.Children.Cast<TextNode>().ToArray();
+            prefixChildren = SliceStyledText(textChildren, 0, characterCount);
+            suffixChildren = SliceStyledText(textChildren, characterCount, atom.Text.Length - characterCount);
+        }
+        else
+        {
+            prefixChildren = [new TextNode(atom.Text[..characterCount], atom.TextStyle)];
+            suffixChildren = [new TextNode(atom.Text[characterCount..], atom.TextStyle)];
+        }
+
+        int prefixWidth = MeasureInlineNodes(prefixChildren);
+        int suffixWidth = MeasureInlineNodes(suffixChildren);
+        prefix = atom with { Children = prefixChildren, Text = atom.Text[..characterCount], Width = prefixWidth, LockedX = atom.LockedX };
+        suffix = atom with { Children = suffixChildren, Text = atom.Text[characterCount..], Width = suffixWidth, LockedX = null };
+        return true;
+    }
+
+    private int MeasureTextPrefix(LayoutAtom atom, int characterCount)
+    {
+        if (atom.Children.All(child => child is TextNode))
+            return MeasureInlineNodes(SliceStyledText(atom.Children.Cast<TextNode>().ToArray(), 0, characterCount));
+        return atom.TextStyle is null ? 0 : MeasureWithStyle(atom.Text![..characterCount], atom.TextStyle);
+    }
+
+    /// <summary>
+    /// Reflows the complete last logical line when a non-terminated PRINT
+    /// buffer receives more text. Appending the newly measured segments at the
+    /// old x coordinate would preserve a stale wrap decision and could leave
+    /// the browser with two incompatible physical-line layouts. Replacements,
+    /// additions and removals are deliberately committed as one transaction.
+    /// </summary>
+    private void RelayoutLastLogicalLine(StructuredGameConsole console, IReadOnlyList<ConsoleNode> appendedNodes, PendingBufferedLine pending)
+    {
+        ConsoleLine last = console.Snapshot.Scrollback.LastOrDefault(line => string.Equals(line.LineId, lastPhysicalLineId, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException("The last physical line disappeared before relayout.");
+        string logicalId = last.LogicalLineId ?? last.LineId;
+        List<ConsoleLine> existingGroup = console.Snapshot.Scrollback
+            .Where(line => string.Equals(line.LogicalLineId ?? line.LineId, logicalId, StringComparison.Ordinal))
+            .OrderBy(line => line.PhysicalIndex)
+            .ToList();
+        if (existingGroup.Count == 0)
+            throw new InvalidOperationException("The last logical line has no physical lines.");
+
+        var originalNodes = new List<ConsoleNode>();
+        foreach (ConsoleLine line in existingGroup)
+        {
+            foreach (PositionedInlineSegmentNode segment in line.Nodes.OfType<PositionedInlineSegmentNode>())
+            {
+                if (segment.Action is { } action)
+                    originalNodes.Add(new ButtonNode(segment.Children, action.Value, action.Tooltip, action.Enabled, action.Generation));
+                else
+                    originalNodes.AddRange(segment.Children);
+            }
+        }
+        originalNodes.AddRange(appendedNodes);
+        // `appendedNodes` already passed through AutoButtonize in
+        // FlushPendingLine. Re-parsing the reconstructed ButtonNode label
+        // would allow button text that happens to contain a bracketed token
+        // to become a second action, changing the upstream click contract.
+        IReadOnlyList<ConsoleNode> relayoutInput = originalNodes;
+        IReadOnlyList<ConsoleLine> relaidOut = LayoutPhysicalLines(
+            logicalId,
+            relayoutInput,
+            existingGroup[0].Alignment,
+            existingGroup[0].Temporary,
+            existingGroup[0].NoWrap,
+            pending.LineEnd);
+
+        var oldIds = existingGroup.Select(line => line.LineId).ToHashSet(StringComparer.Ordinal);
+        var newIds = relaidOut.Select(line => line.LineId).ToHashSet(StringComparer.Ordinal);
+        var operations = new List<ConsoleOperation>(relaidOut.Count + oldIds.Count);
+        foreach (ConsoleLine line in relaidOut)
+        {
+            operations.Add(oldIds.Contains(line.LineId)
+                ? ConsoleOperation.ReplaceLine(line)
+                : ConsoleOperation.AppendLine(line));
+        }
+        string[] removed = existingGroup
+            .Where(line => !newIds.Contains(line.LineId))
+            .Select(line => line.LineId)
+            .ToArray();
+        if (removed.Length > 0)
+            operations.Add(ConsoleOperation.DeleteLines(removed));
+        EmitStructuredTransaction(operations);
+        lastLineId = relaidOut[^1].LineId;
+        lastPhysicalLineId = relaidOut[^1].LineId;
+        lastLineTemporary = relaidOut[^1].Temporary;
     }
 
     private void AppendNode(ConsoleNode node, ConsoleLineAlignment? alignment = null, bool? noWrap = null)
@@ -908,13 +1259,71 @@ internal sealed class EmueraConsole
         foreach (PendingBufferedLine line in lines)
         {
             IReadOnlyList<ConsoleNode> projectedNodes = AutoButtonize(line.Nodes);
+            if (stringMeasure is not null && Config.DefaultFont is not null)
+            {
+                string? deferredLogicalLineId = deferredReplacementLogicalLineId;
+                string id = deferredLogicalLineId ?? $"emuera-line-{checked(++lineId):x}";
+                IReadOnlyList<ConsoleLine> physicalLines = LayoutPhysicalLines(
+                    id,
+                    projectedNodes,
+                    line.Alignment ?? ToAlignment(),
+                    temporary,
+                    line.NoWrap,
+                    line.LineEnd);
+                if (lastLineCanAppend && lastPhysicalLineId is not null && projectedNodes.Count > 0 &&
+                    adapter is StructuredGameConsole appendConsole &&
+                    appendConsole.Snapshot.Scrollback.Any(existing => string.Equals(existing.LineId, lastPhysicalLineId, StringComparison.Ordinal)))
+                {
+                    RelayoutLastLogicalLine(appendConsole, projectedNodes, line);
+                    lastLineCanAppend = !line.LineEnd;
+                    continue;
+                }
+
+                IReadOnlyList<ConsoleLine> existingReplacementGroup = deferredLogicalLineId is not null &&
+                    adapter is StructuredGameConsole replacementConsole
+                    ? GetLogicalLineGroup(replacementConsole, deferredLogicalLineId)
+                    : [];
+                var oldIds = existingReplacementGroup
+                    .Select(line => line.LineId)
+                    .ToHashSet(StringComparer.Ordinal);
+                var newIds = physicalLines
+                    .Select(line => line.LineId)
+                    .ToHashSet(StringComparer.Ordinal);
+                var operations = new List<ConsoleOperation>(physicalLines.Count + existingReplacementGroup.Count);
+                for (int index = 0; index < physicalLines.Count; index++)
+                {
+                    ConsoleLine physicalLine = physicalLines[index];
+                    if (oldIds.Contains(physicalLine.LineId))
+                        operations.Add(ConsoleOperation.ReplaceLine(physicalLine));
+                    else
+                        operations.Add(ConsoleOperation.AppendLine(physicalLine));
+                }
+                string[] removedReplacementLines = existingReplacementGroup
+                    .Where(line => !newIds.Contains(line.LineId))
+                    .Select(line => line.LineId)
+                    .ToArray();
+                if (removedReplacementLines.Length > 0)
+                    operations.Add(ConsoleOperation.DeleteLines(removedReplacementLines));
+                EmitStructuredTransaction(operations);
+                deferredReplacementLogicalLineId = null;
+                lastLineId = physicalLines[^1].LineId;
+                lastPhysicalLineId = physicalLines[^1].LineId;
+                lastLineTemporary = temporary;
+                if (existingReplacementGroup.Count == 0)
+                {
+                    logicalLineCount = checked(logicalLineCount + 1);
+                    DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+                }
+                lastLineCanAppend = !line.LineEnd;
+                continue;
+            }
             if (lastLineCanAppend && lastLineId is not null && projectedNodes.Count > 0)
             {
                 EmitStructured(ConsoleOperation.AppendInline(lastLineId, projectedNodes));
             }
             else
             {
-                string id = deferredReplacementLineId ?? $"emuera-line-{checked(++lineId):x}";
+                string id = deferredReplacementLogicalLineId ?? $"emuera-line-{checked(++lineId):x}";
                 ConsoleLine replacement = new(
                     id,
                     projectedNodes,
@@ -922,7 +1331,7 @@ internal sealed class EmueraConsole
                     temporary,
                     line.NoWrap);
                 bool replaced = false;
-                if (deferredReplacementLineId is not null)
+                if (deferredReplacementLogicalLineId is not null)
                 {
                     bool canReplace = adapter is StructuredGameConsole replacementConsole &&
                         replacementConsole.Snapshot.Scrollback.Any(existing => string.Equals(existing.LineId, id, StringComparison.Ordinal));
@@ -933,11 +1342,12 @@ internal sealed class EmueraConsole
                     }
                     else
                         EmitStructured(ConsoleOperation.AppendLine(replacement));
-                    deferredReplacementLineId = null;
+                    deferredReplacementLogicalLineId = null;
                 }
                 else
                     EmitStructured(ConsoleOperation.AppendLine(replacement));
                 lastLineId = id;
+                lastPhysicalLineId = id;
                 lastLineTemporary = temporary;
                 if (!replaced)
                     logicalLineCount = checked(logicalLineCount + 1);
@@ -956,17 +1366,19 @@ internal sealed class EmueraConsole
 
     private void FlushDeferredReplacementDelete()
     {
-        if (deferredReplacementLineId is null || adapter is not StructuredGameConsole structured)
+        if (deferredReplacementLogicalLineId is null || adapter is not StructuredGameConsole structured)
             return;
 
-        string lineId = deferredReplacementLineId;
-        deferredReplacementLineId = null;
-        if (!structured.Snapshot.Scrollback.Any(line => string.Equals(line.LineId, lineId, StringComparison.Ordinal)))
+        string logicalLineId = deferredReplacementLogicalLineId;
+        deferredReplacementLogicalLineId = null;
+        IReadOnlyList<ConsoleLine> group = GetLogicalLineGroup(structured, logicalLineId);
+        if (group.Count == 0)
             return;
 
-        EmitStructured(ConsoleOperation.DeleteLines([lineId]));
+        EmitStructured(ConsoleOperation.DeleteLines(group.Select(line => line.LineId).ToArray()));
         deletedLines = checked(deletedLines + 1);
         lastLineId = structured.Snapshot.Scrollback.LastOrDefault()?.LineId;
+        lastPhysicalLineId = lastLineId;
         lastLineCanAppend = false;
         lastLineTemporary = structured.Snapshot.Scrollback.LastOrDefault()?.Temporary ?? false;
         logicalLineCount = Math.Max(0, logicalLineCount - 1);
@@ -1023,7 +1435,7 @@ internal sealed class EmueraConsole
         }
     }
 
-    private static string FormatPrintCValue(string value, bool alignmentRight)
+    private string FormatPrintCValue(string value, bool alignmentRight)
     {
         if (string.IsNullOrEmpty(value))
             return value;
@@ -1032,14 +1444,28 @@ internal sealed class EmueraConsole
         if (printCWidth <= 0)
             return value;
 
-        // Upstream uses the default replacement fallback for PRINTC width
-        // measurement. The shared EncodingHandler instance is intentionally
-        // strict for script/file decoding and must not be used here.
+        // PRINTC counts Shift-JIS bytes, then trims only padding spaces that
+        // exceed the measured width of exactly N default-font spaces. The
+        // measure is session-owned; browser metrics never enter this path.
         int byteLength = printCByteCountEncoding.GetByteCount(value);
+        int targetWidth = Measure(new string(' ', printCWidth));
+        int styleWidth(string text) => MeasureWithStyle(text, ToConsoleTextStyle());
         if (alignmentRight && byteLength < printCWidth)
-            return new string(' ', printCWidth - byteLength) + value;
+        {
+            string padded = new string(' ', printCWidth - byteLength) + value;
+            while (padded.Length > value.Length && styleWidth(padded) > targetWidth && padded[0] == ' ')
+                padded = padded[1..];
+            return padded;
+        }
+
         if (!alignmentRight && byteLength < printCWidth + 1)
-            return value + new string(' ', printCWidth + 1 - byteLength);
+        {
+            string padded = value + new string(' ', printCWidth + 1 - byteLength);
+            while (padded.Length > value.Length && styleWidth(padded) > targetWidth && padded[^1] == ' ')
+                padded = padded[..^1];
+            return padded;
+        }
+
         return value;
     }
 
@@ -1084,6 +1510,23 @@ internal sealed class EmueraConsole
         }
         else
             adapter.Emit(operation);
+    }
+
+    private void EmitStructuredTransaction(IEnumerable<ConsoleOperation> operations)
+    {
+        ConsoleOperation[] copy = operations.ToArray();
+        if (copy.Length == 0)
+            return;
+        if (adapter is StructuredGameConsole structured)
+        {
+            SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction(copy));
+            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+        }
+        else
+        {
+            foreach (ConsoleOperation operation in copy)
+                adapter.Emit(operation);
+        }
     }
 
     private void EmitRasterDrawable(
@@ -1142,7 +1585,7 @@ internal sealed class EmueraConsole
             ToConsoleColor(stringStyle.Color),
             null,
             decorations,
-            string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname,
+            "session-default",
             Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize),
             Math.Max(MinorShift.Emuera.Runtime.Config.Config.FontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight),
             buttonColor: ToConsoleColor(stringStyle.ButtonColor));
@@ -1154,9 +1597,11 @@ internal sealed class EmueraConsole
         viewportHeight,
         defaultBackground: ToConsoleColor(bgColor),
         defaultFont: new ConsoleFontSpec(
-            string.IsNullOrWhiteSpace(stringStyle.Fontname) ? "default" : stringStyle.Fontname,
+            "session-default",
             Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize),
-            Math.Max(MinorShift.Emuera.Runtime.Config.Config.FontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight)));
+            Math.Max(MinorShift.Emuera.Runtime.Config.Config.FontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight)),
+        fontFaceId: fontFaceId,
+        webFontAssetDigest: webFontAssetDigest);
 
     private ConsoleContractLimits HtmlContractLimits => adapter is StructuredGameConsole structured
         ? structured.StateStore.Options.ContractLimits
@@ -1263,6 +1708,8 @@ internal sealed class EmueraConsole
             runtimeDebugMessages.RemoveAt(0);
         runtimeDebugMessages.Add(value.Length > 4_096 ? value[..4_096] : value);
     }
+
+    public void Dispose() => stringMeasure?.Dispose();
 
     private static string FormatDiagnostic(string value, ScriptPosition? position) =>
         position is { } located

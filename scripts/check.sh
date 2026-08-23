@@ -6,6 +6,8 @@ cd "$repo_root"
 
 source "$repo_root/scripts/lib/dev-env.sh"
 
+"$repo_root/scripts/verify-runtime-fonts.sh"
+
 compose=(docker compose)
 if [[ -f "$repo_root/docker/.env" ]]; then
   compose+=(--env-file "$repo_root/docker/.env")

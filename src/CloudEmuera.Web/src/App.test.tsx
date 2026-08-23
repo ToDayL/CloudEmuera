@@ -5,6 +5,28 @@ import { App } from "./App";
 import { AuthProvider, CurrentUser } from "./auth";
 
 const digest = "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+const runtimeFontDigest = "01799063a83f8af346c5e02f1a46c3adcd8b81a189abda60a6903075aea7bb25";
+const runtimeFontFaceId = "sarasa-fixed-sc-1.0.40-regular";
+
+function runtimeFontCatalog() {
+  return {
+    schemaVersion: 1,
+    catalogDigest: "a".repeat(64),
+    defaultFaceId: runtimeFontFaceId,
+    items: [{
+      faceId: runtimeFontFaceId,
+      displayName: "Sarasa Fixed SC Regular",
+      family: "sarasa-fixed-sc",
+      sourceVersion: "1.0.40",
+      weight: 400,
+      runtimeFamilyName: "Sarasa Fixed SC",
+      webAssetDigest: runtimeFontDigest,
+      webAssetByteLength: 9,
+      webAssetUrl: `/api/v1/runtime-fonts/assets/${runtimeFontDigest}.woff2`,
+      licenseId: "OFL-1.1",
+    }],
+  };
+}
 
 function game(overrides: Record<string, unknown> = {}) {
   return {
@@ -54,6 +76,9 @@ function session(overrides: Record<string, unknown> = {}) {
     lastActivityAt: "2026-08-10T00:02:00Z",
     closedAt: null,
     closeReason: null,
+    fontFaceId: runtimeFontFaceId,
+    fontSize: 18,
+    lineHeight: 19,
     ...overrides,
   };
 }
@@ -340,17 +365,31 @@ describe("App", () => {
     const currentSession = session();
     mockFetch((url) => {
       if (url === "/api/v1/sessions/sess-world") return jsonResponse(currentSession);
+      if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
+      if (url === `/api/v1/runtime-fonts/assets/${runtimeFontDigest}.woff2`) return new Response(new TextEncoder().encode("font-test"), { headers: { "Content-Type": "font/woff2", "Content-Length": "9" } });
       if (url === "/api/v1/sessions/sess-world/presentation-manifest") return jsonResponse(emptyPresentationManifest());
       return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
     });
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: { add: vi.fn(), load: vi.fn().mockResolvedValue([]), ready: Promise.resolve([]) } });
+    class TestFontFace {
+      constructor(readonly family: string, readonly source: ArrayBuffer, readonly descriptors: FontFaceDescriptors) {}
+      load(): Promise<FontFace> { return Promise.resolve(this as unknown as FontFace); }
+    }
+    vi.stubGlobal("FontFace", TestFontFace);
     vi.stubGlobal("WebSocket", SilentWebSocket);
-    renderAt("/sessions/sess-world");
+    try {
+      renderAt("/sessions/sess-world");
 
-    expect(await screen.findByRole("heading", { name: "港口旅程" })).toBeInTheDocument();
-    expect(screen.getAllByText("连接中").length).toBeGreaterThan(0);
-    expect(screen.getByText("等待 Worker 快照…")).toBeInTheDocument();
-    expect(screen.getAllByText("运行中").length).toBeGreaterThan(0);
-    vi.unstubAllGlobals();
+      expect(await screen.findByRole("heading", { name: "港口旅程" })).toBeInTheDocument();
+      expect(screen.getAllByText("连接中").length).toBeGreaterThan(0);
+      expect(screen.getByText("等待 Worker 快照…")).toBeInTheDocument();
+      expect(screen.getAllByText("运行中").length).toBeGreaterThan(0);
+    } finally {
+      vi.unstubAllGlobals();
+      if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+      else Reflect.deleteProperty(document, "fonts");
+    }
   });
 
   it("deletes a closed Session from the Session list", async () => {

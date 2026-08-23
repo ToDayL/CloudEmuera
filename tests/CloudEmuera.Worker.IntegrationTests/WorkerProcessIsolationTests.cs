@@ -3,7 +3,7 @@ using System.Text;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V5;
+using CloudEmuera.Ipc.V6;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;
@@ -189,6 +189,35 @@ public sealed class WorkerProcessIsolationTests
         Assert.True(Directory.Exists(fixture.SessionRoot));
         Assert.True(File.Exists(Path.Combine(fixture.SessionRoot, SessionRootLayoutBuilder.BindingMetadataFileName)));
         Assert.Equal(fixture.PublishedDigest, fixture.ComputePublishedDigest());
+    }
+
+    [Fact]
+    [Trait("Category", "WorkerLifecycle")]
+    public async Task WorkerReportsStableReasonWhenFontCatalogDoesNotMatch()
+    {
+        await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location));
+        ApiWorkerSession session = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
+            new WorkerBinding("sess_font_catalog_mismatch", "wrk_font_catalog_mismatch", 2),
+            fixture.SessionRoot,
+            "v18-compatible",
+            RuntimeSaveLayout.Root,
+            fixture.Manifest.ManifestDigest,
+            fontCatalogDigest: new string('0', 64)));
+
+        await session.SendStartRuntimeAsync(TimeSpan.FromSeconds(10));
+        await session.WaitForAsync(
+            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.CommandResult && value.CommandResult.Accepted,
+            TimeSpan.FromSeconds(5));
+        WorkerEnvelope failure = await session.WaitForAsync(
+            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.RuntimeFailed,
+            TimeSpan.FromSeconds(15));
+
+        Assert.Equal("font_catalog_mismatch", failure.RuntimeFailed.StableCode);
+        Assert.Equal("initialization", failure.RuntimeFailed.Phase);
+        Assert.True(failure.RuntimeFailed.Fatal);
+        Assert.Equal(13, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
@@ -561,11 +590,39 @@ public sealed class WorkerProcessIsolationTests
                 case CloudEmuera.RuntimeAdapter.ButtonNode button:
                     result.Append(string.Concat(button.Children.Cast<CloudEmuera.RuntimeAdapter.TextNode>().Select(child => child.Text)));
                     break;
+                case CloudEmuera.RuntimeAdapter.PositionedInlineSegmentNode segment:
+                    result.Append(ProjectTranscriptNodes(segment.Children));
+                    break;
             }
         }
 
         if (result.Length > 0 && result[^1] == '\n')
             result.Length--;
+        return result.ToString();
+    }
+
+    private static string ProjectTranscriptNodes(IEnumerable<CloudEmuera.RuntimeAdapter.ConsoleNode> nodes)
+    {
+        var result = new StringBuilder();
+        foreach (CloudEmuera.RuntimeAdapter.ConsoleNode node in nodes)
+        {
+            switch (node)
+            {
+                case CloudEmuera.RuntimeAdapter.TextNode text:
+                    result.Append(text.Text);
+                    break;
+                case CloudEmuera.RuntimeAdapter.LineBreakNode:
+                    result.Append('\n');
+                    break;
+                case CloudEmuera.RuntimeAdapter.ButtonNode button:
+                    result.Append(string.Concat(button.Children.OfType<CloudEmuera.RuntimeAdapter.TextNode>().Select(child => child.Text)));
+                    break;
+                case CloudEmuera.RuntimeAdapter.PositionedInlineSegmentNode segment:
+                    result.Append(ProjectTranscriptNodes(segment.Children));
+                    break;
+            }
+        }
+
         return result.ToString();
     }
 

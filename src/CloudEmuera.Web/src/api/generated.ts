@@ -22,6 +22,7 @@ export interface SessionResponseDto {
   sourceContentDigest: string;
   sourceContentRevision: number;
   runtimeVersion: string;
+  fontFaceId: string;
   fontSize: number;
   lineHeight: number;
   state: SessionStateDto;

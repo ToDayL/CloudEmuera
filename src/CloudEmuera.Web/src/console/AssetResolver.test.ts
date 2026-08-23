@@ -30,6 +30,18 @@ describe("AssetResolver", () => {
     expect(resolver.fontFamily("font-family:evil")).toBe("sans-serif");
   });
 
+  it("never lets presentation manifest fonts override the session runtime face", () => {
+    const assetId = "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const resolver = new AssetResolver("s1", {
+      schemaVersion: 1,
+      assets: [{ assetId, mediaType: "font/woff2", byteLength: 10, contentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+      fonts: [{ family: "game-default", assetId, fallback: "sans-serif", cssFamily: "cloudemuera-font-0123456789abcdef", aliases: ["default"] }],
+      fontDiagnostics: [],
+    }, "cloudemuera-runtime-face");
+    expect(resolver.fontFamily("default")).toBe("cloudemuera-runtime-face");
+    expect(resolver.fontFamily("game-default")).toBe("cloudemuera-runtime-face");
+  });
+
   it("keeps multiple font assets addressable and exposes compatibility diagnostics", () => {
     const first = "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const second = "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

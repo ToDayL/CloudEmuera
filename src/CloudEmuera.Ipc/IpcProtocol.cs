@@ -15,7 +15,7 @@ namespace CloudEmuera.Ipc;
 public static class IpcProtocol
 {
     public const uint CurrentVersion = 2;
-    public const int BootstrapSchemaVersion = 3;
+    public const int BootstrapSchemaVersion = 4;
 
     public static string NewMessageId(string prefix = "msg")
     {
@@ -108,6 +108,8 @@ public readonly record struct IpcValidationResult(bool IsValid, string ReasonCod
 /// <summary>Small DTO used by the API control plane to pass one-time Worker state.</summary>
 public sealed record WorkerBootstrapDocument
 {
+    private const string DefaultRuntimeFontFaceId = "sarasa-fixed-sc-1.0.40-regular";
+
     public int SchemaVersion { get; init; } = IpcProtocol.BootstrapSchemaVersion;
 
     public uint ProtocolVersion { get; init; } = StructuredIpcProtocol.CurrentVersion;
@@ -143,8 +145,8 @@ public sealed record WorkerBootstrapDocument
     public int BrowserWidth { get; init; }
     public int FontSize { get; init; } = 18;
     public int LineHeight { get; init; } = 19;
-    public double HalfWidthPx { get; init; }
-    public double FullWidthPx { get; init; }
+    public string FontFaceId { get; init; } = DefaultRuntimeFontFaceId;
+    public string FontCatalogDigest { get; init; } = string.Empty;
 
     public int SaveLayout { get; init; }
 
@@ -176,7 +178,7 @@ public sealed record WorkerBootstrapDocument
         IpcValidator.ValidateAbsolutePath(SessionRoot, nameof(SessionRoot));
         IpcValidator.ValidateAbsolutePath(ControlSocketPath, nameof(ControlSocketPath));
         IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
-        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384 || FontSize is < 8 or > 72 || LineHeight < FontSize || LineHeight > 128 || !double.IsFinite(HalfWidthPx) || !double.IsFinite(FullWidthPx) || HalfWidthPx < 0 || FullWidthPx < 0 || HalfWidthPx > 128 || FullWidthPx > 256)
+        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384 || FontSize is < 8 or > 72 || LineHeight < FontSize || LineHeight > 128 || string.IsNullOrWhiteSpace(FontFaceId) || !IsIdentifier(FontFaceId) || (FontCatalogDigest.Length != 0 && !IsLowerHexSha256(FontCatalogDigest)))
         {
             throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
         }
@@ -202,6 +204,13 @@ public sealed record WorkerBootstrapDocument
             throw new InvalidDataException($"{IpcReasonCodes.BootstrapInvalid}:{name}");
         }
     }
+
+    private static bool IsLowerHexSha256(string value) =>
+        value.Length == 64 && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static bool IsIdentifier(string value) =>
+        value.Length is > 0 and <= IpcLimits.MaxIdentifierLength &&
+        value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.' or '~');
 }
 
 public static class WorkerBootstrapFile

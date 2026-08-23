@@ -7,23 +7,31 @@ export type SessionGameSummary = SessionGameSummaryDto;
 export type SessionView = SessionResponseDto;
 export type SessionListResponse = SessionListResponseDto;
 
+export interface RuntimeFontFace {
+  faceId: string;
+  displayName: string;
+  family: string;
+  sourceVersion: string;
+  weight: number;
+  runtimeFamilyName: string;
+  webAssetDigest: string;
+  webAssetByteLength: number;
+  webAssetUrl: string;
+  licenseId: string;
+}
+
+export interface RuntimeFontCatalog {
+  schemaVersion: number;
+  catalogDigest: string;
+  defaultFaceId: string;
+  items: RuntimeFontFace[];
+}
+
 export interface SessionListQuery {
   gameId?: string;
   state?: SessionState;
   cursor?: string;
   limit?: number;
-}
-
-export interface SessionTextMetrics { halfWidthPx: number; fullWidthPx: number }
-
-const consoleFontFamily = '"SFMono-Regular", Consolas, "Liberation Mono", "Noto Sans Mono CJK SC", monospace';
-
-export function measureSessionTextMetrics(fontSize: number): SessionTextMetrics {
-  const canvas = typeof document === "undefined" ? null : document.createElement("canvas");
-  const context = canvas?.getContext("2d");
-  if (!context) return { halfWidthPx: fontSize * 0.5, fullWidthPx: fontSize };
-  context.font = `${fontSize}px ${consoleFontFamily}`;
-  return { halfWidthPx: Math.max(0.1, context.measureText("A").width), fullWidthPx: Math.max(0.1, context.measureText("汉").width) };
 }
 
 function jsonMutationHeaders(token: string, key: string): Record<string, string> {
@@ -52,27 +60,30 @@ export async function getSession(sessionId: string): Promise<SessionView> {
   return apiRequest<SessionView>(`/sessions/${encodeURIComponent(sessionId)}`);
 }
 
-export async function createSession(gameId: string, name: string, fontSize = 16, lineHeight = 16, idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
+export async function createSession(gameId: string, name: string, fontSize = 18, lineHeight = 19, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular"): Promise<SessionView> {
   const token = await getCsrfToken();
   return (await apiRequestWithMeta<SessionView>("/sessions", {
     method: "POST",
     headers: jsonMutationHeaders(token, idempotencyKey),
-    body: JSON.stringify({ gameId, name, fontSize, lineHeight }),
+    body: JSON.stringify({ gameId, name, fontFaceId, fontSize, lineHeight }),
   })).value;
 }
 
 export async function openSession(sessionId: string, browserWidth = typeof window === "undefined" ? 0 : Math.round(window.innerWidth), idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
-  const session = await getSession(sessionId);
-  return lifecycleRequest(sessionId, "open", browserWidth, measureSessionTextMetrics(session.fontSize), idempotencyKey);
+  return lifecycleRequest(sessionId, "open", browserWidth, idempotencyKey);
 }
 
-export async function updateSessionConfiguration(sessionId: string, name: string, fontSize: number, lineHeight: number, idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
+export async function updateSessionConfiguration(sessionId: string, name: string, fontSize: number, lineHeight: number, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular"): Promise<SessionView> {
   const token = await getCsrfToken();
-  return (await apiRequestWithMeta<SessionView>(`/sessions/${encodeURIComponent(sessionId)}/configuration`, { method: "PUT", headers: jsonMutationHeaders(token, idempotencyKey), body: JSON.stringify({ name, fontSize, lineHeight }) })).value;
+  return (await apiRequestWithMeta<SessionView>(`/sessions/${encodeURIComponent(sessionId)}/configuration`, { method: "PUT", headers: jsonMutationHeaders(token, idempotencyKey), body: JSON.stringify({ name, fontFaceId, fontSize, lineHeight }) })).value;
+}
+
+export async function listRuntimeFonts(): Promise<RuntimeFontCatalog> {
+  return apiRequest<RuntimeFontCatalog>("/runtime-fonts");
 }
 
 export async function closeSession(sessionId: string, idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
-  return lifecycleRequest(sessionId, "close", 0, null, idempotencyKey);
+  return lifecycleRequest(sessionId, "close", 0, idempotencyKey);
 }
 
 export async function deleteSession(sessionId: string, idempotencyKey = newIdempotencyKey()): Promise<{ pending: boolean }> {
@@ -106,12 +117,12 @@ export async function waitForSessionDeletion(
   throw new Error("Session 删除在限定时间内没有完成。");
 }
 
-async function lifecycleRequest(sessionId: string, operation: "open" | "close", browserWidth: number, textMetrics: SessionTextMetrics | null, idempotencyKey: string): Promise<SessionView> {
+async function lifecycleRequest(sessionId: string, operation: "open" | "close", browserWidth: number, idempotencyKey: string): Promise<SessionView> {
   const token = await getCsrfToken();
   return (await apiRequestWithMeta<SessionView>(`/sessions/${encodeURIComponent(sessionId)}:${operation}`, {
     method: "POST",
     headers: jsonMutationHeaders(token, idempotencyKey),
-    body: operation === "open" ? JSON.stringify({ browserWidth, textMetrics }) : "{}",
+    body: operation === "open" ? JSON.stringify({ browserWidth }) : "{}",
   })).value;
 }
 
@@ -164,6 +175,15 @@ export function useSession(sessionId: string | undefined) {
     enabled: Boolean(sessionId),
     staleTime: 1_000,
     refetchOnWindowFocus: true,
+  });
+}
+
+export function useRuntimeFontCatalog() {
+  return useQuery({
+    queryKey: ["runtime-fonts"],
+    queryFn: listRuntimeFonts,
+    staleTime: 86_400_000,
+    refetchOnWindowFocus: false,
   });
 }
 

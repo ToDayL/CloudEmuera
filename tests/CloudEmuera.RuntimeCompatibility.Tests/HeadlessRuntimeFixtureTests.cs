@@ -6,6 +6,7 @@ using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.UI.Game.Image;
 using MinorShift.Emuera.UI.Game;
 using System.Drawing;
+using System.Security.Cryptography;
 using System.Text;
 using static MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
 using RuntimeConsoleColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
@@ -391,7 +392,9 @@ public sealed class HeadlessRuntimeFixtureTests
         await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
 
         EmueraRuntimeResult initialized = await host.InitializeAsync();
-        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+        Assert.True(
+            initialized.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", initialized.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
         Assert.Contains(initialized.Diagnostics, diagnostic =>
             diagnostic.Code == "runtime_warning" &&
             diagnostic.Message.Contains("was clipped", StringComparison.Ordinal));
@@ -753,7 +756,7 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(
             ConsoleFontStyle.Bold | ConsoleFontStyle.Italic | ConsoleFontStyle.Underline | ConsoleFontStyle.Strike,
             text.Style.Decorations);
-        Assert.Equal("logical", text.Style.FontFamily);
+        Assert.Equal("session-default", text.Style.FontFamily);
         Assert.Equal(new RuntimeConsoleColor(0x11, 0x22, 0x33), text.Style.Foreground);
         Assert.Equal(new RuntimeConsoleColor(0x44, 0x55, 0x66), text.Style.ButtonColor);
     }
@@ -1143,6 +1146,56 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Fact]
+    [Trait("Category", "FontLayout")]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task ClearLineRemovesAllPhysicalRowsOfWrappedLogicalLine()
+    {
+        // P1-S04/COMP-007: the eraTW movement loop prints a fullwidth-space
+        // progress line and immediately CLEARLINEs it. Once Worker layout is
+        // authoritative, one logical line can span several physical rows;
+        // CLEARLINE 1 must remove the complete group, not only its last row.
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        string movementLine = new string('　', 40) + "（少女移動中…）";
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL BEFORE\n" +
+            $"PRINTL {movementLine}\n" +
+            "CLEARLINE 1\n" +
+            "PRINTL AFTER\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:120\n字体大小:18\n每行高度:20\n",
+            erbCodePage: 932);
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.True(
+            initialized.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", initialized.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        IReadOnlyList<ConsoleLine> lines = fixture.Console.Snapshot.Scrollback;
+        Assert.Equal(["BEFORE", "AFTER"], lines.Select(line => RuntimeTranscriptProjector.Project(line.Nodes)));
+        Assert.DoesNotContain(lines, line => string.IsNullOrWhiteSpace(RuntimeTranscriptProjector.Project(line.Nodes)));
+        Assert.Contains(
+            fixture.Console.StateStore.TransactionHistory,
+            transaction => transaction.Transaction.Operations
+                .OfType<AppendLineOperation>()
+                .Any(operation => operation.Line.PhysicalIndex > 0));
+        Assert.Contains(
+            fixture.Console.StateStore.TransactionHistory,
+            transaction => transaction.Transaction.Operations.Any(operation => operation is DeleteLinesOperation));
+    }
+
+    [Fact]
     [Trait("Category", "RuntimeBridge")]
     public async Task PrintCUsesPrintLBoundariesAndPreservesFixedWidthButtonColumns()
     {
@@ -1199,6 +1252,148 @@ public sealed class HeadlessRuntimeFixtureTests
         ButtonNode button = Assert.IsType<ButtonNode>(Assert.Single(line.Nodes));
         Assert.Equal("800", button.Value);
         Assert.Contains("动作", RuntimeTranscriptProjector.Project(button.Children), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [Trait("Category", "FontLayout")]
+    [Trait("Category", "PrintCCompatibility")]
+    [InlineData("sarasa-fixed-sc-1.0.40-light", "sarasa-fixed-sc-1.0.40-light.ttf", "Sarasa Fixed SC", "46a4532b5eea58684509df92552107d93c3102f352a988ab1c31f21812d64427")]
+    [InlineData("sarasa-fixed-sc-1.0.40-regular", "sarasa-fixed-sc-1.0.40-regular.ttf", "Sarasa Fixed SC", "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3")]
+    [InlineData("sarasa-fixed-sc-1.0.40-medium", "sarasa-fixed-sc-1.0.40-medium.ttf", "Sarasa Fixed SC", "3fc2b9e5d026108d4bf3a62e9d34850f2c480b8d62455db29ea1ff262152cb69")]
+    [InlineData("lxgw-wenkai-mono-1.522-light", "lxgw-wenkai-mono-1.522-light.ttf", "LXGW WenKai Mono", "240cf9bc7115ea82a24568dd863e30ef5d4de1a508af7dbde38c74d635a74a1c")]
+    [InlineData("lxgw-wenkai-mono-1.522-regular", "lxgw-wenkai-mono-1.522-regular.ttf", "LXGW WenKai Mono", "3917cb7bbbf467e8f762ee9248f69aaab9ef37a51ca922c05cd2fcc0150ed9fa")]
+    [InlineData("lxgw-wenkai-mono-1.522-medium", "lxgw-wenkai-mono-1.522-medium.ttf", "LXGW WenKai Mono", "20f543ca64e73e7509740344fbefa901b95cf99e4fa0a79c7454386d57f131b4")]
+    public async Task EveryBundledFaceBindsBeforeConfigAndPublishesMeasuredPhysicalLines(
+        string faceId,
+        string ttfFileName,
+        string runtimeFamilyName,
+        string webFontAssetDigest)
+    {
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL 中文中文中文中文中文中文中文 ABCDEFGHIJKLM\n" +
+            "PRINTBUTTON \"[继续]\", 7\n" +
+            "PRINTL\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:120\n字体大小:18\n每行高度:20\n",
+            erbCodePage: 932);
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: faceId,
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", ttfFileName),
+            runtimeFontFamilyName: runtimeFamilyName,
+            webFontAssetDigest: webFontAssetDigest);
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.True(
+            initialized.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", initialized.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        Assert.Equal(faceId, fixture.Console.Snapshot.WindowMetadata.FontFaceId);
+        Assert.Equal(webFontAssetDigest, fixture.Console.Snapshot.WindowMetadata.WebFontAssetDigest);
+        Assert.Contains(fixture.Console.Snapshot.Scrollback, line => line.PhysicalIndex > 0);
+        Assert.All(fixture.Console.Snapshot.Scrollback, line =>
+        {
+            Assert.True(line.LayoutWidth > 0);
+            Assert.Equal(19, line.LineHeight);
+            Assert.All(line.Nodes, node => Assert.IsType<PositionedInlineSegmentNode>(node));
+            Assert.All(
+                line.Nodes.Cast<PositionedInlineSegmentNode>(),
+                segment =>
+                {
+                    Assert.InRange(segment.PositionX, 0, 1_000_000);
+                    Assert.InRange(segment.MeasuredWidth, 0, 1_000_000);
+                    Assert.InRange((long)segment.PositionX + segment.MeasuredWidth, 0, 1_000_000);
+                    Assert.All(segment.Children.OfType<TextNode>(), text => Assert.Equal("session-default", text.Style.FontFamily));
+                });
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "FontLayout")]
+    public async Task BundledFontMetricsPreserveFullwidthCjkAdvance()
+    {
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL AAAAAA\n" +
+            "PRINTL 中文中文中文\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:320\n字体大小:18\n每行高度:20\n",
+            erbCodePage: 932);
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        ConsoleLine ascii = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == "AAAAAA");
+        ConsoleLine cjk = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == "中文中文中文");
+        int asciiWidth = Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(ascii.Nodes)).MeasuredWidth;
+        int cjkWidth = Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(cjk.Nodes)).MeasuredWidth;
+        Assert.True(cjkWidth > asciiWidth, $"Expected CJK advance to exceed Latin advance, got ASCII={asciiWidth}, CJK={cjkWidth}.");
+    }
+
+    [Fact]
+    [Trait("Category", "PrintCCompatibility")]
+    public async Task PrintButtonCMeasuresPaddingOutsideTheActionBox()
+    {
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTBUTTONC \"RIGHT\", 7\n" +
+            "PRINTBUTTONLC \"LEFT\", \"left-value\"\n" +
+            "PRINTL\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:320\n字体大小:18\n每行高度:20\n",
+            erbCodePage: 932);
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        PositionedInlineSegmentNode[] segments = fixture.Console.Snapshot.Scrollback
+            .SelectMany(line => line.Nodes)
+            .OfType<PositionedInlineSegmentNode>()
+            .ToArray();
+        PositionedInlineSegmentNode[] actions = segments.Where(segment => segment.Action is not null).ToArray();
+        Assert.Collection(
+            actions,
+            right =>
+            {
+                Assert.Equal("7", right.Action!.Value);
+                Assert.Equal("RIGHT", RuntimeTranscriptProjector.Project(right.Children));
+            },
+            left =>
+            {
+                Assert.Equal("left-value", left.Action!.Value);
+                Assert.Equal("LEFT", RuntimeTranscriptProjector.Project(left.Children));
+            });
+        Assert.Contains(segments, segment => segment.Action is null && RuntimeTranscriptProjector.Project(segment.Children).Contains(' '));
+        Assert.All(actions, action => Assert.True(action.MeasuredWidth < 240));
     }
 
     [Fact]
@@ -2237,14 +2432,24 @@ public sealed class HeadlessRuntimeFixtureTests
             TimeSpan? initializationDeadline = null,
             TimeSpan? runDeadline = null,
             Action? upstreamGateAcquired = null,
-            int browserWidth = 0)
+            int browserWidth = 0,
+            string fontFaceId = "sarasa-fixed-sc-1.0.40-regular",
+            string fontCatalogDigest = "",
+            string runtimeFontPath = "",
+            string runtimeFontFamilyName = "",
+            string webFontAssetDigest = "")
             => CreateHost(
                 Console,
                 runtimeClock,
                 initializationDeadline,
                 runDeadline,
                 upstreamGateAcquired,
-                browserWidth);
+                browserWidth,
+                fontFaceId,
+                fontCatalogDigest,
+                runtimeFontPath,
+                runtimeFontFamilyName,
+                webFontAssetDigest);
 
         public EmueraRuntimeHost CreateHost(
             StructuredGameConsole console,
@@ -2252,7 +2457,12 @@ public sealed class HeadlessRuntimeFixtureTests
             TimeSpan? initializationDeadline = null,
             TimeSpan? runDeadline = null,
             Action? upstreamGateAcquired = null,
-            int browserWidth = 0)
+            int browserWidth = 0,
+            string fontFaceId = "sarasa-fixed-sc-1.0.40-regular",
+            string fontCatalogDigest = "",
+            string runtimeFontPath = "",
+            string runtimeFontFamilyName = "",
+            string webFontAssetDigest = "")
         {
             var fileSystem = new LocalRuntimeFileSystem(Paths);
             var options = new EmueraRuntimeOptions(
@@ -2265,7 +2475,12 @@ public sealed class HeadlessRuntimeFixtureTests
                 EmueraCompatibilityProfiles.V18Compatible,
                 initializationDeadline ?? TimeSpan.FromSeconds(5),
                 runDeadline ?? TimeSpan.FromSeconds(5),
-                browserWidth: browserWidth);
+                browserWidth: browserWidth,
+                fontFaceId: fontFaceId,
+                fontCatalogDigest: fontCatalogDigest,
+                runtimeFontPath: runtimeFontPath,
+                runtimeFontFamilyName: runtimeFontFamilyName,
+                webFontAssetDigest: webFontAssetDigest);
             return EmueraRuntimeHost.Create(options with { UpstreamGateAcquired = upstreamGateAcquired });
         }
 

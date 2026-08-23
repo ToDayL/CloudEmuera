@@ -58,6 +58,13 @@ describe("ScrollbackRenderer", () => {
     expect(document.querySelectorAll(".console-line")).toHaveLength(1);
   });
 
+  it("applies physical line height as a CSS pixel length", () => {
+    render(<ScrollbackRenderer lines={[{ ...line("measured", "measured"), layoutWidth: 760, lineHeight: 19 }]} assets={assets} onInput={() => undefined} />);
+    const element = document.querySelector<HTMLElement>(".console-line");
+    expect(element).not.toBeNull();
+    expect(element).toHaveStyle({ width: "760px", height: "19px", minHeight: "19px", lineHeight: "19px" });
+  });
+
   it("submits enabled choice buttons from old display frames to the current input slot", () => {
     const onInput = vi.fn();
     const choiceLine = (id: string, generation: number, value: string): RealtimeLine => ({

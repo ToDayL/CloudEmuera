@@ -1,7 +1,7 @@
 using System.IO;
-using CloudEmuera.Ipc.V5;
+using CloudEmuera.Ipc.V6;
 using R = CloudEmuera.RuntimeAdapter;
-using W = CloudEmuera.Ipc.V5;
+using W = CloudEmuera.Ipc.V6;
 
 namespace CloudEmuera.Realtime;
 
@@ -217,7 +217,12 @@ public static class StructuredConsoleWireMapper
                 _ => throw new InvalidDataException("The line alignment is unknown.")
             },
             Temporary = line.Temporary,
-            NoWrap = line.NoWrap
+            NoWrap = line.NoWrap,
+            LayoutWidth = line.LayoutWidth,
+            LineHeight = line.LineHeight,
+            LogicalLineId = line.LogicalLineId,
+            PhysicalIndex = line.PhysicalIndex,
+            IsLogicalStart = line.IsLogicalStart
         };
         result.Nodes.AddRange(line.Nodes.Select(ToProto));
         return result;
@@ -233,7 +238,17 @@ public static class StructuredConsoleWireMapper
             W.LineAlignment.Right => R.ConsoleLineAlignment.Right,
             _ => throw new InvalidDataException("The line alignment is unknown.")
         };
-        return new R.ConsoleLine(line.LineId, line.Nodes.Select(FromProto), alignment, line.Temporary, line.NoWrap);
+        return new R.ConsoleLine(
+            line.LineId,
+            line.Nodes.Select(FromProto),
+            alignment,
+            line.Temporary,
+            line.NoWrap,
+            line.LayoutWidth,
+            line.LineHeight,
+            string.IsNullOrEmpty(line.LogicalLineId) ? null : line.LogicalLineId,
+            line.PhysicalIndex,
+            line.IsLogicalStart);
     }
 
     public static W.ConsoleNode ToProto(R.ConsoleNode node)
@@ -259,6 +274,25 @@ public static class StructuredConsoleWireMapper
                     HasPositionX = button.PositionX is not null
                 };
                 result.Button.Label.AddRange(button.Children.Select(ToProto));
+                break;
+            case R.PositionedInlineSegmentNode segment:
+                result.PositionedInlineSegment = new W.PositionedInlineSegmentNode
+                {
+                    PositionX = segment.PositionX,
+                    MeasuredWidth = segment.MeasuredWidth,
+                    HasAction = segment.Action is not null
+                };
+                result.PositionedInlineSegment.Children.AddRange(segment.Children.Select(ToProto));
+                if (segment.Action is { } action)
+                {
+                    result.PositionedInlineSegment.Action = new W.ConsoleInlineAction
+                    {
+                        Value = action.Value,
+                        Tooltip = action.Tooltip ?? string.Empty,
+                        Enabled = action.Enabled,
+                        Generation = action.Generation
+                    };
+                }
                 break;
             case R.ImageNode image:
                 result.Image = new W.ImageNode
@@ -373,6 +407,17 @@ public static class StructuredConsoleWireMapper
                 node.Button.Enabled,
                 node.Button.Generation,
                 node.Button.HasPositionX ? node.Button.PositionX : null),
+            W.ConsoleNode.KindOneofCase.PositionedInlineSegment => new R.PositionedInlineSegmentNode(
+                node.PositionedInlineSegment.PositionX,
+                node.PositionedInlineSegment.MeasuredWidth,
+                node.PositionedInlineSegment.Children.Select(FromProto),
+                node.PositionedInlineSegment.HasAction
+                    ? new R.ConsoleInlineAction(
+                        node.PositionedInlineSegment.Action.Value,
+                        string.IsNullOrEmpty(node.PositionedInlineSegment.Action.Tooltip) ? null : node.PositionedInlineSegment.Action.Tooltip,
+                        node.PositionedInlineSegment.Action.Enabled,
+                        node.PositionedInlineSegment.Action.Generation)
+                    : null),
             W.ConsoleNode.KindOneofCase.Image => new R.ImageNode(
                 new R.ConsoleAssetId(node.Image.AssetId),
                 node.Image.HasSourceRect ? FromProto(node.Image.SourceRect) : null,
@@ -674,6 +719,8 @@ public static class StructuredConsoleWireMapper
             ViewportWidth = metadata.ViewportWidth,
             ViewportHeight = metadata.ViewportHeight,
             DefaultFont = ToProtoFont(metadata.DefaultFont),
+            FontFaceId = metadata.FontFaceId,
+            WebFontAssetDigest = metadata.WebFontAssetDigest,
             HasDefaultForeground = metadata.DefaultForeground is not null,
             HasDefaultBackground = metadata.DefaultBackground is not null
         };
@@ -690,7 +737,9 @@ public static class StructuredConsoleWireMapper
         metadata.ViewportHeight,
         metadata.HasDefaultForeground ? FromProto(metadata.DefaultForeground) : null,
         metadata.HasDefaultBackground ? FromProto(metadata.DefaultBackground) : null,
-        metadata.DefaultFont is null ? null : FromProtoFont(metadata.DefaultFont));
+        metadata.DefaultFont is null ? null : FromProtoFont(metadata.DefaultFont),
+        string.IsNullOrEmpty(metadata.FontFaceId) ? "default" : metadata.FontFaceId,
+        metadata.WebFontAssetDigest);
 
     public static W.TruncationMetadata ToProto(R.ConsoleTruncationMetadata metadata) => new()
     {

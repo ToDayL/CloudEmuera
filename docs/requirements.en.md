@@ -140,6 +140,10 @@ Session 1 ── 1 private SessionRoot
 - **SESS-010**: After a Worker exits unexpectedly, the Session must transition to `CRASHED` after the heartbeat timeout and must not remain reported as runnable.
 - **SESS-011**: A `CLOSED` Session, and a `CRASHED` Session whose old Worker is proven to have lost write access, must be reopenable. Every open reuses the existing SessionRoot, increments the Worker epoch, and creates a new Worker; it must not recopy current Game content or require a new Session.
 - **SESS-012**: A Session is a resource that persists from creation until explicit deletion. Opening and closing only acquire or release a Worker. Session deletion must be separate from closure and must never occur automatically because of closure, a crash, an API restart, or a browser disconnect.
+- **SESS-013**: Users must be able to choose a concrete font face supported and distributed by CloudEmuera
+  when creating a Session or configuring a stopped Session. The immutable face ID must be persisted and used by
+  later Workers. Font, size, and line height must not change while running; an unknown, missing, or corrupt face
+  must fail before Worker startup rather than falling back to a host or user font.
 
 ### 6.4 Game display and interaction
 
@@ -159,6 +163,16 @@ Session 1 ── 1 private SessionRoot
 - **PLAY-010**: Display history must have configurable bounds. When the bound is exceeded, the Worker should compact to the latest snapshot and discard invisible old deltas instead of growing memory without limit.
 - **PLAY-011**: The same user may view a Session from multiple clients. In the MVP, each `promptId` accepts only the first valid input.
 - **PLAY-012**: When the API or browser cannot keep up, the system must use batching, backpressure, or snapshot fallback rather than accumulating messages without limit.
+- **PLAY-013**: The Runtime and browser must use the same immutable font face distributed by CloudEmuera.
+  The Worker loads the canonical TTF; the browser loads a complete WOFF2 deterministically and losslessly
+  produced from that TTF at build time and verified with its own digest and metric-equivalence checks. The
+  browser loads only the selected face on demand and caches it by content digest. The MVP does not subset
+  fonts, load game-package fonts, or depend on server or user-device fonts; in-game font requests map to the
+  Session-selected face and produce bounded compatibility diagnostics.
+- **PLAY-014**: The Worker must be the layout authority using `Config.DefaultFont`, `StringMeasure`, and
+  `Config.DrawableWidth`. It must emit complete physical `ConsoleLine` values, positioned segments, button
+  `positionX/measuredWidth`, oversized-element handling, and the `ButtonWrap` result. The browser must disable
+  automatic wrapping and render the supplied geometry instead of choosing line breaks or hit boxes again.
 
 ### 6.5 Save management
 
@@ -211,6 +225,10 @@ The system uses the following compatibility classifications:
 - **COMP-007**: Font measurement, line wrapping, fixed line height, and button hit behavior must have visual regression fixtures.
 - **COMP-008**: `CALLSHARP`, arbitrary DLLs, external processes, and unrestricted network access are `Blocked` by default.
 - **COMP-009**: Where a game depends on a known v18 behavior that differs in a newer runtime, a bounded and testable compatibility switch may be provided. The project must not maintain an unverifiable global “emulate old bugs” mode.
+- **COMP-010**: `PRINTC character count` must retain the pinned upstream Shift-JIS byte/half-width-cell
+  semantics, the N right-padding versus N+1 left-padding compatibility difference, and post-padding correction
+  using actual font measurement. `PRINTC items per line` controls only active flush frequency; it must not be
+  interpreted as field width, a Unicode character count, or browser column layout.
 
 ## 8. Three-Layer Architecture
 

@@ -815,7 +815,7 @@ internal sealed class ConfigData
 		return true;
 	}
 
-	public bool LoadConfig()
+	public bool LoadConfig(bool applyConfig = true)
 	{
 		string defaultConfigPath = Program.CsvDir + "_default.config";
 		string fixedConfigPath = Program.CsvDir + "_fixed.config";
@@ -827,6 +827,9 @@ internal sealed class ConfigData
 		loadConfig(defaultConfigPath, false);
 		loadConfig(configPath, false);
 		loadConfig(fixedConfigPath, true);
+
+		if (!applyConfig)
+			return true;
 
 		Config.SetConfig(this);
 		bool needSave = false;

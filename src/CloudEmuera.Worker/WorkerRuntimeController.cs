@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V5;
+using CloudEmuera.Ipc.V6;
 using CloudEmuera.Realtime;
 using CloudEmuera.RuntimeAdapter;
 using R = CloudEmuera.RuntimeAdapter;
@@ -366,6 +366,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             RuntimePaths paths = RuntimePaths.ForExistingSessionRoot(bootstrap.SessionRoot, saveLayout);
             paths.ValidateSessionRoot();
             WorkerLifecycleLog.WriteRuntimeWidth(logger, binding, bootstrap.BrowserWidth);
+            RuntimeFontBinding runtimeFont = RuntimeFontBindingResolver.Resolve(bootstrap.FontFaceId, bootstrap.FontCatalogDigest);
             var fileSystem = new LocalRuntimeFileSystem(paths);
             console = new StructuredGameConsole();
             host = EmueraRuntimeHost.Create(new EmueraRuntimeOptions(
@@ -383,8 +384,11 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 browserWidth: bootstrap.BrowserWidth,
                 fontSize: bootstrap.FontSize,
                 lineHeight: bootstrap.LineHeight,
-                halfWidthPx: bootstrap.HalfWidthPx,
-                fullWidthPx: bootstrap.FullWidthPx));
+                fontFaceId: runtimeFont.FaceId,
+                fontCatalogDigest: runtimeFont.CatalogDigest,
+                runtimeFontPath: runtimeFont.RuntimeTtfPath,
+                runtimeFontFamilyName: runtimeFont.RuntimeFamilyName,
+                webFontAssetDigest: runtimeFont.WebWoff2Sha256));
             runtimeCancellation = new CancellationTokenSource();
             console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
 
@@ -482,6 +486,14 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             await SendFailureCodeAsync(exception.Code, "initialization", exception.SafeMessage, fatal: true).ConfigureAwait(false);
             await WaitForTerminalAcknowledgementAsync().ConfigureAwait(false);
             Complete(WorkerExitCodes.SessionRootInvalid);
+        }
+        catch (RuntimeFontBindingException exception)
+        {
+            LogLifecycle("runtime_failed", exception.Code, LogLevel.Warning);
+            await CommitFailureFrameAndDrainAsync().ConfigureAwait(false);
+            await SendFailureCodeAsync(exception.Code, "initialization", exception.SafeMessage, fatal: true).ConfigureAwait(false);
+            await WaitForTerminalAcknowledgementAsync().ConfigureAwait(false);
+            Complete(WorkerExitCodes.RuntimeInitializationFailed);
         }
         catch (OperationCanceledException)
         {
@@ -702,12 +714,12 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         DisplayFrame = frame
     };
 
-    private static CloudEmuera.Ipc.V5.DisplayCommitReason ToProto(R.DisplayCommitReason reason) => reason switch
+    private static CloudEmuera.Ipc.V6.DisplayCommitReason ToProto(R.DisplayCommitReason reason) => reason switch
     {
-        R.DisplayCommitReason.WaitingForInput => CloudEmuera.Ipc.V5.DisplayCommitReason.WaitingForInput,
-        R.DisplayCommitReason.RuntimeCompleted => CloudEmuera.Ipc.V5.DisplayCommitReason.RuntimeCompleted,
-        R.DisplayCommitReason.RuntimeFailed => CloudEmuera.Ipc.V5.DisplayCommitReason.RuntimeFailed,
-        R.DisplayCommitReason.ExplicitRefresh => CloudEmuera.Ipc.V5.DisplayCommitReason.ExplicitRefresh,
+        R.DisplayCommitReason.WaitingForInput => CloudEmuera.Ipc.V6.DisplayCommitReason.WaitingForInput,
+        R.DisplayCommitReason.RuntimeCompleted => CloudEmuera.Ipc.V6.DisplayCommitReason.RuntimeCompleted,
+        R.DisplayCommitReason.RuntimeFailed => CloudEmuera.Ipc.V6.DisplayCommitReason.RuntimeFailed,
+        R.DisplayCommitReason.ExplicitRefresh => CloudEmuera.Ipc.V6.DisplayCommitReason.ExplicitRefresh,
         _ => throw new InvalidDataException("The runtime display commit reason is unknown.")
     };
 

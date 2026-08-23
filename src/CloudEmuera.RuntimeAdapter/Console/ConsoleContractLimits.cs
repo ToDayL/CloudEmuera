@@ -72,6 +72,12 @@ public sealed record ConsoleContractLimits
 
     public int MaxNodesPerLine { get; init; } = 512;
 
+    public int MaxPhysicalLinesPerLogicalLine { get; init; } = 4_096;
+
+    public int MaxPhysicalLineIndex { get; init; } = 4_095;
+
+    public int MaxSegmentsPerPhysicalLine { get; init; } = 512;
+
     public int MaxScrollbackLines { get; init; } = 4_096;
 
     public int MaxScrollbackNodes { get; init; } = 8_192;
@@ -129,6 +135,9 @@ public sealed record ConsoleContractLimits
         ValidatePositive(MaxWindowTitleLength, nameof(MaxWindowTitleLength));
         ValidatePositive(MaxFontFamilyLength, nameof(MaxFontFamilyLength));
         ValidatePositive(MaxNodesPerLine, nameof(MaxNodesPerLine));
+        ValidatePositive(MaxPhysicalLinesPerLogicalLine, nameof(MaxPhysicalLinesPerLogicalLine));
+        ValidatePositive(MaxPhysicalLineIndex, nameof(MaxPhysicalLineIndex));
+        ValidatePositive(MaxSegmentsPerPhysicalLine, nameof(MaxSegmentsPerPhysicalLine));
         ValidatePositive(MaxScrollbackLines, nameof(MaxScrollbackLines));
         ValidatePositive(MaxScrollbackNodes, nameof(MaxScrollbackNodes));
         ValidatePositive(MaxScrollbackTextLength, nameof(MaxScrollbackTextLength));

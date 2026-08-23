@@ -3,6 +3,9 @@
 状态：已接受
 日期：2026-08-17
 
+字体映射修订（2026-08-23）：上游继续解析 `font face` 语法，但 ADR-0029 规定 headless translator
+统一映射到当前 Session 的产品内置 face，不再从游戏 manifest、宿主或用户字体解析。
+
 ## 背景
 
 CloudEmuera 之前在 `RuntimeAdapter` 中维护了一个独立的 `EmueraHtmlParser`。它可以生成安全的

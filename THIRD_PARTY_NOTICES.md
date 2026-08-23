@@ -29,6 +29,29 @@ required by the zlib/libpng license. Import and modification records live in
 
 This package is intentionally pinned for the Linux MVP compatibility layer described by ADR-0019. CloudEmuera does not claim that this configuration has modern .NET non-Windows product support.
 
+## Sarasa Gothic
+
+- Release: 1.0.40
+- Source: <https://github.com/be5invis/Sarasa-Gothic/releases/tag/v1.0.40>
+- Local assets: `assets/runtime-fonts/runtime-ttf/` and `assets/runtime-fonts/web-woff2/`
+- License: SIL Open Font License 1.1; complete text: `assets/runtime-fonts/licenses/sarasa-gothic.txt`
+
+The three Sarasa Fixed SC TTF files are the unmodified runtime sources. The
+content-addressed WOFF2 files are complete, non-subset conversions of those
+TTFs for same-origin browser delivery and are not distributed as installable
+desktop fonts.
+
+## LXGW WenKai
+
+- Release: 1.522
+- Source: <https://github.com/lxgw/LxgwWenKai/releases/tag/v1.522>
+- Local assets: `assets/runtime-fonts/runtime-ttf/` and `assets/runtime-fonts/web-woff2/`
+- License: SIL Open Font License 1.1; complete text: `assets/runtime-fonts/licenses/lxgw-wenkai-ofl.txt`
+
+The three LXGW WenKai Mono TTF files are the unmodified runtime sources. The
+WOFF2 files are complete format conversions with the original font naming and
+are only served to the browser through the runtime-font endpoint.
+
 ## libgdiplus
 
 - Source: <https://github.com/mono/libgdiplus>

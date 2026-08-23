@@ -26,8 +26,8 @@ describe("console surface background", () => {
   });
 
   it("uses the server-selected runtime viewport width", () => {
-    expect(consoleSurfaceStyle(null, 640, 390)).toEqual({ width: "390px", maxWidth: "100%" });
-    expect(effectiveConsoleWidth(1000, 390)).toBe(390);
+    expect(consoleSurfaceStyle(null, 640, 390)).toEqual({ width: "640px" });
+    expect(effectiveConsoleWidth(1000, 390)).toBe(1000);
     expect(effectiveConsoleWidth(390, 1024)).toBe(390);
   });
 });

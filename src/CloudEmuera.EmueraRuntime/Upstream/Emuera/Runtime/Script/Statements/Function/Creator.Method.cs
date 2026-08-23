@@ -10,6 +10,7 @@ using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.UI.Game;
 using MinorShift.Emuera.UI.Game.Image;
+using MinorShift.Emuera.UI;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -2407,30 +2408,18 @@ internal static partial class FunctionMethodCreator
 		public override long GetIntValue(ExpressionMediator exm, List<AExpression> arguments)
 		{
 			string str = arguments[0].GetStrValue(exm);
-			using System.Drawing.Text.InstalledFontCollection ifc = new();
+			// CloudEmuera S04: CHKFONT is scoped to the one image-owned Session
+			// face. Never scan fontconfig/InstalledFontCollection and never let a
+			// game package font turn into a host-dependent positive result.
 			long isInstalled = 0;
-			foreach (FontFamily ff in ifc.Families)
-			{
-				#region EE_フォントファイル対応
-				if (ff.Name == str)
-				{
-					isInstalled = 1;
-					break;
-				}
-			}
-			// CloudEmuera headless keeps the optional private font collection
-			// uninitialized because it does not load desktop font files. Treat it
-			// as empty so CHKFONT preserves its normal false result instead of
-			// failing every font query with a NullReferenceException.
 			foreach (FontFamily ff in GlobalStatic.Pfc?.Families ?? [])
 			{
-				if (ff.Name == str)
+				if (ff.Name == str || string.Equals(str, Config.FontName, StringComparison.Ordinal))
 				{
 					isInstalled = 1;
 					break;
 				}
 			}
-			#endregion
 			return (isInstalled);
 		}
 
@@ -5564,27 +5553,11 @@ internal static partial class FunctionMethodCreator
 					fs |= FontStyle.Underline;
 			}
 
-			Font styledFont;
-			try
-			{
-				#region EE_フォントファイル対応
-				foreach (FontFamily ff in GlobalStatic.Pfc?.Families ?? [])
-				{
-					if (ff.Name == fontname)
-					{
-						styledFont = new Font(ff, fontsize, fs, GraphicsUnit.Pixel);
-						goto foundfont;
-					}
-				}
-				// styledFont = new Font(fontname, fontsize, FontStyle.Regular, GraphicsUnit.Pixel);
-				styledFont = new Font(fontname, fontsize, fs, GraphicsUnit.Pixel);
-			}
-			catch
-			{
+			// CloudEmuera S04: GSETFONT retains the requested style and size but
+			// resolves the family through the selected Session face only.
+			Font styledFont = FontFactory.GetFont(Config.FontName, fs, checked((int)fontsize));
+			if (styledFont is null)
 				return 0;
-			}
-		foundfont:
-			#endregion
 			// g.GSetFont(styledFont);
 			g.GSetFont(styledFont, fs);
 			return 1;
@@ -5754,7 +5727,9 @@ internal static partial class FunctionMethodCreator
 				if ((style & 8) != 0)
 					fs |= FontStyle.Underline;
 			}
-			Font fnt = new(fontname, fontsize, fs, GraphicsUnit.Pixel);
+			// CloudEmuera S04: GGETTEXTSIZE cannot re-enter host font discovery.
+			Font fnt = FontFactory.GetFont(Config.FontName, fs, checked((int)fontsize))
+				?? throw new InvalidOperationException("The bound Session font could not create a graphics measurement font.");
 			var bitmap = new Bitmap(16, 16);
 			//Graphics canvas = Graphics.FromImage(bitmap);
 			var graphics = Graphics.FromImage(bitmap);

@@ -25,6 +25,9 @@ internal static class RuntimeTranscriptProjector
                     }
 
                     break;
+                case PositionedInlineSegmentNode segment:
+                    result.Append(Project(segment.Children));
+                    break;
                 case ImageNode:
                 case SpriteNode:
                 case ShapeNode:

@@ -16,7 +16,7 @@ public sealed class RealtimeUpgradeValidator(ILocalIdentityService identities, I
         return userId is not null && sessionId is not null && stamp is not null && await identities.ValidateSessionAsync(userId, sessionId, stamp, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Called by the realtime v3 resume envelope handler for every resume attempt.</summary>
+    /// <summary>Called by the realtime v4 resume envelope handler for every resume attempt.</summary>
     public Task<ResourceAccessDecision> AuthorizeResumeAsync(CurrentActor actor, string sessionId, bool mustChangePassword, CancellationToken cancellationToken = default) =>
         authorizer.AuthorizeAsync(actor, ResourceKind.Session, sessionId, ResourceAction.SessionResume, mustChangePassword, cancellationToken);
 }

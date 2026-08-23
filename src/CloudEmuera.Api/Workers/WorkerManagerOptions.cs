@@ -1,3 +1,4 @@
+using CloudEmuera.Application.Fonts;
 using CloudEmuera.Ipc;
 using CloudEmuera.Api.Realtime;
 
@@ -5,10 +6,11 @@ namespace CloudEmuera.Api.Workers;
 
 public sealed record WorkerManagerOptions
 {
-    public WorkerManagerOptions(string dataRoot, string workerAssemblyPath)
+    public WorkerManagerOptions(string dataRoot, string workerAssemblyPath, string? runtimeFontRoot = null)
     {
         DataRoot = Path.GetFullPath(dataRoot ?? throw new ArgumentNullException(nameof(dataRoot)));
         WorkerAssemblyPath = Path.GetFullPath(workerAssemblyPath ?? throw new ArgumentNullException(nameof(workerAssemblyPath)));
+        RuntimeFontRoot = ResolveRuntimeFontRoot(runtimeFontRoot);
         ControlPlaneInstanceId = $"ctl_{Guid.CreateVersion7():N}";
         RuntimeDirectory = Path.Combine(DataRoot, "runtime", ControlPlaneInstanceId);
         ControlSocketPath = Path.Combine(RuntimeDirectory, "worker-control.sock");
@@ -26,6 +28,8 @@ public sealed record WorkerManagerOptions
     public string ControlPlaneInstanceId { get; }
 
     public string WorkerAssemblyPath { get; }
+
+    public string RuntimeFontRoot { get; }
 
     public string DotnetPath { get; init; } = "dotnet";
 
@@ -69,6 +73,7 @@ public sealed record WorkerManagerOptions
         IpcValidator.ValidateAbsolutePath(BootstrapDirectory, nameof(BootstrapDirectory));
         IpcValidator.ValidateAbsolutePath(ControlSocketPath, nameof(ControlSocketPath));
         IpcValidator.ValidateAbsolutePath(WorkerAssemblyPath, nameof(WorkerAssemblyPath));
+        IpcValidator.ValidateAbsolutePath(RuntimeFontRoot, nameof(RuntimeFontRoot));
         IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
         RealtimeOutput.Validate();
         if (ControlSocketPath.Length > 107 || RegistrationTimeout <= TimeSpan.Zero || RuntimeReadyTimeout <= TimeSpan.Zero ||
@@ -94,6 +99,21 @@ public sealed record WorkerManagerOptions
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(first)),
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(second)),
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static string ResolveRuntimeFontRoot(string? configured)
+    {
+        if (!string.IsNullOrWhiteSpace(configured)) return Path.GetFullPath(configured);
+        string? environment = Environment.GetEnvironmentVariable("CLOUDEMUERA_RUNTIME_FONT_ROOT");
+        if (!string.IsNullOrWhiteSpace(environment)) return Path.GetFullPath(environment);
+
+        string current = Path.GetFullPath(Directory.GetCurrentDirectory());
+        for (DirectoryInfo? directory = new(current); directory is not null; directory = directory.Parent)
+        {
+            string candidate = Path.Combine(directory.FullName, "assets", "runtime-fonts");
+            if (Directory.Exists(candidate)) return candidate;
+        }
+        return Path.Combine(AppContext.BaseDirectory, "runtime-fonts");
+    }
 }
 
 public sealed record WorkerLaunchRequest
@@ -105,7 +125,8 @@ public sealed record WorkerLaunchRequest
         CloudEmuera.RuntimeAdapter.RuntimeSaveLayout saveLayout,
         string sessionRootManifestDigest = "",
         long initialOutputSequence = 0,
-        int browserWidth = 0, int fontSize = 18, int lineHeight = 19, double halfWidthPx = 0, double fullWidthPx = 0)
+        int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
+        string fontFaceId = RuntimeFontDefaults.DefaultFaceId, string fontCatalogDigest = "")
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));
         SessionRoot = Path.GetFullPath(sessionRoot ?? throw new ArgumentNullException(nameof(sessionRoot)));
@@ -121,9 +142,15 @@ public sealed record WorkerLaunchRequest
         if (browserWidth < 0 || browserWidth > 16_384)
             throw new ArgumentOutOfRangeException(nameof(browserWidth));
         BrowserWidth = browserWidth;
-        if (fontSize is < 8 or > 72 || lineHeight < fontSize || lineHeight > 128 || halfWidthPx < 0 || fullWidthPx < 0 || halfWidthPx > 128 || fullWidthPx > 256)
+        if (fontSize is < 8 or > 72 || lineHeight < fontSize || lineHeight > 128)
             throw new ArgumentOutOfRangeException(nameof(fontSize));
-        FontSize = fontSize; LineHeight = lineHeight; HalfWidthPx = halfWidthPx; FullWidthPx = fullWidthPx;
+        FontSize = fontSize; LineHeight = lineHeight;
+        if (string.IsNullOrWhiteSpace(fontFaceId) || fontFaceId.Length > IpcLimits.MaxIdentifierLength || fontFaceId.Any(char.IsWhiteSpace) || fontFaceId.Contains('\0'))
+            throw new ArgumentException("The runtime font face ID is invalid.", nameof(fontFaceId));
+        if (!string.IsNullOrEmpty(fontCatalogDigest) && (fontCatalogDigest.Length != 64 || fontCatalogDigest.Any(character => character is < '0' or > '9' and < 'a' or > 'f')))
+            throw new ArgumentException("The runtime font catalog digest is invalid.", nameof(fontCatalogDigest));
+        FontFaceId = fontFaceId;
+        FontCatalogDigest = fontCatalogDigest;
     }
 
     public WorkerBinding Binding { get; }
@@ -141,6 +168,6 @@ public sealed record WorkerLaunchRequest
     public int BrowserWidth { get; }
     public int FontSize { get; }
     public int LineHeight { get; }
-    public double HalfWidthPx { get; }
-    public double FullWidthPx { get; }
+    public string FontFaceId { get; }
+    public string FontCatalogDigest { get; }
 }

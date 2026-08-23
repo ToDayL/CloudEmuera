@@ -420,7 +420,7 @@ public sealed class SessionRuntimeCoordinatorTests
 
     private sealed class RecordingOpenOptionsFactory : IWorkerOpenOptionsFactory
     {
-        public SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0, SessionTextMetrics? textMetrics = null) =>
+        public SessionRuntimeOpenOptions Create(string sessionId, int browserWidth = 0) =>
             CreateOpenOptionsForTest(sessionId, browserWidth);
 
         private static SessionRuntimeOpenOptions CreateOpenOptionsForTest(string sessionId, int browserWidth) => new(

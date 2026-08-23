@@ -48,6 +48,7 @@ services:
       CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
       CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
       CloudEmuera__DataPath: /data
+      CloudEmuera__RuntimeFontRoot: /workspace/assets/runtime-fonts
       CloudEmuera__Capacity__MaxActiveWorkers: "${CLOUDEMUERA_CAPACITY_MAX_ACTIVE_WORKERS-}"
       CloudEmuera__Capacity__MaxInactiveSessions: "${CLOUDEMUERA_CAPACITY_MAX_INACTIVE_SESSIONS-}"
       CloudEmuera__Capacity__MaxArchiveBytes: "${CLOUDEMUERA_CAPACITY_MAX_ARCHIVE_BYTES-}"

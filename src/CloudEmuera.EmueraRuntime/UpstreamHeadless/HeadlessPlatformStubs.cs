@@ -1,6 +1,7 @@
 // CloudEmuera headless platform boundary: compile-time desktop shapes are
 // replaced with inert declarations; supported behavior is routed through ports.
 using System;
+using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
@@ -197,9 +198,41 @@ namespace System.Windows.Forms
             System.Drawing.Size proposedSize,
             TextFormatFlags flags)
         {
-            int fontSize = font is null ? 16 : Math.Max(1, (int)Math.Round(font.Size));
-            int width = checked(text.Length * Math.Max(1, (fontSize * 2) / 3));
-            int height = proposedSize.Height > 0 ? proposedSize.Height : checked(fontSize + 4);
+            if (graphics is null)
+                throw new ArgumentNullException(nameof(graphics));
+            if (font is null)
+                throw new ArgumentNullException(nameof(font));
+            if (text.IsEmpty)
+                return System.Drawing.Size.Empty;
+
+            // The old headless placeholder returned text.Length * 2/3 of the
+            // font size. That made the Worker layout independent of the bound
+            // TTF, so CJK, Latin, styled text, PRINTC padding, and alignment
+            // all received fabricated widths. The selected TTF's cmap/hmtx
+            // advance table is loaded once for this runtime; TextRenderer is
+            // only the compatibility seam used by StringMeasure.
+            using var format = new System.Drawing.StringFormat(System.Drawing.StringFormat.GenericTypographic)
+            {
+                FormatFlags = System.Drawing.StringFormatFlags.MeasureTrailingSpaces |
+                    System.Drawing.StringFormatFlags.NoClip |
+                    System.Drawing.StringFormatFlags.NoWrap,
+                Trimming = System.Drawing.StringTrimming.None,
+            };
+            System.Drawing.SizeF layoutSize = proposedSize.Width > 0 && proposedSize.Height > 0
+                ? new(proposedSize.Width, proposedSize.Height)
+                : new(float.MaxValue, float.MaxValue);
+            string value = text.ToString();
+            if (HeadlessFontMetrics.TryMeasure(text, font, out int authoritativeWidth))
+            {
+                int authoritativeHeight = proposedSize.Height > 0
+                    ? proposedSize.Height
+                    : checked((int)Math.Ceiling(Math.Max(0, font.GetHeight(graphics))));
+                return new(authoritativeWidth, authoritativeHeight);
+            }
+
+            System.Drawing.SizeF measured = graphics.MeasureString(value, font, layoutSize, format);
+            int width = checked((int)Math.Ceiling(Math.Max(0, measured.Width)));
+            int height = checked((int)Math.Ceiling(Math.Max(0, measured.Height)));
             return new(width, height);
         }
         public static void DrawText(

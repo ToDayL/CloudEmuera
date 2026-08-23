@@ -559,7 +559,8 @@ internal sealed partial class EmueraConsole : IDisposable
 		Font font;
 		try
 		{
-			font = new Font(Style.Fontname, Config.DefaultFont.Size, Style.FontStyle, GraphicsUnit.Pixel);
+			font = FontFactory.GetFont(Style.Fontname, Style.FontStyle, Config.DefaultFont.Size)
+				?? throw new InvalidOperationException("The bound Session font could not create a PRINTC measurement font.");
 		}
 		catch
 		{

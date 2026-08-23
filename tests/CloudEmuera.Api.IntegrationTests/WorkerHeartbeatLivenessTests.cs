@@ -4,7 +4,7 @@ using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V5;
+using CloudEmuera.Ipc.V6;
 using CloudEmuera.RuntimeAdapter;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;

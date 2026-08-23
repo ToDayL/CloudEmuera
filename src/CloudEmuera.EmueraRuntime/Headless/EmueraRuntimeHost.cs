@@ -318,7 +318,8 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                         sprite.AnimationFrames)
                     : null,
                 options.UpstreamGateAcquired,
-                options.BrowserWidth, options.FontSize, options.LineHeight, options.HalfWidthPx, options.FullWidthPx);
+                options.BrowserWidth, options.FontSize, options.LineHeight,
+                options.FontFaceId, options.FontCatalogDigest, options.RuntimeFontPath, options.RuntimeFontFamilyName, options.WebFontAssetDigest);
             bool initialized = session.InitializeAsync(options.Paths).GetAwaiter().GetResult();
             cancellationToken.ThrowIfCancellationRequested();
             if (!initialized)

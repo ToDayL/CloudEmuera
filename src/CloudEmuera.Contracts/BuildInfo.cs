@@ -7,7 +7,7 @@ public sealed record BuildInfo(
     int HttpProtocolVersion,
     int RealtimeProtocolVersion,
     int IpcProtocolVersion,
-    string RealtimePayloadSchemaVersion = "p1-s03-display-commit");
+    string RealtimePayloadSchemaVersion = "p1-s04-authoritative-layout");
 
 public sealed record VersionResponse(
     string Product,
@@ -20,4 +20,5 @@ public sealed record VersionResponse(
     int WorkerIpcMajor,
     string RuntimeIntegrationVersion,
     string UpstreamCommit,
-    string DatabaseSchemaCompatibilityVersion);
+    string DatabaseSchemaCompatibilityVersion,
+    string FontCatalogDigest = "");
