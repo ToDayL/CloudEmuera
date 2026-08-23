@@ -124,9 +124,20 @@ function sliceTextNodes(children: readonly Extract<RealtimeNode, { type: "text" 
   return result;
 }
 
+function renderRuntimeText(text: string, useLxgwBlockGlyphCompatibility: boolean): ReactNode {
+  if (!useLxgwBlockGlyphCompatibility)
+    return text;
+  const parts = text.split("▅");
+  if (parts.length === 1)
+    return text;
+  return parts.flatMap((part, index) => index === parts.length - 1
+    ? [part]
+    : [part, <span className="console-halfwidth-glyph" key={`halfwidth-${index}`}>▅</span>]);
+}
+
 export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: RealtimeNode; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }): ReactNode {
   switch (node.type) {
-    case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{node.text}</span>;
+    case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{renderRuntimeText(node.text, assets.usesLxgwBlockGlyphCompatibility())}</span>;
     case "lineBreak": return <br />;
     case "button": {
       if (!node.enabled && node.value.length === 0) {

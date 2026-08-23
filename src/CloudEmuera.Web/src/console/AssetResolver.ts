@@ -13,14 +13,17 @@ const safeAssetId = /^[A-Za-z0-9._~-]{1,128}$/;
 const safeFamily = /^[A-Za-z0-9._~ -]{1,128}$/;
 const safeCssFamily = /^cloudemuera-font-[a-f0-9]{16}$/;
 const allowedMedia = /^(?:image\/(?:png|jpeg|gif|webp|bmp)|audio\/(?:ogg|mpeg|wav|webm|flac)|font\/(?:woff2?|ttf|otf))$/;
+const lxgwRuntimeFamilyName = "LXGW WenKai Mono";
 
 /** Resolves only assets authorized by the session presentation manifest. */
 export class AssetResolver {
   private readonly assets: ReadonlyMap<string, PresentationAsset>;
   private readonly fonts: readonly ResolvedPresentationFont[];
   private readonly fontDiagnostics: readonly string[];
+  private readonly runtimeFontFamilyName?: string;
 
-  constructor(private readonly sessionId: string, manifest: PresentationManifest | null | undefined, private readonly runtimeFontFamily?: string) {
+  constructor(private readonly sessionId: string, manifest: PresentationManifest | null | undefined, private readonly runtimeFontFamily?: string, runtimeFontFamilyName?: string) {
+    this.runtimeFontFamilyName = runtimeFontFamilyName;
     this.assets = new Map((manifest?.assets ?? []).filter(asset => safeAssetId.test(asset.assetId) && allowedMedia.test(asset.mediaType) && Number.isSafeInteger(asset.byteLength) && asset.byteLength >= 0 && /^sha256:[0-9A-Fa-f]{64}$/.test(asset.contentDigest)).map(asset => [asset.assetId, asset]));
     this.fonts = (manifest?.fonts ?? [])
       .filter(font => safeFamily.test(font.family) && safeAssetId.test(font.assetId))
@@ -70,6 +73,10 @@ export class AssetResolver {
 
   diagnostics(): readonly string[] {
     return this.fontDiagnostics;
+  }
+
+  usesLxgwBlockGlyphCompatibility(): boolean {
+    return this.runtimeFontFamilyName === lxgwRuntimeFamilyName;
   }
 }
 

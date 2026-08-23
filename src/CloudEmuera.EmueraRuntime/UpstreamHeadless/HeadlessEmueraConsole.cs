@@ -76,6 +76,7 @@ internal sealed class EmueraConsole
         IReadOnlyList<ConsoleNode> Nodes,
         ConsoleLineAlignment? Alignment,
         bool NoWrap,
+        bool Truncate,
         bool LineEnd);
 
     private sealed record LayoutAtom(
@@ -877,12 +878,12 @@ internal sealed class EmueraConsole
         // matching the desktop console's IsLineEnd behavior.
         FlushPendingLine();
         if (string.IsNullOrEmpty(value))
-            FlushPendingLine(force: true, temporary: temporary);
+            FlushPendingLine(force: true, temporary: temporary, noWrap: true, truncate: true);
         else
         {
             AppendText(value);
             pendingLineEnd = true;
-            FlushPendingLine(force: true, temporary: temporary);
+            FlushPendingLine(force: true, temporary: temporary, noWrap: true, truncate: true);
         }
     }
 
@@ -924,6 +925,7 @@ internal sealed class EmueraConsole
         ConsoleLineAlignment alignment,
         bool temporary,
         bool noWrap,
+        bool truncate,
         bool lineEnd)
     {
         int layoutWidth = Config.DrawableWidth > 0 ? Config.DrawableWidth : viewportWidth;
@@ -940,52 +942,86 @@ internal sealed class EmueraConsole
             cursor = 0;
         }
 
-        foreach (LayoutAtom original in atoms)
+        // PRINTSINGLE* uses the upstream single-row buffer, but a browser
+        // physical line must not be allowed to overflow the drawable viewport.
+        // Keep the prefix that fits and discard the rest instead of entering
+        // the normal wrapping loop.
+        if (truncate)
         {
-            LayoutAtom remaining = original;
-            while (true)
+            noWrap = true;
+            foreach (LayoutAtom atom in atoms)
             {
-                int position = remaining.LockedX is { } locked ? Math.Max(cursor, locked) : cursor;
-                bool fits = noWrap || layoutWidth <= 0 || position + remaining.Width <= layoutWidth;
+                int position = atom.LockedX is { } locked ? Math.Max(cursor, locked) : cursor;
+                bool fits = layoutWidth <= 0 || position + atom.Width <= layoutWidth;
                 if (fits)
                 {
-                    current.Add(new PositionedInlineSegmentNode(position, remaining.Width, remaining.Children, remaining.Action));
-                    cursor = Math.Max(cursor, checked(position + remaining.Width));
-                    break;
-                }
-
-                if (current.Count > 0 && remaining.Action is not null && Config.ButtonWrap)
-                {
-                    FlushDraft();
+                    current.Add(new PositionedInlineSegmentNode(position, atom.Width, atom.Children, atom.Action));
+                    cursor = Math.Max(cursor, checked(position + atom.Width));
                     continue;
                 }
 
-                if (remaining.CanDivide)
+                if (atom.CanDivide)
                 {
                     int available = Math.Max(0, layoutWidth - cursor);
-                    int fittingCharacters = FindFittingCharacters(remaining, available);
-                    if (fittingCharacters > 0 && TrySplitAtom(remaining, fittingCharacters, out LayoutAtom? prefix, out LayoutAtom? suffix))
+                    int fittingCharacters = FindFittingCharacters(atom, available);
+                    if (fittingCharacters > 0 && TrySplitAtom(atom, fittingCharacters, out LayoutAtom? prefix, out _))
                     {
                         current.Add(new PositionedInlineSegmentNode(cursor, prefix.Width, prefix.Children, prefix.Action));
                         cursor = checked(cursor + prefix.Width);
-                        FlushDraft();
-                        remaining = suffix;
-                        continue;
                     }
                 }
-
-                if (current.Count > 0)
-                {
-                    FlushDraft();
-                    continue;
-                }
-
-                // A non-dividable image/shape or a single glyph wider than the
-                // drawable area remains on its own physical line, matching the
-                // upstream overflow rule instead of looping forever.
-                current.Add(new PositionedInlineSegmentNode(0, remaining.Width, remaining.Children, remaining.Action));
-                cursor = remaining.Width;
                 break;
+            }
+        }
+        else
+        {
+            foreach (LayoutAtom original in atoms)
+            {
+                LayoutAtom remaining = original;
+                while (true)
+                {
+                    int position = remaining.LockedX is { } locked ? Math.Max(cursor, locked) : cursor;
+                    bool fits = noWrap || layoutWidth <= 0 || position + remaining.Width <= layoutWidth;
+                    if (fits)
+                    {
+                        current.Add(new PositionedInlineSegmentNode(position, remaining.Width, remaining.Children, remaining.Action));
+                        cursor = Math.Max(cursor, checked(position + remaining.Width));
+                        break;
+                    }
+
+                    if (current.Count > 0 && remaining.Action is not null && Config.ButtonWrap)
+                    {
+                        FlushDraft();
+                        continue;
+                    }
+
+                    if (remaining.CanDivide)
+                    {
+                        int available = Math.Max(0, layoutWidth - cursor);
+                        int fittingCharacters = FindFittingCharacters(remaining, available);
+                        if (fittingCharacters > 0 && TrySplitAtom(remaining, fittingCharacters, out LayoutAtom? prefix, out LayoutAtom? suffix))
+                        {
+                            current.Add(new PositionedInlineSegmentNode(cursor, prefix.Width, prefix.Children, prefix.Action));
+                            cursor = checked(cursor + prefix.Width);
+                            FlushDraft();
+                            remaining = suffix;
+                            continue;
+                        }
+                    }
+
+                    if (current.Count > 0)
+                    {
+                        FlushDraft();
+                        continue;
+                    }
+
+                    // A non-dividable image/shape or a single glyph wider than the
+                    // drawable area remains on its own physical line, matching the
+                    // upstream overflow rule instead of looping forever.
+                    current.Add(new PositionedInlineSegmentNode(0, remaining.Width, remaining.Children, remaining.Action));
+                    cursor = remaining.Width;
+                    break;
+                }
             }
         }
 
@@ -1168,6 +1204,7 @@ internal sealed class EmueraConsole
             existingGroup[0].Alignment,
             existingGroup[0].Temporary,
             existingGroup[0].NoWrap,
+            pending.Truncate,
             pending.LineEnd);
 
         var oldIds = existingGroup.Select(line => line.LineId).ToHashSet(StringComparer.Ordinal);
@@ -1220,6 +1257,7 @@ internal sealed class EmueraConsole
                     pendingLine.ToArray(),
                     pendingLineAlignment ?? alignment,
                     pendingLineNoWrap || noWrap,
+                    Truncate: false,
                     LineEnd: true));
                 pendingLine.Clear();
                 pendingLineAlignment = null;
@@ -1236,7 +1274,8 @@ internal sealed class EmueraConsole
         bool force = false,
         bool temporary = false,
         ConsoleLineAlignment? alignment = null,
-        bool? noWrap = null)
+        bool? noWrap = null,
+        bool truncate = false)
     {
         if (!outputEnabled)
             return;
@@ -1253,12 +1292,15 @@ internal sealed class EmueraConsole
                 pendingLine.ToArray(),
                 alignment ?? pendingLineAlignment,
                 noWrap ?? pendingLineNoWrap,
+                truncate,
                 pendingLineEnd));
         }
 
         foreach (PendingBufferedLine line in lines)
         {
             IReadOnlyList<ConsoleNode> projectedNodes = AutoButtonize(line.Nodes);
+            if (line.Truncate && (stringMeasure is null || Config.DefaultFont is null))
+                projectedNodes = TruncateNodes(projectedNodes);
             if (stringMeasure is not null && Config.DefaultFont is not null)
             {
                 string? deferredLogicalLineId = deferredReplacementLogicalLineId;
@@ -1269,6 +1311,7 @@ internal sealed class EmueraConsole
                     line.Alignment ?? ToAlignment(),
                     temporary,
                     line.NoWrap,
+                    line.Truncate,
                     line.LineEnd);
                 if (lastLineCanAppend && lastPhysicalLineId is not null && projectedNodes.Count > 0 &&
                     adapter is StructuredGameConsole appendConsole &&
@@ -1362,6 +1405,36 @@ internal sealed class EmueraConsole
         pendingLineAlignment = null;
         pendingLineNoWrap = false;
         pendingLineEnd = true;
+    }
+
+    private IReadOnlyList<ConsoleNode> TruncateNodes(IReadOnlyList<ConsoleNode> nodes)
+    {
+        int layoutWidth = Config.DrawableWidth > 0 ? Config.DrawableWidth : viewportWidth;
+        var result = new List<ConsoleNode>(nodes.Count);
+        int cursor = 0;
+        foreach (ConsoleNode node in nodes)
+        {
+            int width = MeasureInlineNode(node);
+            if (cursor + width <= layoutWidth)
+            {
+                result.Add(node);
+                cursor = checked(cursor + width);
+                continue;
+            }
+
+            // Preserve a text prefix when the fallback path has no bound font.
+            // Buttons and drawable nodes remain atomic, as they are in the
+            // authoritative layout path.
+            if (node is TextNode)
+            {
+                LayoutAtom atom = CreateLayoutAtoms([node])[0];
+                int fittingCharacters = FindFittingCharacters(atom, Math.Max(0, layoutWidth - cursor));
+                if (fittingCharacters > 0 && TrySplitAtom(atom, fittingCharacters, out LayoutAtom? prefix, out _))
+                    result.AddRange(prefix.Children);
+            }
+            break;
+        }
+        return result;
     }
 
     private void FlushDeferredReplacementDelete()

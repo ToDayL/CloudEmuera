@@ -12,6 +12,7 @@ namespace CloudEmuera.EmueraRuntime.UpstreamHeadless;
 /// </summary>
 internal static class HeadlessFontMetrics
 {
+    private const string LxgwWenKaiMonoFamilyName = "LXGW WenKai Mono";
     private static FontTable current;
 
     public static void Configure(string fontPath, string familyName)
@@ -40,7 +41,7 @@ internal static class HeadlessFontMetrics
             else
                 codePoint = first;
 
-            totalUnits += table.GetAdvance(table.GetGlyph(codePoint));
+            totalUnits += table.GetAdvanceUnits(codePoint, table.GetGlyph(codePoint));
         }
 
         width = checked((int)Math.Ceiling(totalUnits * font.Size / table.UnitsPerEm));
@@ -142,6 +143,20 @@ internal static class HeadlessFontMetrics
                 glyph = 0;
             int metricIndex = Math.Min(glyph, (ushort)(numberOfHMetrics - 1));
             return ReadUInt16(data, checked((int)hmtxOffset + metricIndex * 4));
+        }
+
+        public double GetAdvanceUnits(int codePoint, ushort glyph)
+        {
+            double advance = GetAdvance(glyph);
+            // CloudEmuera compatibility: eraTW's PRINT_COLORBAR helpers use
+            // U+2585 (LOWER FIVE EIGHTHS BLOCK, ▅) as a half-width cell. The
+            // LXGW face exposes that glyph with a full-cell hmtx advance, so
+            // only that face needs the compatibility correction. Other
+            // bundled faces, including Sarasa Fixed SC, keep their native
+            // advance metrics.
+            if (codePoint == 0x2585 && string.Equals(FamilyName, LxgwWenKaiMonoFamilyName, StringComparison.Ordinal))
+                return advance * 0.5;
+            return advance;
         }
 
         private static (uint Offset, uint Length) RequireTable(

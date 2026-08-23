@@ -64,7 +64,7 @@ export function ConsolePage() {
   const runtimeCssFamily = useMemo(() => runtimeFont ? runtimeFontCssFamily(runtimeFont) : undefined, [runtimeFont]);
   const [runtimeFontReady, setRuntimeFontReady] = useState(false);
   const [runtimeFontFailed, setRuntimeFontFailed] = useState(false);
-  const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", manifest.data, runtimeCssFamily), [manifest.data, runtimeCssFamily, sessionId]);
+  const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", manifest.data, runtimeCssFamily, runtimeFont?.runtimeFamilyName), [manifest.data, runtimeCssFamily, runtimeFont, sessionId]);
   const media = useRef<MediaController | null>(null);
 
   if (!media.current) media.current = new MediaController(message => setRendererError(message));
