@@ -147,7 +147,7 @@ public sealed class SqliteSessionRuntimeStore(
             session.SourceContentDigest,
             session.FontFaceId,
             fontCatalog?.CatalogDigest ?? string.Empty);
-        return SessionRuntimeAcquireResult.Success(new SessionRuntimeLease(binding, session.OwnerUserId, session.State, now, lease.ExpiresAt, session.FontSize, session.LineHeight, session.FontFaceId, fontCatalog?.CatalogDigest ?? string.Empty));
+        return SessionRuntimeAcquireResult.Success(new SessionRuntimeLease(binding, session.OwnerUserId, session.State, now, lease.ExpiresAt, session.FontSize, session.LineHeight, session.FontFaceId, fontCatalog?.CatalogDigest ?? string.Empty, session.WidthMode, session.CustomWidth));
         }
     }
 
@@ -438,7 +438,7 @@ public sealed class SqliteSessionRuntimeStore(
             session.SourceContentDigest,
             session.FontFaceId,
             fontCatalog?.CatalogDigest ?? string.Empty);
-        return new SessionRuntimeLease(binding, session.OwnerUserId, session.State, lease.AcquiredAt, lease.ExpiresAt, session.FontSize, session.LineHeight, session.FontFaceId, fontCatalog?.CatalogDigest ?? string.Empty);
+        return new SessionRuntimeLease(binding, session.OwnerUserId, session.State, lease.AcquiredAt, lease.ExpiresAt, session.FontSize, session.LineHeight, session.FontFaceId, fontCatalog?.CatalogDigest ?? string.Empty, session.WidthMode, session.CustomWidth);
     }
 
     public async Task<bool> ReconcileAsync(

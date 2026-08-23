@@ -14,6 +14,7 @@ public partial class RemoveDetachedSessionState : Migration
     {
         modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
         modelBuilder.HasAnnotation(SessionConfiguration.ExcludeRuntimeFontFaceSchemaAnnotation, true);
+        modelBuilder.HasAnnotation(SessionConfiguration.ExcludeRuntimeWidthSchemaAnnotation, true);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(CloudEmueraDbContext).Assembly);
         modelBuilder.Entity<SessionRow>().Ignore(row => row.FontFaceId);
     }

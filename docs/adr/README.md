@@ -32,3 +32,4 @@ ADR 使用 `NNNN-short-title.md` 命名，至少包含状态、背景、决定�
 - [ADR-0027：实例级容量上限与生产 Worker 边界](0027-instance-capacity-and-production-boundary.md)
 - [ADR-0028：生产 bind mount 使用部署者 UID/GID](0028-production-bind-mount-ownership.md)
 - [ADR-0029：内置字体目录与 Worker 权威物理排版](0029-bundled-font-authoritative-headless-layout.md)
+- [ADR-0030：Session 持久宽度模式与启动时 CSS 宽度上限](0030-session-runtime-width-modes.md)

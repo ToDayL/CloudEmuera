@@ -53,6 +53,8 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly int browserWidth;
     private readonly int fontSize;
     private readonly int lineHeight;
+    private readonly RuntimeWidthMode widthMode;
+    private readonly int? customWidth;
     private readonly string fontFaceId;
     private readonly string fontCatalogDigest;
     private readonly string runtimeFontPath;
@@ -72,6 +74,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         Func<string, RuntimeSpriteDefinition> imageResolver,
         Action runtimeGateAcquired = null,
         int browserWidth = 0, int fontSize = 16, int lineHeight = 16,
+        RuntimeWidthMode widthMode = RuntimeWidthMode.Origin, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
         string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "")
     {
@@ -85,6 +88,10 @@ public sealed class UpstreamRuntimeSession : IDisposable
             throw new ArgumentOutOfRangeException(nameof(browserWidth));
         this.browserWidth = browserWidth;
         this.fontSize = fontSize; this.lineHeight = lineHeight;
+        if (!RuntimeWidthPolicy.IsValid(widthMode, customWidth))
+            throw new ArgumentException("The runtime width configuration is invalid.", nameof(customWidth));
+        this.widthMode = widthMode;
+        this.customWidth = customWidth;
         this.fontFaceId = fontFaceId ?? string.Empty;
         this.fontCatalogDigest = fontCatalogDigest ?? string.Empty;
         this.runtimeFontPath = runtimeFontPath ?? string.Empty;
@@ -136,7 +143,9 @@ public sealed class UpstreamRuntimeSession : IDisposable
         AConfigItem configuredFontSize = ConfigData.Instance.GetConfigItem(ConfigCode.FontSize);
         AConfigItem configuredLineHeight = ConfigData.Instance.GetConfigItem(ConfigCode.LineHeight);
         int configuredWidth = windowWidth.GetValue<int>();
-        int effectiveWidth = browserWidth > 0 ? Math.Min(configuredWidth, browserWidth) : configuredWidth;
+        int effectiveWidth = browserWidth > 0
+            ? RuntimeWidthPolicy.Resolve(configuredWidth, browserWidth, widthMode, customWidth)
+            : configuredWidth;
         windowWidth.SetValue(effectiveWidth);
         configuredFontSize.SetValue(fontSize);
         configuredLineHeight.SetValue(lineHeight);

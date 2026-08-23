@@ -1,5 +1,9 @@
 # CloudEmuera modifications to Emuera.EM+EE
 
+- Added a Session-bound width policy at the headless configuration seam: Origin caps game `WindowX` by the startup
+  browser CSS width, Max overrides it up to 2000px, and Custom overrides it up to the persisted user width. All modes
+  remain capped by the startup browser width and do not reflow during a Worker run (SESS-014/PLAY-015, ADR-0030).
+
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.

@@ -53,7 +53,9 @@ public sealed record CreateSessionCommand(
     string IdempotencyKey,
     int FontSize = 18,
     int LineHeight = 19,
-    string FontFaceId = RuntimeFontDefaults.DefaultFaceId);
+    string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
+    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    int? CustomWidth = null);
 
 public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey, int BrowserWidth = 0);
 
@@ -63,7 +65,9 @@ public sealed record SessionConfigurationCommand(
     int FontSize,
     int LineHeight,
     string IdempotencyKey,
-    string FontFaceId = RuntimeFontDefaults.DefaultFaceId);
+    string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
+    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    int? CustomWidth = null);
 
 public sealed record SessionDeleteCommand(string SessionId, string IdempotencyKey);
 
@@ -97,6 +101,8 @@ public sealed record SessionView(
 {
     /// <summary>Exact catalog face selected for this persistent Session.</summary>
     public string FontFaceId { get; init; } = RuntimeFontDefaults.DefaultFaceId;
+    public SessionWidthMode WidthMode { get; init; } = SessionWidthMode.Origin;
+    public int? CustomWidth { get; init; }
 }
 
 public sealed record SessionListPage(IReadOnlyList<SessionView> Items, string? NextCursor);

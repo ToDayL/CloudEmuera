@@ -1554,6 +1554,10 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("current_prompt_id");
 
+                    b.Property<int?>("CustomWidth")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("custom_width");
+
                     b.Property<string>("GameId")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -1660,6 +1664,13 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(0L)
                         .HasColumnName("worker_epoch");
 
+                    b.Property<string>("WidthMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("ORIGIN")
+                        .HasColumnName("width_mode");
+
                     b.HasKey("Id")
                         .HasName("pk_sessions");
 
@@ -1718,6 +1729,8 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_sessions_time_order", "created_at >= 0 AND last_activity_at >= created_at AND (started_at IS NULL OR started_at >= created_at) AND (closed_at IS NULL OR closed_at >= created_at)");
 
                             t.HasCheckConstraint("ck_sessions_waiting_prompt", "waiting_for_input IN (0, 1) AND ((waiting_for_input = 1 AND current_prompt_id IS NOT NULL AND length(current_prompt_id) BETWEEN 1 AND 256) OR (waiting_for_input = 0 AND current_prompt_id IS NULL))");
+
+                            t.HasCheckConstraint("ck_sessions_width_configuration", "width_mode IN ('ORIGIN', 'MAX', 'CUSTOM') AND ((width_mode = 'CUSTOM' AND custom_width BETWEEN 240 AND 16384) OR (width_mode <> 'CUSTOM' AND custom_width IS NULL))");
                         });
                 });
 

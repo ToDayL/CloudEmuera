@@ -367,6 +367,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             paths.ValidateSessionRoot();
             WorkerLifecycleLog.WriteRuntimeWidth(logger, binding, bootstrap.BrowserWidth);
             RuntimeFontBinding runtimeFont = RuntimeFontBindingResolver.Resolve(bootstrap.FontFaceId, bootstrap.FontCatalogDigest);
+            RuntimeWidthMode widthMode = Enum.Parse<RuntimeWidthMode>(bootstrap.WidthMode, ignoreCase: true);
             var fileSystem = new LocalRuntimeFileSystem(paths);
             console = new StructuredGameConsole();
             host = EmueraRuntimeHost.Create(new EmueraRuntimeOptions(
@@ -384,6 +385,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 browserWidth: bootstrap.BrowserWidth,
                 fontSize: bootstrap.FontSize,
                 lineHeight: bootstrap.LineHeight,
+                widthMode: widthMode,
+                customWidth: bootstrap.CustomWidth,
                 fontFaceId: runtimeFont.FaceId,
                 fontCatalogDigest: runtimeFont.CatalogDigest,
                 runtimeFontPath: runtimeFont.RuntimeTtfPath,

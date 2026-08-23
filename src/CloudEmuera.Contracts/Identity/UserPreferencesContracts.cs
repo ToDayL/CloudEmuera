@@ -3,9 +3,13 @@ namespace CloudEmuera.Contracts.Identity;
 public sealed record SessionStartupDefaultsResponse(
     string FontFaceId,
     int FontSize,
-    int LineHeight);
+    int LineHeight,
+    string WidthMode,
+    int? CustomWidth);
 
 public sealed record UpdateSessionStartupDefaultsRequest(
     string FontFaceId,
     int FontSize,
-    int LineHeight);
+    int LineHeight,
+    string WidthMode = "ORIGIN",
+    int? CustomWidth = null);

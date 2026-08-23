@@ -1,16 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, apiRequestWithMeta, getCsrfToken } from "../api";
+import type { RuntimeWidthModeDto } from "../api/generated";
 
 export interface SessionStartupDefaults {
   fontFaceId: string;
   fontSize: number;
   lineHeight: number;
+  widthMode: RuntimeWidthModeDto;
+  customWidth: number | null;
 }
 
 export const DEFAULT_SESSION_STARTUP_DEFAULTS: SessionStartupDefaults = {
   fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
   fontSize: 18,
   lineHeight: 19,
+  widthMode: "ORIGIN",
+  customWidth: null,
 };
 
 export function sessionStartupDefaultsQueryKey(userId: string | undefined) {

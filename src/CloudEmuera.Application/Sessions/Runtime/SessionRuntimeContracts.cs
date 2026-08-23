@@ -84,7 +84,9 @@ public sealed record SessionRuntimeLease(
     int FontSize = 18,
     int LineHeight = 19,
     string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
-    string FontCatalogDigest = "");
+    string FontCatalogDigest = "",
+    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    int? CustomWidth = null);
 
 public enum SessionRuntimeAcquireFailure
 {
@@ -170,7 +172,9 @@ public sealed record WorkerLaunchSpec(
     int FontSize = 18,
     int LineHeight = 19,
     string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
-    string FontCatalogDigest = "");
+    string FontCatalogDigest = "",
+    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    int? CustomWidth = null);
 
 public interface ISessionRuntimeStore
 {
@@ -324,7 +328,9 @@ public sealed class SessionRuntimeCoordinator(
                     lease.FontSize,
                     lease.LineHeight,
                     lease.FontFaceId,
-                    lease.FontCatalogDigest),
+                    lease.FontCatalogDigest,
+                    lease.WidthMode,
+                    lease.CustomWidth),
                 operationCancellationToken).ConfigureAwait(false);
             SessionRuntimeWriteResult identityResult = await store.RecordProcessIdentityAsync(
                 binding,

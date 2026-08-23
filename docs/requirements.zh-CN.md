@@ -150,6 +150,8 @@ Session 1 ── 1 私有 SessionRoot
 - **SESS-013**：用户必须能在创建 Session 和停止态 Session 配置中选择 CloudEmuera 支持并随产品
   分发的具体字体 face；选择必须以不可变 face ID 持久化并用于后续 Worker。运行态不得修改字体、字号
   或行高；未知、缺失或损坏的 face 必须在 Worker 启动前明确失败，不得回退到宿主或用户字体。
+- **SESS-014**：用户必须能在账户启动默认值、Session 创建和停止态 Session 配置中选择 `ORIGIN`、
+  `MAX` 或 `CUSTOM` 宽度模式；模式与 Custom 宽度随 Session 持久化，运行态不得修改。
 
 ### 6.4 游戏显示与交互
 
@@ -174,6 +176,9 @@ Session 1 ── 1 私有 SessionRoot
 - **PLAY-014**：Worker 必须以 `Config.DefaultFont`、`StringMeasure` 和 `Config.DrawableWidth` 作为
   排版权威，输出完整物理 `ConsoleLine`、positioned segment、按钮 `positionX/measuredWidth`、超宽元素
   处理和 `ButtonWrap` 结果。浏览器必须禁用自身自动换行并按后端几何渲染，不得重新决定断行或按钮命中盒。
+- **PLAY-015**：Worker 读取游戏配置后必须按启动时浏览器 CSS 宽度计算布局：`ORIGIN` 取浏览器宽度与
+  `WindowX` 的较小值，`MAX` 取浏览器宽度与 2000px 的较小值，`CUSTOM` 取浏览器宽度与用户值的较小值。
+  运行中视口变化不触发重排；采用新宽度必须关闭并重新开启 Session。
 
 ### 6.5 存档管理
 

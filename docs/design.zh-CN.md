@@ -551,6 +551,11 @@ Session 行不再保存完整的 `runtime_manifest_json`。创建和物化时生
 和 Worker 启动前绑定校验。清单文件只允许由 API 在 SessionRoot 发布阶段创建，读取时重复执行路径、
 普通文件、硬链接、大小和 JSON 校验。
 
+Session 另持久化 `width_mode`（`ORIGIN | MAX | CUSTOM`）与可空 `custom_width`。Worker 启动时读取游戏
+`WindowX` 后，按 ADR-0030 用当次浏览器 CSS viewport 宽度计算最终布局：Origin 保留游戏配置上限，
+Max 覆盖为不超过 2000px，Custom 覆盖为不超过用户值；三者都不超过浏览器宽度。该配置只允许在创建
+或 Session 静止态修改，运行中 resize 不重新排版。
+
 P1-01 已固定 `close_reason/closed_at` 列名；在可重开模型中，它们表示当前静止状态的最近一次 Worker
 停止原因和时间，而不是 Session 资源删除或终态时间。进入 `CLOSED/CRASHED` 时设置，成功进入新
 `STARTING` 时清空；历史由 `audit_events` 保留。若未来重命名列，必须使用新增 migration，不回改

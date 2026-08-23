@@ -43,9 +43,9 @@ import {
 } from "./games";
 import { ConsolePage as RealtimeConsolePage } from "./console/ConsolePage";
 import { SavesPage as NativeSavesPage } from "./saves/SavesPage";
-import { NewSessionPage as RealNewSessionPage, SessionConfigurationPage as RealSessionConfigurationPage, SessionDisplayFields, SessionFontField, SessionsPage as RealSessionsPage } from "./sessions/pages";
+import { NewSessionPage as RealNewSessionPage, SessionConfigurationPage as RealSessionConfigurationPage, SessionDisplayFields, SessionFontField, SessionWidthFields, SessionsPage as RealSessionsPage } from "./sessions/pages";
 import { updateSessionStartupDefaults, useSessionStartupDefaults, sessionStartupDefaultsQueryKey, DEFAULT_SESSION_STARTUP_DEFAULTS } from "./settings/api";
-import { useRuntimeFontCatalog } from "./sessions/api";
+import { useRuntimeFontCatalog, type RuntimeWidthMode } from "./sessions/api";
 
 type IconName =
   | "archive"
@@ -756,6 +756,8 @@ function SettingsPage() {
   const [fontFaceId, setFontFaceId] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.fontFaceId);
   const [fontSize, setFontSize] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.fontSize);
   const [lineHeight, setLineHeight] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.lineHeight);
+  const [widthMode, setWidthMode] = useState<RuntimeWidthMode>(DEFAULT_SESSION_STARTUP_DEFAULTS.widthMode);
+  const [customWidth, setCustomWidth] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.customWidth ?? 800);
   const [fontPreviewReady, setFontPreviewReady] = useState(false);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -766,6 +768,8 @@ function SettingsPage() {
     setFontFaceId(startupDefaults.data.fontFaceId);
     setFontSize(startupDefaults.data.fontSize);
     setLineHeight(startupDefaults.data.lineHeight);
+    setWidthMode(startupDefaults.data.widthMode);
+    setCustomWidth(startupDefaults.data.customWidth ?? 800);
   }, [startupDefaults.data]);
   useEffect(() => {
     if (fonts.data && !fonts.data.items.some(font => font.faceId === fontFaceId)) setFontFaceId(fonts.data.defaultFaceId);
@@ -781,11 +785,13 @@ function SettingsPage() {
     }
     setPending(true);
     try {
-      const saved = await updateSessionStartupDefaults({ fontFaceId, fontSize, lineHeight });
+      const saved = await updateSessionStartupDefaults({ fontFaceId, fontSize, lineHeight, widthMode, customWidth: widthMode === "CUSTOM" ? customWidth : null });
       queryClient.setQueryData(sessionStartupDefaultsQueryKey(user?.id), saved);
       setFontFaceId(saved.fontFaceId);
       setFontSize(saved.fontSize);
       setLineHeight(saved.lineHeight);
+      setWidthMode(saved.widthMode);
+      setCustomWidth(saved.customWidth ?? 800);
       setMessage("已保存。之后创建的 Session 将使用这些默认值。");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "无法保存 Session 启动默认值。");
@@ -794,7 +800,7 @@ function SettingsPage() {
     }
   };
 
-  return <><PageHeader eyebrow="SESSION DEFAULTS" title="设置" description="配置新建 Session 的启动默认值；只影响之后创建的 Session，不会覆盖已经创建的 Session。"/><form className="form-panel settings-panel" onSubmit={submit}><h2>Session 启动默认值</h2><p className="settings-description">Session 创建后会保存自己的字体、字号和行高。关闭后重新启动时，仍使用该 Session 自身的配置。</p><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/>{startupDefaults.isError && <p className="settings-warning" role="status">无法读取账户默认值，当前显示内置默认值；保存后会重新写入。</p>}{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="settings-success" role="status">{message}</p>}<div className="form-actions"><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady}>{pending ? "保存中…" : "保存默认值"}</button></div></form></>;
+  return <><PageHeader eyebrow="SESSION DEFAULTS" title="设置" description="配置新建 Session 的启动默认值；只影响之后创建的 Session，不会覆盖已经创建的 Session。"/><form className="form-panel settings-panel" onSubmit={submit}><h2>Session 启动默认值</h2><p className="settings-description">Session 创建后会保存自己的字体、字号、行高和宽度模式。关闭后重新启动时，仍使用该 Session 自身的配置。</p><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending}/>{startupDefaults.isError && <p className="settings-warning" role="status">无法读取账户默认值，当前显示内置默认值；保存后会重新写入。</p>}{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="settings-success" role="status">{message}</p>}<div className="form-actions"><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady}>{pending ? "保存中…" : "保存默认值"}</button></div></form></>;
 }
 
 function ConfirmDialog({ title, body, confirm, onCancel, onConfirm, pending = false }: { title: string; body: string; confirm: string; onCancel: () => void; onConfirm?: () => void; pending?: boolean }) {

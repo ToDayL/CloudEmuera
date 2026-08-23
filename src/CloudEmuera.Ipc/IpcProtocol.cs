@@ -15,7 +15,7 @@ namespace CloudEmuera.Ipc;
 public static class IpcProtocol
 {
     public const uint CurrentVersion = 2;
-    public const int BootstrapSchemaVersion = 4;
+    public const int BootstrapSchemaVersion = 5;
 
     public static string NewMessageId(string prefix = "msg")
     {
@@ -147,6 +147,8 @@ public sealed record WorkerBootstrapDocument
     public int LineHeight { get; init; } = 19;
     public string FontFaceId { get; init; } = DefaultRuntimeFontFaceId;
     public string FontCatalogDigest { get; init; } = string.Empty;
+    public string WidthMode { get; init; } = "ORIGIN";
+    public int? CustomWidth { get; init; }
 
     public int SaveLayout { get; init; }
 
@@ -178,7 +180,13 @@ public sealed record WorkerBootstrapDocument
         IpcValidator.ValidateAbsolutePath(SessionRoot, nameof(SessionRoot));
         IpcValidator.ValidateAbsolutePath(ControlSocketPath, nameof(ControlSocketPath));
         IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
-        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384 || FontSize is < 8 or > 72 || LineHeight < FontSize || LineHeight > 128 || string.IsNullOrWhiteSpace(FontFaceId) || !IsIdentifier(FontFaceId) || (FontCatalogDigest.Length != 0 && !IsLowerHexSha256(FontCatalogDigest)))
+        bool validWidth = WidthMode switch
+        {
+            "ORIGIN" or "MAX" => CustomWidth is null,
+            "CUSTOM" => CustomWidth is >= 240 and <= 16_384,
+            _ => false,
+        };
+        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384 || FontSize is < 8 or > 72 || LineHeight < FontSize || LineHeight > 128 || string.IsNullOrWhiteSpace(FontFaceId) || !IsIdentifier(FontFaceId) || (FontCatalogDigest.Length != 0 && !IsLowerHexSha256(FontCatalogDigest)) || !validWidth)
         {
             throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
         }

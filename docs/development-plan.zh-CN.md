@@ -961,7 +961,20 @@ structured IPC v6、Realtime v4、HTTP/migration/Web contract 完整且旧 major
 Worker 26/26，以及 Web 99/99 类型检查/测试/生产构建均通过；真实 Chromium 在非安全 `http://web` origin
 验证了无 `SubtleCrypto` 时的 SHA-256 回退和 FontFace 加载。
 
-### P1-15 — MVP 验收、安全与性能门（TODO；依赖 P1-S04）
+### P1-S05 — Session 运行宽度模式（DONE）
+
+需求映射：SESS-014、PLAY-015、PLAY-009/014。
+
+关联决策：[`ADR-0030`](adr/0030-session-runtime-width-modes.md)。
+
+交付物：账户启动默认值、Session 创建与停止态配置支持 Origin、Max、Custom；模式及可选 Custom
+宽度持久化并进入 Worker bootstrap。Runtime 在加载 `emuera.config` 后按当次浏览器 CSS viewport 计算
+权威宽度，Max 固定 cap 2000px，Custom 受用户值与浏览器双重限制，运行中不随 resize 重排。
+
+验证：migration/SQLite CHECK、默认值与 Session HTTP 契约、静止态配置、RuntimeBridge 四种 cap 组合、
+Web 表单/请求、完整 `./scripts/check.sh`。
+
+### P1-15 — MVP 验收、安全与性能门（TODO；依赖 P1-S04、P1-S05）
 
 需求映射：AC-001～014、设计第 17 章全部测试层级。
 
@@ -1000,5 +1013,7 @@ SUSPENDED/RESUMING 和解释器快照必须另立设计与兼容性证明；在�
    已于 2026-08-12 完成，并按 ADR-0019 补齐 libgdiplus 动态 Graphics/CBG 支持。
 6. ~~按 ADR-0029 完成 P1-S04 的内置字体、Worker 权威物理排版和 PRINTC 兼容测试，再执行 P1-15 统一
    验收；不得用浏览器自动换行或用户字体替代该步骤。~~ 已于 2026-08-23 完成。
+7. ~~按 ADR-0030 完成 P1-S05 的 Session Origin/Max/Custom 宽度模式、用户默认值和停止态配置。~~
+   已于 2026-08-23 完成。
 
 每完成一步，更新本文件状态，并在对应 ADR、测试报告或提交说明中记录实际执行命令与结果。未通过当前步骤的验证，不进入依赖它的下一步骤。

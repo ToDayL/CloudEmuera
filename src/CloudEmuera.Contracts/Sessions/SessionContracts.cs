@@ -7,13 +7,17 @@ public sealed record CreateSessionRequest(
     string Name,
     string FontFaceId = "sarasa-fixed-sc-1.0.40-regular",
     int FontSize = 18,
-    int LineHeight = 19);
+    int LineHeight = 19,
+    string WidthMode = "ORIGIN",
+    int? CustomWidth = null);
 
 public sealed record UpdateSessionConfigurationRequest(
     string Name,
     string FontFaceId = "sarasa-fixed-sc-1.0.40-regular",
     int FontSize = 18,
-    int LineHeight = 19);
+    int LineHeight = 19,
+    string WidthMode = "ORIGIN",
+    int? CustomWidth = null);
 
 /// <summary>
 /// The lifecycle endpoints intentionally accept only an empty JSON object.
@@ -35,6 +39,8 @@ public sealed record SessionResponse(
     string FontFaceId,
     int FontSize,
     int LineHeight,
+    string WidthMode,
+    int? CustomWidth,
     string State,
     int StateVersion,
     long WorkerEpoch,

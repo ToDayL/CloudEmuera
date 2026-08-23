@@ -61,14 +61,15 @@ public sealed partial class SqliteSessionApplicationService(
         string name = NormalizeName(command.Name);
         ValidateIdempotencyKey(command.IdempotencyKey);
         ValidateTextLayout(command.FontSize, command.LineHeight);
+        ValidateWidthConfiguration(command.WidthMode, command.CustomWidth);
         string fontFaceId = RequireRuntimeFontFace(command.FontFaceId);
-        string digest = SessionIdempotency.Digest(actor.UserId, CreateScope, "sessions", new { gameId = command.GameId, name, command.FontSize, command.LineHeight, fontFaceId });
+        string digest = SessionIdempotency.Digest(actor.UserId, CreateScope, "sessions", new { gameId = command.GameId, name, command.FontSize, command.LineHeight, fontFaceId, command.WidthMode, command.CustomWidth });
 
         CreatePreparation preparation;
         try
         {
             await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
-            preparation = await PrepareCreateAsync(scope.ServiceProvider, actor, command.GameId, name, command.FontSize, command.LineHeight, fontFaceId, command.IdempotencyKey, digest, cancellationToken).ConfigureAwait(false);
+            preparation = await PrepareCreateAsync(scope.ServiceProvider, actor, command.GameId, name, command.FontSize, command.LineHeight, fontFaceId, command.WidthMode, command.CustomWidth, command.IdempotencyKey, digest, cancellationToken).ConfigureAwait(false);
         }
         catch (SessionApplicationException)
         {
@@ -216,7 +217,7 @@ public sealed partial class SqliteSessionApplicationService(
     {
         ArgumentNullException.ThrowIfNull(actor); ArgumentNullException.ThrowIfNull(command);
         ValidateSessionId(command.SessionId); ValidateIdempotencyKey(command.IdempotencyKey);
-        string name = NormalizeName(command.Name); ValidateTextLayout(command.FontSize, command.LineHeight);
+        string name = NormalizeName(command.Name); ValidateTextLayout(command.FontSize, command.LineHeight); ValidateWidthConfiguration(command.WidthMode, command.CustomWidth);
         string fontFaceId = RequireRuntimeFontFace(command.FontFaceId);
         await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
         CloudEmueraDbContext db = scope.ServiceProvider.GetRequiredService<CloudEmueraDbContext>();
@@ -224,10 +225,10 @@ public sealed partial class SqliteSessionApplicationService(
         SessionRow? session = await db.Sessions.Include(row => row.Game).SingleOrDefaultAsync(row => row.Id == command.SessionId && row.OwnerUserId == actor.UserId, cancellationToken).ConfigureAwait(false);
         if (session is null) throw new SessionApplicationException(SessionErrorCodes.SessionNotFound, "Session 不存在。", 404);
         if (session.State is not (SessionState.Closed or SessionState.Crashed)) throw new SessionApplicationException(SessionErrorCodes.SessionNotReady, "只能在 Session 停止后修改显示配置。", 409);
-        session.Name = name; session.FontSize = command.FontSize; session.LineHeight = command.LineHeight; session.FontFaceId = fontFaceId;
+        session.Name = name; session.FontSize = command.FontSize; session.LineHeight = command.LineHeight; session.FontFaceId = fontFaceId; session.WidthMode = command.WidthMode; session.CustomWidth = command.CustomWidth;
         session.StateVersion = checked(session.StateVersion + 1); session.LastActivityAt = timeProvider.GetUtcNow();
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false); await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new SessionCommandResult(ToView(new SessionProjection(session.Id, session.Name, session.GameId, session.Game!.Name, session.SourceContentDigest, session.SourceContentRevision, session.RuntimeVersion, session.FontFaceId, session.FontSize, session.LineHeight, session.State, session.StateVersion, session.WorkerEpoch, session.WaitingForInput, session.CreatedAt, session.StartedAt, session.LastActivityAt, session.ClosedAt, session.CloseReason)), 200, false, false);
+        return new SessionCommandResult(ToView(new SessionProjection(session.Id, session.Name, session.GameId, session.Game!.Name, session.SourceContentDigest, session.SourceContentRevision, session.RuntimeVersion, session.FontFaceId, session.FontSize, session.LineHeight, session.WidthMode, session.CustomWidth, session.State, session.StateVersion, session.WorkerEpoch, session.WaitingForInput, session.CreatedAt, session.StartedAt, session.LastActivityAt, session.ClosedAt, session.CloseReason)), 200, false, false);
     }
 
     public async Task<SessionDeleteResult> DeleteAsync(
@@ -643,7 +644,7 @@ public sealed partial class SqliteSessionApplicationService(
         IServiceProvider services,
         CurrentActor actor,
         string gameId,
-        string name, int fontSize, int lineHeight, string fontFaceId,
+        string name, int fontSize, int lineHeight, string fontFaceId, SessionWidthMode widthMode, int? customWidth,
         string key,
         string digest,
         CancellationToken cancellationToken)
@@ -732,6 +733,8 @@ public sealed partial class SqliteSessionApplicationService(
             FontFaceId = fontFaceId,
             FontSize = fontSize,
             LineHeight = lineHeight,
+            WidthMode = widthMode,
+            CustomWidth = customWidth,
             State = SessionState.Creating,
             StateVersion = 0,
             WorkerEpoch = 0,
@@ -1000,6 +1003,8 @@ public sealed partial class SqliteSessionApplicationService(
             session.FontFaceId,
             session.FontSize,
             session.LineHeight,
+            session.WidthMode,
+            session.CustomWidth,
             session.State,
             session.StateVersion,
             session.WorkerEpoch,
@@ -1056,6 +1061,8 @@ public sealed partial class SqliteSessionApplicationService(
             session.FontFaceId,
             session.FontSize,
             session.LineHeight,
+            session.WidthMode,
+            session.CustomWidth,
             session.State,
             session.StateVersion,
             session.WorkerEpoch,
@@ -1479,6 +1486,8 @@ public sealed partial class SqliteSessionApplicationService(
         row.FontFaceId,
         row.FontSize,
         row.LineHeight,
+        row.WidthMode,
+        row.CustomWidth,
         row.State,
         row.StateVersion,
         row.WorkerEpoch,
@@ -1490,7 +1499,7 @@ public sealed partial class SqliteSessionApplicationService(
         row.CloseReason));
 
     private static System.Linq.Expressions.Expression<Func<SessionProjection, SessionView>> ToViewExpression() => row => new SessionView(
-        1,
+        2,
         row.Id,
         row.Name,
         new SessionGameSummary(row.GameId, row.GameName),
@@ -1510,14 +1519,18 @@ public sealed partial class SqliteSessionApplicationService(
         row.CloseReason)
     {
         FontFaceId = row.FontFaceId,
+        WidthMode = row.WidthMode,
+        CustomWidth = row.CustomWidth,
     };
 
     private static SessionView ToView(SessionProjection row) => new(
-        1, row.Id, row.Name, new SessionGameSummary(row.GameId, row.GameName), row.SourceContentDigest,
+        2, row.Id, row.Name, new SessionGameSummary(row.GameId, row.GameName), row.SourceContentDigest,
         row.SourceContentRevision, row.RuntimeVersion, row.FontSize, row.LineHeight, row.State, row.StateVersion, row.WorkerEpoch,
         row.WaitingForInput, row.CreatedAt, row.StartedAt, row.LastActivityAt, row.ClosedAt, row.CloseReason)
     {
         FontFaceId = row.FontFaceId,
+        WidthMode = row.WidthMode,
+        CustomWidth = row.CustomWidth,
     };
 
     private static SessionCommandResult ConvertExisting(CreatePreparation preparation)
@@ -1979,6 +1992,12 @@ public sealed partial class SqliteSessionApplicationService(
             throw new SessionApplicationException(SessionErrorCodes.ValidationFailed, "字号必须为 8～72px，行高必须不小于字号且不超过 128px。", 400);
     }
 
+    private static void ValidateWidthConfiguration(SessionWidthMode widthMode, int? customWidth)
+    {
+        if (!SessionWidthConfiguration.IsValid(widthMode, customWidth))
+            throw new SessionApplicationException(SessionErrorCodes.ValidationFailed, "Origin/Max 模式不能设置自定义宽度；Custom 模式宽度必须为 240～16384px。", 400);
+    }
+
     private string RequireRuntimeFontFace(string faceId)
     {
         if (string.IsNullOrWhiteSpace(faceId) || faceId.Length > 128 ||
@@ -2092,6 +2111,8 @@ public sealed partial class SqliteSessionApplicationService(
         string FontFaceId,
         int FontSize,
         int LineHeight,
+        SessionWidthMode WidthMode,
+        int? CustomWidth,
         SessionState State,
         int StateVersion,
         long WorkerEpoch,

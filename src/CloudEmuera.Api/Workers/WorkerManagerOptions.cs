@@ -1,6 +1,7 @@
 using CloudEmuera.Application.Fonts;
 using CloudEmuera.Ipc;
 using CloudEmuera.Api.Realtime;
+using CloudEmuera.Domain.Sessions;
 
 namespace CloudEmuera.Api.Workers;
 
@@ -126,7 +127,8 @@ public sealed record WorkerLaunchRequest
         string sessionRootManifestDigest = "",
         long initialOutputSequence = 0,
         int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
-        string fontFaceId = RuntimeFontDefaults.DefaultFaceId, string fontCatalogDigest = "")
+        string fontFaceId = RuntimeFontDefaults.DefaultFaceId, string fontCatalogDigest = "",
+        SessionWidthMode widthMode = SessionWidthMode.Origin, int? customWidth = null)
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));
         SessionRoot = Path.GetFullPath(sessionRoot ?? throw new ArgumentNullException(nameof(sessionRoot)));
@@ -151,6 +153,10 @@ public sealed record WorkerLaunchRequest
             throw new ArgumentException("The runtime font catalog digest is invalid.", nameof(fontCatalogDigest));
         FontFaceId = fontFaceId;
         FontCatalogDigest = fontCatalogDigest;
+        if (!SessionWidthConfiguration.IsValid(widthMode, customWidth))
+            throw new ArgumentException("The runtime width configuration is invalid.", nameof(customWidth));
+        WidthMode = widthMode;
+        CustomWidth = customWidth;
     }
 
     public WorkerBinding Binding { get; }
@@ -170,4 +176,6 @@ public sealed record WorkerLaunchRequest
     public int LineHeight { get; }
     public string FontFaceId { get; }
     public string FontCatalogDigest { get; }
+    public SessionWidthMode WidthMode { get; }
+    public int? CustomWidth { get; }
 }

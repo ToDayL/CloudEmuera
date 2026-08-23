@@ -25,6 +25,7 @@ public sealed record EmueraRuntimeOptions
         TimeSpan runDeadline,
         Action<EmueraRuntimeDiagnostic>? diagnosticSink = null,
         int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
+        RuntimeWidthMode widthMode = RuntimeWidthMode.Origin, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
         string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "")
     {
@@ -51,6 +52,10 @@ public sealed record EmueraRuntimeOptions
         if (fontSize is < 8 or > 72 || lineHeight < fontSize || lineHeight > 128)
             throw new ArgumentOutOfRangeException(nameof(fontSize));
         FontSize = fontSize; LineHeight = lineHeight;
+        if (!RuntimeWidthPolicy.IsValid(widthMode, customWidth))
+            throw new ArgumentException("The runtime width configuration is invalid.", nameof(customWidth));
+        WidthMode = widthMode;
+        CustomWidth = customWidth;
         if (string.IsNullOrWhiteSpace(fontFaceId) || fontFaceId.Length > 128 || fontFaceId.Any(char.IsWhiteSpace) || fontFaceId.Contains('\0'))
             throw new ArgumentException("The runtime font face ID is invalid.", nameof(fontFaceId));
         if (!string.IsNullOrEmpty(fontCatalogDigest) && (fontCatalogDigest.Length != 64 || fontCatalogDigest.Any(character => character is < '0' or > '9' and < 'a' or > 'f')))
@@ -79,6 +84,8 @@ public sealed record EmueraRuntimeOptions
     public int BrowserWidth { get; }
     public int FontSize { get; }
     public int LineHeight { get; }
+    public RuntimeWidthMode WidthMode { get; }
+    public int? CustomWidth { get; }
     public string FontFaceId { get; }
     public string FontCatalogDigest { get; }
     public string RuntimeFontPath { get; }

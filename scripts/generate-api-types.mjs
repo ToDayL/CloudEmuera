@@ -18,10 +18,11 @@ const schemaOrder = [
 ];
 const aliases = [
   ["SessionStateDto", ["CREATING", "STARTING", "RUNNING", "STOPPING", "CLOSED", "CRASHED"]],
+  ["RuntimeWidthModeDto", ["ORIGIN", "MAX", "CUSTOM"]],
   ["SaveLayoutDto", ["ROOT", "SAV_DIRECTORY"]],
 ];
 const fieldTypeOverrides = {
-  SessionResponse: { state: "SessionStateDto" },
+  SessionResponse: { state: "SessionStateDto", widthMode: "RuntimeWidthModeDto", customWidth: "number | null" },
   SaveListResponse: { layout: "SaveLayoutDto" },
 };
 

@@ -5,7 +5,7 @@ import { ApiError } from "../api";
 import { useAuth } from "../auth";
 import { formatDateTime, listGames, shortDigest } from "../games";
 import { DEFAULT_SESSION_STARTUP_DEFAULTS, useSessionStartupDefaults } from "../settings/api";
-import { closeSession, createSession, deleteSession, openSession, updateSessionConfiguration, useRuntimeFontCatalog, useSession, useSessionList, waitForSession, waitForSessionDeletion, type RuntimeFontFace, type SessionState, type SessionView } from "./api";
+import { closeSession, createSession, deleteSession, openSession, updateSessionConfiguration, useRuntimeFontCatalog, useSession, useSessionList, waitForSession, waitForSessionDeletion, type RuntimeFontFace, type RuntimeWidthMode, type SessionState, type SessionView } from "./api";
 import { loadRuntimeFont, runtimeFontCssFamily } from "../console/RuntimeFontLoader";
 
 function stateLabel(state: SessionState): string {
@@ -102,6 +102,8 @@ export function NewSessionPage() {
   const [fontSize, setFontSize] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.fontSize);
   const [lineHeight, setLineHeight] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.lineHeight);
   const [fontFaceId, setFontFaceId] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.fontFaceId);
+  const [widthMode, setWidthMode] = useState<RuntimeWidthMode>(DEFAULT_SESSION_STARTUP_DEFAULTS.widthMode);
+  const [customWidth, setCustomWidth] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.customWidth ?? 800);
   const [fontPreviewReady, setFontPreviewReady] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +116,8 @@ export function NewSessionPage() {
     setFontFaceId(startupDefaults.data.fontFaceId);
     setFontSize(startupDefaults.data.fontSize);
     setLineHeight(startupDefaults.data.lineHeight);
+    setWidthMode(startupDefaults.data.widthMode);
+    setCustomWidth(startupDefaults.data.customWidth ?? 800);
   }, [startupDefaults.data]);
   useEffect(() => {
     if (fonts.data && !fonts.data.items.some(font => font.faceId === fontFaceId)) setFontFaceId(fonts.data.defaultFaceId);
@@ -125,7 +129,7 @@ export function NewSessionPage() {
     if (!selected) { setError("请选择一个有当前内容的可运行游戏。"); return; }
     setPending(true); setError(null);
     try {
-      const created = await createSession(selected.id, name.trim() || `${selected.name} · 新旅程`, fontSize, lineHeight, undefined, fontFaceId);
+      const created = await createSession(selected.id, name.trim() || `${selected.name} · 新旅程`, fontSize, lineHeight, undefined, fontFaceId, widthMode, widthMode === "CUSTOM" ? customWidth : null);
       const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]));
       const opened = await openSession(ready.id);
       const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING"]));
@@ -136,7 +140,7 @@ export function NewSessionPage() {
 
   return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">NEW SESSION</p><h1>创建 Session</h1><p>每个 Session 都拥有独立、持久的游戏目录与原生存档。</p></div></header>
     {games.isError && <div className="error-banner" role="alert"><strong>无法读取游戏库</strong><small>{errorMessage(games.error)}</small></div>}
-    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：周目三 · 新旅程" maxLength={120} required /></label><label><span>游戏</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">请选择游戏</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? "（已禁用）" : !game.hasCurrentContent ? "（无当前内容）" : ""}</option>)}</select></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || startupDefaults.isPending || games.isPending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady || !selected}>{pending ? <><span className="mini-spinner"/>正在创建并启动…</> : "创建并开始"}</button></div></form>
+    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：周目三 · 新旅程" maxLength={120} required /></label><label><span>游戏</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">请选择游戏</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? "（已禁用）" : !game.hasCurrentContent ? "（无当前内容）" : ""}</option>)}</select></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending}/><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || startupDefaults.isPending || games.isPending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady || !selected}>{pending ? <><span className="mini-spinner"/>正在创建并启动…</> : "创建并开始"}</button></div></form>
   </div>;
 }
 
@@ -167,17 +171,21 @@ export function SessionDisplayFields({ fontSize, lineHeight, setFontSize, setLin
   return <div className="form-grid"><label><span>字号（px）</span><input type="number" min={8} max={72} value={fontSize} onChange={event => setFontSize(Number(event.target.value))}/></label><label><span>行高（px）</span><input type="number" min={Math.max(8, fontSize)} max={128} value={lineHeight} onChange={event => setLineHeight(Number(event.target.value))}/></label></div>;
 }
 
+export function SessionWidthFields({ widthMode, customWidth, setWidthMode, setCustomWidth, disabled = false }: { widthMode: RuntimeWidthMode; customWidth: number; setWidthMode: (value: RuntimeWidthMode) => void; setCustomWidth: (value: number) => void; disabled?: boolean }) {
+  return <><label><span>运行宽度</span><select value={widthMode} onChange={event => setWidthMode(event.target.value as RuntimeWidthMode)} disabled={disabled}><option value="ORIGIN">Origin · 不超过游戏配置与浏览器宽度</option><option value="MAX">Max · 尽量铺满，最高 2000px</option><option value="CUSTOM">Custom · 使用自定义上限</option></select></label>{widthMode === "CUSTOM" && <label><span>自定义宽度（CSS px）</span><input type="number" min={240} max={16384} value={customWidth} onChange={event => setCustomWidth(Number(event.target.value))} disabled={disabled} required/></label>}<p className="settings-description">实际宽度在每次开启时受当时浏览器 CSS 宽度限制；运行中改变视口不会重新排版。</p></>;
+}
+
 export function SessionConfigurationPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const session = useSession(sessionId);
   const fonts = useRuntimeFontCatalog();
-  const [name, setName] = useState(""); const [fontFaceId, setFontFaceId] = useState("sarasa-fixed-sc-1.0.40-regular"); const [fontPreviewReady, setFontPreviewReady] = useState(false); const [fontSize, setFontSize] = useState(18); const [lineHeight, setLineHeight] = useState(19); const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
-  useEffect(() => { if (session.data) { setName(session.data.name); setFontFaceId(session.data.fontFaceId); setFontSize(session.data.fontSize); setLineHeight(session.data.lineHeight); } }, [session.data]);
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (!sessionId) return; setPending(true); setError(null); try { await updateSessionConfiguration(sessionId, name, fontSize, lineHeight, undefined, fontFaceId); navigate("/sessions"); } catch (cause) { setError(errorMessage(cause)); } finally { setPending(false); } };
+  const [name, setName] = useState(""); const [fontFaceId, setFontFaceId] = useState("sarasa-fixed-sc-1.0.40-regular"); const [fontPreviewReady, setFontPreviewReady] = useState(false); const [fontSize, setFontSize] = useState(18); const [lineHeight, setLineHeight] = useState(19); const [widthMode, setWidthMode] = useState<RuntimeWidthMode>("ORIGIN"); const [customWidth, setCustomWidth] = useState(800); const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { if (session.data) { setName(session.data.name); setFontFaceId(session.data.fontFaceId); setFontSize(session.data.fontSize); setLineHeight(session.data.lineHeight); setWidthMode(session.data.widthMode); setCustomWidth(session.data.customWidth ?? 800); } }, [session.data]);
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!sessionId) return; setPending(true); setError(null); try { await updateSessionConfiguration(sessionId, name, fontSize, lineHeight, undefined, fontFaceId, widthMode, widthMode === "CUSTOM" ? customWidth : null); navigate("/sessions"); } catch (cause) { setError(errorMessage(cause)); } finally { setPending(false); } };
   if (session.isPending || !session.data) return <div className="narrow-page">正在读取 Session…</div>;
   const selectedFontExists = fonts.data?.items.some(font => font.faceId === fontFaceId) === true;
-  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">SESSION SETTINGS</p><h1>Session 配置</h1><p>游戏固定为 {session.data.game.name}；运行中的 Session 需要先关闭才能修改。</p></div></header><form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} required/></label><label><span>游戏</span><input value={session.data.game.name} disabled/></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !selectedFontExists || !fontPreviewReady || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}>{pending ? "保存中…" : "保存配置"}</button></div></form></div>;
+  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">SESSION SETTINGS</p><h1>Session 配置</h1><p>游戏固定为 {session.data.game.name}；运行中的 Session 需要先关闭才能修改。</p></div></header><form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} required/></label><label><span>游戏</span><input value={session.data.game.name} disabled/></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}/>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !selectedFontExists || !fontPreviewReady || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}>{pending ? "保存中…" : "保存配置"}</button></div></form></div>;
 }
 
 export function sessionGameGlyph(session: SessionView): string { return session.game.name.slice(0, 1); }

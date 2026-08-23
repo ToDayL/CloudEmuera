@@ -144,6 +144,9 @@ Session 1 ── 1 private SessionRoot
   when creating a Session or configuring a stopped Session. The immutable face ID must be persisted and used by
   later Workers. Font, size, and line height must not change while running; an unknown, missing, or corrupt face
   must fail before Worker startup rather than falling back to a host or user font.
+- **SESS-014**: Users must be able to select an `ORIGIN`, `MAX`, or `CUSTOM` width mode in account startup defaults,
+  Session creation, and quiescent Session configuration. The mode and Custom width are persisted per Session and
+  cannot be changed while it is active.
 
 ### 6.4 Game display and interaction
 
@@ -173,6 +176,10 @@ Session 1 ── 1 private SessionRoot
   `Config.DrawableWidth`. It must emit complete physical `ConsoleLine` values, positioned segments, button
   `positionX/measuredWidth`, oversized-element handling, and the `ButtonWrap` result. The browser must disable
   automatic wrapping and render the supplied geometry instead of choosing line breaks or hit boxes again.
+- **PLAY-015**: After loading game configuration, the Worker must resolve layout width from the startup browser CSS
+  width: `ORIGIN` uses the lesser of browser width and `WindowX`, `MAX` the lesser of browser width and 2000px, and
+  `CUSTOM` the lesser of browser width and the user value. Viewport changes do not reflow a running Session; a close
+  and reopen is required to apply a new width.
 
 ### 6.5 Save management
 

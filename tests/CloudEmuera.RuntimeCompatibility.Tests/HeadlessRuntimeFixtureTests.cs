@@ -886,6 +886,23 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(390, fixture.Console.Snapshot.WindowMetadata.ViewportWidth);
     }
 
+    [Theory]
+    [InlineData(RuntimeWidthMode.Max, null, 2500, 2000)]
+    [InlineData(RuntimeWidthMode.Max, null, 900, 900)]
+    [InlineData(RuntimeWidthMode.Custom, 1200, 1600, 1200)]
+    [InlineData(RuntimeWidthMode.Custom, 1200, 900, 900)]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task ConfiguredWidthModeSelectsTheAuthoritativeLayoutWidth(RuntimeWidthMode widthMode, int? customWidth, int browserWidth, int expectedWidth)
+    {
+        // SESS-014/PLAY-015: Max overrides WindowX up to 2000 CSS px;
+        // Custom overrides it up to the persisted value. Both remain capped by the browser.
+        using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(browserWidth: browserWidth, widthMode: widthMode, customWidth: customWidth);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(expectedWidth, fixture.Console.Snapshot.WindowMetadata.ViewportWidth);
+    }
+
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     public void CustomDrawLineRejectsAnEmptyBarString()
@@ -2433,6 +2450,8 @@ public sealed class HeadlessRuntimeFixtureTests
             TimeSpan? runDeadline = null,
             Action? upstreamGateAcquired = null,
             int browserWidth = 0,
+            RuntimeWidthMode widthMode = RuntimeWidthMode.Origin,
+            int? customWidth = null,
             string fontFaceId = "sarasa-fixed-sc-1.0.40-regular",
             string fontCatalogDigest = "",
             string runtimeFontPath = "",
@@ -2445,6 +2464,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 runDeadline,
                 upstreamGateAcquired,
                 browserWidth,
+                widthMode,
+                customWidth,
                 fontFaceId,
                 fontCatalogDigest,
                 runtimeFontPath,
@@ -2458,6 +2479,8 @@ public sealed class HeadlessRuntimeFixtureTests
             TimeSpan? runDeadline = null,
             Action? upstreamGateAcquired = null,
             int browserWidth = 0,
+            RuntimeWidthMode widthMode = RuntimeWidthMode.Origin,
+            int? customWidth = null,
             string fontFaceId = "sarasa-fixed-sc-1.0.40-regular",
             string fontCatalogDigest = "",
             string runtimeFontPath = "",
@@ -2476,6 +2499,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 initializationDeadline ?? TimeSpan.FromSeconds(5),
                 runDeadline ?? TimeSpan.FromSeconds(5),
                 browserWidth: browserWidth,
+                widthMode: widthMode,
+                customWidth: customWidth,
                 fontFaceId: fontFaceId,
                 fontCatalogDigest: fontCatalogDigest,
                 runtimeFontPath: runtimeFontPath,

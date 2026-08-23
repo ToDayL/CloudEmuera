@@ -7,6 +7,8 @@
 
 export type SessionStateDto = "CREATING" | "STARTING" | "RUNNING" | "STOPPING" | "CLOSED" | "CRASHED";
 
+export type RuntimeWidthModeDto = "ORIGIN" | "MAX" | "CUSTOM";
+
 export type SaveLayoutDto = "ROOT" | "SAV_DIRECTORY";
 
 export interface SessionGameSummaryDto {
@@ -25,6 +27,8 @@ export interface SessionResponseDto {
   fontFaceId: string;
   fontSize: number;
   lineHeight: number;
+  widthMode: RuntimeWidthModeDto;
+  customWidth: number | null;
   state: SessionStateDto;
   stateVersion: number;
   workerEpoch: number;

@@ -61,6 +61,43 @@ public sealed class SqliteSessionApplicationServiceTests
     }
 
     [Fact]
+    public async Task WidthConfigurationPersistsAtCreationAndCanOnlyBeChangedWhileQuiescent()
+    {
+        // SESS-014: width intent belongs to the persistent Session and active
+        // Workers cannot have their authoritative layout changed underneath them.
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        await SeedGameAsync(database);
+        await using ServiceProvider provider = BuildProvider(database.Options);
+        ISessionApplicationService service = provider.GetRequiredService<ISessionApplicationService>();
+        CurrentActor actor = new("usr_fixture", "PLAYER", "auth_fixture");
+
+        SessionView created = (await service.CreateAsync(actor,
+            new CreateSessionCommand("game_fixture", "宽度", "create-width", WidthMode: SessionWidthMode.Max))).Value!;
+        Assert.Equal(SessionWidthMode.Max, created.WidthMode);
+        Assert.Null(created.CustomWidth);
+
+        SessionView updated = (await service.UpdateConfigurationAsync(actor,
+            new SessionConfigurationCommand(created.Id, created.Name, created.FontSize, created.LineHeight, "configure-width", WidthMode: SessionWidthMode.Custom, CustomWidth: 1280))).Value!;
+        Assert.Equal(SessionWidthMode.Custom, updated.WidthMode);
+        Assert.Equal(1280, updated.CustomWidth);
+
+        await using (DbContextScope scope = database.OpenContext())
+        {
+            SessionRow row = await scope.Context.Sessions.SingleAsync(value => value.Id == created.Id);
+            row.State = SessionState.Running;
+            row.StartedAt = row.CreatedAt;
+            row.ClosedAt = null;
+            await scope.Context.SaveChangesAsync();
+        }
+
+        SessionApplicationException active = await Assert.ThrowsAsync<SessionApplicationException>(() =>
+            service.UpdateConfigurationAsync(actor,
+                new SessionConfigurationCommand(created.Id, created.Name, created.FontSize, created.LineHeight, "configure-active", WidthMode: SessionWidthMode.Origin)));
+        Assert.Equal(SessionErrorCodes.SessionNotReady, active.Code);
+    }
+
+    [Fact]
     public async Task ClosedAndCrashedSessionsCanBeDeletedButActiveSessionsCannot()
     {
         using TemporarySqliteDatabase database = new();
