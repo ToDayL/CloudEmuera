@@ -87,6 +87,43 @@ public sealed class IdentityApiContractTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "IdentityApi")]
+    public async Task SessionStartupDefaultsPersistInUserPreferencesAndRejectInvalidLayout()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
+        _factory = new IdentityFactory(_dataRoot);
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+
+        string csrf = await GetCsrfAsync(client);
+        Assert.True((await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf)).IsSuccessStatusCode);
+        csrf = await GetCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
+
+        SessionStartupDefaultsResponse initial = await (await client.GetAsync("/api/v1/preferences/session-startup-defaults")).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Default Session startup preferences were missing.");
+        Assert.Equal("sarasa-fixed-sc-1.0.40-regular", initial.FontFaceId);
+        Assert.Equal(18, initial.FontSize);
+        Assert.Equal(19, initial.LineHeight);
+
+        csrf = await GetCsrfAsync(client);
+        SessionStartupDefaultsResponse saved = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
+            new UpdateSessionStartupDefaultsRequest("lxgw-wenkai-mono-1.522-medium", 24, 28), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Saved Session startup preferences were missing.");
+        Assert.Equal("lxgw-wenkai-mono-1.522-medium", saved.FontFaceId);
+        Assert.Equal(24, saved.FontSize);
+        Assert.Equal(28, saved.LineHeight);
+
+        SessionStartupDefaultsResponse persisted = await (await client.GetAsync("/api/v1/preferences/session-startup-defaults")).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Persisted Session startup preferences were missing.");
+        Assert.Equal(saved, persisted);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage invalid = await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
+            new UpdateSessionStartupDefaultsRequest("lxgw-wenkai-mono-1.522-medium", 24, 23), csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        ApiError error = await invalid.Content.ReadFromJsonAsync<ApiError>() ?? throw new Xunit.Sdk.XunitException("Invalid preference error was missing.");
+        Assert.Equal("INVALID_SESSION_STARTUP_DEFAULTS", error.Code);
+    }
+
+    [Fact]
     [Trait("Category", "Bootstrap")]
     public async Task ConcurrentHostsCreateOneBootstrapAdminAndBothBecomeReady()
     {

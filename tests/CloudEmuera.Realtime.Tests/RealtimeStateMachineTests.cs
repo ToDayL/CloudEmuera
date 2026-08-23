@@ -450,6 +450,8 @@ public sealed class RealtimeStateMachineTests
         public Task<CurrentUser?> GetCurrentUserAsync(string userId, CancellationToken cancellationToken = default) =>
             Task.FromResult<CurrentUser?>(new CurrentUser(userId, "test", "test@example.test", "PLAYER", "ACTIVE", false, 1));
 
+        public Task<SessionStartupDefaults> GetSessionStartupDefaultsAsync(CurrentActor actor, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<SessionStartupDefaults> UpdateSessionStartupDefaultsAsync(CurrentActor actor, SessionStartupDefaultsCommand command, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<LoginResult?> LoginAsync(LoginCommand command, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task LogoutAsync(string sessionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<LoginResult?> ChangePasswordAsync(CurrentActor actor, string currentPassword, string newPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();

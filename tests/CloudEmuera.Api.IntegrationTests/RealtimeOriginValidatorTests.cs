@@ -66,6 +66,8 @@ public sealed class RealtimeUpgradeValidatorTests
         public Task<bool> ValidateSessionAsync(string userId, string sessionId, string securityStamp, CancellationToken cancellationToken = default) => Task.FromResult(live);
         public Task<LoginResult?> LoginAsync(LoginCommand command, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<CurrentUser?> GetCurrentUserAsync(string userId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<SessionStartupDefaults> GetSessionStartupDefaultsAsync(CurrentActor actor, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<SessionStartupDefaults> UpdateSessionStartupDefaultsAsync(CurrentActor actor, SessionStartupDefaultsCommand command, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task LogoutAsync(string sessionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<LoginResult?> ChangePasswordAsync(CurrentActor actor, string currentPassword, string newPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<CurrentUser>> ListUsersAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();

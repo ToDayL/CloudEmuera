@@ -1,5 +1,9 @@
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using CloudEmuera.Application.Auditing;
+using CloudEmuera.Application.Fonts;
 using CloudEmuera.Application.Identity;
 using CloudEmuera.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
@@ -22,10 +26,16 @@ public sealed class LocalIdentityService(
     CloudEmueraUserStore userStore,
     IPasswordHasher<CloudEmueraUser> passwordHasher,
     TimeProvider timeProvider,
-    IAuditContext auditContext) : ILocalIdentityService
+    IAuditContext auditContext,
+    IRuntimeFontCatalog? fontCatalog = null) : ILocalIdentityService
 {
     private const int LockoutThreshold = 5;
+    private const string SessionStartupDefaultsKey = "sessionStartupDefaults";
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
+    private static readonly JsonSerializerOptions PreferencesJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false,
+    };
     private readonly string _dummyHash = passwordHasher.HashPassword(new CloudEmueraUser(), "not-a-user-password");
 
     public async Task<LoginResult?> LoginAsync(LoginCommand command, CancellationToken cancellationToken = default)
@@ -81,6 +91,40 @@ public sealed class LocalIdentityService(
 
     public Task<CurrentUser?> GetCurrentUserAsync(string userId, CancellationToken cancellationToken = default) =>
         db.Users.AsNoTracking().Where(user => user.Id == userId && user.Status == UserStatus.Active).Select(user => ToCurrent(user)).SingleOrDefaultAsync(cancellationToken);
+
+    public async Task<SessionStartupDefaults> GetSessionStartupDefaultsAsync(CurrentActor actor, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        CloudEmueraUser? user = await db.Users.AsNoTracking()
+            .SingleOrDefaultAsync(value => value.Id == actor.UserId && value.Status == UserStatus.Active, cancellationToken)
+            .ConfigureAwait(false);
+        return user is null ? throw new KeyNotFoundException() : ReadSessionStartupDefaults(user.PreferencesJson);
+    }
+
+    public async Task<SessionStartupDefaults> UpdateSessionStartupDefaultsAsync(CurrentActor actor, SessionStartupDefaultsCommand command, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(command);
+        SessionStartupDefaults defaults = ValidateSessionStartupDefaults(command);
+        await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, cancellationToken).ConfigureAwait(false);
+        CloudEmueraUser? user = await db.Users.SingleOrDefaultAsync(value => value.Id == actor.UserId && value.Status == UserStatus.Active, cancellationToken).ConfigureAwait(false);
+        if (user is null) throw new KeyNotFoundException();
+
+        JsonObject preferences = ReadPreferencesObject(user.PreferencesJson);
+        preferences[SessionStartupDefaultsKey] = JsonSerializer.SerializeToNode(defaults, PreferencesJsonOptions);
+        string serialized = preferences.ToJsonString(PreferencesJsonOptions);
+        if (Encoding.UTF8.GetByteCount(serialized) > PersistenceLimits.JsonMaxLength)
+            throw new IdentityValidationException("PREFERENCES_TOO_LARGE");
+
+        DateTimeOffset now = timeProvider.GetUtcNow();
+        user.PreferencesJson = serialized;
+        user.UpdatedAt = now;
+        user.StateVersion = checked(user.StateVersion + 1);
+        AddAudit(AuditActions.UserPreferencesUpdated, "USER", user.Id, "SUCCEEDED", "USER", user.Id);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return defaults;
+    }
 
     public async Task<bool> ValidateSessionAsync(string userId, string sessionId, string securityStamp, CancellationToken cancellationToken = default)
     {
@@ -257,6 +301,61 @@ public sealed class LocalIdentityService(
         if (!await db.Users.AnyAsync(user => user.Id != currentId && user.Role == UserRole.Admin && user.Status == UserStatus.Active, cancellationToken).ConfigureAwait(false)) throw new IdentityConflictException("LAST_ACTIVE_ADMIN");
     }
     private static CurrentUser ToCurrent(CloudEmueraUser user) => new(user.Id, user.LoginName, user.Email ?? string.Empty, user.Role == UserRole.Admin ? "ADMIN" : "PLAYER", user.Status == UserStatus.Active ? "ACTIVE" : "DISABLED", user.MustChangePassword, user.StateVersion);
+    private SessionStartupDefaults ValidateSessionStartupDefaults(SessionStartupDefaultsCommand command)
+    {
+        if (command.FontSize is < 8 or > 72 || command.LineHeight < command.FontSize || command.LineHeight > 128)
+            throw new IdentityValidationException("INVALID_SESSION_STARTUP_DEFAULTS");
+        if (fontCatalog is null)
+        {
+            if (!string.Equals(command.FontFaceId, RuntimeFontDefaults.DefaultFaceId, StringComparison.Ordinal))
+                throw new IdentityValidationException("INVALID_SESSION_STARTUP_FONT");
+            return new SessionStartupDefaults(RuntimeFontDefaults.DefaultFaceId, command.FontSize, command.LineHeight);
+        }
+        try
+        {
+            string faceId = fontCatalog.Require(command.FontFaceId).FaceId;
+            return new SessionStartupDefaults(faceId, command.FontSize, command.LineHeight);
+        }
+        catch (RuntimeFontCatalogException)
+        {
+            throw new IdentityValidationException("INVALID_SESSION_STARTUP_FONT");
+        }
+    }
+
+    private SessionStartupDefaults ReadSessionStartupDefaults(string preferencesJson)
+    {
+        try
+        {
+            JsonObject? preferences = JsonNode.Parse(preferencesJson) as JsonObject;
+            SessionStartupDefaults? stored = preferences?[SessionStartupDefaultsKey]?.Deserialize<SessionStartupDefaults>(PreferencesJsonOptions);
+            if (stored is null || stored.FontSize is < 8 or > 72 || stored.LineHeight < stored.FontSize || stored.LineHeight > 128)
+                return SessionStartupDefaults.Default;
+            if (fontCatalog is null)
+                return string.Equals(stored.FontFaceId, RuntimeFontDefaults.DefaultFaceId, StringComparison.Ordinal) ? stored : SessionStartupDefaults.Default;
+            string faceId = fontCatalog.Require(stored.FontFaceId).FaceId;
+            return new SessionStartupDefaults(faceId, stored.FontSize, stored.LineHeight);
+        }
+        catch (JsonException)
+        {
+            return SessionStartupDefaults.Default;
+        }
+        catch (RuntimeFontCatalogException)
+        {
+            return SessionStartupDefaults.Default;
+        }
+    }
+
+    private static JsonObject ReadPreferencesObject(string preferencesJson)
+    {
+        try
+        {
+            return JsonNode.Parse(preferencesJson) as JsonObject ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
     private static UserRole ParseRole(string role) => role == "ADMIN" ? UserRole.Admin : role == "PLAYER" ? UserRole.Player : throw new IdentityValidationException("INVALID_ROLE");
     private static UserStatus ParseStatus(string status) => status == "ACTIVE" ? UserStatus.Active : status == "DISABLED" ? UserStatus.Disabled : throw new IdentityValidationException("INVALID_STATUS");
     private static string NewStamp() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));

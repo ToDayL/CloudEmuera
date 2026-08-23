@@ -2,7 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api";
+import { useAuth } from "../auth";
 import { formatDateTime, listGames, shortDigest } from "../games";
+import { DEFAULT_SESSION_STARTUP_DEFAULTS, useSessionStartupDefaults } from "../settings/api";
 import { closeSession, createSession, deleteSession, openSession, updateSessionConfiguration, useRuntimeFontCatalog, useSession, useSessionList, waitForSession, waitForSessionDeletion, type RuntimeFontFace, type SessionState, type SessionView } from "./api";
 import { loadRuntimeFont, runtimeFontCssFamily } from "../console/RuntimeFontLoader";
 
@@ -88,17 +90,19 @@ function SessionRow({ session, busy, onLifecycle, onDelete }: { session: Session
 }
 
 export function NewSessionPage() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedGame = searchParams.get("game");
   const games = useQuery({ queryKey: ["games", "session-create"], queryFn: listGames, staleTime: 3_000 });
   const fonts = useRuntimeFontCatalog();
+  const startupDefaults = useSessionStartupDefaults(user?.id);
   const availableGames = (games.data ?? []).filter(game => game.status === "ACTIVE" && game.hasCurrentContent);
   const [gameId, setGameId] = useState(requestedGame && availableGames.some(game => game.id === requestedGame) ? requestedGame : "");
   const [name, setName] = useState("");
-  const [fontSize, setFontSize] = useState(18);
-  const [lineHeight, setLineHeight] = useState(19);
-  const [fontFaceId, setFontFaceId] = useState("sarasa-fixed-sc-1.0.40-regular");
+  const [fontSize, setFontSize] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.fontSize);
+  const [lineHeight, setLineHeight] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.lineHeight);
+  const [fontFaceId, setFontFaceId] = useState(DEFAULT_SESSION_STARTUP_DEFAULTS.fontFaceId);
   const [fontPreviewReady, setFontPreviewReady] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +110,12 @@ export function NewSessionPage() {
   useEffect(() => {
     if (!gameId && requestedGame && availableGames.some(game => game.id === requestedGame)) setGameId(requestedGame);
   }, [availableGames, gameId, requestedGame]);
+  useEffect(() => {
+    if (!startupDefaults.data) return;
+    setFontFaceId(startupDefaults.data.fontFaceId);
+    setFontSize(startupDefaults.data.fontSize);
+    setLineHeight(startupDefaults.data.lineHeight);
+  }, [startupDefaults.data]);
   useEffect(() => {
     if (fonts.data && !fonts.data.items.some(font => font.faceId === fontFaceId)) setFontFaceId(fonts.data.defaultFaceId);
   }, [fontFaceId, fonts.data]);
@@ -127,11 +137,11 @@ export function NewSessionPage() {
 
   return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">NEW SESSION</p><h1>创建 Session</h1><p>每个 Session 都拥有独立、持久的游戏目录与原生存档。</p></div></header>
     {games.isError && <div className="error-banner" role="alert"><strong>无法读取游戏库</strong><small>{errorMessage(games.error)}</small></div>}
-    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：周目三 · 新旅程" maxLength={120} required /></label><label><span>游戏</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">请选择游戏</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? "（已禁用）" : !game.hasCurrentContent ? "（无当前内容）" : ""}</option>)}</select></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || games.isPending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady || !selected}>{pending ? <><span className="mini-spinner"/>正在创建并启动…</> : "创建并开始"}</button></div></form>
+    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：周目三 · 新旅程" maxLength={120} required /></label><label><span>游戏</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">请选择游戏</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? "（已禁用）" : !game.hasCurrentContent ? "（无当前内容）" : ""}</option>)}</select></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} setFontSize={setFontSize} setLineHeight={setLineHeight}/><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || startupDefaults.isPending || games.isPending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady || !selected}>{pending ? <><span className="mini-spinner"/>正在创建并启动…</> : "创建并开始"}</button></div></form>
   </div>;
 }
 
-function SessionFontField({ value, fonts, disabled, onChange, onReadinessChange }: { value: string; fonts: RuntimeFontFace[]; disabled: boolean; onChange: (value: string) => void; onReadinessChange?: (ready: boolean) => void }) {
+export function SessionFontField({ value, fonts, disabled, onChange, onReadinessChange }: { value: string; fonts: RuntimeFontFace[]; disabled: boolean; onChange: (value: string) => void; onReadinessChange?: (ready: boolean) => void }) {
   const selected = fonts.find(font => font.faceId === value);
   return <><label><span>运行时字体</span><select value={value} onChange={event => onChange(event.target.value)} disabled={disabled} required>{!selected && <option value={value} disabled>当前字体不可用，请选择现有字体</option>}{fonts.map(font => <option value={font.faceId} key={font.faceId}>{font.displayName} · {font.family} {font.weight}</option>)}</select></label><RuntimeFontPreview face={selected} onReadinessChange={onReadinessChange}/></>;
 }
@@ -154,8 +164,8 @@ function RuntimeFontPreview({ face, onReadinessChange }: { face?: RuntimeFontFac
   </div>;
 }
 
-function SessionDisplayFields({ fontSize, lineHeight, setFontSize, setLineHeight }: { fontSize: number; lineHeight: number; setFontSize: (value: number) => void; setLineHeight: (value: number) => void }) {
-  return <div className="form-grid"><label><span>字号（px）</span><input type="number" min={8} max={72} value={fontSize} onChange={event => setFontSize(Number(event.target.value))}/></label><label><span>行高（px）</span><input type="number" min={8} max={128} value={lineHeight} onChange={event => setLineHeight(Number(event.target.value))}/></label></div>;
+export function SessionDisplayFields({ fontSize, lineHeight, setFontSize, setLineHeight }: { fontSize: number; lineHeight: number; setFontSize: (value: number) => void; setLineHeight: (value: number) => void }) {
+  return <div className="form-grid"><label><span>字号（px）</span><input type="number" min={8} max={72} value={fontSize} onChange={event => setFontSize(Number(event.target.value))}/></label><label><span>行高（px）</span><input type="number" min={Math.max(8, fontSize)} max={128} value={lineHeight} onChange={event => setLineHeight(Number(event.target.value))}/></label></div>;
 }
 
 export function SessionConfigurationPage() {

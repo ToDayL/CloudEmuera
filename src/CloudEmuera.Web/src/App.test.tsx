@@ -102,6 +102,45 @@ describe("App", () => {
     return render(<MemoryRouter initialEntries={[path]}><AuthProvider initialUser={user}><App /></AuthProvider></MemoryRouter>);
   }
 
+  it("loads and saves Session startup defaults from the settings page", async () => {
+    const savedDefaults = { fontFaceId: runtimeFontFaceId, fontSize: 24, lineHeight: 28 };
+    const fetchMock = mockFetch((url, init) => {
+      if (url === "/api/v1/preferences/session-startup-defaults" && init?.method === "PUT") return jsonResponse(savedDefaults);
+      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse({ fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19 });
+      if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
+      if (url === `/api/v1/runtime-fonts/assets/${runtimeFontDigest}.woff2`) return new Response(new TextEncoder().encode("font-test"), { headers: { "Content-Type": "font/woff2", "Content-Length": "9" } });
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: { add: vi.fn(), load: vi.fn().mockResolvedValue([]), ready: Promise.resolve([]) } });
+    class TestFontFace {
+      constructor(readonly family: string, readonly source: ArrayBuffer, readonly descriptors: FontFaceDescriptors) {}
+      load(): Promise<FontFace> { return Promise.resolve(this as unknown as FontFace); }
+    }
+    vi.stubGlobal("FontFace", TestFontFace);
+    try {
+      renderAt("/settings");
+      expect(await screen.findByRole("heading", { name: "设置" })).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: "保存默认值" })).toBeEnabled());
+      expect(screen.getByLabelText("字号（px）")).toHaveValue(18);
+      expect(screen.getByLabelText("行高（px）")).toHaveValue(19);
+
+      fireEvent.change(screen.getByLabelText("字号（px）"), { target: { value: "24" } });
+      fireEvent.change(screen.getByLabelText("行高（px）"), { target: { value: "28" } });
+      fireEvent.click(screen.getByRole("button", { name: "保存默认值" }));
+
+      expect(await screen.findByText("已保存。之后创建的 Session 将使用这些默认值。"))
+        .toBeInTheDocument();
+      const putCall = fetchMock.mock.calls.find(([url, init]) => String(url) === "/api/v1/preferences/session-startup-defaults" && init?.method === "PUT");
+      expect(JSON.parse(String(putCall?.[1]?.body))).toEqual(savedDefaults);
+    } finally {
+      vi.unstubAllGlobals();
+      if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+      else Reflect.deleteProperty(document, "fonts");
+    }
+  });
+
   it("renders live admin runtime diagnostics and sends an audited force-stop command", async () => {
     const admin: CurrentUser = { id: "usr_admin", username: "admin", email: "admin@example.com", role: "ADMIN", status: "ACTIVE", mustChangePassword: false, stateVersion: 1 };
     const runtime = {

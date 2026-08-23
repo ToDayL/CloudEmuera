@@ -481,6 +481,29 @@ app.MapGet("/api/v1/auth/me", async (HttpContext context, ILocalIdentityService 
     return user is null ? ApiIdentity.Error("UNAUTHENTICATED", "需要登录。", StatusCodes.Status401Unauthorized) : Results.Ok(ApiIdentity.ToResponse(user));
 }).RequireAuthorization();
 
+var preferences = app.MapGroup("/api/v1/preferences").RequireAuthorization();
+preferences.MapGet("/session-startup-defaults", async (HttpContext context, ILocalIdentityService identities) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    SessionStartupDefaults defaults = await identities.GetSessionStartupDefaultsAsync(actor, context.RequestAborted).ConfigureAwait(false);
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Ok(ApiIdentity.ToResponse(defaults));
+}).RequireRateLimiting("session-read");
+preferences.MapPut("/session-startup-defaults", async (HttpContext context, UpdateSessionStartupDefaultsRequest? request, IAntiforgery antiforgery, ILocalIdentityService identities) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    if (request is null) return ApiIdentity.Error("VALIDATION_FAILED", "请求体无效。", 400);
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
+    try
+    {
+        SessionStartupDefaults defaults = await identities.UpdateSessionStartupDefaultsAsync(actor, new SessionStartupDefaultsCommand(request.FontFaceId, request.FontSize, request.LineHeight), context.RequestAborted).ConfigureAwait(false);
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(ApiIdentity.ToResponse(defaults));
+    }
+    catch (IdentityValidationException exception) { return ApiIdentity.Error(exception.Code, "Session 启动默认值无效。", 400); }
+    catch (KeyNotFoundException) { return ApiIdentity.Error("UNAUTHENTICATED", "需要登录。", 401); }
+}).RequireRateLimiting("session-write");
+
 app.MapPost("/api/v1/auth/logout", async (HttpContext context, IAntiforgery antiforgery, ILocalIdentityService identities) =>
 {
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
@@ -1105,6 +1128,7 @@ internal static class ApiIdentity
         return context.Response.WriteAsJsonAsync(new ApiError(code, message, RequestCorrelation.Current ?? context.TraceIdentifier));
     }
     public static CurrentUserResponse ToResponse(CurrentUser value) => new(value.Id, value.Username, value.Email, value.Role, value.Status, value.MustChangePassword, value.StateVersion);
+    public static SessionStartupDefaultsResponse ToResponse(SessionStartupDefaults value) => new(value.FontFaceId, value.FontSize, value.LineHeight);
     public static CurrentActor? Actor(HttpContext context)
     {
         string? id = context.User.FindFirstValue(ClaimTypes.NameIdentifier); string? role = context.User.FindFirstValue(ClaimTypes.Role); string? session = context.User.FindFirstValue("auth_session_id");

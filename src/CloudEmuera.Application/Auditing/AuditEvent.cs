@@ -15,6 +15,7 @@ public static class AuditActions
     public const string PasswordChanged = "AUTH_PASSWORD_CHANGED";
     public const string UserCreated = "USER_CREATED";
     public const string UserProfileUpdated = "USER_PROFILE_UPDATED";
+    public const string UserPreferencesUpdated = "USER_PREFERENCES_UPDATED";
     public const string UserRoleChanged = "USER_ROLE_CHANGED";
     public const string UserStatusChanged = "USER_STATUS_CHANGED";
     public const string PasswordReset = "USER_PASSWORD_RESET";
