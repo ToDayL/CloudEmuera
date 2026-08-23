@@ -125,6 +125,7 @@ describe("App", () => {
       await waitFor(() => expect(screen.getByRole("button", { name: "保存默认值" })).toBeEnabled());
       expect(screen.getByLabelText("字号（px）")).toHaveValue(18);
       expect(screen.getByLabelText("行高（px）")).toHaveValue(19);
+      expect(screen.queryByText("Sarasa Fixed SC Regular 已通过 WOFF2 校验")).not.toBeInTheDocument();
 
       fireEvent.change(screen.getByLabelText("字号（px）"), { target: { value: "24" } });
       fireEvent.change(screen.getByLabelText("行高（px）"), { target: { value: "28" } });
@@ -447,6 +448,8 @@ describe("App", () => {
     renderAt("/sessions");
 
     expect(await screen.findByRole("heading", { name: "港口旅程" })).toBeInTheDocument();
+    expect(screen.queryByText("Session 与浏览器连接相互独立")).not.toBeInTheDocument();
+    expect(screen.queryByText("关闭标签页不会停止游戏。请在不再需要时显式关闭 Session，以释放 Worker 名额。")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
 

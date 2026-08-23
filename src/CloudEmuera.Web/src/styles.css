@@ -133,10 +133,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .drop-zone > span { display: grid; width: 54px; height: 54px; place-items: center; margin-bottom: 12px; border-radius: 50%; color: var(--accent); background: #f8e5dd; }
 .drop-zone strong, .drop-zone small { display: block; }
 .drop-zone small { margin-top: 6px; color: #92958d; font-size: 10px; }
-.modal-note, .form-explain, .aside-note, .locked-banner, .info-banner { display: flex; align-items: center; gap: 12px; }
+.modal-note, .form-explain, .aside-note, .locked-banner { display: flex; align-items: center; gap: 12px; }
 .modal-note { margin-top: 17px; color: #8a6b2a; }
-.modal-note p, .form-explain p, .aside-note p, .locked-banner p, .info-banner p { margin: 0; }
-.modal-note strong, .modal-note small, .form-explain strong, .form-explain small, .aside-note strong, .aside-note small, .locked-banner strong, .locked-banner small, .info-banner strong, .info-banner small { display: block; }
+.modal-note p, .form-explain p, .aside-note p, .locked-banner p { margin: 0; }
+.modal-note strong, .modal-note small, .form-explain strong, .form-explain small, .aside-note strong, .aside-note small, .locked-banner strong, .locked-banner small { display: block; }
 .modal-note strong { font-size: 11px; }
 .modal-note small { margin-top: 2px; color: #9b9583; font-size: 9px; }
 .scan-state { display: flex; min-height: 240px; align-items: center; justify-content: center; flex-direction: column; text-align: center; }
@@ -214,9 +214,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .status-pill.running { color: #257258; background: #e1f0e9; }.status-pill.running i { background: #319470; }
 .session-meta span, .session-meta strong { display: block; }.session-meta span { color: #9a9d95; font-size: 9px; }.session-meta strong { margin-top: 5px; font-size: 10px; font-weight: 600; }
 .session-row > .play-button, .session-row > .secondary-button { min-width: 112px; min-height: 38px; font-size: 10px; }
-.info-banner { margin-top: 19px; padding: 15px 18px; border: 1px solid #e7ddc2; border-radius: 11px; color: #8c692a; background: #f8f2e2; }
-.info-banner strong { font-size: 11px; }.info-banner small { margin-top: 2px; color: #8d8879; font-size: 9px; }
-
 .narrow-page { max-width: 780px !important; }
 .form-panel { display: grid; gap: 20px; padding: 28px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
 .form-panel > label, .login-form > label { display: grid; gap: 8px; color: #4d514a; font-size: 11px; font-weight: 700; }
@@ -632,8 +629,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .realtime-console .realtime-console-stage {
   width: max-content;
-  min-width: 100%;
   min-height: 100%;
+  /* Keep the server-sized viewport centered on wide desktop screens. */
   margin: 0 auto;
 }
 .realtime-console .console-input-dock {

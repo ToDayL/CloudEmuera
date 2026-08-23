@@ -73,7 +73,6 @@ export function SessionsPage() {
       : items.length === 0 ? <div className="empty-state"><span className="empty-icon">◌</span><h2>还没有 Session</h2><p>从已启用当前内容的游戏创建一个独立、可重连的 Session。</p><Link className="primary-button" to="/sessions/new">创建 Session</Link></div>
       : <section className="session-list" aria-label="Session 列表">{items.map(session => <SessionRow key={session.id} session={session} busy={actionId === session.id} onLifecycle={operation => void lifecycle(session, operation)} onDelete={() => void remove(session)} />)}</section>}
     {query.data?.nextCursor && <div className="pagination-actions"><button className="secondary-button" onClick={() => setCursor(query.data?.nextCursor ?? undefined)} disabled={query.isFetching}>加载更多</button></div>}
-    <div className="info-banner"><span aria-hidden="true">✦</span><p><strong>Session 与浏览器连接相互独立</strong><small>关闭标签页不会停止游戏。请在不再需要时显式关闭 Session，以释放 Worker 名额。</small></p></div>
   </>;
 }
 
@@ -160,7 +159,7 @@ function RuntimeFontPreview({ face, onReadinessChange }: { face?: RuntimeFontFac
   if (!face) return <p className="runtime-font-preview is-error" role="status">字体目录中没有当前字体，请选择一个可用 face。</p>;
   return <div className={`runtime-font-preview ${state === "error" ? "is-error" : ""}`} role="status" aria-live="polite">
     <span className="runtime-font-preview-text" style={state === "ready" ? { fontFamily: `"${runtimeFontCssFamily(face)}"` } : undefined}>ABC 123　中文 日本語</span>
-    <small>{state === "loading" ? "正在加载所选字体预览…" : state === "ready" ? `${face.displayName} 已通过 WOFF2 校验` : "字体预览加载失败；创建/保存已禁用。"}</small>
+    {state !== "ready" && <small>{state === "loading" ? "正在加载所选字体预览…" : "字体预览加载失败；创建/保存已禁用。"}</small>}
   </div>;
 }
 
