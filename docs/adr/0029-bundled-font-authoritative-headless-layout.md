@@ -19,7 +19,9 @@ PRINTC 列宽和按钮命中区域。
 尚未执行这一步物理布局。
 
 用户已确认首期忽略游戏包和游戏脚本请求的字体，只允许 CloudEmuera 分发、校验并支持的字体。首期
-字体为 Sarasa Fixed SC 与霞鹜文楷 Mono 的 Light、Regular、Medium 三种字重。
+字体最初为 Sarasa Fixed SC 与霞鹜文楷 Mono 各三个字重。2026-08-24 根据实际兼容性反馈，霞鹜文楷
+Mono 的西文符号度量会把部分本应为半角的符号表现为全角；该系列改为西文来自 Monaspace Argon、明确
+保持西文与汉字宽度 1:2 的 LXGW Bright Code v2.922。
 
 ## 决定
 
@@ -34,14 +36,18 @@ CloudEmuera 直接随产品分发固定字体，不依赖宿主机、容器基�
 | `sarasa-fixed-sc-1.0.40-light` | Sarasa Fixed SC Light | Sarasa Gothic v1.0.40 |
 | `sarasa-fixed-sc-1.0.40-regular` | Sarasa Fixed SC Regular | Sarasa Gothic v1.0.40 |
 | `sarasa-fixed-sc-1.0.40-medium` | Sarasa Fixed SC Medium | Sarasa Gothic v1.0.40 |
-| `lxgw-wenkai-mono-1.522-light` | 霞鹜文楷 Mono Light | LXGW WenKai v1.522 |
-| `lxgw-wenkai-mono-1.522-regular` | 霞鹜文楷 Mono Regular | LXGW WenKai v1.522 |
-| `lxgw-wenkai-mono-1.522-medium` | 霞鹜文楷 Mono Medium | LXGW WenKai v1.522 |
+| `lxgw-bright-code-2.922-extralight` | LXGW Bright Code ExtraLight | LXGW Bright Code v2.922 |
+| `lxgw-bright-code-2.922-light` | LXGW Bright Code Light | LXGW Bright Code v2.922 |
+| `lxgw-bright-code-2.922-regular` | LXGW Bright Code Regular | LXGW Bright Code v2.922 |
 
 默认值为 `sarasa-fixed-sc-1.0.40-regular`。face ID 同时包含上游版本；未来升级字体必须新增 ID，不能在
 原 ID 下替换字节。实现导入提交必须记录来源 URL/tag、上游 commit、文件 SHA-256、内部 family/
 subfamily、字重、字形覆盖和许可证。删除仍可能被持久 Session 引用的 face 属于数据迁移，不是普通
 资产清理。
+
+旧 face 不在新目录中伪装成相同 ID。离线 SQLite migration 按上游公布的字重对应关系更新 Session、
+账户启动默认值和 Session 幂等响应：霞鹜文楷 Mono Light → Bright Code ExtraLight、Regular → Light、
+Medium → Regular。这样既保持不可变 face ID 约束，也让既有 Session 明确使用对应的新字体。
 
 两套字体均按 SIL Open Font License 1.1 分发。仓库和生产制品必须带各自完整许可证与版权声明；
 [`verify-third-party.sh`](../../scripts/verify-third-party.sh) 必须校验字体字节、转换产物和声明。WOFF2
@@ -184,5 +190,5 @@ WebSocket 重连不传输字体。加载失败显示阻断错误，不使用 `mo
 
 - [Sarasa Gothic v1.0.40 release](https://github.com/be5invis/Sarasa-Gothic/releases/tag/v1.0.40)
 - [Sarasa Gothic LICENSE](https://github.com/be5invis/Sarasa-Gothic/blob/main/LICENSE)
-- [LXGW WenKai v1.522 release](https://github.com/lxgw/LxgwWenKai/releases/tag/v1.522)
-- [LXGW WenKai OFL.txt](https://github.com/lxgw/LxgwWenKai/blob/main/OFL.txt)
+- [LXGW Bright Code v2.922 release](https://github.com/lxgw/LxgwBright-Code/releases/tag/v2.922)
+- [LXGW Bright Code OFL.txt](https://github.com/lxgw/LxgwBright-Code/blob/v2.922/OFL.txt)

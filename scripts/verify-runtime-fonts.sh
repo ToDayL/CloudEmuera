@@ -135,9 +135,9 @@ expected = {
     "sarasa-fixed-sc-1.0.40-light": ("sarasa-fixed-sc", "1.0.40", 300),
     "sarasa-fixed-sc-1.0.40-regular": ("sarasa-fixed-sc", "1.0.40", 400),
     "sarasa-fixed-sc-1.0.40-medium": ("sarasa-fixed-sc", "1.0.40", 600),
-    "lxgw-wenkai-mono-1.522-light": ("lxgw-wenkai-mono", "1.522", 300),
-    "lxgw-wenkai-mono-1.522-regular": ("lxgw-wenkai-mono", "1.522", 400),
-    "lxgw-wenkai-mono-1.522-medium": ("lxgw-wenkai-mono", "1.522", 500),
+    "lxgw-bright-code-2.922-extralight": ("lxgw-bright-code", "2.922", 200),
+    "lxgw-bright-code-2.922-light": ("lxgw-bright-code", "2.922", 300),
+    "lxgw-bright-code-2.922-regular": ("lxgw-bright-code", "2.922", 400),
 }
 seen_ids = set()
 seen_paths = set()
@@ -183,7 +183,13 @@ for item in items:
     if woff_data[:4] != b"wOF2":
         fail(f"WOFF2 signature mismatch for {face_id}")
     tables = ttf_tables(ttf_data, f"{face_id} TTF")
-    for required in ("cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "GPOS", "GSUB"):
+    # Bright Code is a fixed-pitch merge and its pinned upstream TTFs do not
+    # carry a GPOS table. The advance-width authority lives in hhea/hmtx;
+    # Sarasa keeps its upstream GPOS table and remains checked explicitly.
+    required_tables = ["cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "GSUB"]
+    if family == "sarasa-fixed-sc":
+        required_tables.append("GPOS")
+    for required in required_tables:
         if required not in tables:
             fail(f"{face_id} TTF misses required {required} table")
     families = {value for name_id, value, _ in name_strings(tables["name"]) if name_id in (1, 16)}

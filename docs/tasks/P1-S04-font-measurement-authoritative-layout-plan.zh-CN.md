@@ -22,7 +22,8 @@
 本任务把字体选择、字体测量、PRINTC 字段宽度、物理断行和按钮横坐标收敛到 Worker 一处权威实现。
 完成后：
 
-1. CloudEmuera 随产品分发 Sarasa Fixed SC 和霞鹜文楷 Mono 的 Light/Regular/Medium 六个具体 face；
+1. CloudEmuera 随产品分发 Sarasa Fixed SC 的 Light/Regular/Medium 和 LXGW Bright Code 的
+   ExtraLight/Light/Regular 六个具体 face；
 2. Session 创建页和停止态配置页选择具体 `fontFaceId`，选择随 Session 持久化并进入 Worker binding；
 3. Worker 在 `Config.SetConfig` 前加载对应 TTF、覆盖 `Config.FontName`，用 `Config.DefaultFont`、
    `StringMeasure` 和 `Config.DrawableWidth` 执行原版物理布局；
@@ -82,12 +83,12 @@ assets/runtime-fonts/
 ├── catalog.json
 ├── runtime-ttf/
 │   ├── sarasa-fixed-sc/1.0.40/{Light,Regular,Medium}.ttf
-│   └── lxgw-wenkai-mono/1.522/{Light,Regular,Medium}.ttf
+│   └── lxgw-bright-code/2.922/{ExtraLight,Light,Regular}.ttf
 ├── web-woff2/
 │   └── {sha256}.woff2
 └── licenses/
     ├── Sarasa-Gothic-LICENSE.txt
-    └── LXGW-WenKai-OFL.txt
+    └── LXGW-Bright-Code-OFL.txt
 ```
 
 实际文件名可保留上游名称；代码永远通过 `catalog.json` 和 face ID 解析，不根据路径、文件名或 UI
@@ -481,7 +482,7 @@ console 内容区宽度至少为 Snapshot layoutWidth；设备更窄时横向滚
 创建页与配置页先查询字体目录，使用按 family 分组的六项 select/radio：
 
 - Sarasa Fixed SC — Light / Regular / Medium；
-- 霞鹜文楷 Mono — Light / Regular / Medium。
+- LXGW Bright Code — ExtraLight / Light / Regular。
 
 显示预览字符串 `ABC 123　中文 日本語`，预览也必须先加载选中 face 的 WOFF2。默认 Sarasa Regular；
 初次打开页面不得为六个选项同时下载字体。表单提交

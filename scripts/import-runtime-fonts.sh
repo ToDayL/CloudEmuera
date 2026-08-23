@@ -29,11 +29,11 @@ find_source() {
 
 declare -a ids=(
   sarasa-fixed-sc-1.0.40-light sarasa-fixed-sc-1.0.40-regular sarasa-fixed-sc-1.0.40-medium
-  lxgw-wenkai-mono-1.522-light lxgw-wenkai-mono-1.522-regular lxgw-wenkai-mono-1.522-medium
+  lxgw-bright-code-2.922-extralight lxgw-bright-code-2.922-light lxgw-bright-code-2.922-regular
 )
 declare -a names=(
   SarasaFixedSC-Light.ttf SarasaFixedSC-Regular.ttf SarasaFixedSC-SemiBold.ttf
-  LXGWWenKaiMono-Light.ttf LXGWWenKaiMono-Regular.ttf LXGWWenKaiMono-Medium.ttf
+  LXGWBrightCode-ExtraLight.ttf LXGWBrightCode-Light.ttf LXGWBrightCode-Regular.ttf
 )
 for index in "${!ids[@]}"; do
   id="${ids[$index]}"
@@ -45,7 +45,7 @@ for index in "${!ids[@]}"; do
 done
 
 cp -- "$destination/licenses/sarasa-gothic.txt" "$stage/licenses/sarasa-gothic.txt"
-cp -- "$destination/licenses/lxgw-wenkai-ofl.txt" "$stage/licenses/lxgw-wenkai-ofl.txt"
+cp -- "$(find_source OFL.txt)" "$stage/licenses/lxgw-bright-code-ofl.txt"
 
 STAGE="$stage" python3 - <<'PY'
 import hashlib
@@ -58,9 +58,9 @@ rows = [
     ("sarasa-fixed-sc-1.0.40-light", "Sarasa Fixed SC Light", "sarasa-fixed-sc", "1.0.40", 300, "Sarasa Fixed SC", "sarasa-gothic.txt"),
     ("sarasa-fixed-sc-1.0.40-regular", "Sarasa Fixed SC Regular", "sarasa-fixed-sc", "1.0.40", 400, "Sarasa Fixed SC", "sarasa-gothic.txt"),
     ("sarasa-fixed-sc-1.0.40-medium", "Sarasa Fixed SC Medium", "sarasa-fixed-sc", "1.0.40", 600, "Sarasa Fixed SC", "sarasa-gothic.txt"),
-    ("lxgw-wenkai-mono-1.522-light", "霞鹜文楷 Mono Light", "lxgw-wenkai-mono", "1.522", 300, "LXGW WenKai Mono", "lxgw-wenkai-ofl.txt"),
-    ("lxgw-wenkai-mono-1.522-regular", "霞鹜文楷 Mono Regular", "lxgw-wenkai-mono", "1.522", 400, "LXGW WenKai Mono", "lxgw-wenkai-ofl.txt"),
-    ("lxgw-wenkai-mono-1.522-medium", "霞鹜文楷 Mono Medium", "lxgw-wenkai-mono", "1.522", 500, "LXGW WenKai Mono", "lxgw-wenkai-ofl.txt"),
+    ("lxgw-bright-code-2.922-extralight", "LXGW Bright Code ExtraLight", "lxgw-bright-code", "2.922", 200, "LXGW Bright Code", "lxgw-bright-code-ofl.txt"),
+    ("lxgw-bright-code-2.922-light", "LXGW Bright Code Light", "lxgw-bright-code", "2.922", 300, "LXGW Bright Code", "lxgw-bright-code-ofl.txt"),
+    ("lxgw-bright-code-2.922-regular", "LXGW Bright Code Regular", "lxgw-bright-code", "2.922", 400, "LXGW Bright Code", "lxgw-bright-code-ofl.txt"),
 ]
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()

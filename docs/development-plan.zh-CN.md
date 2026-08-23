@@ -930,13 +930,18 @@ Realtime 纵切；`test-process-recovery.sh` 覆盖 SIGTERM、API/Worker 强制�
 详细方案：
 [`tasks/P1-S04-font-measurement-authoritative-layout-plan.zh-CN.md`](tasks/P1-S04-font-measurement-authoritative-layout-plan.zh-CN.md)。
 
-交付物：固定并分发 Sarasa Fixed SC 与霞鹜文楷 Mono 的 Light/Regular/Medium 六个 face；Session
+交付物：固定并分发 Sarasa Fixed SC 的 Light/Regular/Medium 与 LXGW Bright Code 的
+ExtraLight/Light/Regular 六个 face；Session
 创建/停止态配置选择不可变 face ID；Worker 在 `Config.SetConfig` 前加载并覆盖 `Config.FontName`，删除
 浏览器 textMetrics；新增基于 `Config.DefaultFont`、`StringMeasure`、`Config.DrawableWidth` 的 headless
 layout engine，输出物理 ConsoleLine、positionX/measuredWidth、ButtonWrap 和超宽策略；浏览器按需加载
 由同一规范 TTF 构建且度量等价的完整 WOFF2，以内容摘要长期缓存，并按权威几何绘制且不自动换行；
 完整保留 PRINTC/PRINTLC 的 Shift-JIS 半角格与 N/N+1 兼容语义。
 游戏字体、宿主字体和用户字体不进入首期 Runtime。
+
+字体更新记录（2026-08-24）：为修复霞鹜文楷 Mono 将部分西文符号表现为全角的问题，固定版本字体
+改为 LXGW Bright Code v2.922。旧 Session、账户启动默认值和 Session 幂等响应通过 migration 按
+Light → ExtraLight、Regular → Light、Medium → Regular 映射到新 face；旧不可变 ID 和资产从目录移除。
 
 验证：
 

@@ -109,8 +109,8 @@ public sealed class IdentityApiContractTests : IDisposable
 
         csrf = await GetCsrfAsync(client);
         SessionStartupDefaultsResponse saved = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
-            new UpdateSessionStartupDefaultsRequest("lxgw-wenkai-mono-1.522-medium", 24, 28, "CUSTOM", 1200), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Saved Session startup preferences were missing.");
-        Assert.Equal("lxgw-wenkai-mono-1.522-medium", saved.FontFaceId);
+            new UpdateSessionStartupDefaultsRequest("lxgw-bright-code-2.922-regular", 24, 28, "CUSTOM", 1200), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Saved Session startup preferences were missing.");
+        Assert.Equal("lxgw-bright-code-2.922-regular", saved.FontFaceId);
         Assert.Equal(24, saved.FontSize);
         Assert.Equal(28, saved.LineHeight);
         Assert.Equal("CUSTOM", saved.WidthMode);
@@ -121,14 +121,14 @@ public sealed class IdentityApiContractTests : IDisposable
 
         csrf = await GetCsrfAsync(client);
         HttpResponseMessage invalid = await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
-            new UpdateSessionStartupDefaultsRequest("lxgw-wenkai-mono-1.522-medium", 24, 23), csrf);
+            new UpdateSessionStartupDefaultsRequest("lxgw-bright-code-2.922-regular", 24, 23), csrf);
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
         ApiError error = await invalid.Content.ReadFromJsonAsync<ApiError>() ?? throw new Xunit.Sdk.XunitException("Invalid preference error was missing.");
         Assert.Equal("INVALID_SESSION_STARTUP_DEFAULTS", error.Code);
 
         csrf = await GetCsrfAsync(client);
         HttpResponseMessage invalidWidth = await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
-            new UpdateSessionStartupDefaultsRequest("lxgw-wenkai-mono-1.522-medium", 24, 28, "MAX", 1200), csrf);
+            new UpdateSessionStartupDefaultsRequest("lxgw-bright-code-2.922-regular", 24, 28, "MAX", 1200), csrf);
         Assert.Equal(HttpStatusCode.BadRequest, invalidWidth.StatusCode);
     }
 

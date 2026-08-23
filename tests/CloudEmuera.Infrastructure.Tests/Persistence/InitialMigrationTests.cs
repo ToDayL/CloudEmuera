@@ -59,7 +59,7 @@ public sealed class InitialMigrationTests
         Assert.Contains("save_layout", sessionColumns);
         Assert.Contains("width_mode", sessionColumns);
         Assert.Contains("custom_width", sessionColumns);
-        Assert.Equal(20, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(21, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(20, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(21, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -108,7 +108,7 @@ public sealed class InitialMigrationTests
         Assert.Null(user.PasswordChangedAt);
         Assert.False(user.MustChangePassword);
         Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
-        Assert.Equal(20, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(21, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -135,6 +135,49 @@ public sealed class InitialMigrationTests
         Assert.Equal(SessionState.Running, (await verify.Context.Sessions.SingleAsync()).State);
         await Assert.ThrowsAsync<SqliteException>(() =>
             ExecuteAsync(verify.Connection, "UPDATE sessions SET state = 'DETACHED' WHERE id = 'sess_fixture';"));
+    }
+
+    [Fact]
+    [Trait("Category", "Migration")]
+    public async Task LxgwWenKaiReferences_MapToCorrespondingBrightCodeFaces()
+    {
+        using TemporarySqliteDatabase database = new();
+        await using (DbContextScope initial = database.OpenContext(SqliteConnectionAccess.ReadWriteCreate))
+        {
+            await initial.Context.Database.MigrateAsync("20260823143000_AddSessionWidthModes");
+            QuotaProfileRow quota = PersistenceFixtures.CreateQuotaProfile();
+            CloudEmueraUser user = PersistenceFixtures.CreateUser();
+            user.PreferencesJson = """{"sessionStartupDefaults":{"fontFaceId":"lxgw-wenkai-mono-1.522-medium","fontSize":18,"lineHeight":19,"widthMode":"ORIGIN","customWidth":null},"unrelated":true}""";
+            GameRow game = PersistenceFixtures.CreateGame();
+            SessionRow light = PersistenceFixtures.CreateSession("sess_lxgw_light");
+            light.FontFaceId = "lxgw-wenkai-mono-1.522-light";
+            SessionRow regular = PersistenceFixtures.CreateSession("sess_lxgw_regular");
+            regular.FontFaceId = "lxgw-wenkai-mono-1.522-regular";
+            SessionRow medium = PersistenceFixtures.CreateSession("sess_lxgw_medium");
+            medium.FontFaceId = "lxgw-wenkai-mono-1.522-medium";
+            IdempotencyRecordRow idempotency = PersistenceFixtures.CreateIdempotency("lxgw-replay");
+            idempotency.Status = IdempotencyRecordStatus.Succeeded;
+            idempotency.ResponseJson = """{"fontFaceId":"lxgw-wenkai-mono-1.522-regular","other":"kept"}""";
+            idempotency.CompletedAt = PersistenceFixtures.CreatedAt;
+            initial.Context.AddRange(quota, user, game, light, regular, medium, idempotency);
+            await initial.Context.SaveChangesAsync();
+        }
+
+        MigrationResult result = await database.MigrateAsync();
+
+        Assert.True(result.Succeeded, result.ErrorCode);
+        await using (DbContextScope verify = database.OpenContext())
+        {
+            Dictionary<string, string> faces = await verify.Context.Sessions
+                .ToDictionaryAsync(session => session.Id, session => session.FontFaceId);
+            Assert.Equal("lxgw-bright-code-2.922-extralight", faces["sess_lxgw_light"]);
+            Assert.Equal("lxgw-bright-code-2.922-light", faces["sess_lxgw_regular"]);
+            Assert.Equal("lxgw-bright-code-2.922-regular", faces["sess_lxgw_medium"]);
+            Assert.Contains("\"fontFaceId\":\"lxgw-bright-code-2.922-regular\"", (await verify.Context.Users.SingleAsync()).PreferencesJson, StringComparison.Ordinal);
+            Assert.Contains("\"unrelated\":true", (await verify.Context.Users.SingleAsync()).PreferencesJson, StringComparison.Ordinal);
+            Assert.Contains("\"fontFaceId\":\"lxgw-bright-code-2.922-light\"", (await verify.Context.IdempotencyRecords.SingleAsync()).ResponseJson, StringComparison.Ordinal);
+            Assert.Contains("\"other\":\"kept\"", (await verify.Context.IdempotencyRecords.SingleAsync()).ResponseJson, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -247,7 +290,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(21, await CountHistoryRowsAsync(database));
+        Assert.Equal(22, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>

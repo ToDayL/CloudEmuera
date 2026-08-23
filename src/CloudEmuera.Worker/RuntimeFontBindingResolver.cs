@@ -38,9 +38,9 @@ internal static class RuntimeFontBindingResolver
             ["sarasa-fixed-sc-1.0.40-light"] = "Sarasa Fixed SC",
             ["sarasa-fixed-sc-1.0.40-regular"] = "Sarasa Fixed SC",
             ["sarasa-fixed-sc-1.0.40-medium"] = "Sarasa Fixed SC",
-            ["lxgw-wenkai-mono-1.522-light"] = "LXGW WenKai Mono",
-            ["lxgw-wenkai-mono-1.522-regular"] = "LXGW WenKai Mono",
-            ["lxgw-wenkai-mono-1.522-medium"] = "LXGW WenKai Mono",
+            ["lxgw-bright-code-2.922-extralight"] = "LXGW Bright Code",
+            ["lxgw-bright-code-2.922-light"] = "LXGW Bright Code",
+            ["lxgw-bright-code-2.922-regular"] = "LXGW Bright Code",
         };
 
     public static RuntimeFontBinding Resolve(string faceId, string expectedCatalogDigest)

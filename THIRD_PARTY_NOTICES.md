@@ -41,14 +41,15 @@ content-addressed WOFF2 files are complete, non-subset conversions of those
 TTFs for same-origin browser delivery and are not distributed as installable
 desktop fonts.
 
-## LXGW WenKai
+## LXGW Bright Code
 
-- Release: 1.522
-- Source: <https://github.com/lxgw/LxgwWenKai/releases/tag/v1.522>
+- Release: 2.922
+- Source: <https://github.com/lxgw/LxgwBright-Code/releases/tag/v2.922>
+- Source commit: `6106564927bc6e1099a3eeb625d76a3e5a684595`
 - Local assets: `assets/runtime-fonts/runtime-ttf/` and `assets/runtime-fonts/web-woff2/`
-- License: SIL Open Font License 1.1; complete text: `assets/runtime-fonts/licenses/lxgw-wenkai-ofl.txt`
+- License: SIL Open Font License 1.1; complete text: `assets/runtime-fonts/licenses/lxgw-bright-code-ofl.txt`
 
-The three LXGW WenKai Mono TTF files are the unmodified runtime sources. The
+The LXGW Bright Code ExtraLight, Light, and Regular TTF files are the unmodified runtime sources. The
 WOFF2 files are complete format conversions with the original font naming and
 are only served to the browser through the runtime-font endpoint.
 

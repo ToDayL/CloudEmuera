@@ -571,6 +571,10 @@ public sealed class HeadlessRuntimeFixtureTests
         // PLAY-002/COMP-007: HTML_PRINT flushes a partial PRINT line but
         // starts its own physical display row. This keeps the right-aligned
         // clock between the leading marker and the following status output.
+        // Direct console tests must not inherit the last Runtime fixture's
+        // static DrawableWidth, which varies with the selected font fixture.
+        MinorShift.Emuera.Runtime.Config.ConfigData.ResetHeadless();
+        MinorShift.Emuera.Runtime.Config.Config.SetConfig(MinorShift.Emuera.Runtime.Config.ConfigData.Instance);
         var console = new StructuredGameConsole();
         var headless = new EmueraConsole(
             console,
@@ -1277,9 +1281,9 @@ public sealed class HeadlessRuntimeFixtureTests
     [InlineData("sarasa-fixed-sc-1.0.40-light", "sarasa-fixed-sc-1.0.40-light.ttf", "Sarasa Fixed SC", "46a4532b5eea58684509df92552107d93c3102f352a988ab1c31f21812d64427")]
     [InlineData("sarasa-fixed-sc-1.0.40-regular", "sarasa-fixed-sc-1.0.40-regular.ttf", "Sarasa Fixed SC", "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3")]
     [InlineData("sarasa-fixed-sc-1.0.40-medium", "sarasa-fixed-sc-1.0.40-medium.ttf", "Sarasa Fixed SC", "3fc2b9e5d026108d4bf3a62e9d34850f2c480b8d62455db29ea1ff262152cb69")]
-    [InlineData("lxgw-wenkai-mono-1.522-light", "lxgw-wenkai-mono-1.522-light.ttf", "LXGW WenKai Mono", "240cf9bc7115ea82a24568dd863e30ef5d4de1a508af7dbde38c74d635a74a1c")]
-    [InlineData("lxgw-wenkai-mono-1.522-regular", "lxgw-wenkai-mono-1.522-regular.ttf", "LXGW WenKai Mono", "3917cb7bbbf467e8f762ee9248f69aaab9ef37a51ca922c05cd2fcc0150ed9fa")]
-    [InlineData("lxgw-wenkai-mono-1.522-medium", "lxgw-wenkai-mono-1.522-medium.ttf", "LXGW WenKai Mono", "20f543ca64e73e7509740344fbefa901b95cf99e4fa0a79c7454386d57f131b4")]
+    [InlineData("lxgw-bright-code-2.922-extralight", "lxgw-bright-code-2.922-extralight.ttf", "LXGW Bright Code", "fa949cdbe0aa291e4a9facdbd4f475d5529a4a5bd3542855a2aae79502443dc0")]
+    [InlineData("lxgw-bright-code-2.922-light", "lxgw-bright-code-2.922-light.ttf", "LXGW Bright Code", "5d37f7c267fae54dd87bb2efea3f3753464746a1b6b236b96ff4d4ee2c9a5098")]
+    [InlineData("lxgw-bright-code-2.922-regular", "lxgw-bright-code-2.922-regular.ttf", "LXGW Bright Code", "9a9ee8e1ea7de3cb42b96b1fdde7953698e07be458eb6e73385052a799b60c1c")]
     public async Task EveryBundledFaceBindsBeforeConfigAndPublishesMeasuredPhysicalLines(
         string faceId,
         string ttfFileName,
@@ -1363,6 +1367,41 @@ public sealed class HeadlessRuntimeFixtureTests
         int asciiWidth = Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(ascii.Nodes)).MeasuredWidth;
         int cjkWidth = Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(cjk.Nodes)).MeasuredWidth;
         Assert.True(cjkWidth > asciiWidth, $"Expected CJK advance to exceed Latin advance, got ASCII={asciiWidth}, CJK={cjkWidth}.");
+    }
+
+    [Fact]
+    [Trait("Category", "FontLayout")]
+    public async Task BrightCodeKeepsWesternPunctuationHalfwidth()
+    {
+        const string western = "[]{}<>!@#$%^&*()";
+        const string cjk = "中文中文中文中文中文中文中文中文";
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            $"PRINTL {western}\n" +
+            $"PRINTL {cjk}\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:640\n字体大小:18\n每行高度:20\n",
+            erbCodePage: 932);
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "lxgw-bright-code-2.922-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "lxgw-bright-code-2.922-regular.ttf"),
+            runtimeFontFamilyName: "LXGW Bright Code",
+            webFontAssetDigest: "9a9ee8e1ea7de3cb42b96b1fdde7953698e07be458eb6e73385052a799b60c1c");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        ConsoleLine westernLine = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == western);
+        ConsoleLine cjkLine = Assert.Single(fixture.Console.Snapshot.Scrollback, line => RuntimeTranscriptProjector.Project(line.Nodes) == cjk);
+        int westernWidth = Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(westernLine.Nodes)).MeasuredWidth;
+        int cjkWidth = Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(cjkLine.Nodes)).MeasuredWidth;
+        Assert.InRange((double)cjkWidth / westernWidth, 1.8, 2.2);
     }
 
     [Fact]

@@ -153,11 +153,11 @@ public sealed class GameLibraryApiContractTests : IDisposable
 
         csrf = await GetCsrfAsync(client);
         HttpResponseMessage createdResponse = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
-            new CreateSessionRequest(current.Id, "HTTP Session", "lxgw-wenkai-mono-1.522-medium", 24, 28, "MAX"), csrf, idempotencyKey: "session-create");
+            new CreateSessionRequest(current.Id, "HTTP Session", "lxgw-bright-code-2.922-regular", 24, 28, "MAX"), csrf, idempotencyKey: "session-create");
         Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
         SessionResponse created = await createdResponse.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Session create response was missing.");
         Assert.Equal("CLOSED", created.State);
-        Assert.Equal("lxgw-wenkai-mono-1.522-medium", created.FontFaceId);
+        Assert.Equal("lxgw-bright-code-2.922-regular", created.FontFaceId);
         Assert.Equal(24, created.FontSize);
         Assert.Equal(28, created.LineHeight);
         Assert.Equal("MAX", created.WidthMode);
@@ -167,7 +167,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 
         csrf = await GetCsrfAsync(client);
         HttpResponseMessage createReplay = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
-            new CreateSessionRequest(current.Id, "HTTP Session", "lxgw-wenkai-mono-1.522-medium", 24, 28, "MAX"), csrf, idempotencyKey: "session-create");
+            new CreateSessionRequest(current.Id, "HTTP Session", "lxgw-bright-code-2.922-regular", 24, 28, "MAX"), csrf, idempotencyKey: "session-create");
         SessionResponse replayed = await createReplay.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Session replay response was missing.");
         Assert.Equal(HttpStatusCode.Created, createReplay.StatusCode);
         Assert.Equal(created.Id, replayed.Id);

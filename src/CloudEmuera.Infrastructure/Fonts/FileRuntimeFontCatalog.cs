@@ -25,9 +25,9 @@ public sealed class FileRuntimeFontCatalog : IRuntimeFontCatalog
             ["sarasa-fixed-sc-1.0.40-light"] = ("sarasa-fixed-sc", "1.0.40", 300, "Sarasa Fixed SC"),
             ["sarasa-fixed-sc-1.0.40-regular"] = ("sarasa-fixed-sc", "1.0.40", 400, "Sarasa Fixed SC"),
             ["sarasa-fixed-sc-1.0.40-medium"] = ("sarasa-fixed-sc", "1.0.40", 600, "Sarasa Fixed SC"),
-            ["lxgw-wenkai-mono-1.522-light"] = ("lxgw-wenkai-mono", "1.522", 300, "LXGW WenKai Mono"),
-            ["lxgw-wenkai-mono-1.522-regular"] = ("lxgw-wenkai-mono", "1.522", 400, "LXGW WenKai Mono"),
-            ["lxgw-wenkai-mono-1.522-medium"] = ("lxgw-wenkai-mono", "1.522", 500, "LXGW WenKai Mono"),
+            ["lxgw-bright-code-2.922-extralight"] = ("lxgw-bright-code", "2.922", 200, "LXGW Bright Code"),
+            ["lxgw-bright-code-2.922-light"] = ("lxgw-bright-code", "2.922", 300, "LXGW Bright Code"),
+            ["lxgw-bright-code-2.922-regular"] = ("lxgw-bright-code", "2.922", 400, "LXGW Bright Code"),
         };
 
     public static string ResolveDefaultRoot()
