@@ -371,7 +371,7 @@ requirements/ADR references, and verification commands.
   and gives the fixed loader only paths inside that view. A port-only test runs
   successfully while the physical GameRoot remains empty.
 - The direct `System.IO` call-point audit and P0-05 deferral boundary are
-  recorded in `docs/runtime-system-io-audit.zh-CN.md`. All `Program.*Dir`
+  recorded in `internal-docs/runtime-system-io-audit.zh-CN.md`. All `Program.*Dir`
   values are now runtime-validated as children of one private view. The former
   dynamic Graphics fail-closed boundary was superseded by the bounded
   libgdiplus decision in ADR-0019; Graphics file paths are now constrained to

@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 
 root = Path.cwd()
-matrix_path = root / "docs/runtime-capabilities.json"
-schema_path = root / "docs/runtime-capabilities.schema.json"
+matrix_path = root / "src/CloudEmuera.Contracts/Realtime/runtime-capabilities.json"
+schema_path = root / "src/CloudEmuera.Contracts/Realtime/runtime-capabilities.schema.json"
 matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
 schema = json.loads(schema_path.read_text(encoding="utf-8"))
 

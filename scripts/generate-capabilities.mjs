@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sourcePath = path.join(root, "docs/runtime-capabilities.json");
+const sourcePath = path.join(root, "src/CloudEmuera.Contracts/Realtime/runtime-capabilities.json");
 const outputPath = path.join(root, "src/CloudEmuera.Web/src/realtime/capabilities.ts");
 
 export function generateCapabilities(matrix) {
@@ -16,7 +16,7 @@ export function generateCapabilities(matrix) {
     .map(item => item.capabilityId);
   if (new Set(supported).size !== supported.length) throw new Error("runtime capability matrix contains duplicate supported IDs.");
   return [
-    "/** GENERATED CONTRACT SNAPSHOT — source: docs/runtime-capabilities.json. */",
+    "/** GENERATED CONTRACT SNAPSHOT — source: src/CloudEmuera.Contracts/Realtime/runtime-capabilities.json. */",
     `export const CAPABILITY_DIGEST = ${JSON.stringify(digest)};`,
     "export const SUPPORTED_CAPABILITIES = [",
     ...supported.map(capability => `  ${JSON.stringify(capability)},`),

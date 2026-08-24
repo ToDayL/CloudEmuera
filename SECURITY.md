@@ -1,6 +1,5 @@
 # Security Policy
 
-CloudEmuera 尚未发布稳定版本。请勿将当前开发版本暴露给不受信任用户或公网。
+CloudEmuera has not released a stable version. Do not expose the current development build to untrusted users or the public internet.
 
-发现安全问题时，请私下联系仓库维护者。报告应包括受影响提交、复现步骤和影响范围，但不要包含真实密码、Cookie、游戏包、存档或用户输入内容。维护者确认修复并完成升级指引前，请勿公开可直接利用的细节。
-
+If you find a security issue, contact the repository maintainers privately. Include the affected commit, reproduction steps, and impact, but do not include real passwords, cookies, game packages, saves, or user input. Do not publish directly exploitable details until the maintainers have confirmed the fix and completed upgrade guidance.

@@ -20,6 +20,7 @@ test-results/
 # Runtime data and secrets
 .env
 !.env.example
+internal-docs/
 data/*
 !data/.gitkeep
 artifacts/

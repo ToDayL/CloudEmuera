@@ -1,17 +1,17 @@
 # Contributing
 
-## 开发流程
+## Development workflow
 
-1. 从 `main` 创建短生命周期分支；
-2. 保持改动范围单一，并为状态机、协议或安全边界补充测试；
-3. 修改需求编号时同步检查中英文需求文档；
-4. 修改 HTTP、WebSocket 或 IPC 时同步更新机器契约和兼容测试；
-5. 提交前运行 `./scripts/check.sh`。
+1. Create a short-lived branch from `main`.
+2. Keep each change focused and add tests for state machines, protocols, and security boundaries.
+3. When changing a requirement ID, check the corresponding internal requirement record.
+4. When changing HTTP, WebSocket, or IPC behavior, update the machine contract and compatibility tests.
+5. Run `./scripts/check.sh` before submitting.
 
-## 代码约定
+## Code conventions
 
-- C# 使用 nullable reference types，并把编译警告视为错误；
-- TypeScript 开启 strict，不在实时状态路径使用无界数组；
-- 不记录密码、认证令牌或用户输入全文；
-- 内置上游源码可以直接修改，但必须保留原许可证/版权声明，并同步登记 `src/CloudEmuera.EmueraRuntime/MODIFICATIONS.md`；
-- 新依赖必须说明用途、许可证和无法使用标准库完成的原因。
+- Use nullable reference types in C# and treat compiler warnings as errors.
+- Enable TypeScript strict mode and do not use unbounded arrays in realtime state paths.
+- Never log passwords, authentication tokens, or complete user input.
+- Vendored upstream source may be modified directly, but must retain its original license/copyright notices and be recorded in `src/CloudEmuera.EmueraRuntime/MODIFICATIONS.md`.
+- Every new dependency must document its purpose, license, and why the standard library is insufficient.

@@ -31,7 +31,7 @@ const schema = JSON.parse(await read("src/CloudEmuera.Contracts/Realtime/realtim
 const protocolCs = await read("src/CloudEmuera.Contracts/Realtime/RealtimeProtocol.cs");
 const realtimeGenerated = await read("src/CloudEmuera.Web/src/realtime/generated.ts");
 const apiGenerated = await read("src/CloudEmuera.Web/src/api/generated.ts");
-const capabilityMatrix = JSON.parse(await read("docs/runtime-capabilities.json"));
+const capabilityMatrix = JSON.parse(await read("src/CloudEmuera.Contracts/Realtime/runtime-capabilities.json"));
 const capabilityTs = await read("src/CloudEmuera.Web/src/realtime/capabilities.ts");
 
 const payloadSchemaVersion = schema?.$defs?.serverHello?.properties?.payloadSchemaVersion?.const;
@@ -41,7 +41,7 @@ requireValue(realtimeGenerated.includes("GENERATED CONTRACT SNAPSHOT"), "realtim
 requireValue(realtimeGenerated.includes(`REALTIME_PAYLOAD_SCHEMA_VERSION = \"${payloadSchemaVersion}\"`), "TypeScript realtime payload schema version drifted");
 requireValue(apiGenerated.includes("GENERATED CONTRACT SNAPSHOT"), "API generated snapshot header is missing");
 requireValue(realtimeGenerated === generateRealtimeTypes(schema), "realtime/generated.ts is not reproducible from realtime-v4.schema.json");
-requireValue(capabilityTs === generateCapabilities(capabilityMatrix), "realtime/capabilities.ts is not reproducible from runtime-capabilities.json");
+requireValue(capabilityTs === generateCapabilities(capabilityMatrix), "realtime/capabilities.ts is not reproducible from the runtime capability matrix");
 for (const generatedType of ["RealtimeSnapshotPayload", "RealtimeNode", "RealtimeDrawable", "RealtimeOperation", "ConsoleState"]) {
   requireValue(new RegExp(`(?:interface|type) ${generatedType}\\b`).test(realtimeGenerated), `realtime generated type ${generatedType} is missing`);
 }
@@ -68,7 +68,7 @@ if (capabilityBlock) {
   requireValue(new Set(generatedCapabilities).size === generatedCapabilities.length, "SUPPORTED_CAPABILITIES contains duplicates");
   requireValue(generatedCapabilities.every(item => knownCapabilities.has(item)), "SUPPORTED_CAPABILITIES contains an unknown runtime capability");
 }
-requireValue(capabilityTs.includes(`CAPABILITY_DIGEST = \"${capabilityMatrix.capabilitySetDigest}\"`), "capability digest drifted from runtime-capabilities.json");
+requireValue(capabilityTs.includes(`CAPABILITY_DIGEST = \"${capabilityMatrix.capabilitySetDigest}\"`), "capability digest drifted from the runtime capability matrix");
 
 const openApiUrl = process.env.CLOUDEMUERA_OPENAPI_URL;
 if (openApiUrl) {
