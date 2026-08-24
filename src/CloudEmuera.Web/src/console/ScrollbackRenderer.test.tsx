@@ -30,22 +30,39 @@ describe("ScrollbackRenderer", () => {
     expect(element.scrollTo).toHaveBeenCalledWith({ top: 100, behavior: "auto" });
   });
 
-  it("follows new output even when the reader was above the latest position", () => {
+  it("does not pull the reader to the bottom when a frame arrives above the latest position", () => {
     const { ref, element } = scrollContainer(false);
     const view = render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
     element.scrollTop = 10;
     fireEvent.scroll(element);
+    vi.mocked(element.scrollTo).mockClear();
     view.rerender(<ScrollbackRenderer lines={[line("one", "one"), line("two", "two")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
-    expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: "auto" });
+    expect(element.scrollTo).not.toHaveBeenCalled();
   });
 
-  it("re-synchronizes the bottom when a reconnect changes the session phase without changing the snapshot", () => {
+  it("does not pull the reader to the bottom for a reconnect phase change while above the latest position", () => {
     const { ref, element } = scrollContainer(false);
     const view = render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} scrollVersion="ready:live:1:12" />);
     element.scrollTop = 10;
     fireEvent.scroll(element);
+    vi.mocked(element.scrollTo).mockClear();
     view.rerender(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} scrollVersion="ready:resuming:1:12" />);
+    expect(element.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("always scrolls for input and keeps following the next output frame", () => {
+    const { ref, element } = scrollContainer(false);
+    const view = render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} forceScrollVersion={0} />);
+    element.scrollTop = 10;
+    fireEvent.scroll(element);
+    vi.mocked(element.scrollTo).mockClear();
+
+    view.rerender(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} forceScrollVersion={1} />);
     expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: "auto" });
+
+    (element as HTMLElement & { scrollHeight: number }).scrollHeight = 300;
+    view.rerender(<ScrollbackRenderer lines={[line("one", "one"), line("two", "two")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} scrollVersion={1} forceScrollVersion={1} />);
+    expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 200, behavior: "auto" });
   });
 
   it("re-synchronizes after the connected snapshot changes its measured height", () => {

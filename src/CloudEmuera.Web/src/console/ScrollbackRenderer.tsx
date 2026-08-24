@@ -11,7 +11,7 @@ export interface ConsoleInputEvent {
   key?: { keyCode: number; control: boolean; alt: boolean; shift: boolean };
 }
 
-export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion }: { lines: RealtimeLine[]; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void; scrollContainerRef?: RefObject<HTMLElement | null>; scrollVersion?: string | number }) {
+export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion }: { lines: RealtimeLine[]; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void; scrollContainerRef?: RefObject<HTMLElement | null>; scrollVersion?: string | number; forceScrollVersion?: string | number }) {
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
   const scrollbackShellRef = useRef<HTMLDivElement>(null);
@@ -43,6 +43,19 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     return () => container.removeEventListener("scroll", updatePosition);
   }, [scrollContainerRef]);
   useLayoutEffect(() => {
+    if (forceScrollVersion === undefined) return;
+    // Input is an explicit navigation action. It must win even when the
+    // reader was looking at older output, and it must update the ref used by
+    // the following display frame so newly appended output stays visible.
+    scrollToBottom("auto");
+    if (typeof requestAnimationFrame !== "function") return;
+    const frame = requestAnimationFrame(() => scrollToBottom("auto"));
+    return () => cancelAnimationFrame(frame);
+  }, [forceScrollVersion, scrollToBottom]);
+  useLayoutEffect(() => {
+    // A display frame follows the reader only when the reader was already at
+    // the latest position. Do not pull a user back while reading old output.
+    if (!atLatestRef.current) return;
     scrollToBottom("auto");
     // The connection snapshot can complete one more layout after React's
     // layout effects (for example when a late image measurement changes the
@@ -50,7 +63,6 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     if (typeof requestAnimationFrame !== "function") return;
     const frame = requestAnimationFrame(() => scrollToBottom("auto"));
     return () => cancelAnimationFrame(frame);
-    // New output is authoritative for the reading position: the console always follows it.
   }, [lines, scrollToBottom, scrollVersion]);
   useEffect(() => {
     const shell = scrollbackShellRef.current;

@@ -34,6 +34,7 @@ export function ConsolePage() {
   const [closeError, setCloseError] = useState<string | null>(null);
   const [rendererError, setRendererError] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [inputScrollVersion, setInputScrollVersion] = useState(0);
   const [visualViewport, setVisualViewport] = useState(() => currentVisualViewport());
   const session = useSession(sessionId);
   const runtimeFonts = useRuntimeFontCatalog();
@@ -124,16 +125,18 @@ export function ConsolePage() {
     const container = gameConsoleRef.current;
     if (!container) return;
     const top = Math.max(0, container.scrollHeight - container.clientHeight);
+    if (behavior === "auto") container.scrollTop = top;
     if (typeof container.scrollTo === "function") container.scrollTo({ top, behavior });
     else container.scrollTop = top;
   }, []);
 
   const input = useCallback((event: ConsoleInputEvent) => {
     if (!sessionId) return;
-    scrollToBottom();
+    setInputScrollVersion(version => version + 1);
+    scrollToBottom("auto");
     const clientMessageId = manager.sendInput(sessionId, { source: event.source, value: event.value, pointer: event.pointer ?? null, key: event.key ?? null });
     if (!clientMessageId) setCloseError("当前实时连接尚未就绪，输入没有发送。请等待连接恢复后重试。");
-  }, [manager, scrollToBottom, sessionId, stream.consoleState]);
+  }, [manager, scrollToBottom, sessionId]);
   const reportRendererError = useCallback((message: string) => setRendererError(message), []);
   const handleConsoleSurfaceClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (!isBlankConsoleSurfaceTarget(event.target)) return;
@@ -179,7 +182,7 @@ export function ConsolePage() {
         {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
         {assets.diagnostics().length > 0 && <div className="console-compat-warning" role="status"><strong>兼容性提示</strong><small>{assets.diagnostics().map(fontDiagnosticLabel).join("；")}</small></div>}
-        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}`} /></> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
+        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} /></> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
         </div>
       </main>
