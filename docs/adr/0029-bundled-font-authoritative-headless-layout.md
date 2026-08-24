@@ -121,6 +121,13 @@ presentation manifest 作为运行时字体发布。`emuera.config` 中的字体
 不可拆分且超宽的元素保留在单独物理行并允许水平溢出。`nobr` 禁止物理拆分。换行后的剩余 parts 从
 `PointX=0` 重新计算，随后再应用行对齐。
 
+2026-08-24 兼容性补充：eraTW 等日文 Era 地图把 East Asian Width 为 Ambiguous 的方框线和常用几何符号
+作为一个汉字格使用，而两套内置 coding face 的原始 `hmtx` 均把 `■`、`│`、`∥`、`─`、`―`、`●`、
+`┏━┓`、`☆` 等字符定义为半格。Worker 对封闭的地图符号集合仅在其原始 advance 小于 U+3000 advance
+时采用当前 face 的 U+3000 汉字格宽度；普通 ASCII、原本已为全格的字符和按钮提交值不变。浏览器在
+positioned segment 内应用同一封闭集合的宽格视觉投影，不能只改 Worker 坐标或只改 CSS。该规则以真实
+eraTW 地图网格测试覆盖，不推广为一套脱离字体的通用 Unicode East Asian Width 估算算法。
+
 ### 6. PRINTC/PRINTLC 兼容语义
 
 `PRINTC文字数量` 保持 Shift-JIS 字节/半角格语义，默认 `N=25`：ASCII 通常计 1，大多数 CJK 通常计

@@ -126,7 +126,7 @@ function sliceTextNodes(children: readonly Extract<RealtimeNode, { type: "text" 
 
 export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: RealtimeNode; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }): ReactNode {
   switch (node.type) {
-    case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{node.text}</span>;
+    case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{renderRuntimeText(node.text)}</span>;
     case "lineBreak": return <br />;
     case "button": {
       if (!node.enabled && node.value.length === 0) {
@@ -171,6 +171,16 @@ export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: R
       ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)
       : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
+}
+
+const eraWideCell = /[―∥\u2500-\u257F■□○●★☆]/u;
+const eraWideShape = /[■□○●★☆]/u;
+
+function renderRuntimeText(value: string): ReactNode {
+  if (![...value].some(character => eraWideCell.test(character))) return value;
+  return [...value].map((character, index) => eraWideCell.test(character)
+    ? <span className="console-era-wide-cell" key={`era-wide-${index}`}><span className={eraWideShape.test(character) ? "console-era-wide-shape" : "console-era-wide-line"}>{character}</span></span>
+    : character);
 }
 
 function physicalLineStyle(line: RealtimeLine): CSSProperties {

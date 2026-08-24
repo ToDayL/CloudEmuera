@@ -40,7 +40,7 @@ internal static class HeadlessFontMetrics
             else
                 codePoint = first;
 
-            totalUnits += table.GetAdvance(table.GetGlyph(codePoint));
+            totalUnits += table.GetDisplayAdvance(codePoint);
         }
 
         width = checked((int)Math.Ceiling(totalUnits * font.Size / table.UnitsPerEm));
@@ -143,6 +143,26 @@ internal static class HeadlessFontMetrics
             int metricIndex = Math.Min(glyph, (ushort)(numberOfHMetrics - 1));
             return ReadUInt16(data, checked((int)hmtxOffset + metricIndex * 4));
         }
+
+        public ushort GetDisplayAdvance(int codePoint)
+        {
+            ushort nativeAdvance = GetAdvance(GetGlyph(codePoint));
+            if (!UsesEraWideCell(codePoint))
+                return nativeAdvance;
+
+            // Japanese Era maps use these East-Asian-width ambiguous glyphs
+            // as one CJK cell. The bundled coding faces encode them as a
+            // half-cell, unlike the Japanese Windows fonts targeted by those
+            // maps. Preserve a future face's already-wide metric; otherwise
+            // use U+3000 as the selected face's CJK-cell authority.
+            return Math.Max(nativeAdvance, GetAdvance(GetGlyph(0x3000)));
+        }
+
+        private static bool UsesEraWideCell(int codePoint) =>
+            codePoint == 0x2015 || // HORIZONTAL BAR
+            codePoint == 0x2225 || // PARALLEL TO
+            codePoint is >= 0x2500 and <= 0x257F || // Box Drawing
+            codePoint is 0x25A0 or 0x25A1 or 0x25CB or 0x25CF or 0x2605 or 0x2606;
 
         private static (uint Offset, uint Length) RequireTable(
             System.Collections.Generic.IReadOnlyDictionary<string, (uint Offset, uint Length)> tables,

@@ -1429,6 +1429,98 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.InRange((double)cjkWidth / westernWidth, 1.8, 2.2);
     }
 
+    [Theory]
+    [Trait("Category", "FontLayout")]
+    [Trait("Category", "RuntimeBridge")]
+    [InlineData("sarasa-fixed-sc-1.0.40-regular", "sarasa-fixed-sc-1.0.40-regular.ttf", "Sarasa Fixed SC", "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3")]
+    [InlineData("lxgw-bright-code-2.922-regular", "lxgw-bright-code-2.922-regular.ttf", "LXGW Bright Code", "9a9ee8e1ea7de3cb42b96b1fdde7953698e07be458eb6e73385052a799b60c1c")]
+    public async Task EraTwMapButtonsKeepOneFullwidthDigitEqualToTwoAsciiDigits(
+        string faceId,
+        string ttfFileName,
+        string runtimeFamilyName,
+        string webFontAssetDigest)
+    {
+        // PLAY-014/COMP-007: eraTW reads two ASCII digits from its map and
+        // displays one-digit destinations through TOFULL. Both forms occupy
+        // one CJK cell; otherwise every following wall drifts horizontally.
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTBUTTON \"12\", 12\n" +
+            "PRINTBUTTON \"１\", 1\n" +
+            "PRINTL\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:320\n字体大小:16\n每行高度:16\n",
+            erbCodePage: 932);
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: faceId,
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", ttfFileName),
+            runtimeFontFamilyName: runtimeFamilyName,
+            webFontAssetDigest: webFontAssetDigest);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        ConsoleLine line = Assert.Single(fixture.Console.Snapshot.Scrollback);
+        PositionedInlineSegmentNode[] buttons = line.Nodes
+            .Cast<PositionedInlineSegmentNode>()
+            .Where(segment => segment.Action is not null)
+            .ToArray();
+        Assert.Equal(2, buttons.Length);
+        Assert.Equal(buttons[0].MeasuredWidth, buttons[1].MeasuredWidth);
+        Assert.Equal(buttons[0].MeasuredWidth, buttons[1].PositionX - buttons[0].PositionX);
+    }
+
+    [Theory]
+    [Trait("Category", "FontLayout")]
+    [Trait("Category", "RuntimeBridge")]
+    [InlineData("sarasa-fixed-sc-1.0.40-regular", "sarasa-fixed-sc-1.0.40-regular.ttf", "Sarasa Fixed SC", "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3")]
+    [InlineData("lxgw-bright-code-2.922-regular", "lxgw-bright-code-2.922-regular.ttf", "LXGW Bright Code", "9a9ee8e1ea7de3cb42b96b1fdde7953698e07be458eb6e73385052a799b60c1c")]
+    public async Task EraTwMapWideSymbolsKeepTheCjkCellAdvance(
+        string faceId,
+        string ttfFileName,
+        string runtimeFamilyName,
+        string webFontAssetDigest)
+    {
+        const string mapSymbols = "■│｜∥￤─―●┏━┓￣。〓＼／☆萃";
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        string script = "@SYSTEM_TITLE\nPRINTL 中\n" +
+            string.Concat(mapSymbols.Select(symbol => $"PRINTL {symbol}\n")) +
+            "QUIT\n";
+        using var fixture = RuntimeHostFixture.Create(
+            script,
+            configuration: "Use sav folder:NO\n窗口宽度:320\n字体大小:16\n每行高度:16\n",
+            erbCodePage: 932);
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: faceId,
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", ttfFileName),
+            runtimeFontFamilyName: runtimeFamilyName,
+            webFontAssetDigest: webFontAssetDigest);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        Dictionary<string, int> widths = fixture.Console.Snapshot.Scrollback.ToDictionary(
+            line => RuntimeTranscriptProjector.Project(line.Nodes),
+            line => Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(line.Nodes)).MeasuredWidth,
+            StringComparer.Ordinal);
+        int cellWidth = widths["中"];
+        Assert.True(
+            mapSymbols.All(symbol => widths[symbol.ToString()] == cellWidth),
+            $"Expected every eraTW map symbol to use the {cellWidth}px CJK cell in {faceId}; got " +
+            string.Join(", ", mapSymbols.Select(symbol => $"{symbol}= {widths[symbol.ToString()]}")));
+    }
+
     [Fact]
     [Trait("Category", "FontLayout")]
     [Trait("Category", "RuntimeBridge")]

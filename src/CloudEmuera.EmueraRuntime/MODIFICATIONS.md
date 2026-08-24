@@ -24,6 +24,21 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-24 — Era East Asian ambiguous map-cell compatibility
+
+- `UpstreamHeadless/HeadlessFontMetrics.cs` gives the box-drawing, common
+  geometric and horizontal-bar glyphs used by Era text maps the selected
+  face's U+3000 CJK-cell advance when their native `hmtx` advance is only a
+  half-cell. Ordinary ASCII and glyphs already occupying a wide cell are
+  unchanged.
+- The Web renderer applies the matching bounded visual projection inside the
+  Worker-published positioned segment, so browser ink and authoritative
+  geometry remain consistent for both bundled font families.
+- Scope: eraTW map rendering, PLAY-002/014, COMP-007/010 and ADR-0029.
+  Verification: `EraTwMapButtonsKeepOneFullwidthDigitEqualToTwoAsciiDigits`,
+  `EraTwMapWideSymbolsKeepTheCjkCellAdvance`, the Web renderer projection test
+  and the complete dev-Docker check.
+
 ## 2026-08-24 — Era halfwidth yen display compatibility
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` and `UpstreamHtmlTranslator.cs` map visible U+005C text to U+00A5

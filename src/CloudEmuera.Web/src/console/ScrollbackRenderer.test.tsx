@@ -96,6 +96,14 @@ describe("ScrollbackRenderer", () => {
     expect(element).toHaveStyle({ width: "760px", height: "19px", minHeight: "19px", lineHeight: "19px" });
   });
 
+  it("projects eraTW ambiguous map glyphs into one CJK cell", () => {
+    render(<ScrollbackRenderer lines={[line("map", "■│12☆")]} assets={assets} onInput={() => undefined} />);
+    expect(document.querySelectorAll(".console-era-wide-cell")).toHaveLength(3);
+    expect(document.querySelectorAll(".console-era-wide-line")).toHaveLength(1);
+    expect(document.querySelectorAll(".console-era-wide-shape")).toHaveLength(2);
+    expect(document.querySelector<HTMLElement>(".console-line")).toHaveTextContent("■│12☆");
+  });
+
   it("keeps escaped portrait pixels inside the scrollable scrollback extent", () => {
     const portraitLine: RealtimeLine = {
       lineId: "portrait-line",
