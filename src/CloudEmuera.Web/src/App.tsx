@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
@@ -17,21 +17,14 @@ import {
   ContentScope,
   GameDiagnosticItem,
   GameFileItem,
-  GamePackageDiagnostic,
   GameLibraryItem,
   GameTextFile,
-  GameValidationResult,
   GameVisibility,
-  IngestedGamePackage,
-  activateGame,
-  bindGamePackage,
-  createGame,
   deleteGame,
   downloadFileUrl,
   formatBytes,
   formatDateTime,
   getGame,
-  ingestGamePackage,
   listDiagnostics,
   listFiles,
   listGames,
@@ -39,7 +32,7 @@ import {
   setGameBlocked,
   shortDigest,
   updateGame,
-  validateGame,
+  uploadGame,
 } from "./games";
 import { ConsolePage as RealtimeConsolePage } from "./console/ConsolePage";
 import { SavesPage as NativeSavesPage } from "./saves/SavesPage";
@@ -170,7 +163,6 @@ function GamesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -196,12 +188,12 @@ function GamesPage() {
 
   return <>
     <PageHeader eyebrow="LIBRARY" title="游戏库" description="管理游戏包、内容与兼容性，然后开启一段新的旅程。"
-      actions={<><button className="secondary-button" onClick={() => setCreateOpen(true)}><Icon name="plus"/>创建游戏</button><button className="primary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>导入游戏</button></>}/>
+      actions={<button className="primary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>上传游戏</button>}/>
     <section className="summary-strip" aria-label="游戏库概览">
       <div><span className="summary-icon peach"><Icon name="book"/></span><p><strong>{items.length}</strong><small>游戏</small></p></div>
       <div><span className="summary-icon mint"><Icon name="archive"/></span><p><strong>{currentCount}</strong><small>份当前内容</small></p></div>
       <div><span className="summary-icon blue"><Icon name="grid"/></span><p><strong>{sharedCount}</strong><small>服务器共享</small></p></div>
-      <div className="tip"><Icon name="spark"/><p><strong>内容验证后原子启用</strong><small>上传包只写入独立工作区，不影响当前可运行内容</small></p></div>
+      <div className="tip"><Icon name="spark"/><p><strong>上传后自动加载并启用</strong><small>每个 ZIP 创建一个独立游戏，通过真实加载测试后即可游玩</small></p></div>
     </section>
     <div className="toolbar">
       <label className="search-box"><Icon name="search"/><span className="sr-only">搜索游戏</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索游戏…"/></label>
@@ -209,7 +201,7 @@ function GamesPage() {
     </div>
     {loading ? <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/><p>正在加载游戏库…</p></div>
       : error ? <div className="panel error-panel" role="alert"><Icon name="warning"/><div><strong>无法加载游戏库</strong><p>{error}</p></div><button className="secondary-button" onClick={() => void refresh()}>重试</button></div>
-      : filtered.length === 0 ? <section className="empty-state"><span className="empty-icon"><Icon name="book" size={26}/></span><h2>{items.length === 0 ? "还没有游戏" : "没有匹配的游戏"}</h2><p>{items.length === 0 ? "创建游戏或导入 ZIP 游戏包，验证通过后即可创建 Session。" : "试试其他关键词或筛选条件。"}</p><div className="empty-actions">{items.length === 0 && <><button className="primary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>导入游戏</button><button className="secondary-button" onClick={() => setCreateOpen(true)}><Icon name="plus"/>创建游戏</button></>}</div></section>
+      : filtered.length === 0 ? <section className="empty-state"><span className="empty-icon"><Icon name="book" size={26}/></span><h2>{items.length === 0 ? "还没有游戏" : "没有匹配的游戏"}</h2><p>{items.length === 0 ? "上传 ZIP 游戏包；加载测试通过后会自动启用。" : "试试其他关键词或筛选条件。"}</p><div className="empty-actions">{items.length === 0 && <button className="primary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>上传游戏</button>}</div></section>
       : <section className="game-grid" aria-label="游戏列表">
           {filtered.map((game) => <article className="game-card" key={game.id}>
             <div className={`game-cover ${coverColor(game.name)}`}><span className="cover-grid"/><span className="cover-glyph">{game.name.slice(0, 1).toUpperCase()}</span><span className="cover-digest">{game.hasCurrentContent ? shortDigest(game.contentDigest) : "无当前内容"}</span></div>
@@ -229,120 +221,53 @@ function GamesPage() {
               </div>
             </div>
           </article>)}
-          <button className="game-card add-card" onClick={() => setUploadOpen(true)}><span><Icon name="upload" size={24}/></span><strong>导入新的游戏包</strong><small>支持安全校验的 ZIP 文件</small></button>
+          <button className="game-card add-card" onClick={() => setUploadOpen(true)}><span><Icon name="upload" size={24}/></span><strong>上传新的游戏包</strong><small>加载通过后自动启用</small></button>
         </section>}
-    {createOpen && <CreateGameDialog onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); void refresh(); }}/>}
-    {uploadOpen && <UploadDialog onClose={() => setUploadOpen(false)} games={items}/>}
+    {uploadOpen && (
+      <UploadDialog onClose={() => {
+        setUploadOpen(false);
+        void refresh();
+      }}/>
+    )}
   </>;
 }
 
-function CreateGameDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (game: GameLibraryItem) => void }) {
-  const [name, setName] = useState("");
-  const [visibility, setVisibility] = useState<GameVisibility>("PRIVATE");
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) { setError("请输入游戏名称。"); return; }
-    setError(""); setPending(true);
-    try { onCreated(await createGame(trimmed, visibility)); }
-    catch (err) { setError(err instanceof Error ? err.message : "创建失败。"); setPending(false); }
-  };
-  return <div className="modal-layer" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="create-game-title">
-    <button className="icon-button modal-close" onClick={onClose} aria-label="关闭"><Icon name="close"/></button>
-    <p className="eyebrow">NEW GAME</p><h2 id="create-game-title">创建游戏</h2><p className="modal-intro">先创建一个空游戏，之后导入游戏包并验证启用；也可以直接用「导入游戏」一步完成。</p>
-    <form className="form-panel modal-form" onSubmit={submit}>
-      <label><span>游戏名称</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：ERA: The World" autoFocus required/></label>
-      <label><span>可见性</span><select value={visibility} onChange={(e) => setVisibility(e.target.value as GameVisibility)}><option value="PRIVATE">私有（仅自己可见）</option><option value="SERVER_SHARED">服务器共享（所有玩家可见）</option></select></label>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="form-actions"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={pending}>{pending ? "正在创建…" : "创建游戏"}</button></div>
-    </form>
-  </section></div>;
-}
-
-function UploadDialog({ onClose, games, initialGameId }: { onClose: () => void; games: GameLibraryItem[]; initialGameId?: string }) {
-  const [step, setStep] = useState<"choose" | "uploading" | "ingested" | "done" | "error">("choose");
-  const [fileName, setFileName] = useState("");
-  const [ingestion, setIngestion] = useState<IngestedGamePackage | null>(null);
-  const [error, setError] = useState("");
-  const [errorCode, setErrorCode] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const [createMode, setCreateMode] = useState(!initialGameId);
+function UploadDialog({ onClose }: { onClose: () => void }) {
+  const [step, setStep] = useState<"choose" | "uploading" | "done" | "error">("choose");
+  const [file, setFile] = useState<File | null>(null);
   const [gameName, setGameName] = useState("");
   const [visibility, setVisibility] = useState<GameVisibility>("PRIVATE");
-  const [targetGameId, setTargetGameId] = useState(initialGameId ?? "");
-  const [boundGameId, setBoundGameId] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [createdGame, setCreatedGame] = useState<GameLibraryItem | null>(null);
 
-  const startUpload = (file: File) => {
-    if (!file) return;
-    setFileName(file.name);
-    setGameName(file.name.replace(/\.zip$/i, "") || "New Game");
-    setStep("uploading");
-    setError("");
-    void ingestGamePackage(file)
-      .then(result => { setIngestion(result); setStep("ingested"); })
-      .catch(err => {
-        // A transport-level failure (e.g. "Failed to fetch") usually means the
-        // server aborted the body: the archive exceeded the server/network limit.
-        setErrorCode(err instanceof ApiError ? err.code : null);
-        setError(err instanceof ApiError ? err.message : "网络错误：上传未能完成。请确认文件未超过大小限制，并检查网络后重试。");
-        setStep("error");
-      });
-  };
-
-  const bind = async (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!ingestion) return;
-    setPending(true); setError("");
+    if (!file || !gameName.trim()) return;
+    setStep("uploading"); setError(""); setErrorCode(null);
     try {
-      const fresh = createMode
-        ? await createGame(gameName.trim() || "New Game", visibility)
-        : await getGame(targetGameId);
-      await bindGamePackage(fresh.id, fresh.stateVersion, ingestion.ingestionId, ingestion.manifest.contentDigest);
-      setBoundGameId(fresh.id);
+      setCreatedGame(await uploadGame(gameName.trim(), visibility, file));
       setStep("done");
     } catch (err) {
       setErrorCode(err instanceof ApiError ? err.code : null);
-      setError(err instanceof ApiError ? err.message : "绑定失败。");
-      setPending(false);
+      setError(err instanceof ApiError ? err.message : "网络错误：上传未能完成。请确认文件未超过容量限制，并检查网络后重试。");
+      setStep("error");
     }
   };
 
-  const ownedGames = games.filter(game => game.visibility === "PRIVATE");
-  const blocking = ingestion?.manifest.diagnostics.filter(diagnostic => diagnostic.publishBlocking).length ?? 0;
-
   return <div className="modal-layer" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
     <button className="icon-button modal-close" onClick={onClose} aria-label="关闭"><Icon name="close"/></button>
-    <p className="eyebrow">NEW GAME</p><h2 id="upload-title">{initialGameId ? "替换游戏包" : "导入游戏包"}</h2><p className="modal-intro">文件会先进入隔离区，完成路径、编码和运行时兼容性检查后才可启用为当前内容。</p>
-    {step === "choose" && <>
-      <button className="drop-zone" type="button" onClick={() => fileInputRef.current?.click()}><span><Icon name="upload" size={28}/></span><strong>选择 ZIP 文件</strong><small>或拖放到这里 · 最大 2 GB</small></button>
-      <input ref={fileInputRef} type="file" accept=".zip,application/zip" className="sr-only" onChange={(e) => { const file = e.target.files?.[0]; if (file) startUpload(file); }}/>
+    <p className="eyebrow">NEW GAME</p><h2 id="upload-title">上传游戏</h2><p className="modal-intro">每个 ZIP 都会创建独立游戏；服务端只做容量与安全暂存处理，并用真实运行时加载测试后自动启用。</p>
+    {step === "choose" && <form className="form-panel modal-form" onSubmit={submit}>
+      <label><span>ZIP 游戏包</span><input type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); if (selected && !gameName) setGameName(selected.name.replace(/\.zip$/i, "")); }} required/></label>
+      <label><span>游戏名称</span><input value={gameName} onChange={(event) => setGameName(event.target.value)} placeholder="例如：ERA: The World" required/></label>
+      <label><span>可见性</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as GameVisibility)}><option value="PRIVATE">私有（仅自己可见）</option><option value="SERVER_SHARED">服务器共享（所有玩家可见）</option></select></label>
       <div className="modal-note"><Icon name="warning"/><p><strong>请确认你拥有游戏内容的使用权</strong><small>CloudEmuera 不提供或分发游戏资源。</small></p></div>
-    </>}
-    {step === "uploading" && <div className="scan-state"><span className="spinner"/><h3>正在检查 {fileName}</h3><p>上传并扫描文件与目录结构…</p><div className="progress"><span/></div></div>}
-    {step === "ingested" && ingestion && <>
-      <div className="ingest-summary">
-        <span className="success-ring"><Icon name="check" size={30}/></span>
-        <div><h3>游戏包已安全解压</h3><p>{ingestion.manifest.fileCount} 个文件 · {ingestion.manifest.directoryCount} 个目录 · {formatBytes(ingestion.manifest.contentBytes)}</p><small>摘要 sha256:{shortDigest(ingestion.manifest.contentDigest)}</small></div>
-      </div>
-      {blocking > 0 && <div className="ingest-warning"><Icon name="warning"/><p><strong>{blocking} 条阻断提醒</strong><small>绑定后可查看工作区草稿；验证通过前不会启用为当前内容。</small></p></div>}
-      {blocking > 0 && <ul className="ingest-blocking-list" aria-label="阻断提醒明细">
-        {ingestion.manifest.diagnostics.filter(diagnostic => diagnostic.publishBlocking).slice(0, 6).map((diagnostic: GamePackageDiagnostic, index) => <li key={index}><span>{diagnostic.code}</span>{diagnostic.logicalPath && <small>{diagnostic.logicalPath}</small>}</li>)}
-        {blocking > 6 && <li className="ingest-blocking-more">…另有 {blocking - 6} 条</li>}
-      </ul>}
-      <form className="form-panel modal-form" onSubmit={bind}>
-        {!initialGameId && <label className="radio-row"><input type="radio" name="target" checked={createMode} onChange={() => setCreateMode(true)}/><span><strong>创建新游戏并绑定</strong><small>新游戏会立即拥有此工作区草稿</small></span></label>}
-        {createMode && <><label><span>游戏名称</span><input value={gameName} onChange={(e) => setGameName(e.target.value)} required/></label><label><span>可见性</span><select value={visibility} onChange={(e) => setVisibility(e.target.value as GameVisibility)}><option value="PRIVATE">私有</option><option value="SERVER_SHARED">服务器共享</option></select></label></>}
-        {!initialGameId && <label className="radio-row"><input type="radio" name="target" checked={!createMode} onChange={() => setCreateMode(false)}/><span><strong>绑定到已有游戏</strong><small>替换该游戏的工作区草稿，不影响当前内容</small></span></label>}
-        {!createMode && !initialGameId && <label><span>目标游戏</span><select value={targetGameId} onChange={(e) => setTargetGameId(e.target.value)} required><option value="" disabled>选择游戏…</option>{ownedGames.map(game => <option key={game.id} value={game.id}>{game.name}</option>)}</select></label>}
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <div className="form-actions"><button className="secondary-button" type="button" onClick={() => setStep("choose")}>重新选择</button><button className="primary-button" disabled={pending || (createMode ? !gameName.trim() : !targetGameId)}>{pending ? "正在绑定…" : "绑定并查看草稿"}</button></div>
-      </form>
-    </>}
-    {step === "done" && boundGameId && <div className="scan-state done"><span className="success-ring"><Icon name="check" size={30}/></span><h3>游戏包已绑定到工作区</h3><p>草稿尚未启用为当前内容；验证通过后原子启用。</p><Link className="primary-button" to={`/games/${boundGameId}`} onClick={onClose}>查看草稿并启用<Icon name="arrow"/></Link></div>}
-    {step === "error" && <div className="scan-state error"><span className="error-ring"><Icon name="warning" size={30}/></span><h3>游戏包未通过安全检查</h3><p>{error}</p>{errorCode && <code className="error-code">{errorCode}</code>}<button className="secondary-button" onClick={() => { setError(""); setErrorCode(null); setStep("choose"); }}>重新选择文件</button></div>}
+      <div className="form-actions"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={!file || !gameName.trim()}>上传、加载并启用</button></div>
+    </form>}
+    {step === "uploading" && <div className="scan-state"><span className="spinner"/><h3>正在处理 {file?.name}</h3><p>上传到隔离区、运行加载测试并自动启用…</p><div className="progress"><span/></div></div>}
+    {step === "done" && createdGame && <div className="scan-state done"><span className="success-ring"><Icon name="check" size={30}/></span><h3>游戏已加载并启用</h3><p>现在可以直接创建 Session。</p><Link className="primary-button" to={`/games/${createdGame.id}`} onClick={onClose}>查看游戏<Icon name="arrow"/></Link></div>}
+    {step === "error" && <div className="scan-state error"><span className="error-ring"><Icon name="warning" size={30}/></span><h3>游戏未能启用</h3><p>{error}</p>{errorCode && <code className="error-code">{errorCode}</code>}<button className="secondary-button" onClick={() => { setError(""); setErrorCode(null); setStep("choose"); }}>返回修改</button></div>}
   </section></div>;
 }
 
@@ -381,11 +306,9 @@ function GameDetailPage() {
   const [tab, setTab] = useState<"内容" | "文件" | "兼容性">("内容");
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
-  const [validation, setValidation] = useState<GameValidationResult | null>(null);
   const [diagnostics, setDiagnostics] = useState<GameDiagnosticItem[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [uploadOpen, setUploadOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try { setGame(await getGame(gameId)); setLoadError(null); }
@@ -400,11 +323,10 @@ function GameDetailPage() {
 
   useEffect(() => { void refresh(); void loadDiagnostics(); }, [refresh, loadDiagnostics]);
 
-  const run = useCallback(async (label: string, action: () => Promise<GameLibraryItem | GameValidationResult | void>) => {
+  const run = useCallback(async (label: string, action: () => Promise<GameLibraryItem | void>) => {
     setBusy(label); setActionError(null);
     try {
-      const result = await action();
-      if (result && typeof result === "object" && "canActivate" in result) setValidation(result as GameValidationResult);
+      await action();
       await refresh();
       await loadDiagnostics();
     } catch (err) {
@@ -438,9 +360,7 @@ function GameDetailPage() {
   const hasDraft = game.workspaceStatus === "DRAFT";
   const canPlay = game.hasCurrentContent && game.status === "ACTIVE";
   const displayDiagnostics: Array<{ id: string; code: string; severity: string; path: string | null; message: string; activationBlocking: boolean }> =
-    diagnostics.length > 0
-      ? diagnostics
-      : (validation?.diagnostics ?? []).map((diagnostic, index) => ({ id: `validation-${index}`, code: diagnostic.code, severity: diagnostic.severity, path: diagnostic.path, message: diagnostic.message, activationBlocking: diagnostic.activationBlocking }));
+    diagnostics;
   const blockingCount = displayDiagnostics.filter(diagnostic => diagnostic.activationBlocking).length;
 
   return <>
@@ -450,7 +370,7 @@ function GameDetailPage() {
       <div>
         <p className="eyebrow">{game.visibility === "PRIVATE" ? "PRIVATE GAME" : "SERVER SHARED GAME"}</p>
         <h1>{game.name}</h1>
-        <p>{game.status === "BLOCKED" ? "已被管理员禁用，无法创建新 Session；既有 Session 不受影响。" : "内容验证后原子启用；当前内容对既有 Session 不可变。"}</p>
+        <p>{game.status === "BLOCKED" ? "已被管理员禁用，无法创建新 Session；既有 Session 不受影响。" : "上传时已完成真实运行时加载测试并自动启用；当前内容对既有 Session 不可变。"}</p>
         <div className="tag-row">
           {game.status === "BLOCKED" && <span className="tag warning"><Icon name="warning" size={13}/>已禁用</span>}
           {game.hasCurrentContent ? <span className="tag success"><Icon name="check" size={13}/>当前内容可运行</span> : <span className="tag">无当前内容</span>}
@@ -471,50 +391,41 @@ function GameDetailPage() {
 
     {tab === "内容" && <section className="panel">
       <div className="panel-heading">
-        <div><h2>当前内容</h2><p>当前可运行内容是只读快照；上传包写入独立摄取工作区，验证通过并原子启用后才替换。</p></div>
-        {hasDraft
-          ? <button className="primary-button" onClick={() => void run("正在验证并启用", () => activateGame(game.id, game.stateVersion))} disabled={busy !== ""}><Icon name="check"/>验证并启用</button>
-          : <button className="secondary-button" onClick={() => setUploadOpen(true)} disabled={busy !== ""}><Icon name="upload"/>上传游戏包</button>}
+        <div><h2>当前内容</h2><p>当前可运行内容是上传后通过加载测试并自动启用的只读快照。</p></div>
       </div>
       <div className="content-list">
         <article><span className="timeline-dot live"/><div>
           <h3>{game.hasCurrentContent ? `sha256:${shortDigest(game.contentDigest)}` : "尚未启用当前内容"}{game.hasCurrentContent && <span className="tag success">当前内容</span>}</h3>
           <p>内容修订 #{game.contentRevision} · {formatDateTime(game.updatedAt)} 更新</p>
-          <small>{game.hasCurrentContent ? "Session 创建时完整复制此快照；后续上传不会改变既有 Session。" : "导入游戏包并验证启用后，即可创建 Session。"}</small>
+          <small>{game.hasCurrentContent ? "Session 创建时完整复制此快照；其它上传始终创建独立游戏。" : "此条目来自旧流程且没有已启用内容；请回到游戏库重新上传为独立游戏。"}</small>
         </div><button className="text-button" onClick={() => setTab("文件")}>查看文件 <Icon name="arrow"/></button></article>
       </div>
       {hasDraft && <div className="content-list">
         <article><span className="timeline-dot"/><div>
           <h3>工作区草稿 <span className="tag waiting">待验证</span></h3>
-          <p>上传包只写入工作区，当前内容保持不可变。</p>
-          <small>验证通过后可原子启用；不启用时可再次上传包替换。</small>
-        </div>
-        <span className="workspace-actions">
-          <button className="text-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>验证</button>
-        </span></article>
+          <p>这是旧版多阶段流程留下的工作区，不再提供手动绑定或启用操作。</p>
+          <small>请回到游戏库，把游戏包重新上传为新的独立游戏。</small>
+        </div></article>
       </div>}
-      {!game.hasCurrentContent && !hasDraft && <div className="content-list empty-list"><article><span className="timeline-dot"/><div><h3>这个游戏还没有内容</h3><p>导入一个游戏包开始。</p></div><button className="secondary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>导入游戏包</button></article></div>}
-      {hasDraft && <div className="panel-foot-actions"><button className="secondary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>上传新游戏包替换工作区</button></div>}
-      {(validation || displayDiagnostics.length > 0) && <div className={`validation-banner ${blockingCount === 0 ? "ok" : "bad"}`}><Icon name={blockingCount === 0 ? "check" : "warning"}/><p><strong>{blockingCount === 0 ? "验证通过" : "存在阻断启用的诊断"}</strong><small>{validation ? `${validation.diagnostics.length} 条诊断 · 摘要 ${shortDigest(validation.contentDigest)}` : `${displayDiagnostics.length} 条诊断`}</small></p><button className="text-button" onClick={() => setTab("兼容性")}>查看详情 <Icon name="arrow"/></button></div>}
+      {!game.hasCurrentContent && !hasDraft && <div className="content-list empty-list"><article><span className="timeline-dot"/><div><h3>这个游戏没有内容</h3><p>请回到游戏库重新上传为独立游戏。</p></div></article></div>}
+      {displayDiagnostics.length > 0 && <div className={`validation-banner ${blockingCount === 0 ? "ok" : "bad"}`}><Icon name={blockingCount === 0 ? "check" : "warning"}/><p><strong>{blockingCount === 0 ? "加载测试已完成" : "存在加载诊断"}</strong><small>{displayDiagnostics.length} 条运行时诊断</small></p><button className="text-button" onClick={() => setTab("兼容性")}>查看详情 <Icon name="arrow"/></button></div>}
     </section>}
 
     {tab === "文件" && <GameFilesPanel game={game}/>}
 
     {tab === "兼容性" && <section className="panel diagnostics">
-      {!validation && displayDiagnostics.length === 0 ? <div className="diagnostic-empty"><Icon name="spark" size={26}/><h2>尚未运行验证</h2><p>运行一次验证以检查目录结构、编码、解析错误与禁止能力。</p><button className="primary-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>运行验证</button></div>
+      {displayDiagnostics.length === 0 ? <div className="diagnostic-empty"><Icon name="spark" size={26}/><h2>加载测试已通过</h2><p>没有运行时加载诊断；系统未执行额外的全树编码或内容规则检查。</p></div>
         : <>
           <div className="diagnostic-summary">
             <span className={`score ${blockingCount === 0 ? "ok" : "bad"}`}>{blockingCount === 0 ? "✓" : "!"}</span>
-            <div><h2>{blockingCount === 0 ? "验证通过，可以启用" : "存在阻断启用的诊断"}</h2><p>{validation ? `${validation.fileCount} 个文件 · ${formatBytes(validation.totalBytes)} · 摘要 ${shortDigest(validation.contentDigest)}` : `${displayDiagnostics.length} 条诊断 · 工作区草稿`}</p></div>
+            <div><h2>{blockingCount === 0 ? "加载测试通过" : "存在运行时加载诊断"}</h2><p>{displayDiagnostics.length} 条诊断</p></div>
           </div>
           {displayDiagnostics.length === 0 ? <p className="diagnostic-none">没有诊断。</p>
             : displayDiagnostics.map(diagnostic => <div className={`diagnostic-row ${diagnostic.activationBlocking ? "blocking" : ""}`} key={diagnostic.id}><Icon name={diagnostic.activationBlocking ? "warning" : "check"}/><span><strong>{diagnostic.code}</strong>{diagnostic.path && <small> · {diagnostic.path}</small>}<p>{diagnostic.message}</p></span><small>{diagnostic.severity}</small></div>)}
         </>}
-      {hasDraft && <div className="diagnostic-foot"><button className="secondary-button" onClick={() => void run("正在验证", () => validateGame(game.id, game.stateVersion))} disabled={busy !== ""}>{busy === "正在验证" ? "验证中…" : "重新验证"}</button></div>}
     </section>}
 
     {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); void refresh(); }}/>}
-    {uploadOpen && <UploadDialog onClose={() => setUploadOpen(false)} games={[game]} initialGameId={game.id}/>}
     {confirmDelete && <ConfirmDialog title="删除这个游戏？" body="未被 Session 引用的游戏会先执行可恢复的逻辑删除；被引用的游戏会被拒绝删除。" confirm="确认删除" onCancel={() => setConfirmDelete(false)} onConfirm={() => void deleteGameAction()} pending={busy === "正在删除"}/>}
   </>;
 }
@@ -567,7 +478,7 @@ function GameFilesPanel({ game }: { game: GameLibraryItem }) {
       <span className="readonly-note">文件仅供查看和下载</span>
     </div>
     {!workspaceAvailable && !currentAvailable
-      ? <div className="panel empty-list-panel"><Icon name="folder" size={26}/><p>这个游戏还没有可浏览的内容。先在「内容」页导入游戏包。</p></div>
+      ? <div className="panel empty-list-panel"><Icon name="folder" size={26}/><p>这个旧条目没有可浏览内容；请回到游戏库重新上传为独立游戏。</p></div>
       : <section className="panel file-panel">
         <div className="file-tree">
           <h3>{scope === "WORKSPACE" ? "待验证工作区" : "当前内容"}{path ? ` / ${path}` : ""}</h3>

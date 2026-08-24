@@ -14,9 +14,11 @@ public sealed class GameValidatorProcessIntegrationTests
         {
             Directory.CreateDirectory(Path.Combine(root, "CSV"));
             Directory.CreateDirectory(Path.Combine(root, "ERB"));
-            await File.WriteAllTextAsync(Path.Combine(root, "CSV", "GAMEBASE.CSV"), "title,validator-test\n");
-            await File.WriteAllTextAsync(Path.Combine(root, "ERB", "START.ERB"), "@SYSTEM_TITLE\nINPUT\nQUIT\n");
+            Directory.CreateDirectory(Path.Combine(root, "ReadMe"));
+            await File.WriteAllTextAsync(Path.Combine(root, "CSV", "GAMEBASE.CSV"), "コード,验证器测试\n");
+            await File.WriteAllTextAsync(Path.Combine(root, "ERB", "START.ERB"), "@SYSTEM_TITLE\nPRINTL 加载测试\nINPUT\nQUIT\n");
             await File.WriteAllTextAsync(Path.Combine(root, "emuera.config"), "Use sav folder:NO\n");
+            await File.WriteAllTextAsync(Path.Combine(root, "ReadMe", "eraSQN\u0083p\u0083b\u0083`.txt"), "not runtime content");
             string assembly = Path.Combine(FindRepositoryRoot(), "src", "CloudEmuera.Validator", "bin", "Release", "net10.0", "CloudEmuera.Validator.dll");
             var client = new GameValidatorProcessClient(new GameValidatorProcessOptions
             {
@@ -27,7 +29,7 @@ public sealed class GameValidatorProcessIntegrationTests
 
             GameParserValidationResult result = await client.ValidateAsync(root);
 
-            Assert.True(result.CanActivate, string.Join(',', result.Diagnostics.Select(item => item.Code)));
+            Assert.True(result.CanActivate, string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}: {item.Message}")));
             Assert.Empty(result.Diagnostics);
         }
         finally

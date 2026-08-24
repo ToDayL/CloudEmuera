@@ -123,9 +123,7 @@ public sealed class GamePackageIngestionService(
                 List<GamePackageDiagnostic> conversionDiagnostics = encodingDiagnostics.Build();
                 GamePackageManifest manifest = Analyze(archiveBytes, archiveDigest, content, extraction, effectiveLimits);
                 if (conversionDiagnostics.Count > 0)
-                {
                     manifest = manifest with { Diagnostics = manifest.Diagnostics.Concat(conversionDiagnostics).ToArray() };
-                }
                 await AdjustReservationAsync(ingestionId, archiveBytes, extraction.TotalBytes, deadline.Token).ConfigureAwait(false);
                 string manifestJson = JsonSerializer.Serialize(manifest, JsonOptions);
                 using (SafeFileHandle manifestHandle = LinuxGamePackageStagingStore.CreateFile(candidate, "manifest.json"))
@@ -564,12 +562,13 @@ public sealed class GamePackageIngestionService(
                 Reject(GamePackageRejectionCodes.StagedContentChanged, "Staged content changed during analysis.", file.Path);
             bool text = IsText(file.Path);
             TextAnalysis textAnalysis = text ? AnalyzeText(handle) : new(GamePackageTextEncoding.None, false, []);
-            GamePackageTextEncoding encoding = textAnalysis.Encoding;
-            bool bom = encoding == GamePackageTextEncoding.Utf8Bom;
             foreach (string code in textAnalysis.DiagnosticCodes)
-                diagnostics.Add(code, GamePackageDiagnosticSeverity.Error, "ENCODING", file.Path,
-                    $"gamePackage.diagnostic.{ToCamelCase(code)}", publishBlocking: true);
-            files.Add(new(file.Path, file.Bytes, file.Digest, text ? GamePackageFileKind.Text : GamePackageFileKind.Binary, encoding, bom));
+                diagnostics.Add(code, GamePackageDiagnosticSeverity.Warning, "ENCODING", file.Path,
+                    $"gamePackage.diagnostic.{ToCamelCase(code)}", publishBlocking: false);
+            files.Add(new(file.Path, file.Bytes, file.Digest,
+                text ? GamePackageFileKind.Text : GamePackageFileKind.Binary,
+                textAnalysis.Encoding,
+                textAnalysis.Encoding == GamePackageTextEncoding.Utf8Bom));
         }
         string contentDigest = ComputeContentDigest(files, extraction.Directories);
         return GamePackageManifest.Create(archiveBytes, archiveDigest, extraction.TotalBytes, contentDigest, files, extraction.Directories, diagnostics.Build());

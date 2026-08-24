@@ -406,6 +406,11 @@ TOCTOU、取消、模拟磁盘写满、rename/CAS/audit 故障、过期 CONSUMIN
 `./scripts/check.sh` 通过 locked restore、Release 0 warning/0 error、全部 .NET 与 Web 测试、Web
 typecheck 和 production build；`./scripts/verify-third-party.sh` 与 `git diff --check` 通过。
 
+2026-08-24 边界修订：依据 [`ADR-0032`](adr/0032-one-step-game-upload-and-load-only-validation.md)，
+摄取阶段继续保留容量、归档可读性、受保护 staging、无歧义物化和恢复保证，但不再实施 Windows
+可移植名称、大小写/NFC 碰撞、链接/特殊类型元数据或文本编码内容拒绝。链接与特殊类型只按普通
+文件/目录物化；UTF-16/UTF-32 BOM 转 UTF-8 保留，其失败和其它编码诊断不阻断。
+
 P1-01 的 `game_versions` 是 ADR-0010 之前已完成的旧 schema。不得回改已提交 migration；P1-04
 必须新增升级 migration，把内容元数据合并进 `games`、把 Session 改为 Game + 源摘要快照，并删除
 旧表和产品代码。
@@ -452,6 +457,18 @@ API；P1-11 不再处理 Game 的 UI。同时修复开发容器 Validator 程序
 阻断诊断），使开发环境可真实执行验证与启用。新增 Web 单元测试（列表/创建/上传绑定/文件查看/
 验证启用）、HTTP 集成测试（GameLibrary 类别，含真实 parser 进程）与 RuntimeBridge 回归测试；
 `pnpm --dir src/CloudEmuera.Web typecheck/test/build`、定向 .NET 测试与隔离 e2e 身份套件通过。
+
+2026-08-24 流程修订：依据 [`ADR-0032`](adr/0032-one-step-game-upload-and-load-only-validation.md)，
+公开产品面收敛为一次 `POST /games` ZIP 上传；每个包创建独立 Game，内部 staging/workspace 仅由
+正式 Validator 执行真实运行时初始化加载，成功后自动原子启用。删除公开 ingestion、绑定既有
+Game、手动 validate/activate 路由与 UI。Validator 不再叠加固定目录、全树编码、静态入口点、资源
+引用或 `CALLSHARP` 等内容扫描；新增一步成功、加载失败不留可见草稿、UTF-16 转换及旧路由消失回归。
+
+SQC 实包回归（2026-08-24）：Validator 按 pinned Emuera 的逐文件编码探测执行初始化，不再以固定
+CP932 预读 `GAMEBASE.CSV`/ERB；运行时逻辑路径只保留相对路径、边界和长度等宿主必须约束，不再
+应用 Windows 设备名、控制字符、冒号或尾随空格/点等可移植性策略。保存布局检查兼容日文配置键中
+`sav`/`SAV` 的大小写。未修改的 `eraSQC.zip` 初始化结果为 `canActivate: true`，解释器自身警告均为
+非阻断诊断。
 
 ### P1-05 — API Worker Manager、租约、epoch 与可重开状态机（DONE）
 

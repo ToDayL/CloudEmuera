@@ -640,7 +640,7 @@ internal static class LinuxFileOperations
 
     private static void ValidateLeafName(string name)
     {
-        if (string.IsNullOrWhiteSpace(name)
+        if (name.Length == 0
             || name is "." or ".."
             || name.Contains('/')
             || name.Contains('\\')

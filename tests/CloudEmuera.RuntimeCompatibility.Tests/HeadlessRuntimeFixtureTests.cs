@@ -2409,7 +2409,7 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public async Task MissingGameBaseReturnsInitializationDiagnostic()
+    public async Task MissingGameBaseDoesNotAddAStaticInitializationGate()
     {
         using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
         File.Delete(Path.Combine(fixture.Paths.CsvRoot, "GAMEBASE.CSV"));
@@ -2417,21 +2417,21 @@ public sealed class HeadlessRuntimeFixtureTests
 
         EmueraRuntimeResult result = await host.InitializeAsync();
 
-        Assert.Equal(EmueraRuntimeStatus.InitializationFailed, result.Status);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "runtime_initialization_failed" && diagnostic.IsFatal);
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "runtime_initialization_failed");
     }
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public async Task UnsupportedInstructionFailsClosedDuringInitialization()
+    public async Task UnsupportedInstructionDoesNotAddAStaticInitializationGate()
     {
         using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nCALLSHARP forbidden\nQUIT\n");
         await using EmueraRuntimeHost host = fixture.CreateHost();
 
         EmueraRuntimeResult result = await host.InitializeAsync();
 
-        Assert.Equal(EmueraRuntimeStatus.UnsupportedCapability, result.Status);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "unsupported_runtime_capability" && diagnostic.IsFatal);
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "unsupported_runtime_capability");
     }
 
     [Fact]

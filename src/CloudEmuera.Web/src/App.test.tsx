@@ -210,11 +210,11 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
-  it("creates a game through the real API contract", async () => {
-    const created = game({ id: "g-new", name: "My Era Game", contentRevision: 0, hasCurrentContent: false, contentDigest: null, workspaceStatus: "NONE" });
+  it("uploads, load-tests, and activates a new game through one API call", async () => {
+    const created = game({ id: "g-new", name: "My Era Game" });
     let gamesList: unknown[] = [];
     const fetchMock = mockFetch((url, init) => {
-      if (url === "/api/v1/games" && init?.method === "POST") { gamesList = [created]; return jsonResponse(created, 201); }
+      if (url === "/api/v1/games?name=My+Era+Game&visibility=PRIVATE" && init?.method === "POST") { gamesList = [created]; return jsonResponse(created, 201); }
       if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
       if (url === "/api/v1/games") return jsonResponse({ items: gamesList });
       return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
@@ -222,50 +222,16 @@ describe("App", () => {
     renderAt("/games");
 
     expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "创建游戏" })[0]);
-    const dialog = await screen.findByRole("dialog", { name: "创建游戏" });
-    fireEvent.change(within(dialog).getByLabelText("游戏名称"), { target: { value: "My Era Game" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "创建游戏" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "上传游戏" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "上传游戏" });
+    fireEvent.change(within(dialog).getByLabelText("ZIP 游戏包"), { target: { files: [new File(["zip"], "My Era Game.zip", { type: "application/zip" })] } });
+    const uploadButton = within(dialog).getByRole("button", { name: "上传、加载并启用" });
+    await waitFor(() => expect(uploadButton).toBeEnabled());
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
 
-    expect(await screen.findByRole("heading", { name: "My Era Game" })).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/games", expect.objectContaining({ method: "POST" }));
-    vi.unstubAllGlobals();
-  });
-
-  it("uploads a package and binds it to a new game workspace", async () => {
-    const ingestion = {
-      ingestionId: "ing-1",
-      ownerUserId: "usr_test",
-      expiresAt: "2026-08-10T00:00:00Z",
-      manifest: {
-        schemaVersion: 1, archiveBytes: 1024, archiveDigest: "sha256:aa", contentBytes: 512,
-        fileCount: 1, directoryCount: 1, contentDigest: "sha256:bb", files: [], directories: [], diagnostics: [],
-      },
-    };
-    const created = game({ id: "g-new", name: "My Game", workspaceStatus: "DRAFT", contentRevision: 0, hasCurrentContent: false, contentDigest: null });
-    mockFetch((url, init) => {
-      if (url === "/api/v1/games" && init?.method === "POST") return jsonResponse(created, 201);
-      if (url === "/api/v1/games/g-new/package" && init?.method === "PUT") return jsonResponse(created);
-      if (url === "/api/v1/game-package-ingestions") return jsonResponse(ingestion, 201);
-      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
-      if (url === "/api/v1/games") return jsonResponse({ items: [] });
-      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
-    });
-    renderAt("/games");
-    expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
-
-    fireEvent.click(screen.getAllByRole("button", { name: "导入游戏" })[0]);
-    const dialog = await screen.findByRole("dialog", { name: "导入游戏包" });
-    const fileInput = dialog.querySelector('input[type="file"]');
-    expect(fileInput).not.toBeNull();
-    fireEvent.change(fileInput as HTMLInputElement, { target: { files: [new File(["zip"], "my-game.zip", { type: "application/zip" })] } });
-
-    expect(await within(dialog).findByText("游戏包已安全解压")).toBeInTheDocument();
-    expect(within(dialog).getByText(/1 个文件/)).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", { name: "绑定并查看草稿" }));
-
-    expect(await within(dialog).findByText("游戏包已绑定到工作区")).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: /查看草稿并启用/ })).toHaveAttribute("href", "/games/g-new");
+    expect(await within(dialog).findByText("游戏已加载并启用")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: /查看游戏/ })).toHaveAttribute("href", "/games/g-new");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/games?name=My+Era+Game&visibility=PRIVATE", expect.objectContaining({ method: "POST", body: expect.any(File) }));
     vi.unstubAllGlobals();
   });
 
@@ -296,92 +262,18 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
-  it("validates then activates the workspace through the real API contract", async () => {
-    const draft = game({ workspaceStatus: "DRAFT", stateVersion: 2 });
-    const validation = { canActivate: true, contentDigest: digest, fileCount: 1, totalBytes: 13, diagnostics: [], stateVersion: 3 };
-    const activated = game({ workspaceStatus: "NONE", contentRevision: 2, stateVersion: 3 });
-    let current = draft;
+  it("shows the completed runtime load result without manual validation controls", async () => {
     mockFetch((url) => {
-      if (url.endsWith(":validate")) return jsonResponse(validation);
-      if (url.endsWith(":activate")) { current = activated; return jsonResponse(activated); }
-      if (url === "/api/v1/games/g1") return jsonResponse(current);
-      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/games/g1") return jsonResponse(game());
+      if (url === "/api/v1/games/g1/diagnostics") return jsonResponse({ items: [] });
       return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
     });
     renderAt("/games/g1");
     expect(await screen.findByRole("heading", { name: "ERA: The World" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "兼容性" }));
-    expect(await screen.findByText("尚未运行验证")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "运行验证" }));
-    expect(await screen.findByText("验证通过，可以启用")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "内容" }));
-    fireEvent.click(screen.getByRole("button", { name: "验证并启用" }));
-    expect(await screen.findByText(/内容修订 #2/)).toBeInTheDocument();
-    expect(screen.queryByText("工作区草稿")).not.toBeInTheDocument();
-    vi.unstubAllGlobals();
-  });
-
-  it("surfaces persisted blocking diagnostics after a failed activation", async () => {
-    const draft = game({ workspaceStatus: "DRAFT", stateVersion: 2 });
-    const blocking = [
-      { id: "diag-1", code: "ERB_ENTRYPOINT_MISSING", severity: "ERROR", path: "ERB", message: "ERB directory must contain at least one .ERB file at the package root.", messageKey: "game.validation.erb_entrypoint_missing", activationBlocking: true, overridePolicy: "NEVER", overriddenBy: null, overriddenAt: null },
-    ];
-    mockFetch((url, init) => {
-      if (url === "/api/v1/games/g1") return jsonResponse(draft);
-      if (url === "/api/v1/games/g1/diagnostics") return jsonResponse({ items: blocking });
-      if (url.endsWith(":activate") && init?.method === "POST") {
-        return jsonResponse({ code: "ACTIVATION_VALIDATION_FAILED", message: "The workspace has activation-blocking diagnostics.", requestId: "req-1" }, 422);
-      }
-      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
-      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
-    });
-    renderAt("/games/g1");
-    expect(await screen.findByRole("heading", { name: "ERA: The World" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "验证并启用" }));
-    expect(await screen.findByText(/1 条阻断诊断/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "兼容性" }));
-    expect(await screen.findByText("ERB directory must contain at least one .ERB file at the package root.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /重新验证/ })).toBeInTheDocument();
-    vi.unstubAllGlobals();
-  });
-
-  it("shows blocking ingestion diagnostics after a successful upload", async () => {
-    const ingestion = {
-      ingestionId: "ing-1",
-      ownerUserId: "usr_test",
-      expiresAt: "2026-08-10T00:00:00Z",
-      manifest: {
-        schemaVersion: 1, archiveBytes: 100, archiveDigest: "sha256:aa", contentBytes: 50,
-        fileCount: 1, directoryCount: 0, contentDigest: "sha256:bb", files: [], directories: [],
-        diagnostics: [
-          { code: "TEXT_CONTROL_CHARACTER", severity: 2, stage: "ENCODING", logicalPath: "Readme.txt", messageKey: "gamePackage.diagnostic.textControlCharacter", arguments: {}, publishBlocking: true, suppressedCount: 0 },
-        ],
-      },
-    };
-    mockFetch((url, init) => {
-      if (url === "/api/v1/games" && init?.method === "POST") return jsonResponse(game({ id: "g-new", name: "My Game", workspaceStatus: "DRAFT", contentRevision: 0, hasCurrentContent: false, contentDigest: null }), 201);
-      if (url === "/api/v1/games/g-new/package" && init?.method === "PUT") return jsonResponse(game({ id: "g-new", workspaceStatus: "DRAFT", contentRevision: 0, hasCurrentContent: false, contentDigest: null }));
-      if (url === "/api/v1/game-package-ingestions") return jsonResponse(ingestion, 201);
-      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
-      if (url === "/api/v1/games") return jsonResponse({ items: [] });
-      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
-    });
-    renderAt("/games");
-    expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
-
-    fireEvent.click(screen.getAllByRole("button", { name: "导入游戏" })[0]);
-    const dialog = await screen.findByRole("dialog", { name: "导入游戏包" });
-    const fileInput = dialog.querySelector('input[type="file"]');
-    fireEvent.change(fileInput as HTMLInputElement, { target: { files: [new File(["zip"], "my-game.zip", { type: "application/zip" })] } });
-
-    expect(await within(dialog).findByText("游戏包已安全解压")).toBeInTheDocument();
-    expect(within(dialog).getByRole("list", { name: "阻断提醒明细" })).toBeInTheDocument();
-    expect(within(dialog).getByText("TEXT_CONTROL_CHARACTER")).toBeInTheDocument();
-    expect(within(dialog).getByText("Readme.txt")).toBeInTheDocument();
+    expect(await screen.findByText("加载测试已通过")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /验证|启用/ })).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 
@@ -390,20 +282,23 @@ describe("App", () => {
       const url = String(input);
       if (url === "/api/v1/games") return Promise.resolve(jsonResponse({ items: [] }));
       if (url === "/api/v1/auth/csrf") return Promise.resolve(jsonResponse({ token: "csrf-token" }));
-      if (url === "/api/v1/game-package-ingestions") return Promise.reject(new TypeError("Failed to fetch"));
+      if (url.startsWith("/api/v1/games?") && init?.method === "POST") return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404));
     });
     vi.stubGlobal("fetch", fetchMock);
     renderAt("/games");
     expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "导入游戏" })[0]);
-    const dialog = await screen.findByRole("dialog", { name: "导入游戏包" });
+    fireEvent.click(screen.getAllByRole("button", { name: "上传游戏" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "上传游戏" });
     const fileInput = dialog.querySelector('input[type="file"]');
     fireEvent.change(fileInput as HTMLInputElement, { target: { files: [new File(["x".repeat(1024)], "large.zip", { type: "application/zip" })] } });
+    const uploadButton = within(dialog).getByRole("button", { name: "上传、加载并启用" });
+    await waitFor(() => expect(uploadButton).toBeEnabled());
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
 
     expect(await within(dialog).findByText(/网络错误：上传未能完成/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "重新选择文件" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "返回修改" })).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 

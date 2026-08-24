@@ -181,9 +181,7 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
     [Trait("Category", "ArchiveSecurity")]
     [InlineData("../escape.txt", GamePackageRejectionCodes.PathInvalid)]
     [InlineData("/absolute.txt", GamePackageRejectionCodes.PathInvalid)]
-    [InlineData("C:/drive.txt", GamePackageRejectionCodes.PathInvalid)]
     [InlineData("ERB\\backslash.erb", GamePackageRejectionCodes.PathInvalid)]
-    [InlineData("CON.txt", GamePackageRejectionCodes.PathReservedName)]
     public async Task RejectsUnsafePathsWithoutReadyContent(string entryName, string expectedCode)
     {
         await AssertRejectedAsync(CreateZip((entryName, "x"u8.ToArray(), null)), expectedCode);
@@ -192,26 +190,45 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
 
     [Fact]
     [Trait("Category", "ArchiveSecurity")]
-    public async Task RejectsCaseCollision()
+    public async Task AcceptsCaseDistinctPaths()
     {
         byte[] zip = CreateZip(("ERB/A.ERB", "a"u8.ToArray(), null), ("erb/a.erb", "b"u8.ToArray(), null));
-        await AssertRejectedAsync(zip, GamePackageRejectionCodes.PathCollision);
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+        Assert.Contains(result.Manifest.Files, file => file.Path == "ERB/A.ERB");
+        Assert.Contains(result.Manifest.Files, file => file.Path == "erb/a.erb");
     }
 
     [Fact]
     [Trait("Category", "ArchiveSecurity")]
-    public async Task RejectsUnicodeNormalizationCollision()
+    public async Task AcceptsUnicodeNormalizationDistinctPathsWithoutRewriting()
     {
-        byte[] zip = CreateZip(("ERB/é.ERB", "a"u8.ToArray(), null), ("ERB/e\u0301.ERB", "b"u8.ToArray(), null));
-        await AssertRejectedAsync(zip, GamePackageRejectionCodes.PathCollision);
+        byte[] zip = CreateZip(("ERB/é.ERB", "a"u8.ToArray(), null), ("ERB/e\u0301.ERB", "b"u8.ToArray(), null), ("emuera.config", Array.Empty<byte>(), null));
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+        Assert.Contains(result.Manifest.Files, file => file.Path == "ERB/é.ERB");
+        Assert.Contains(result.Manifest.Files, file => file.Path == "ERB/e\u0301.ERB");
     }
 
     [Fact]
     [Trait("Category", "ArchiveSecurity")]
-    public async Task RejectsUnixSymbolicLinkMetadata()
+    public async Task MaterializesUnixSymbolicLinkMetadataAsOrdinaryFile()
     {
-        byte[] zip = CreateZip(("ERB/link", "../../outside"u8.ToArray(), (0xA000 | 0x1FF) << 16));
-        await AssertRejectedAsync(zip, GamePackageRejectionCodes.LinkEntryForbidden);
+        byte[] zip = CreateZip(("ERB/link", "../../outside"u8.ToArray(), (0xA000 | 0x1FF) << 16), ("emuera.config", Array.Empty<byte>(), null));
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+        string path = Path.Combine(root, "games", "staging", result.IngestionId, "ready", "content", "ERB", "link");
+        Assert.Equal("../../outside", await File.ReadAllTextAsync(path));
+        Assert.Null(new FileInfo(path).LinkTarget);
+    }
+
+    [Theory]
+    [InlineData("CON.txt")]
+    [InlineData("C:/drive.txt")]
+    [InlineData("trailing. ")]
+    [InlineData(" ")]
+    public async Task AcceptsNamesWithoutPortablePathPolicy(string path)
+    {
+        IngestedGamePackage result = await Service().IngestAsync(
+            new(userId, new MemoryStream(CreateZip((path, "x"u8.ToArray(), null)))), Limits());
+        Assert.Contains(result.Manifest.Files, file => file.Path == path);
     }
 
     [Fact]
@@ -349,10 +366,13 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
     [InlineData(0x2000)]
     [InlineData(0x6000)]
     [InlineData(0xC000)]
-    public async Task RejectsUnixSpecialFileTypes(int unixType)
+    public async Task MaterializesUnixSpecialFileMetadataAsOrdinaryFiles(int unixType)
     {
         byte[] zip = CreateZip(("special", "x"u8.ToArray(), (unixType | 0x180) << 16));
-        await AssertRejectedAsync(zip, GamePackageRejectionCodes.SpecialEntryForbidden);
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+        string path = Path.Combine(root, "games", "staging", result.IngestionId, "ready", "content", "special");
+        Assert.True(File.Exists(path));
+        Assert.Equal("x", await File.ReadAllTextAsync(path));
     }
 
     [Fact]
@@ -418,23 +438,20 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
 
     [Fact]
     [Trait("Category", "Encoding")]
-    public async Task EmitsStructuredNfcUtf16NulAndTruncationDiagnostics()
+    public async Task KeepsUtf16ConversionAndMakesContentDiagnosticsNonBlocking()
     {
         byte[] zip = CreateZip(
             ("e\u0301.txt", new byte[] { 0xFF, 0xFE, 0x41, 0x00 }, null),
             ("zero.txt", new byte[] { (byte)'a', 0, (byte)'b' }, null));
         IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits() with { MaxDiagnostics = 1 });
-        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "PATH_NORMALIZED_TO_NFC"
-            && diagnostic.MessageKey.Length > 0 && diagnostic.Arguments is not null);
-        GamePackageDiagnostic truncated = Assert.Single(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "DIAGNOSTICS_TRUNCATED");
-        Assert.True(truncated.PublishBlocking);
-        Assert.True(truncated.SuppressedCount >= 1);
-        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_ENCODING_CONVERTED");
+        Assert.DoesNotContain(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "PATH_NORMALIZED_TO_NFC");
+        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_ENCODING_CONVERTED" && !diagnostic.PublishBlocking);
+        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_NUL_CHARACTER" && !diagnostic.PublishBlocking);
     }
 
     [Fact]
     [Trait("Category", "Encoding")]
-    public async Task ConvertsUtf16AndKeepsNulDiagnosticBlocking()
+    public async Task ConvertsUtf16AndKeepsNulDiagnosticInformational()
     {
         byte[] zip = CreateZip(
             ("utf16.txt", new byte[] { 0xFF, 0xFE, 0x41, 0x00 }, null),
@@ -443,7 +460,7 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
         Assert.DoesNotContain(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_UTF16_OR_UTF32_UNSUPPORTED");
         Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_ENCODING_CONVERTED"
             && diagnostic.LogicalPath == "utf16.txt" && !diagnostic.PublishBlocking);
-        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_NUL_CHARACTER" && diagnostic.PublishBlocking);
+        Assert.Contains(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_NUL_CHARACTER" && !diagnostic.PublishBlocking);
         Assert.All(result.Manifest.Diagnostics, diagnostic => Assert.StartsWith("gamePackage.diagnostic.", diagnostic.MessageKey, StringComparison.Ordinal));
     }
 

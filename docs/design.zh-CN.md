@@ -61,7 +61,7 @@ MVP 由一个 Docker 容器承载，容器内包含以下独立进程：
    有有界内存去重的 `clientMessageId`；断线显示状态由完整 Snapshot 替换，不持久补发历史增量。
 5. **epoch fencing 优先于连接状态**：任何旧 Worker 即使恢复连接，也不能影响当前 Session。
 6. **当前内容原子替换，Session 工作区私有**：Game 只有一份当前可运行内容；上传包进入独立
-   摄取 workspace，验证后原子替换当前内容；每个 Session 只写自己的完整副本。
+   摄取 workspace，经真实加载后自动原子发布当前内容；每个上传创建独立 Game，每个 Session 只写自己的完整副本。
 7. **显示数据结构化**：浏览器不执行游戏提供的 HTML、脚本或任意 URL。
 8. **有界缓存**：Snapshot、实时连接队列、日志和当前 Worker 去重记录均有明确上限及降级方式。
 
@@ -746,29 +746,32 @@ SessionRoot、Worker binding 和 IPC 参数，不向 Worker 传递 Game workspac
 P1-04 的单一 workspace、逐文件清单、持久 operation、Validator、内容启用崩溃对账、授权和逻辑删除
 细节见
 [`tasks/P1-04-simple-game-library-plan.zh-CN.md`](tasks/P1-04-simple-game-library-plan.zh-CN.md)，
-对应决策由
-[`ADR-0010`](adr/0010-single-game-content-without-version-entities.md) 冻结。
+对应内容模型由 [`ADR-0010`](adr/0010-single-game-content-without-version-entities.md) 冻结，一步上传与
+加载测试边界由 [`ADR-0032`](adr/0032-one-step-game-upload-and-load-only-validation.md) 修订。
 
 ### 6.1 上传流水线
 
-P1-03 的 ZIP 子集、暂存预留、路径规范化、双阶段预算、一次性候选内容和故障恢复细节见
+P1-03 的 ZIP 子集、暂存预留、容量预算、一次性候选内容和故障恢复基础见
 [`tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md`](tasks/P1-03-secure-game-package-ingestion-plan.zh-CN.md)，
-相关决策由 [`ADR-0008`](adr/0008-secure-zip-ingestion-policy.md) 冻结。
+其中产品上传与兼容性边界以 [`ADR-0032`](adr/0032-one-step-game-upload-and-load-only-validation.md) 为准。
 
 ```text
-Upload → Quarantine → Archive scan → Safe extract → File scan
-       → Encoding/case analysis → Game workspace
-       → Runtime validation → Atomic activation of current content
+POST /games (ZIP + metadata) → protected staging → capacity/readability checks
+       → ordinary-file materialization → best-effort UTF-16/32 BOM conversion
+       → production Validator runtime load → automatic atomic activation
 ```
 
 1. API 流式接收上传内容到随机命名临时文件，同时计算 SHA-256 并执行压缩前大小限制；
-2. 解包器逐项规范化路径，先校验后落盘；
-3. 拒绝绝对路径、`..`、NUL、设备文件、FIFO、硬链接、游戏包携带的符号链接和大小写/Unicode 规范化冲突；
+2. 解包器只验证条目能否在受保护 staging 下无歧义物化；路径穿越、绝对路径、NUL、反斜杠歧义、
+   精确重名和文件/目录冲突必须拒绝；Windows 保留名、尾点/空格、大小写与 Unicode 规范化差异原样保留；
+3. 归档携带的符号链接、硬链接、设备或其它特殊类型元数据不在宿主文件系统执行，只把 payload
+   和目录结构物化为普通文件/目录；
 4. 同时限制条目数、单文件大小、总展开大小、目录深度和压缩比；
-5. 对 ERB/CSV/配置文件检测 BOM，并以确定性顺序尝试 UTF-8 与 Shift-JIS；模糊结果产生诊断，不依赖系统 locale；
-6. 静态扫描禁止能力、资源引用和文件名大小写；
-7. 在受限验证 Worker 中执行解析验证，验证超时或超资源则失败；
-8. 启用时计算规范清单摘要，将冻结 workspace 原子替换为 Game current content，改为只读，再在
+5. 对文本文件保留编码识别；带 BOM 的 UTF-16/UTF-32 尽力转为 UTF-8 并记录转换提示，未知、混合或
+   转换失败的编码不阻断；
+6. 不执行固定目录布局、静态入口点、全树编码、资源引用、文件名大小写或禁止能力扫描；
+7. 正式 Validator 只以候选目录为 GameRoot 调用真实运行时初始化加载，加载失败或超时才判定不兼容；
+8. 加载成功后自动计算清单摘要，将冻结 workspace 原子替换为 Game current content，改为只读，再在
    数据库事务中更新 Game 的摘要、清单和 `content_revision`。
 
 若文件移动成功而数据库事务失败，后台清理器根据“数据库无引用且超过安全期”回收孤儿目录。不得在请求失败时立即递归删除尚未核对的路径。
@@ -776,9 +779,9 @@ Upload → Quarantine → Archive scan → Safe extract → File scan
 ### 6.2 Game 摄取 workspace 与只读查看
 
 - current content 不可原地编辑；
-- 上传新包时把安全展开结果写入唯一内部 workspace，并用它整体替换先前候选；
+- 每次上传先创建独立 Game，并把展开结果写入该 Game 的内部 workspace；不绑定或替换既有 Game；
 - 浏览器只可浏览目录、只读查看受支持文本和下载文件，不提供写文件、创建、重命名、删除或搜索 API；
-- 编码转换只发生在已定义的摄取兼容步骤中，不提供用户交互式转换；
+- UTF-16/UTF-32 BOM 转 UTF-8 只发生在内部摄取步骤中，不提供用户交互式转换；
 - 启用生成新的内容摘要和内部 revision；Session 只固定 `gameId + sourceContentDigest`，完整内容
   已复制到自己的 SessionRoot；
 - Game 不保留用户可见历史版本、版本标签或回滚入口。
@@ -1063,12 +1066,9 @@ Session 或 Worker 生命周期。
 | `POST /auth/login` | 以 email/password 本地登录 | 不接受 username；速率限制、防暴力破解 |
 | `POST /auth/logout` | 注销当前会话 | 使服务端会话失效 |
 | `GET /games` | 列出可见游戏 | 私有所有者或共享游戏 |
-| `POST /games` | 创建 Game | 玩家 |
-| `PUT /games/{id}/package` | 上传/替换内部摄取 workspace | 所有者，流式、幂等 |
+| `POST /games?name=...&visibility=...` | 上传 ZIP，创建独立 Game，真实加载并自动启用 | 玩家，流式、幂等 |
 | `GET /games/{id}/files` | 浏览 workspace 或 current | 授权后访问 |
 | `GET /games/{id}/file?path=...` | 只读查看或下载 workspace/current 文件 | 严格规范化路径 |
-| `POST /games/{id}:validate` | 验证 workspace | 返回持久 operation |
-| `POST /games/{id}:activate` | 原子启用 workspace 为 current | 幂等、要求无阻断错误 |
 | `GET /sessions` | 列出自己的 Session | 支持状态过滤 |
 | `POST /sessions` | 创建持久 SessionRoot | 幂等、预留存储预算，成功后为 `CLOSED` |
 | `GET /sessions/{id}` | Session 详情 | 所有者/管理员 |

@@ -79,6 +79,7 @@ public interface IGameContentOperationMaintenance
 public interface IGameLibraryService
 {
     Task<IReadOnlyList<GameLibraryItem>> ListAsync(CurrentActor actor, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> UploadAsync(CurrentActor actor, string name, string visibility, Stream content, string requestId, CancellationToken cancellationToken = default);
     Task<GameLibraryItem> CreateAsync(CurrentActor actor, string name, string visibility, CancellationToken cancellationToken = default);
     Task<GameLibraryItem?> GetAsync(CurrentActor actor, string gameId, CancellationToken cancellationToken = default);
     Task<GameLibraryItem> UpdateAsync(CurrentActor actor, string gameId, string? name, string? visibility, int expectedStateVersion, CancellationToken cancellationToken = default);

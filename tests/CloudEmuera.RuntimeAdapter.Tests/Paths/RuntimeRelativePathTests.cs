@@ -12,6 +12,11 @@ public sealed class RuntimeRelativePathTests
     [InlineData("ERB/START.ERB")]
     [InlineData("sav/save00.sav")]
     [InlineData("emoji/猫😀.txt")]
+    [InlineData("ReadMe/eraSQN\u0083p\u0083b\u0083`.txt")]
+    [InlineData("file:game")]
+    [InlineData("foo ")]
+    [InlineData("foo.")]
+    [InlineData("CON.txt")]
     public void ValidPathsKeepStableOrdinalSlashForm(string value)
     {
         RuntimeRelativePath path = RuntimeRelativePath.Parse(value);
@@ -22,24 +27,16 @@ public sealed class RuntimeRelativePathTests
 
     [Theory]
     [InlineData("")]
-    [InlineData(" ")]
     [InlineData(".")]
     [InlineData("..")]
     [InlineData("a/../b")]
     [InlineData("a//b")]
     [InlineData("a/")]
     [InlineData("/etc/passwd")]
-    [InlineData("C:/game/file")]
     [InlineData("C:\\game\\file")]
     [InlineData("\\\\server\\share")]
-    [InlineData("file:game")]
     [InlineData("a\\b")]
     [InlineData("a\0b")]
-    [InlineData("a\n b")]
-    [InlineData("foo ")]
-    [InlineData("foo.")]
-    [InlineData("CON.txt")]
-    [InlineData("COM1")]
     public void UnsafePathsAreRejected(string value)
     {
         Assert.False(RuntimeRelativePath.TryParse(value, out _));

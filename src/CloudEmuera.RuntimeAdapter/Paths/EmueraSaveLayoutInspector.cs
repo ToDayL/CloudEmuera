@@ -151,7 +151,7 @@ public static class EmueraSaveLayoutInspector
 
     private static bool IsUseSaveFolderKey(string key) =>
         key.Equals(UpstreamEnglishUseSaveFolderKey, StringComparison.OrdinalIgnoreCase) ||
-        key.Equals(UpstreamJapaneseUseSaveFolderKey, StringComparison.Ordinal) ||
+        key.Equals(UpstreamJapaneseUseSaveFolderKey, StringComparison.OrdinalIgnoreCase) ||
         key.Equals(SimplifiedChineseUseSaveFolderKey, StringComparison.OrdinalIgnoreCase);
 }
 

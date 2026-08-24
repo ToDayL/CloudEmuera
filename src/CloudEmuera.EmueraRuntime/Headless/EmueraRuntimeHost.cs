@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
+using MinorShift.Emuera.Runtime.Utils;
 
 namespace CloudEmuera.EmueraRuntime.Headless;
 
@@ -10,10 +11,6 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
 {
     private static readonly TimeSpan DeadlineCancellationGrace = TimeSpan.FromSeconds(1);
     private const int MaxInitializationWarnings = 128;
-    private static readonly HashSet<string> UnsupportedHeadlessIdentifiers = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "CALLSHARP", "GETKEY", "GETKEYTRIGGERED", "MOUSEX", "MOUSEY", "MOUSEB", "GETTEXTBOX", "SETTEXTBOX",
-    };
     private readonly object sync = new();
     private readonly EmueraRuntimeOptions options;
     private readonly List<EmueraRuntimeDiagnostic> diagnostics = [];
@@ -263,37 +260,6 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
             }
         }
 
-        RuntimeFilePath gameBase = new(RuntimeFileArea.GameContent, "CSV/GAMEBASE.CSV");
-        if (!options.FileSystem.FileExists(gameBase, cancellationToken))
-        {
-            throw new FileNotFoundException("CSV/GAMEBASE.CSV is missing.");
-        }
-
-        string gameBaseText = ReadText(gameBase, SelectEncoding(), cancellationToken);
-        if (string.IsNullOrWhiteSpace(gameBaseText))
-        {
-            throw new InvalidDataException("CSV/GAMEBASE.CSV is empty.");
-        }
-
-        RuntimeFilePath erbDirectory = new(RuntimeFileArea.GameContent, "ERB");
-        if (!options.FileSystem.DirectoryExists(erbDirectory, cancellationToken))
-        {
-            throw new DirectoryNotFoundException("The ERB directory is missing.");
-        }
-
-        IReadOnlyList<RuntimeFileEntry> entries = options.FileSystem.Enumerate(erbDirectory, cancellationToken);
-        foreach (RuntimeFileEntry entry in entries
-            .Where(entry => entry.Kind == RuntimeFileEntryKind.File && entry.Path.LogicalPath.EndsWith(".ERB", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(entry => entry.Path.LogicalPath, StringComparer.Ordinal))
-        {
-            ValidateNoUnsupportedCapabilities(ReadText(entry.Path, SelectEncoding(), cancellationToken));
-        }
-
-        if (!entries.Any(entry => entry.Kind == RuntimeFileEntryKind.File && entry.Path.LogicalPath.EndsWith(".ERB", StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new FileNotFoundException("No ERB source files were found.");
-        }
-
         sprites = LoadSprites(cancellationToken);
         UpstreamRuntimeSession? session = null;
         try
@@ -339,52 +305,6 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         }
     }
 
-    private static void ValidateNoUnsupportedCapabilities(string source)
-    {
-        foreach (string line in source.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
-        {
-            if (line.TrimStart().StartsWith("CALLSHARP", StringComparison.OrdinalIgnoreCase))
-                throw new NotSupportedException("CALLSHARP is unavailable in the headless runtime.");
-            foreach ((string identifier, int end) in EnumerateIdentifiers(line))
-            {
-                int next = end;
-                while (next < line.Length && char.IsWhiteSpace(line[next]))
-                    next++;
-                bool invocation = next < line.Length && line[next] == '(';
-                if (invocation && UnsupportedHeadlessIdentifiers.Contains(identifier))
-                {
-                    throw new NotSupportedException($"{identifier} is unavailable in the headless runtime.");
-                }
-            }
-        }
-    }
-
-    private static IEnumerable<(string Identifier, int End)> EnumerateIdentifiers(string line)
-    {
-        bool quoted = false;
-        for (int index = 0; index < line.Length;)
-        {
-            char current = line[index];
-            if (current == '"')
-            {
-                quoted = !quoted;
-                index++;
-                continue;
-            }
-            if (!quoted && current == ';')
-                yield break;
-            if (!quoted && (char.IsLetter(current) || current == '_'))
-            {
-                int start = index++;
-                while (index < line.Length && (char.IsLetterOrDigit(line[index]) || line[index] == '_'))
-                    index++;
-                yield return (line[start..index], index);
-                continue;
-            }
-            index++;
-        }
-    }
-
     private ReadOnlyDictionary<string, SpriteDefinition> LoadSprites(CancellationToken cancellationToken)
     {
         RuntimeFilePath resources = new(RuntimeFileArea.GameContent, "resources");
@@ -401,7 +321,7 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
             string directory = relative.Contains('/')
                 ? relative[..(relative.LastIndexOf('/') + 1)]
                 : "resources/";
-            string content = ReadText(spriteCsv, SelectEncoding(), cancellationToken);
+            string content = ReadText(spriteCsv, cancellationToken);
             foreach (string rawLine in content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
             {
                 string trimmed = rawLine.Trim();
@@ -455,7 +375,16 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                     continue;
                 }
 
-                RuntimeFilePath imagePath = new(RuntimeFileArea.GameContent, directory + filename);
+                if (!RuntimeFilePath.TryParse(RuntimeFileArea.GameContent, directory + filename, out RuntimeFilePath imagePath))
+                {
+                    AddDiagnostic(
+                        "runtime_warning",
+                        EmueraRuntimePhase.Loading,
+                        $"{spriteCsv.LogicalPath} references a Sprite resource with an invalid path; skipping it.",
+                        fatal: false,
+                        sourcePath: spriteCsv.LogicalPath);
+                    continue;
+                }
                 RuntimeImageMetadata metadata;
                 try
                 {
@@ -745,16 +674,13 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
     private static bool TryInt(string value, out int result) =>
         int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
 
-    private string ReadText(RuntimeFilePath path, Encoding encoding, CancellationToken cancellationToken)
+    private string ReadText(RuntimeFilePath path, CancellationToken cancellationToken)
     {
         using Stream stream = options.FileSystem.OpenRead(path, cancellationToken);
+        Encoding encoding = EncodingHandler.DetectEncoding(stream);
         using var reader = new StreamReader(stream, encoding, true, 4096, leaveOpen: false);
         return reader.ReadToEnd();
     }
-
-    private Encoding SelectEncoding() => options.CompatibilityProfile == EmueraCompatibilityProfiles.V18Compatible
-        ? Encoding.GetEncoding(932, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)
-        : new UTF8Encoding(false, true);
 
     private async Task<T> RunWithDeadlineAsync<T>(
         Func<CancellationToken, T> operation,
@@ -845,7 +771,8 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         string message = exception switch
         {
             FileNotFoundException or DirectoryNotFoundException or InvalidDataException => exception.Message,
-            RuntimeFileAccessException => "A controlled runtime file operation was rejected.",
+            RuntimeFileAccessException runtimeFile =>
+                $"A controlled runtime file operation was rejected ({runtimeFile.ReasonCode}, {runtimeFile.Area}, {runtimeFile.LogicalPath ?? "<unknown>"}).",
             _ => "Runtime initialization failed."
         };
         foreach (string root in new[]

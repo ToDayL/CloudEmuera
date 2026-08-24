@@ -8,6 +8,10 @@
 内部模型，但取消浏览器内文件编辑、创建、重命名、删除与搜索产品面。workspace 现作为包摄取和
 检查工作区；本文编辑器相关历史表述不再是 MVP 要求。
 
+2026-08-24 修订说明：[`ADR-0032`](0032-one-step-game-upload-and-load-only-validation.md) 取消把上传绑定或
+替换到既有 Game 以及公开手动验证/启用的流程。每次上传创建独立 Game，内部 workspace 加载成功后
+在同一操作中自动成为 current；单一 current、不可变 Session 副本和原子发布模型继续有效。
+
 取代：[`ADR-0009`](0009-draft-publication-and-immutable-version-identity.md)
 
 ## 背景

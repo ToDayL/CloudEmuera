@@ -88,7 +88,6 @@ internal static class ZipStructureInspector
             if (entryCommentLength > 0) stream.Position += entryCommentLength;
             string? unicodeName = ValidateExtra(extra, nameBytes);
             string name = DecodeName(nameBytes, flags, unicodeName);
-            ValidateUnixType(madeBy, external, name);
 
             long saved = stream.Position;
             stream.Position = localOffset;
@@ -167,8 +166,8 @@ internal static class ZipStructureInspector
                 return utf8;
             }
             if (unicodeName is not null) return unicodeName;
-            if (bytes.Any(value => value > 0x7f)) Reject(GamePackageRejectionCodes.PathInvalid, "ZIP entry names without the UTF-8 flag must be ASCII.");
-            return Encoding.ASCII.GetString(bytes);
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(437).GetString(bytes);
         }
         catch (DecoderFallbackException exception)
         {
@@ -190,7 +189,6 @@ internal static class ZipStructureInspector
             if (length > extra.Length - offset) Reject(GamePackageRejectionCodes.ArchiveCorrupt, "ZIP extra field length is invalid.");
             if (!ids.Add(id)) Reject(GamePackageRejectionCodes.ArchiveCorrupt, "ZIP extra field is duplicated.");
             if (id == 0x0001) Reject(GamePackageRejectionCodes.Zip64Unsupported, "ZIP64 extra field is unsupported.");
-            if (id is 0x000d or 0x5855 or 0x756e) Reject(GamePackageRejectionCodes.LinkEntryForbidden, "Unix link metadata is forbidden.");
             if (id == 0x7075)
             {
                 ReadOnlySpan<byte> value = extra.Slice(offset, length);
@@ -216,17 +214,6 @@ internal static class ZipStructureInspector
             for (int bit = 0; bit < 8; bit++) crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0u : 0xEDB88320u);
         }
         return crc ^ uint.MaxValue;
-    }
-
-    private static void ValidateUnixType(ushort madeBy, uint external, string name)
-    {
-        int creator = madeBy >> 8;
-        if (creator != 3) return;
-        int type = (int)((external >> 16) & 0xF000);
-        if (type == 0) return;
-        bool directory = name.EndsWith('/');
-        if (type == 0xA000) Reject(GamePackageRejectionCodes.LinkEntryForbidden, "Symbolic links are forbidden.");
-        if (type != (directory ? 0x4000 : 0x8000)) Reject(GamePackageRejectionCodes.SpecialEntryForbidden, "Special ZIP entries are forbidden.");
     }
 
     private static ushort U16(ReadOnlySpan<byte> bytes, int offset) => BinaryPrimitives.ReadUInt16LittleEndian(bytes[offset..]);

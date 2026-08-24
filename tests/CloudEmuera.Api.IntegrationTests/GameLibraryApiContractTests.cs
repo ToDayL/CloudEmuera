@@ -21,9 +21,8 @@ using Xunit;
 
 namespace CloudEmuera.Api.IntegrationTests;
 
-/// <summary>GAME-004~007/009/010: exercise the P1-04 single-Game HTTP boundary
-/// end to end, including the one-shot parser Validator process that the browser
-/// UI drives through validate/activate.</summary>
+/// <summary>GAME-001~010: exercise one-step ZIP upload, load-only validation,
+/// automatic activation and the resulting single-Game HTTP boundary.</summary>
 public sealed class GameLibraryApiContractTests : IDisposable
 {
     private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid().ToString("N")[..16]}");
@@ -33,7 +32,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 
     [Fact]
     [Trait("Category", "GameLibrary")]
-    public async Task CreateIngestBindValidateActivateFlowWorksOverHttp()
+    public async Task UploadLoadsAndActivatesNewGameOverHttp()
     {
         await CreateDatabaseAsync();
         using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
@@ -47,52 +46,32 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
 
         csrf = await GetCsrfAsync(client);
-        HttpResponseMessage created = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("HTTP Fixture", "PRIVATE"), csrf);
-        GameLibraryItem game = await created.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
-        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        Assert.Equal("NONE", game.WorkspaceStatus);
-        Assert.False(game.HasCurrentContent);
-
-        csrf = await GetCsrfAsync(client);
         using MemoryStream archive = CreateArchive();
-        HttpResponseMessage ingested = await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", archive.ToArray(), "application/zip", csrf, $"ingest-{Guid.NewGuid():N}");
-        Assert.Equal(HttpStatusCode.Created, ingested.StatusCode);
-        IngestedGamePackage package = await ingested.Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
-        Assert.Equal(3, package.Manifest.FileCount);
+        HttpResponseMessage uploaded = await UploadAsync(client, "HTTP Fixture", archive, csrf, "http-fixture-upload");
+        GameLibraryItem game = await uploaded.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Upload response was missing.");
+        Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
+        Assert.Equal("NONE", game.WorkspaceStatus);
+        Assert.True(game.HasCurrentContent);
+        Assert.Equal(1, game.ContentRevision);
 
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage bound = await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
-            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, $"bind-{Guid.NewGuid():N}");
-        GameLibraryItem draft = await bound.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
-        Assert.Equal(HttpStatusCode.OK, bound.StatusCode);
-        Assert.Equal("DRAFT", draft.WorkspaceStatus);
+        using MemoryStream replayArchive = CreateArchive();
+        HttpResponseMessage replay = await UploadAsync(client, "HTTP Fixture", replayArchive, csrf, "http-fixture-upload");
+        GameLibraryItem replayed = await replay.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Upload replay response was missing.");
+        Assert.Equal(HttpStatusCode.Created, replay.StatusCode);
+        Assert.Equal(game.Id, replayed.Id);
 
-        HttpResponseMessage files = await client.GetAsync($"/api/v1/games/{game.Id}/files?scope=WORKSPACE");
+        HttpResponseMessage files = await client.GetAsync($"/api/v1/games/{game.Id}/files?scope=CURRENT");
         GameFileListResponse listing = await files.Content.ReadFromJsonAsync<GameFileListResponse>() ?? throw new Xunit.Sdk.XunitException("File list was missing.");
         Assert.Contains(listing.Items, item => item.Path == "CSV" && item.IsDirectory);
         Assert.Contains(listing.Items, item => item.Path == "ERB" && item.IsDirectory);
-        HttpResponseMessage erbListingResponse = await client.GetAsync($"/api/v1/games/{game.Id}/files?scope=WORKSPACE&path=ERB");
+        HttpResponseMessage erbListingResponse = await client.GetAsync($"/api/v1/games/{game.Id}/files?scope=CURRENT&path=ERB");
         GameFileListResponse erbListing = await erbListingResponse.Content.ReadFromJsonAsync<GameFileListResponse>() ?? throw new Xunit.Sdk.XunitException("ERB file list was missing.");
         Assert.Contains(erbListing.Items, item => item.Path == "ERB/START.ERB");
 
-        HttpResponseMessage text = await client.GetAsync($"/api/v1/games/{game.Id}/file?scope=WORKSPACE&path=ERB%2FSTART.ERB");
+        HttpResponseMessage text = await client.GetAsync($"/api/v1/games/{game.Id}/file?scope=CURRENT&path=ERB%2FSTART.ERB");
         GameTextFile startFile = await text.Content.ReadFromJsonAsync<GameTextFile>() ?? throw new Xunit.Sdk.XunitException("Text file was missing.");
         Assert.Equal("@SYSTEM_TITLE\nINPUT\nQUIT\n", startFile.Content);
         Assert.NotNull(text.Headers.ETag);
-
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage validated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, $"validate-{Guid.NewGuid():N}");
-        GameValidationResult validation = await validated.Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
-        Assert.Equal(HttpStatusCode.OK, validated.StatusCode);
-        Assert.True(validation.CanActivate, string.Join(',', validation.Diagnostics.Select(item => item.Code)));
-
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage activated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, $"activate-{Guid.NewGuid():N}");
-        GameLibraryItem current = await activated.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Activate response was missing.");
-        Assert.Equal(HttpStatusCode.OK, activated.StatusCode);
-        Assert.True(current.HasCurrentContent);
-        Assert.Equal("NONE", current.WorkspaceStatus);
-        Assert.Equal(1, current.ContentRevision);
 
         HttpResponseMessage currentFiles = await client.GetAsync($"/api/v1/games/{game.Id}/files?scope=CURRENT");
         GameFileListResponse currentListing = await currentFiles.Content.ReadFromJsonAsync<GameFileListResponse>() ?? throw new Xunit.Sdk.XunitException("Current file list was missing.");
@@ -106,6 +85,11 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/v1/games/{game.Id}/workspace")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsync($"/api/v1/games/{game.Id}/file?path=ERB%2FNEW.ERB", new StringContent("{}", Encoding.UTF8, "application/json"))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/v1/games/{game.Id}/file?path=ERB%2FSTART.ERB")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync("/api/v1/game-package-ingestions", new ByteArrayContent([]))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsync($"/api/v1/games/{game.Id}/package", JsonContent.Create(new { }))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/v1/games/{game.Id}:validate", JsonContent.Create(new { }))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/v1/games/{game.Id}:activate", JsonContent.Create(new { }))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/v1/games/{game.Id}/operations/internal-operation")).StatusCode);
 
         HttpResponseMessage download = await client.GetAsync($"/api/v1/games/{game.Id}/download?scope=CURRENT&path=ERB%2FSTART.ERB");
         Assert.Equal(HttpStatusCode.OK, download.StatusCode);
@@ -133,23 +117,9 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
 
         csrf = await GetCsrfAsync(client);
-        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("HTTP Session Fixture", "PRIVATE"), csrf))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
-        csrf = await GetCsrfAsync(client);
         using MemoryStream archive = CreateArchive();
-        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", archive.ToArray(), "application/zip", csrf, "session-ingest"))
-            .Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
-        csrf = await GetCsrfAsync(client);
-        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
-            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, "session-bind"))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
-        csrf = await GetCsrfAsync(client);
-        GameValidationResult validation = await (await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, "session-validate"))
-            .Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
-        Assert.True(validation.CanActivate, string.Join(',', validation.Diagnostics.Select(item => item.Code)));
-        csrf = await GetCsrfAsync(client);
-        GameLibraryItem current = await (await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, "session-activate"))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Activation response was missing.");
+        GameLibraryItem current = await (await UploadAsync(client, "HTTP Session Fixture", archive, csrf, "session-upload"))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Upload response was missing.");
 
         csrf = await GetCsrfAsync(client);
         HttpResponseMessage createdResponse = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
@@ -306,7 +276,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 
     [Fact]
     [Trait("Category", "GameLibrary")]
-    public async Task FailedActivationPersistsReadableBlockingDiagnostics()
+    public async Task RuntimeLoadFailureRejectsUploadWithoutVisibleDraftGame()
     {
         await CreateDatabaseAsync();
         using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
@@ -319,37 +289,14 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
 
         csrf = await GetCsrfAsync(client);
-        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Nested Folder Fixture", "PRIVATE"), csrf))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
-        csrf = await GetCsrfAsync(client);
         using MemoryStream nestedArchive = CreateNestedFolderArchive();
-        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", nestedArchive.ToArray(), "application/zip", csrf, $"ingest-{Guid.NewGuid():N}"))
-            .Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
-        csrf = await GetCsrfAsync(client);
-        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
-            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, $"bind-{Guid.NewGuid():N}"))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
-        Assert.Equal("DRAFT", draft.WorkspaceStatus);
-
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage validated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, $"validate-{Guid.NewGuid():N}");
-        GameValidationResult validation = await validated.Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
-        Assert.Equal(HttpStatusCode.OK, validated.StatusCode);
-        Assert.False(validation.CanActivate);
-        Assert.Contains(validation.Diagnostics, diagnostic => diagnostic.Code == "ERB_ENTRYPOINT_MISSING" && diagnostic.ActivationBlocking);
-
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage activated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, $"activate-{Guid.NewGuid():N}");
-        ApiError error = await activated.Content.ReadFromJsonAsync<ApiError>() ?? throw new Xunit.Sdk.XunitException("Activation error was missing.");
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, activated.StatusCode);
+        HttpResponseMessage uploaded = await UploadAsync(client, "Nested Folder Fixture", nestedArchive, csrf);
+        ApiError error = await uploaded.Content.ReadFromJsonAsync<ApiError>() ?? throw new Xunit.Sdk.XunitException("Upload error was missing.");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, uploaded.StatusCode);
         Assert.Equal("ACTIVATION_VALIDATION_FAILED", error.Code);
-
-        HttpResponseMessage diagnostics = await client.GetAsync($"/api/v1/games/{game.Id}/diagnostics");
-        GameDiagnosticListResponse listing = await diagnostics.Content.ReadFromJsonAsync<GameDiagnosticListResponse>() ?? throw new Xunit.Sdk.XunitException("Diagnostics response was missing.");
-        Assert.Equal(HttpStatusCode.OK, diagnostics.StatusCode);
-        GameDiagnosticItem entrypoint = Assert.Single(listing.Items, item => item.Code == "ERB_ENTRYPOINT_MISSING");
-        Assert.True(entrypoint.ActivationBlocking);
-        Assert.False(string.IsNullOrWhiteSpace(entrypoint.Message));
+        GameListResponse games = await (await client.GetAsync("/api/v1/games")).Content.ReadFromJsonAsync<GameListResponse>()
+            ?? throw new Xunit.Sdk.XunitException("Game list was missing.");
+        Assert.DoesNotContain(games.Items, item => item.Name == "Nested Folder Fixture");
     }
 
     private static MemoryStream CreateNestedFolderArchive()
@@ -420,34 +367,16 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
 
         csrf = await GetCsrfAsync(client);
-        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Flattened Fixture", "PRIVATE"), csrf))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
-        csrf = await GetCsrfAsync(client);
         using MemoryStream archive = CreateSingleRootCaseVariantArchive();
-        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", archive.ToArray(), "application/zip", csrf, $"ingest-{Guid.NewGuid():N}"))
-            .Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
-        Assert.Contains(package.Manifest.Files, file => file.Path == "ERB/START.ERB");
-        Assert.Contains(package.Manifest.Files, file => file.Path == "CSV/GameBase.csv");
-        Assert.DoesNotContain(package.Manifest.Files, file => file.Path.StartsWith("eraJK-wrapper/", StringComparison.Ordinal));
-
-        csrf = await GetCsrfAsync(client);
-        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
-            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, $"bind-{Guid.NewGuid():N}"))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
-        Assert.Equal("DRAFT", draft.WorkspaceStatus);
-
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage validated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, $"validate-{Guid.NewGuid():N}");
-        GameValidationResult validation = await validated.Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
-        Assert.Equal(HttpStatusCode.OK, validated.StatusCode);
-        Assert.True(validation.CanActivate, string.Join(',', validation.Diagnostics.Select(item => item.Code)));
-
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage activated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, $"activate-{Guid.NewGuid():N}");
-        GameLibraryItem current = await activated.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Activate response was missing.");
-        Assert.Equal(HttpStatusCode.OK, activated.StatusCode);
+        HttpResponseMessage uploaded = await UploadAsync(client, "Flattened Fixture", archive, csrf);
+        GameLibraryItem current = await uploaded.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Upload response was missing.");
+        Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
         Assert.True(current.HasCurrentContent);
         Assert.Equal("NONE", current.WorkspaceStatus);
+        GameFileListResponse root = await (await client.GetAsync($"/api/v1/games/{current.Id}/files?scope=CURRENT"))
+            .Content.ReadFromJsonAsync<GameFileListResponse>() ?? throw new Xunit.Sdk.XunitException("Current root was missing.");
+        Assert.Contains(root.Items, file => file.Path == "ERB");
+        Assert.Contains(root.Items, file => file.Path == "CSV");
     }
 
     [Fact]
@@ -465,11 +394,13 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
 
         csrf = await GetCsrfAsync(client);
-        GameLibraryItem first = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Reusable Name", "PRIVATE"), csrf))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
+        using MemoryStream firstArchive = CreateArchive();
+        GameLibraryItem first = await (await UploadAsync(client, "Reusable Name", firstArchive, csrf))
+            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Upload response was missing.");
 
         csrf = await GetCsrfAsync(client);
-        HttpResponseMessage duplicate = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Reusable Name", "PRIVATE"), csrf);
+        using MemoryStream duplicateArchive = CreateArchive();
+        HttpResponseMessage duplicate = await UploadAsync(client, "Reusable Name", duplicateArchive, csrf);
         ApiError conflict = await duplicate.Content.ReadFromJsonAsync<ApiError>() ?? throw new Xunit.Sdk.XunitException("Conflict error was missing.");
         Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
         Assert.Equal("GAME_NAME_CONFLICT", conflict.Code);
@@ -478,7 +409,8 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Delete, $"/api/v1/games/{first.Id}", new { }, csrf, first.StateVersion)).StatusCode);
 
         csrf = await GetCsrfAsync(client);
-        HttpResponseMessage recreated = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Reusable Name", "PRIVATE"), csrf);
+        using MemoryStream recreatedArchive = CreateArchive();
+        HttpResponseMessage recreated = await UploadAsync(client, "Reusable Name", recreatedArchive, csrf);
         Assert.Equal(HttpStatusCode.Created, recreated.StatusCode);
         GameLibraryItem second = await recreated.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Recreated game response was missing.");
         Assert.NotEqual(first.Id, second.Id);
@@ -499,28 +431,14 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
 
         csrf = await GetCsrfAsync(client);
-        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("Utf16 Fixture", "PRIVATE"), csrf))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
-        csrf = await GetCsrfAsync(client);
         using MemoryStream archive = CreateUtf16Archive();
-        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post, "/api/v1/game-package-ingestions", archive.ToArray(), "application/zip", csrf, $"ingest-{Guid.NewGuid():N}"))
-            .Content.ReadFromJsonAsync<IngestedGamePackage>() ?? throw new Xunit.Sdk.XunitException("Ingestion response was missing.");
-        Assert.DoesNotContain(package.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_UTF16_OR_UTF32_UNSUPPORTED");
-        Assert.Contains(package.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_ENCODING_CONVERTED");
-        Assert.Contains(package.Manifest.Files, file => file.Path == "ERB/START.ERB" && file.Encoding == GamePackageTextEncoding.Utf8);
-
-        csrf = await GetCsrfAsync(client);
-        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put, $"/api/v1/games/{game.Id}/package",
-            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf, game.StateVersion, $"bind-{Guid.NewGuid():N}"))
-            .Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Bind response was missing.");
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage validated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, $"validate-{Guid.NewGuid():N}");
-        GameValidationResult validation = await validated.Content.ReadFromJsonAsync<GameValidationResult>() ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
-        Assert.True(validation.CanActivate, string.Join(',', validation.Diagnostics.Select(item => item.Code)));
-
-        csrf = await GetCsrfAsync(client);
-        HttpResponseMessage activated = await SendJsonAsync(client, HttpMethod.Post, $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, $"activate-{Guid.NewGuid():N}");
-        Assert.Equal(HttpStatusCode.OK, activated.StatusCode);
+        HttpResponseMessage uploaded = await UploadAsync(client, "Utf16 Fixture", archive, csrf);
+        Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
+        GameLibraryItem game = await uploaded.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Upload response was missing.");
+        GameTextFile file = await (await client.GetAsync($"/api/v1/games/{game.Id}/file?scope=CURRENT&path=ERB%2FSTART.ERB"))
+            .Content.ReadFromJsonAsync<GameTextFile>() ?? throw new Xunit.Sdk.XunitException("Converted text file was missing.");
+        Assert.Equal("UTF8", file.Encoding);
+        Assert.Equal("@SYSTEM_TITLE\nINPUT\nQUIT\n", file.Content);
     }
 
     private static MemoryStream CreateUtf16Archive()
@@ -539,6 +457,11 @@ public sealed class GameLibraryApiContractTests : IDisposable
             using (Stream writer = entry.Open())
             using (var text = new StreamWriter(writer))
                 text.Write("Use sav folder:NO\n");
+            // GAME-003/GAME-007: an unrelated text file with bytes that the
+            // static analyzer cannot decode must not block a runtime-loadable game.
+            entry = archive.CreateEntry("notes.txt");
+            using (Stream writer = entry.Open())
+                writer.Write([0x81, 0x00, 0xFF]);
         }
         stream.Position = 0;
         return stream;
@@ -638,6 +561,21 @@ public sealed class GameLibraryApiContractTests : IDisposable
         request.Headers.Add("Idempotency-Key", idempotencyKey);
         return await client.SendAsync(request);
     }
+
+    private static Task<HttpResponseMessage> UploadAsync(
+        HttpClient client,
+        string name,
+        MemoryStream archive,
+        string csrf,
+        string? idempotencyKey = null) =>
+        SendRawAsync(
+            client,
+            HttpMethod.Post,
+            $"/api/v1/games?name={Uri.EscapeDataString(name)}&visibility=PRIVATE",
+            archive.ToArray(),
+            "application/zip",
+            csrf,
+            idempotencyKey ?? $"upload-{Guid.NewGuid():N}");
 
     private async Task ExerciseRealtimeWebSocketAsync(string sessionId, long expectedEpoch, bool completeInput = true)
     {
@@ -940,6 +878,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
         }
     }
 
+    private sealed record GameListResponse(IReadOnlyList<GameLibraryItem> Items);
     private sealed record GameFileListResponse(IReadOnlyList<GameFileItem> Items);
     private sealed record GameDiagnosticListResponse(IReadOnlyList<GameDiagnosticItem> Items);
     private sealed record CsrfResponse(string Token);

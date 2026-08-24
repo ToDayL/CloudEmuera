@@ -590,40 +590,39 @@ adminGames.MapPost("/{id}/diagnostics/{diagnosticId}:override", async (string id
     return await ApiIdentity.GameResultAsync(() => library.OverrideDiagnosticAsync(actor, id, diagnosticId, version, context.RequestAborted), Results.Ok).ConfigureAwait(false);
 }).RequireRateLimiting("game-write");
 
-app.MapPost("/api/v1/game-package-ingestions", async (HttpContext context, IAntiforgery antiforgery, IGamePackageIngestionService ingestion, ApiIdempotencyStore idempotency) =>
-{
-    // Game packages stream up to the instance package limit (default 2 GiB), far
-    // above the Kestrel 30 MiB request-body default. Removing the Kestrel cap for
-    // this route is safe because GamePackageIngestionService.ReceiveAsync enforces
-    // the archive limit while streaming; other endpoints keep the default cap.
-    context.Features.Get<IHttpMaxRequestBodySizeFeature>()?.MaxRequestBodySize = null;
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error("IDEMPOTENCY_KEY_REQUIRED", "需要 Idempotency-Key。", 428);
-    try
-    {
-        IdempotencyExecution<IngestedGamePackage> execution = await idempotency.ExecuteAsync(actor, "game-package-ingestion", key,
-            new { context.Request.ContentLength, context.Request.ContentType },
-            () => ingestion.IngestAsync(new GamePackageIngestionRequest(actor.UserId, context.Request.Body, key), cancellationToken: context.RequestAborted),
-            statusCode: StatusCodes.Status201Created, cancellationToken: context.RequestAborted).ConfigureAwait(false);
-        IngestedGamePackage result = execution.Value;
-        return Results.Created($"/api/v1/game-package-ingestions/{result.IngestionId}", result);
-    }
-    catch (GameLibraryException exception) { return ApiIdentity.Error(exception.Code, exception.Message, exception.Code == GameLibraryErrorCodes.Conflict ? 409 : 400); }
-    catch (GamePackageIngestionException exception) { return ApiIdentity.Error(exception.Code, GamePackageRejectionMessages.Resolve(exception.Code, exception.LogicalPath), 400); }
-}).RequireAuthorization().RequireRateLimiting("game-write");
-
 var games = app.MapGroup("/api/v1/games").RequireAuthorization();
 games.MapGet("", async (HttpContext context, IGameLibraryService library) =>
 {
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     return Results.Ok(new { items = await library.ListAsync(actor, context.RequestAborted).ConfigureAwait(false) });
 }).RequireRateLimiting("game-read");
-games.MapPost("", async (HttpContext context, CreateGameRequest request, IAntiforgery antiforgery, IGameLibraryService library) =>
+games.MapPost("", async (string name, string? visibility, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library, ApiIdempotencyStore idempotency) =>
 {
+    // Uploads may exceed Kestrel's default 30 MiB limit. The ingestion service
+    // still enforces the configured archive limit while streaming.
+    context.Features.Get<IHttpMaxRequestBodySizeFeature>()?.MaxRequestBodySize = null;
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    return await ApiIdentity.GameResultAsync(() => library.CreateAsync(actor, request.Name, request.Visibility, context.RequestAborted), item => Results.Created($"/api/v1/games/{item.Id}", item)).ConfigureAwait(false);
+    if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error("IDEMPOTENCY_KEY_REQUIRED", "需要 Idempotency-Key。", 428);
+    try
+    {
+        return await ApiIdentity.GameResultAsync(async () =>
+        {
+            IdempotencyExecution<GameLibraryItem> execution = await idempotency.ExecuteAsync(
+                actor,
+                "game-upload",
+                key,
+                new { name, visibility = visibility ?? "PRIVATE", context.Request.ContentLength, context.Request.ContentType },
+                () => library.UploadAsync(actor, name, visibility ?? "PRIVATE", context.Request.Body, key, context.RequestAborted),
+                statusCode: StatusCodes.Status201Created,
+                cancellationToken: context.RequestAborted).ConfigureAwait(false);
+            return execution.Value;
+        }, item => Results.Created($"/api/v1/games/{item.Id}", item)).ConfigureAwait(false);
+    }
+    catch (GamePackageIngestionException exception)
+    {
+        return ApiIdentity.Error(exception.Code, GamePackageRejectionMessages.Resolve(exception.Code, exception.LogicalPath), 400);
+    }
 }).RequireRateLimiting("game-write");
 games.MapGet("/{id}", async (string id, HttpContext context, IGameLibraryService library) =>
 {
@@ -644,27 +643,6 @@ games.MapDelete("/{id}", async (string id, HttpContext context, IAntiforgery ant
     if (!ApiIdentity.TryVersion(context.Request, out int version)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要 If-Match。", 428);
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
     return await ApiIdentity.GameResultAsync(async () => { await library.DeleteAsync(actor, id, version, context.RequestAborted).ConfigureAwait(false); return true; }, _ => Results.NoContent()).ConfigureAwait(false);
-}).RequireRateLimiting("game-write");
-games.MapPut("/{id}/package", async (string id, HttpContext context, BindGamePackageRequest request, IAntiforgery antiforgery, IGameLibraryService library, ApiIdempotencyStore idempotency) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    if (!ApiIdentity.TryVersion(context.Request, out int version)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要 If-Match。", 428);
-    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error("IDEMPOTENCY_KEY_REQUIRED", "需要 Idempotency-Key。", 428);
-    try
-    {
-        return await ApiIdentity.GameResultAsync(async () =>
-        {
-            IdempotencyExecution<GameLibraryItem> execution = await idempotency.ExecuteAsync(actor, $"game/{id}/package", key,
-                new { id, request.IngestionId, request.ContentDigest, version },
-                () => library.BindPackageAsync(actor, id, request.IngestionId, request.ContentDigest, version, context.RequestAborted), cancellationToken: context.RequestAborted).ConfigureAwait(false);
-            return execution.Value;
-        }, Results.Ok).ConfigureAwait(false);
-    }
-    catch (GamePackageIngestionException exception)
-    {
-        return ApiIdentity.Error(exception.Code, GamePackageRejectionMessages.Resolve(exception.Code, exception.LogicalPath), 400);
-    }
 }).RequireRateLimiting("game-write");
 games.MapGet("/{id}/files", async (string id, string? scope, string? path, HttpContext context, IGameLibraryService library) =>
 {
@@ -692,39 +670,6 @@ games.MapGet("/{id}/diagnostics", async (string id, HttpContext context, IGameLi
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     return await ApiIdentity.GameResultAsync(() => library.ListDiagnosticsAsync(actor, id, context.RequestAborted), items => Results.Ok(new { items })).ConfigureAwait(false);
 }).RequireRateLimiting("game-read");
-games.MapGet("/{id}/operations/{operationId}", async (string id, string operationId, HttpContext context, IGameLibraryService library) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    GameContentOperationItem? operation = await library.GetOperationAsync(actor, id, operationId, context.RequestAborted).ConfigureAwait(false);
-    return operation is null ? ApiIdentity.Error("GAME_NOT_FOUND", "资源不存在。", 404) : Results.Ok(operation);
-}).RequireRateLimiting("game-read");
-games.MapPost("/{id}:validate", async (string id, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library, ApiIdempotencyStore idempotency) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    if (!ApiIdentity.TryVersion(context.Request, out int version)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要 If-Match。", 428);
-    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error("IDEMPOTENCY_KEY_REQUIRED", "需要 Idempotency-Key。", 428);
-    return await ApiIdentity.GameResultAsync(async () =>
-    {
-        IdempotencyExecution<GameValidationResult> execution = await idempotency.ExecuteAsync(actor, $"game/{id}:validate", key,
-            new { id, version }, () => library.ValidateAsync(actor, id, version, context.RequestAborted), cancellationToken: context.RequestAborted).ConfigureAwait(false);
-        return execution.Value;
-    }, Results.Ok).ConfigureAwait(false);
-}).RequireRateLimiting("game-validate");
-games.MapPost("/{id}:activate", async (string id, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library, ApiIdempotencyStore idempotency) =>
-{
-    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
-    if (!ApiIdentity.TryVersion(context.Request, out int version)) return ApiIdentity.Error("PRECONDITION_REQUIRED", "需要 If-Match。", 428);
-    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
-    if (!ApiIdentity.TryIdempotencyKey(context.Request, out string key)) return ApiIdentity.Error("IDEMPOTENCY_KEY_REQUIRED", "需要 Idempotency-Key。", 428);
-    return await ApiIdentity.GameResultAsync(async () =>
-    {
-        IdempotencyExecution<GameLibraryItem> execution = await idempotency.ExecuteAsync(actor, $"game/{id}:activate", key,
-            new { id, version }, () => library.ActivateAsync(actor, id, version, context.RequestAborted), cancellationToken: context.RequestAborted).ConfigureAwait(false);
-        return execution.Value;
-    }, Results.Ok).ConfigureAwait(false);
-}).RequireRateLimiting("game-validate");
-
 var sessions = app.MapGroup("/api/v1/sessions").RequireAuthorization();
 sessions.MapPost("", async (HttpContext context, CreateSessionRequest? request, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, IAntiforgery antiforgery, ISessionApplicationService service, SessionCommandReadiness readiness) =>
 {

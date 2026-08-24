@@ -44,38 +44,12 @@ public sealed class SessionSaveApiContractTests : IDisposable
 
         await LoginAsync(client);
         string csrf = await GetCsrfAsync(client);
-        GameLibraryItem game = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/games",
-            new CreateGameRequest("Session Save Fixture", "PRIVATE"), csrf))
-            .Content.ReadFromJsonAsync<GameLibraryItem>()
-            ?? throw new Xunit.Sdk.XunitException("Game create response was missing.");
-
-        csrf = await GetCsrfAsync(client);
         using MemoryStream archive = CreateArchive(useSavFolder);
-        IngestedGamePackage package = await (await SendRawAsync(client, HttpMethod.Post,
-            "/api/v1/game-package-ingestions", archive.ToArray(), "application/zip", csrf, "save-ingest"))
-            .Content.ReadFromJsonAsync<IngestedGamePackage>()
-            ?? throw new Xunit.Sdk.XunitException("Package ingestion response was missing.");
-
-        csrf = await GetCsrfAsync(client);
-        GameLibraryItem draft = await (await SendJsonAsync(client, HttpMethod.Put,
-            $"/api/v1/games/{game.Id}/package",
-            new BindGamePackageRequest(package.IngestionId, package.Manifest.ContentDigest), csrf,
-            game.StateVersion, "save-bind"))
+        GameLibraryItem current = await (await SendRawAsync(client, HttpMethod.Post,
+            "/api/v1/games?name=Session%20Save%20Fixture&visibility=PRIVATE",
+            archive.ToArray(), "application/zip", csrf, "save-upload"))
             .Content.ReadFromJsonAsync<GameLibraryItem>()
-            ?? throw new Xunit.Sdk.XunitException("Game bind response was missing.");
-
-        csrf = await GetCsrfAsync(client);
-        GameValidationResult validation = await (await SendJsonAsync(client, HttpMethod.Post,
-            $"/api/v1/games/{game.Id}:validate", new { }, csrf, draft.StateVersion, "save-validate"))
-            .Content.ReadFromJsonAsync<GameValidationResult>()
-            ?? throw new Xunit.Sdk.XunitException("Validation response was missing.");
-        Assert.True(validation.CanActivate, string.Join(',', validation.Diagnostics.Select(item => item.Code)));
-
-        csrf = await GetCsrfAsync(client);
-        GameLibraryItem current = await (await SendJsonAsync(client, HttpMethod.Post,
-            $"/api/v1/games/{game.Id}:activate", new { }, csrf, validation.StateVersion, "save-activate"))
-            .Content.ReadFromJsonAsync<GameLibraryItem>()
-            ?? throw new Xunit.Sdk.XunitException("Activation response was missing.");
+            ?? throw new Xunit.Sdk.XunitException("Game upload response was missing.");
 
         csrf = await GetCsrfAsync(client);
         SessionResponse session = await (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",

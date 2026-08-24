@@ -36,23 +36,6 @@ export interface GameTextFile {
   stateVersion: number;
 }
 
-export interface GameValidationDiagnostic {
-  code: string;
-  severity: string;
-  path: string | null;
-  message: string;
-  activationBlocking: boolean;
-}
-
-export interface GameValidationResult {
-  canActivate: boolean;
-  contentDigest: string;
-  fileCount: number;
-  totalBytes: number;
-  diagnostics: GameValidationDiagnostic[];
-  stateVersion: number;
-}
-
 export interface GameDiagnosticItem {
   id: string;
   code: string;
@@ -64,66 +47,6 @@ export interface GameDiagnosticItem {
   overridePolicy: string;
   overriddenBy: string | null;
   overriddenAt: string | null;
-}
-
-export type ContentOperationType = "IMPORT" | "RESET_WORKSPACE" | "VALIDATE" | "ACTIVATE";
-export type ContentOperationStatus = "PENDING" | "RUNNING" | "CONTENT_READY" | "COMMITTED" | "FAILED";
-
-export interface GameContentOperationItem {
-  id: string;
-  type: ContentOperationType;
-  status: ContentOperationStatus;
-  contentDigest: string | null;
-  errorCode: string | null;
-  createdAt: string;
-  updatedAt: string;
-  completedAt: string | null;
-}
-
-// Game package ingestion (P1-03 manifest). Enum values are serialized as numbers
-// by the ASP.NET Core default JSON writer.
-export const GamePackageFileKind = { Binary: 0, Text: 1 } as const;
-export const GamePackageTextEncoding = { None: 0, Utf8: 1, Utf8Bom: 2, ShiftJis: 3, Unknown: 4 } as const;
-export const GamePackageSeverity = { Info: 0, Warning: 1, Error: 2 } as const;
-
-export interface GamePackageFileManifest {
-  path: string;
-  bytes: number;
-  digest: string;
-  kind: number;
-  encoding: number;
-  hasBom: boolean;
-}
-
-export interface GamePackageDiagnostic {
-  code: string;
-  severity: number;
-  stage: string;
-  logicalPath: string | null;
-  messageKey: string;
-  arguments: Record<string, string>;
-  publishBlocking: boolean;
-  suppressedCount: number;
-}
-
-export interface GamePackageManifest {
-  schemaVersion: number;
-  archiveBytes: number;
-  archiveDigest: string;
-  contentBytes: number;
-  fileCount: number;
-  directoryCount: number;
-  contentDigest: string;
-  files: GamePackageFileManifest[];
-  directories: string[];
-  diagnostics: GamePackageDiagnostic[];
-}
-
-export interface IngestedGamePackage {
-  ingestionId: string;
-  ownerUserId: string;
-  expiresAt: string;
-  manifest: GamePackageManifest;
 }
 
 export interface GameListResponse {
@@ -149,15 +72,6 @@ function scopeQuery(scope?: ContentScope | null, path?: string | null): string {
 export async function listGames(): Promise<GameLibraryItem[]> {
   const page = await apiRequest<GameListResponse>("/games");
   return page.items;
-}
-
-export async function createGame(name: string, visibility: GameVisibility): Promise<GameLibraryItem> {
-  const token = await getCsrfToken();
-  return apiRequest<GameLibraryItem>("/games", {
-    method: "POST",
-    headers: mutationHeaders(token),
-    body: JSON.stringify({ name, visibility }),
-  });
 }
 
 export async function getGame(gameId: string): Promise<GameLibraryItem> {
@@ -190,9 +104,10 @@ export async function setGameBlocked(gameId: string, stateVersion: number, block
   });
 }
 
-export async function ingestGamePackage(file: File): Promise<IngestedGamePackage> {
+export async function uploadGame(name: string, visibility: GameVisibility, file: File): Promise<GameLibraryItem> {
   const token = await getCsrfToken();
-  return apiRequest<IngestedGamePackage>("/game-package-ingestions", {
+  const query = new URLSearchParams({ name, visibility });
+  return apiRequest<GameLibraryItem>(`/games?${query.toString()}`, {
     method: "POST",
     headers: {
       "X-CSRF-TOKEN": token,
@@ -200,18 +115,6 @@ export async function ingestGamePackage(file: File): Promise<IngestedGamePackage
       "Content-Type": "application/zip",
     },
     body: file,
-  });
-}
-
-export async function bindGamePackage(gameId: string, stateVersion: number, ingestionId: string, contentDigest: string): Promise<GameLibraryItem> {
-  const token = await getCsrfToken();
-  return apiRequest<GameLibraryItem>(`/games/${encodeURIComponent(gameId)}/package`, {
-    method: "PUT",
-    headers: mutationHeaders(token, {
-      ...stateVersionHeader(stateVersion),
-      "Idempotency-Key": newIdempotencyKey(),
-    }),
-    body: JSON.stringify({ ingestionId, contentDigest }),
   });
 }
 
@@ -229,27 +132,6 @@ export async function listDiagnostics(gameId: string): Promise<GameDiagnosticIte
   return page.items;
 }
 
-export async function validateGame(gameId: string, stateVersion: number): Promise<GameValidationResult> {
-  const token = await getCsrfToken();
-  return apiRequest<GameValidationResult>(`/games/${encodeURIComponent(gameId)}:validate`, {
-    method: "POST",
-    headers: mutationHeaders(token, {
-      ...stateVersionHeader(stateVersion),
-      "Idempotency-Key": newIdempotencyKey(),
-    }),
-  });
-}
-
-export async function activateGame(gameId: string, stateVersion: number): Promise<GameLibraryItem> {
-  const token = await getCsrfToken();
-  return apiRequest<GameLibraryItem>(`/games/${encodeURIComponent(gameId)}:activate`, {
-    method: "POST",
-    headers: mutationHeaders(token, {
-      ...stateVersionHeader(stateVersion),
-      "Idempotency-Key": newIdempotencyKey(),
-    }),
-  });
-}
 
 export function downloadFileUrl(gameId: string, scope: ContentScope, path: string): string {
   const params = new URLSearchParams({ scope, path });

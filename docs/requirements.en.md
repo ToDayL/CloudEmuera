@@ -32,7 +32,7 @@ CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit comp
 ### 3.1 Product goals
 
 - Play Era/Emuera games through modern desktop and mobile browsers.
-- Let players upload, inspect, view, and activate their own game packages containing ERB, CSV, and assets.
+- Let players upload their own game packages containing ERB, CSV, and assets; each upload becomes an independent Game and is activated automatically after a real load test.
 - Let one user run multiple Sessions for the same or different games concurrently.
 - Keep Sessions alive independently from browser connections and restore the latest display and input state on reconnect.
 - Isolate saves, configuration, temporary files, and runtime state across users and Sessions.
@@ -42,7 +42,7 @@ CloudEmuera will use Emuera.EM+EE as the runtime baseline, with an explicit comp
 ### 3.2 MVP scope
 
 - Local accounts or one external identity provider.
-- Game package upload, validation, browsing, and activation; no browser-based ERB/CSV file writes.
+- One-step game package upload, real load testing, automatic activation, and read-only browsing; no browser-based ERB/CSV file writes.
 - Session creation, listing, opening, connection, reconnection, explicit closure, and reopening.
 - Complete structured support for the text, line and layout, button, HTML/HTML Island, image/sprite,
   background, Shape/CBG, font, animation, and audio semantics of the pinned Emuera.EM+EE baseline that
@@ -115,13 +115,13 @@ Session 1 ── 1 private SessionRoot
 
 ### 6.2 Game package and ERB management
 
-- **GAME-001**: The system must support uploading game packages containing `ERB`, `CSV`, configuration, and asset files.
-- **GAME-002**: Upload processing must reject path traversal, absolute paths, unsafe symbolic links, archive bombs, and files exceeding configured quotas.
-- **GAME-003**: The system must detect and record text-file encodings, covering at least Shift-JIS, UTF-8 with BOM, and UTF-8 without BOM.
+- **GAME-001**: The system must accept a ZIP containing `ERB`, `CSV`, configuration, and asset files in one step. Every upload always creates an independent Game and, after a successful real load test, activates it automatically. Binding to an existing Game and manual validate/activate flows must not be exposed.
+- **GAME-002**: Upload processing may check only archive readability, archive/expanded/single-file/entry/staging capacity, and whether entries can be materialized safely and unambiguously under protected staging. It must not reject Windows reserved names, case or Unicode-normalization differences, directory layout, file content, or encoding policy. Traversal, absolute paths, NUL, ambiguous backslashes, exact duplicates, and file/directory conflicts must still be rejected because they cannot be safely materialized. Link or special-file metadata must be ignored and materialized only as ordinary files or directories.
+- **GAME-003**: BOM-marked UTF-16/UTF-32 text must be converted to UTF-8 on a best-effort basis and the result recorded. Other encodings may be detected and recorded, but unknown, mixed, or failed conversion must not independently block upload or activation; the real runtime load result is authoritative.
 - **GAME-004**: Each Game has only one current runnable content tree. That tree must remain immutable until atomically replaced and must record its checksum, activator, activation time, and runtime configuration. The system must not expose GameVersion resources, version labels, version lists, or product-level history rollback.
-- **GAME-005**: Upload and inspection must write to the Game's separate ingestion workspace. They must not change current runnable content before validation and atomic activation, and must never change files already copied into an existing Session.
+- **GAME-005**: Upload must first write to the new Game's internal staging/workspace and, after a successful real load, atomically activate it as current content within the same operation. This internal phase must not be exposed as a bindable, editable, or user-confirmed two-step resource and must never change files already copied into an existing Session.
 - **GAME-006**: The system must provide directory browsing, read-only text viewing, and file download. Browser-based creation, editing, renaming, deletion, or search of ERB/CSV files is outside MVP scope.
-- **GAME-007**: Before activating an ingestion workspace as current content, the system must perform baseline validation for directory layout, encoding, parse errors, missing assets, and prohibited capabilities.
+- **GAME-007**: Compatibility checking must only invoke the production Validator with the candidate staging/workspace as GameRoot and perform real runtime initialization. Successful loading permits automatic activation; failure returns runtime diagnostics. Whole-tree encoding correctness, fixed layouts, static entry-point checks, missing-asset scans, `CALLSHARP` scans, and other additional content rules must not block activation.
 - **GAME-008**: Session creation must copy the Game's current runnable content into a private SessionRoot and record the source digest and runtime-manifest snapshot. Later package replacements or activations must not implicitly alter an existing Session.
 - **GAME-009**: Game visibility must support at least private and server-shared modes. Public marketplace publication is outside the MVP scope.
 - **GAME-010**: Deleting a Game referenced by any Session must be rejected. An unreferenced Game must first be soft-deleted; ordinary requests must not immediately remove its content recursively.
@@ -501,7 +501,7 @@ shared graceful Worker budget is 5 seconds, the shared force-stop budget is 5 se
 - **AC-007**: After a Worker is force-killed, its Session becomes CRASHED within the heartbeat window and its SessionRoot is not cleaned up. After the old-Worker exit barrier completes, the same Session can be reopened and inspect or load native saves already present there.
 - **AC-008**: A representative `1824+v18` test game completes loading, input, save, load, and primary display scenarios.
 - **AC-009**: A representative current EM+EE test game runs all declared Supported features, while unsupported features produce explicit diagnostics.
-- **AC-010**: A game package containing path traversal, symbolic-link escape, or archive-bomb characteristics is rejected without writing outside the protected ingestion directory.
+- **AC-010**: A package with traversal, an absolute path, NUL, ambiguous backslashes, or archive-bomb characteristics is rejected without writing outside protected staging. Link metadata is materialized as ordinary content; Windows reserved names, case/NFC differences, and nonstandard text encodings are not upload-stage rejection reasons.
 - **AC-011**: Both desktop and mobile browsers can create a Session, submit game input, reconnect, and download a save.
 - **AC-012**: During sustained high output, Worker and browser memory remain within configured bounds and reconnection still produces a consistent snapshot.
 - **AC-013**: A representative game can save and load through native Emuera logic in both root-level and `sav/` layouts, while physical save files appear only in the owning Session's private area.
@@ -522,7 +522,7 @@ shared graceful Worker budget is 5 seconds, the shared force-stop budget is 5 se
 - An in-process API Worker Manager directly manages one independent child process per Session; only the API accesses SQLite at runtime.
 - WebSocket reconnection, ConsoleSnapshot, save isolation, and structured Web rendering and input for every
   Supported capability in the pinned Emuera.EM+EE baseline.
-- Game package upload, an internal ingestion workspace, atomic current-content activation, and baseline diagnostics; no browser-based file writes.
+- One-step game package upload, internal staging/workspace, real load testing, and automatic atomic current-content activation; no browser-based file writes or manual bind/validate/activate flow.
 
 ### Phase 2: Self-hosted hardening
 

@@ -45,7 +45,7 @@ public readonly struct RuntimeRelativePath : IEquatable<RuntimeRelativePath>, IC
     {
         path = default;
 
-        if (string.IsNullOrWhiteSpace(candidate) || candidate.Length > MaxLength)
+        if (string.IsNullOrEmpty(candidate) || candidate.Length > MaxLength)
         {
             return false;
         }
@@ -104,17 +104,10 @@ public readonly struct RuntimeRelativePath : IEquatable<RuntimeRelativePath>, IC
             return false;
         }
 
-        if (!string.Equals(segment, segment.Trim(), StringComparison.Ordinal) ||
-            segment[^1] == '.' ||
-            segment.Contains(':'))
-        {
-            return false;
-        }
-
         for (int index = 0; index < segment.Length; index++)
         {
             char character = segment[index];
-            if (char.IsControl(character) || char.IsSurrogate(character))
+            if (char.IsSurrogate(character))
             {
                 if (!char.IsHighSurrogate(character) ||
                     index + 1 >= segment.Length ||
@@ -127,35 +120,7 @@ public readonly struct RuntimeRelativePath : IEquatable<RuntimeRelativePath>, IC
             }
         }
 
-        string deviceName = segment;
-        int extensionSeparator = deviceName.IndexOf('.', StringComparison.Ordinal);
-        if (extensionSeparator >= 0)
-        {
-            deviceName = deviceName[..extensionSeparator];
-        }
-
-        if (deviceName.Equals("CON", StringComparison.OrdinalIgnoreCase) ||
-            deviceName.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
-            deviceName.Equals("AUX", StringComparison.OrdinalIgnoreCase) ||
-            deviceName.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
-            deviceName.Equals("CLOCK$", StringComparison.OrdinalIgnoreCase) ||
-            IsNumberedDevice(deviceName, "COM") ||
-            IsNumberedDevice(deviceName, "LPT"))
-        {
-            return false;
-        }
-
         return true;
-    }
-
-    private static bool IsNumberedDevice(string value, string prefix)
-    {
-        if (!value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || value.Length != prefix.Length + 1)
-        {
-            return false;
-        }
-
-        return value[^1] is >= '1' and <= '9';
     }
 
     private static RuntimePathException Invalid(string? candidate)

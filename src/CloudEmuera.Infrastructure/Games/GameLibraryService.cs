@@ -28,6 +28,59 @@ public sealed class GameLibraryService(
             .Select(game => ToItem(game))
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
 
+    public async Task<GameLibraryItem> UploadAsync(
+        CurrentActor actor,
+        string name,
+        string visibility,
+        Stream content,
+        string requestId,
+        CancellationToken cancellationToken = default)
+    {
+        // The public product operation is deliberately one step. The existing
+        // ingestion/workspace/content operations remain internal durable
+        // boundaries so a process crash can still be reconciled safely.
+        GameLibraryItem game = await CreateAsync(actor, name, visibility, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            IngestedGamePackage package = await ingestions.IngestAsync(
+                new GamePackageIngestionRequest(actor.UserId, content, requestId),
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            GameLibraryItem draft = await BindPackageAsync(
+                actor,
+                game.Id,
+                package.IngestionId,
+                package.Manifest.ContentDigest,
+                game.StateVersion,
+                cancellationToken).ConfigureAwait(false);
+            return await ActivateAsync(actor, game.Id, draft.StateVersion, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // A failed upload/load must not leave a user-visible empty Game that
+            // can only be repaired through the removed multi-step workflow.
+            try
+            {
+                GameRow? row = await db.Games.SingleOrDefaultAsync(
+                    value => value.Id == game.Id && value.OwnerUserId == actor.UserId && value.Status != GameStatus.Deleted,
+                    CancellationToken.None).ConfigureAwait(false);
+                if (row is not null && row.ContentDigest is null)
+                {
+                    row.Status = GameStatus.Deleted;
+                    row.DeletedBy = actor.UserId;
+                    row.DeletedAt = timeProvider.GetUtcNow();
+                    Touch(row, row.DeletedAt.Value);
+                    AddAudit(actor, "GAME_UPLOAD_REJECTED", row.Id, row.UpdatedAt);
+                    await SaveAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            catch (Exception cleanupException) when (cleanupException is DbUpdateException or DbUpdateConcurrencyException)
+            {
+                // Recovery maintenance owns any durable intermediate operation.
+            }
+            throw;
+        }
+    }
+
     public async Task<GameLibraryItem> CreateAsync(CurrentActor actor, string name, string visibility, CancellationToken cancellationToken = default)
     {
         string normalizedName = NormalizeName(name);
@@ -414,9 +467,12 @@ public sealed class GameLibraryService(
                 "{}",
                 "{}");
         }
-        if (!inspection.CanActivate) return inspection;
         GameParserValidationResult parsed = await validator.ValidateAsync(snapshot, token).ConfigureAwait(false);
         IReadOnlyList<GameValidationDiagnostic> diagnostics = inspection.Diagnostics.Concat(parsed.Diagnostics).ToArray();
+        // The manifest scan only enforces storage limits and builds immutable
+        // metadata; it no longer contributes content-policy diagnostics. Keep
+        // those mandatory capacity limits alongside the authoritative runtime
+        // load result.
         return inspection with { CanActivate = inspection.CanActivate && parsed.CanActivate, Diagnostics = diagnostics };
     }
 
@@ -637,9 +693,6 @@ public sealed class GameLibraryService(
         string[] regularDirectories = EnumerateRegularDirectories(root).Order(StringComparer.Ordinal).ToArray();
         if ((long)regularFiles.Length + regularDirectories.Length > GameContentScanLimits.MaxEntryCount)
             throw new GameContentLimitException("GAME_CONTENT_ENTRY_LIMIT");
-        if (!regularFiles.Any(file => Path.GetRelativePath(root, file).Replace('\\', '/').StartsWith("ERB/", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(Path.GetExtension(file), ".ERB", StringComparison.OrdinalIgnoreCase)))
-            diagnostics.Add(new("ERB_ENTRYPOINT_MISSING", "ERROR", "ERB", "ERB directory must contain at least one .ERB file.", true));
         string configurationPath = Path.Combine(root, "emuera.config");
         string runtimeConfig = "{}";
         var entries = new List<InspectedEntry>();
@@ -664,14 +717,10 @@ public sealed class GameLibraryService(
             bool hasBom = false;
             if (IsGameTextFile(file))
             {
-                if (!TryReadGameText(file, out string text, out encoding, out hasBom))
-                    diagnostics.Add(new("TEXT_ENCODING_UNSUPPORTED", "ERROR", logical, "Text must be valid UTF-8 or CP932.", true));
-                else
+                if (TryReadGameText(file, out string text, out encoding, out hasBom))
                 {
                     if (string.Equals(file, configurationPath, StringComparison.Ordinal))
                         runtimeConfig = JsonSerializer.Serialize(new { emueraConfig = text, encoding, hasBom });
-                    if (text.Contains("CALLSHARP", StringComparison.OrdinalIgnoreCase))
-                        diagnostics.Add(new("CALLSHARP_FORBIDDEN", "ERROR", logical, "CALLSHARP is not allowed in server games.", true));
                 }
             }
             string digest;

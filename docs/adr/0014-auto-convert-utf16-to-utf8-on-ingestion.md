@@ -6,6 +6,10 @@
 
 关联：GAME-003、ADR-0008、P1-03/P1-04
 
+2026-08-24 修订说明：[`ADR-0032`](0032-one-step-game-upload-and-load-only-validation.md) 保留本文的
+UTF-16/UTF-32 BOM 到 UTF-8 自动转换，但转换失败或其它编码诊断不再单独阻断启用；最终结论由真实
+运行时加载测试决定。
+
 ## 背景
 
 部分 era 游戏包内文本文件使用 UTF-16/UTF-32（带 BOM）。当前处理：

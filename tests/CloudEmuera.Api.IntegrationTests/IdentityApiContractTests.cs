@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Globalization;
+using System.IO.Compression;
 using CloudEmuera.Contracts.Identity;
 using CloudEmuera.Contracts.Games;
 using CloudEmuera.Application.Games;
@@ -49,11 +50,11 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.DoesNotContain("SessionRoot", await adminRuntime.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 
         csrf = await GetCsrfAsync(anonymous);
-        HttpResponseMessage gameCreated = await SendJsonAsync(anonymous, HttpMethod.Post, "/api/v1/games", new CreateGameRequest("API Fixture"), csrf);
+        HttpResponseMessage gameCreated = await UploadGameAsync(anonymous, "API Fixture", csrf);
         GameLibraryItem game = await gameCreated.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Create game response was missing.");
         Assert.Equal(HttpStatusCode.Created, gameCreated.StatusCode);
         Assert.Equal("NONE", game.WorkspaceStatus);
-        Assert.False(game.HasCurrentContent);
+        Assert.True(game.HasCurrentContent);
         Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync("/api/v1/game-versions")).StatusCode);
         Assert.Equal(HttpStatusCode.PreconditionRequired, (await SendJsonAsync(anonymous, HttpMethod.Patch, $"/api/v1/games/{game.Id}", new UpdateGameRequest("Renamed", null), csrf)).StatusCode);
         HttpResponseMessage gameUpdated = await SendJsonAsync(anonymous, HttpMethod.Patch, $"/api/v1/games/{game.Id}", new UpdateGameRequest("Renamed", null), csrf, game.StateVersion);
@@ -291,7 +292,22 @@ public sealed class IdentityApiContractTests : IDisposable
     public void Dispose()
     {
         _factory?.Dispose();
-        if (Directory.Exists(_dataRoot)) Directory.Delete(_dataRoot, recursive: true);
+        if (Directory.Exists(_dataRoot))
+        {
+            MakeWritable(_dataRoot);
+            Directory.Delete(_dataRoot, recursive: true);
+        }
+    }
+
+    private static void MakeWritable(string path)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+        {
+            if (Directory.Exists(entry)) MakeWritable(entry);
+            else File.SetUnixFileMode(entry, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
     private async Task CreateDatabaseAsync()
@@ -309,6 +325,25 @@ public sealed class IdentityApiContractTests : IDisposable
         using HttpRequestMessage request = new(method, path) { Content = JsonContent.Create(body) };
         request.Headers.Add("X-CSRF-TOKEN", csrf);
         if (stateVersion is not null) request.Headers.TryAddWithoutValidation("If-Match", $"\"{stateVersion}\"");
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> UploadGameAsync(HttpClient client, string name, string csrf)
+    {
+        using var content = new MemoryStream();
+        using (var archive = new ZipArchive(content, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            using (var writer = new StreamWriter(archive.CreateEntry("CSV/GAMEBASE.CSV").Open())) writer.Write("title,identity-test\n");
+            using (var writer = new StreamWriter(archive.CreateEntry("ERB/START.ERB").Open())) writer.Write("@SYSTEM_TITLE\nINPUT\nQUIT\n");
+            using (var writer = new StreamWriter(archive.CreateEntry("emuera.config").Open())) writer.Write("Use sav folder:NO\n");
+        }
+        using HttpRequestMessage request = new(HttpMethod.Post, $"/api/v1/games?name={Uri.EscapeDataString(name)}&visibility=PRIVATE")
+        {
+            Content = new ByteArrayContent(content.ToArray()),
+        };
+        request.Content.Headers.ContentType = new("application/zip");
+        request.Headers.Add("X-CSRF-TOKEN", csrf);
+        request.Headers.Add("Idempotency-Key", $"identity-game-{Guid.NewGuid():N}");
         return await client.SendAsync(request);
     }
 
