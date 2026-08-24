@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AssetResolver } from "./AssetResolver";
-import { ScrollbackRenderer, trailingVisualOverflow, trimTrailingEmptyLines } from "./ScrollbackRenderer";
+import { ScrollbackRenderer, leadingVisualOverflow, trailingVisualOverflow, trimTrailingEmptyLines } from "./ScrollbackRenderer";
 import type { RealtimeLine } from "../realtime/protocol";
 
 const assets = new AssetResolver("s1", { schemaVersion: 1, assets: [], fonts: [], fontDiagnostics: [] });
@@ -138,6 +138,20 @@ describe("ScrollbackRenderer", () => {
     render(<ScrollbackRenderer lines={[positionedPortraitLine]} assets={clockAssets} onInput={() => undefined} />);
     expect(document.querySelector<HTMLElement>(".console-overflow-reserve")).toHaveStyle({ height: "192px" });
     expect(document.querySelector<HTMLElement>(".positioned-inline-segment")).toHaveStyle({ overflow: "visible" });
+  });
+
+  it("reserves leading space for a title image with a negative ypos", () => {
+    const titleLine: RealtimeLine = {
+      lineId: "title-line",
+      nodes: [{ type: "sprite", assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRect: { x: 0, y: 0, width: 486, height: 648 }, destination: { x: 0, y: -594, width: 486, height: 648 }, frame: 0, zIndex: 0, opacity: 1, altText: "title", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
+      alignment: "left",
+      temporary: false,
+      lineHeight: 20,
+    };
+
+    expect(leadingVisualOverflow([titleLine])).toBe(594);
+    render(<ScrollbackRenderer lines={[titleLine]} assets={clockAssets} onInput={() => undefined} />);
+    expect(document.querySelector<HTMLElement>(".console-overflow-leading")).toHaveStyle({ height: "594px" });
   });
 
   it("submits enabled choice buttons from old display frames to the current input slot", () => {

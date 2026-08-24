@@ -16,6 +16,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   const atLatestRef = useRef(true);
   const scrollbackShellRef = useRef<HTMLDivElement>(null);
   const displayLines = trimTrailingEmptyLines(lines);
+  const leadingOverflow = leadingVisualOverflow(displayLines);
   const visualOverflow = trailingVisualOverflow(displayLines);
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     const container = scrollContainerRef?.current;
@@ -76,6 +77,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   const scrollToLatest = useCallback(() => scrollToBottom("smooth"), [scrollToBottom]);
   return <div ref={scrollbackShellRef} className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
+      {leadingOverflow > 0 && <div className="console-overflow-leading" style={{ height: leadingOverflow }} aria-hidden="true" />}
       {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} style={physicalLineStyle(line)} key={line.lineId}>
         {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
       </div>)}
@@ -89,6 +91,22 @@ export function trimTrailingEmptyLines(lines: readonly RealtimeLine[]): Realtime
   let end = lines.length;
   if (end > 0 && isEmptyLine(lines[end - 1])) end--;
   return lines.slice(0, end);
+}
+
+/**
+ * Inline image parts can paint above the physical line that owns them. Keep
+ * that leading portion inside the scrollback's flow so the first title image
+ * is not clipped by the scrollback's overflow boundary.
+ */
+export function leadingVisualOverflow(lines: readonly RealtimeLine[]): number {
+  let flowHeight = 0;
+  let visualTop = 0;
+  for (const line of lines) {
+    const lineHeight = effectiveLineFlowHeight(line);
+    visualTop = Math.min(visualTop, flowHeight + nodeVisualTop(line.nodes));
+    flowHeight += lineHeight;
+  }
+  return Math.max(0, Math.ceil(-visualTop));
 }
 
 function isEmptyLine(line: RealtimeLine): boolean {
@@ -255,6 +273,25 @@ function nodeVisualBottom(nodes: readonly RealtimeNode[]): number {
       default: return 0;
     }
   }));
+}
+
+function nodeVisualTop(nodes: readonly RealtimeNode[]): number {
+  return Math.min(0, ...nodes.map(node => {
+    switch (node.type) {
+      case "image": return rectTop(node.destination ?? node.sourceRect);
+      case "sprite": return rectTop(node.destination);
+      case "shape": return rectTop(node.bounds);
+      case "div": return Math.min(rectTop(node.bounds), nodeVisualTop(node.children));
+      case "button":
+      case "positionedInlineSegment": return nodeVisualTop(node.children);
+      case "htmlIsland": return node.layout ? rectTop(node.layout) : node.nodes ? nodeVisualTop(node.nodes) : 0;
+      default: return 0;
+    }
+  }));
+}
+
+function rectTop(rect: RealtimeRect | null | undefined): number {
+  return rect?.y ?? 0;
 }
 
 function rectBottom(rect: RealtimeRect | null | undefined): number {
