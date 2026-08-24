@@ -67,11 +67,9 @@ public sealed class SessionSaveApiContractTests : IDisposable
         PresentationAssetResponse asset = Assert.Single(manifest.Assets, item => item.MediaType == "image/png");
         Assert.Equal($"sha256-{expectedDigest}", asset.AssetId);
         PresentationFontResponse[] fonts = manifest.Fonts;
-        Assert.Equal(2, fonts.Length);
-        Assert.Contains(fonts, item => item.Family == "default");
-        Assert.Equal(fonts.Length, fonts.Select(item => item.Family).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        Assert.Equal(fonts.Length, fonts.Select(item => item.CssFamily).Distinct(StringComparer.Ordinal).Count());
-        Assert.Contains("FONT_MULTIPLE_ASSETS_ISOLATED", manifest.FontDiagnostics);
+        Assert.Empty(fonts);
+        Assert.Empty(manifest.FontDiagnostics);
+        Assert.DoesNotContain(manifest.Assets, item => item.MediaType.StartsWith("font/", StringComparison.Ordinal));
         using HttpResponseMessage assetResponse = await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
         Assert.Equal(HttpStatusCode.OK, assetResponse.StatusCode);
         Assert.Equal("image/png", assetResponse.Content.Headers.ContentType?.MediaType);

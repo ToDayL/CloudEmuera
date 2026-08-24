@@ -915,6 +915,38 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(390, fixture.Console.Snapshot.WindowMetadata.ViewportWidth);
     }
 
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task HostOverridesFixedGameWindowAndFontConfiguration()
+    {
+        // PLAY-009/PLAY-013/COMP-007: _fixed.config may lock game values, but
+        // the Worker still owns the browser-capped width and bundled font.
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTL FIXED-CONFIG\nQUIT\n",
+            configuration: "Window width:870\nFont name:MS Gothic\n",
+            configureGame: game => File.WriteAllText(
+                Path.Combine(game, "CSV", "_fixed.config"),
+                "Window width:870\nFont name:MS Gothic\n"));
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            browserWidth: 390,
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(390, fixture.Console.Snapshot.WindowMetadata.ViewportWidth);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+        Assert.Contains(
+            fixture.Console.Snapshot.Scrollback,
+            line => RuntimeTranscriptProjector.Project(line.Nodes).Contains("FIXED-CONFIG", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(RuntimeWidthMode.Max, null, 2500, 2000)]
     [InlineData(RuntimeWidthMode.Max, null, 900, 900)]

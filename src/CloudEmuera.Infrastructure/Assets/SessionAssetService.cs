@@ -38,11 +38,6 @@ public sealed class SessionAssetService(
         [".wav"] = "audio/wav",
         [".webm"] = "audio/webm",
         [".flac"] = "audio/flac",
-        [".woff"] = "font/woff",
-        [".woff2"] = "font/woff2",
-        [".ttf"] = "font/ttf",
-        [".ttc"] = "font/ttf",
-        [".otf"] = "font/otf",
     });
 
     public async Task<SessionPresentationManifest> GetManifestAsync(CurrentActor actor, string sessionId, CancellationToken cancellationToken = default)
@@ -174,53 +169,12 @@ public sealed class SessionAssetService(
     {
         ManifestAsset[] projected = BuildAssets(entries).ToArray();
         SessionPresentationAsset[] assets = projected.Select(asset => new SessionPresentationAsset(asset.AssetId, asset.MediaType, asset.ByteLength, asset.ContentDigest, $"\"{asset.ContentDigest}\"")).ToArray();
-        List<ManifestAsset> fontAssets = projected
-            .Where(asset => asset.MediaType.StartsWith("font/", StringComparison.Ordinal))
-            .OrderBy(asset => asset.AssetId, StringComparer.Ordinal)
-            .ToList();
-        var usedFamilies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var diagnostics = new List<string>();
-        bool hasDefault = fontAssets.Any(asset => string.Equals(FontStem(asset.Path), "default", StringComparison.OrdinalIgnoreCase));
-        var fonts = new List<SessionPresentationFont>(fontAssets.Count);
-
-        for (int index = 0; index < fontAssets.Count; index++)
-        {
-            ManifestAsset asset = fontAssets[index];
-            string stem = FontStem(asset.Path);
-            bool stemIsSafe = IsSafeLogicalFontFamily(stem);
-            string family = stemIsSafe ? stem : $"font-{asset.AssetId[7..23]}";
-            if (!usedFamilies.Add(family))
-            {
-                diagnostics.Add("FONT_FAMILY_COLLISION");
-                family = $"font-{asset.AssetId[7..]}";
-                int suffix = 2;
-                while (!usedFamilies.Add(family)) family = $"font-{asset.AssetId[7..]}-{suffix++}";
-            }
-            if (!stemIsSafe) diagnostics.Add("FONT_FAMILY_UNMAPPED");
-
-            var aliases = new List<string>();
-            if (!hasDefault && index == 0)
-            {
-                aliases.Add("default");
-                diagnostics.Add("FONT_DEFAULT_FALLBACK_ASSIGNED");
-            }
-
-            fonts.Add(new SessionPresentationFont(
-                family,
-                asset.AssetId,
-                "sans-serif",
-                $"cloudemuera-font-{asset.AssetId[7..23]}",
-                aliases));
-        }
-
-        if (fontAssets.Count > 1) diagnostics.Add("FONT_MULTIPLE_ASSETS_ISOLATED");
-        return new SessionPresentationManifest(1, assets, fonts, diagnostics.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
+        // Game fonts are deliberately absent: the Worker binds the immutable
+        // product font catalog, and the browser loads that same face through
+        // the runtime-font endpoint. Keep the response fields for protocol
+        // compatibility, but never infer a CSS default from game files.
+        return new SessionPresentationManifest(1, assets, Array.Empty<SessionPresentationFont>(), Array.Empty<string>());
     }
-
-    private static string FontStem(string path) => Path.GetFileNameWithoutExtension(path);
-
-    private static bool IsSafeLogicalFontFamily(string value) =>
-        value.Length is > 0 and <= 128 && value.All(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '-' or '_' or '.' or '~' or ' ');
 
     private static IEnumerable<ManifestAsset> BuildAssets(IEnumerable<ManifestEntry> entries)
     {
@@ -351,10 +305,6 @@ public sealed class SessionAssetService(
             "audio/wav" => StartsWithAscii(header[..read], 0, "RIFF") && StartsWithAscii(header[..read], 8, "WAVE"),
             "audio/webm" => StartsWith(header[..read], 0x1A, 0x45, 0xDF, 0xA3),
             "audio/flac" => StartsWithAscii(header[..read], 0, "fLaC"),
-            "font/woff" => StartsWithAscii(header[..read], 0, "wOFF"),
-            "font/woff2" => StartsWithAscii(header[..read], 0, "wOF2"),
-            "font/ttf" => StartsWith(header[..read], 0x00, 0x01, 0x00, 0x00) || StartsWithAscii(header[..read], 0, "ttcf"),
-            "font/otf" => StartsWithAscii(header[..read], 0, "OTTO"),
             _ => false,
         };
     }

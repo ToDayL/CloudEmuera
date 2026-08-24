@@ -983,6 +983,10 @@ structured IPC v6、Realtime v4、HTTP/migration/Web contract 完整且旧 major
 Worker 26/26，以及 Web 99/99 类型检查/测试/生产构建均通过；真实 Chromium 在非安全 `http://web` origin
 验证了无 `SubtleCrypto` 时的 SHA-256 回退和 FontFace 加载。
 
+修复记录（2026-08-24）：宿主覆盖 `WindowX`、字号、行高和 Runtime `FontName` 时先解除游戏
+`_fixed.config` 的静默锁定，确保浏览器宽度上限和内置字体始终生效；presentation manifest 不再投影
+游戏字体文件或生成 `default` 回退诊断。
+
 ### P1-S05 — Session 运行宽度模式（DONE）
 
 需求映射：SESS-014、PLAY-015、PLAY-009/014。

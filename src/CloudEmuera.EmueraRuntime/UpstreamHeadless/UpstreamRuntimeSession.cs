@@ -141,17 +141,17 @@ public sealed class UpstreamRuntimeSession : IDisposable
         ConfigData.ResetHeadless();
         ConfigData.Instance.LoadConfig(applyConfig: false);
         if (!string.IsNullOrWhiteSpace(runtimeFontFamilyName))
-            ConfigData.Instance.GetConfigItem(ConfigCode.FontName).SetValue(runtimeFontFamilyName);
-        AConfigItem windowWidth = ConfigData.Instance.GetConfigItem(ConfigCode.WindowX);
-        AConfigItem configuredFontSize = ConfigData.Instance.GetConfigItem(ConfigCode.FontSize);
-        AConfigItem configuredLineHeight = ConfigData.Instance.GetConfigItem(ConfigCode.LineHeight);
+            SetHeadlessConfigValue(ConfigCode.FontName, runtimeFontFamilyName);
+        AConfigItem windowWidth = GetHeadlessConfigItem(ConfigCode.WindowX);
+        AConfigItem configuredFontSize = GetHeadlessConfigItem(ConfigCode.FontSize);
+        AConfigItem configuredLineHeight = GetHeadlessConfigItem(ConfigCode.LineHeight);
         int configuredWidth = windowWidth.GetValue<int>();
         int effectiveWidth = browserWidth > 0
             ? RuntimeWidthPolicy.Resolve(configuredWidth, browserWidth, widthMode, customWidth)
             : configuredWidth;
-        windowWidth.SetValue(effectiveWidth);
-        configuredFontSize.SetValue(fontSize);
-        configuredLineHeight.SetValue(lineHeight);
+        SetHeadlessConfigValue(windowWidth, effectiveWidth);
+        SetHeadlessConfigValue(configuredFontSize, fontSize);
+        SetHeadlessConfigValue(configuredLineHeight, lineHeight);
         Config.SetConfig(ConfigData.Instance);
         if (!string.IsNullOrWhiteSpace(runtimeFontPath))
         {
@@ -225,6 +225,21 @@ public sealed class UpstreamRuntimeSession : IDisposable
 
     public IReadOnlyList<string> InitializationMessages => console?.RuntimeMessages ?? Array.Empty<string>();
     public IReadOnlyList<string> InitializationWarnings => console?.RuntimeWarnings ?? Array.Empty<string>();
+
+    private static AConfigItem GetHeadlessConfigItem(ConfigCode code) =>
+        ConfigData.Instance.GetConfigItem(code) ?? throw new InvalidDataException($"The pinned upstream config item '{code}' is unavailable.");
+
+    private static void SetHeadlessConfigValue<T>(ConfigCode code, T value) =>
+        SetHeadlessConfigValue(GetHeadlessConfigItem(code), value);
+
+    private static void SetHeadlessConfigValue<T>(AConfigItem item, T value)
+    {
+        // _fixed.config is game-owned, but the runtime font and layout are
+        // host-authoritative. ConfigItem.Value silently ignores writes while
+        // Fixed is true, so clear that flag before applying host values.
+        item.Fixed = false;
+        item.SetValue(value);
+    }
 
     public void Dispose()
     {
