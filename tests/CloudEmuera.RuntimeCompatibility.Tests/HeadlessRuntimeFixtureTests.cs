@@ -1363,6 +1363,49 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "FontLayout")]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task GraphicsModeUsesBundledMetricsForEraSqcTitleLine()
+    {
+        // PLAY-014/COMP-007: eraSQC selects GRAPHICS in emuera.config. The
+        // headless worker must still measure "[0] 开始新游戏" with the bound
+        // TTF rather than libgdiplus, because the browser renders its
+        // matching WOFF2 face.
+        const string title = "[0] 开始新游戏";
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+
+        async Task<int> MeasureTitleAsync(string drawingMode)
+        {
+            using var fixture = RuntimeHostFixture.Create(
+                $"@SYSTEM_TITLE\nPRINTL {title}\nQUIT\n",
+                configuration: $"Use sav folder:NO\n描画インターフェース:{drawingMode}\n窗口宽度:1150\n字体大小:19\n一行の高さ:19\n");
+            await using EmueraRuntimeHost host = fixture.CreateHost(
+                runDeadline: TimeSpan.FromSeconds(8),
+                fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+                fontCatalogDigest: catalogDigest,
+                runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+                runtimeFontFamilyName: "Sarasa Fixed SC",
+                webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+            Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+            Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+            ConsoleLine line = Assert.Single(
+                fixture.Console.Snapshot.Scrollback,
+                item => RuntimeTranscriptProjector.Project(item.Nodes) == title);
+            Assert.Contains(title, RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+            return Assert.IsType<PositionedInlineSegmentNode>(Assert.Single(line.Nodes)).MeasuredWidth;
+        }
+
+        int graphicsWidth = await MeasureTitleAsync("GRAPHICS");
+        int textRendererWidth = await MeasureTitleAsync("TEXTRENDERER");
+        Assert.Equal(textRendererWidth, graphicsWidth);
+    }
+
+    [Fact]
+    [Trait("Category", "FontLayout")]
     public async Task BundledFontMetricsPreserveFullwidthCjkAdvance()
     {
         string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();

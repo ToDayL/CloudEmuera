@@ -1,4 +1,5 @@
 ﻿using MinorShift.Emuera.Runtime.Config;
+using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using System;
 using System.Drawing;
 using System.Windows.Forms;
@@ -34,6 +35,13 @@ internal sealed class StringMeasure : IDisposable
 
 	public int GetDisplayLength(ReadOnlySpan<char> chars, Font f)
 	{
+		// CloudEmuera S04: the browser consumes the same catalogued WOFF2 face,
+		// so headless physical layout must not fall back to libgdiplus when a
+		// game selects GRAPHICS. Keep the game's drawing-mode behavior below as
+		// the fallback for non-headless callers and unbound fonts.
+		if (HeadlessFontMetrics.TryMeasure(chars, f, out int authoritativeWidth))
+			return authoritativeWidth;
+
 		if (textDrawingMode == TextDrawingMode.TEXTRENDERER)
 		{
 			var size = TextRenderer.MeasureText(graph, chars, f, layoutSize, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
@@ -49,6 +57,8 @@ internal sealed class StringMeasure : IDisposable
 	{
 		if (string.IsNullOrEmpty(s))
 			return 0;
+		if (HeadlessFontMetrics.TryMeasure(s.AsSpan(), font, out int authoritativeWidth))
+			return authoritativeWidth;
 		if (textDrawingMode == TextDrawingMode.GRAPHICS)
 		{
 			if (s.Contains('\t'))

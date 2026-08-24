@@ -24,6 +24,18 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-24 — Use the bundled face for GRAPHICS-mode layout measurement
+
+- `Upstream/Emuera/UI/Game/StringMeasure.cs` now consults the bound TTF's
+  `hmtx` metrics before the upstream `Graphics.MeasureCharacterRanges` path.
+  This keeps games such as eraSQC, whose `emuera.config` selects
+  `描画インターフェース:GRAPHICS`, on the same authoritative measurement
+  path as TEXTRENDERER and the browser's matching WOFF2 face.
+- The upstream graphics measurement remains the fallback for unbound fonts and
+  non-headless callers. Scope: P1-S04, PLAY-014, COMP-007 and ADR-0029.
+- Verification: the GRAPHICS/TEXTRENDERER bundled-font parity regression and
+  the RuntimeCompatibility font-layout suite in the dev Docker environment.
+
 ## 2026-08-24 — Era East Asian ambiguous map-cell compatibility
 
 - `UpstreamHeadless/HeadlessFontMetrics.cs` gives the box-drawing, common
