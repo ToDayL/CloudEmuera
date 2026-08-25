@@ -162,6 +162,35 @@ public sealed class IdentityApiContractTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "IdentityPassword")]
+    public async Task BootstrapPasswordMayBeShortAndFirstLoginMustChangeToEightCharacterPassword()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true, bootstrapPassword: "!");
+        _factory = new IdentityFactory(_dataRoot);
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+
+        string csrf = await GetCsrfAsync(client);
+        HttpResponseMessage login = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "!", false), csrf);
+        CurrentUserResponse bootstrapAdmin = await login.Content.ReadFromJsonAsync<CurrentUserResponse>() ?? throw new Xunit.Sdk.XunitException("Bootstrap login response was missing.");
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.True(bootstrapAdmin.MustChangePassword);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/v1/admin/workers")).StatusCode);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage incomplete = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("!", "1234567"), csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, incomplete.StatusCode);
+        Assert.Equal("INVALID_PASSWORD", (await incomplete.Content.ReadFromJsonAsync<ApiError>())?.Code);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage changed = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("!", "!!!!!!!!"), csrf);
+        Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
+        CurrentUserResponse current = await (await client.GetAsync("/api/v1/auth/me")).Content.ReadFromJsonAsync<CurrentUserResponse>() ?? throw new Xunit.Sdk.XunitException("Current user response was missing.");
+        Assert.False(current.MustChangePassword);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/admin/workers")).StatusCode);
+    }
+
+    [Fact]
     [Trait("Category", "Bootstrap")]
     public async Task CompletedBootstrapIgnoresRemovedConfigurationAndDoesNotReopenWithoutAnActiveAdmin()
     {

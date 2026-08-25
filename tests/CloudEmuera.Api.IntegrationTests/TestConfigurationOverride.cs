@@ -6,12 +6,12 @@ internal sealed class TestConfigurationOverride : IDisposable
 {
     private readonly Dictionary<string, string?> _previous = [];
 
-    public TestConfigurationOverride(string dataRoot, bool includeBootstrap = false, bool? secureCookies = null)
+    public TestConfigurationOverride(string dataRoot, bool includeBootstrap = false, bool? secureCookies = null, string? bootstrapPassword = null)
     {
         Set("CloudEmuera__DataPath", dataRoot);
         Set("CLOUDEMUERA_BOOTSTRAP_ADMIN_USERNAME", includeBootstrap ? "identity-admin" : null);
         Set("CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL", includeBootstrap ? "admin@example.test" : null);
-        Set("CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD", includeBootstrap ? "temporary-password" : null);
+        Set("CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD", includeBootstrap ? bootstrapPassword ?? "temporary-password" : null);
         if (secureCookies is not null)
             Set("CloudEmuera__Security__SecureCookies", secureCookies.Value ? "true" : "false");
     }
