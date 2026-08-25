@@ -16,6 +16,22 @@ public sealed class GameValidatorProcessClientTests : IDisposable
         Assert.Empty(result.Diagnostics);
     }
 
+    [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task NormalizesSeverityFromTheBlockingBit()
+    {
+        GameParserValidationResult result = await RunAsync(
+            "printf '%s' '{\"schemaVersion\":1,\"canActivate\":true,\"diagnostics\":[" +
+            "{\"code\":\"message\",\"severity\":\"ERROR\",\"path\":null,\"message\":\"informational\",\"activationBlocking\":false}," +
+            "{\"code\":\"error\",\"severity\":\"WARNING\",\"path\":null,\"message\":\"fatal\",\"activationBlocking\":true}]}'");
+
+        Assert.False(result.CanActivate);
+        Assert.Equal("WARNING", result.Diagnostics[0].Severity);
+        Assert.False(result.Diagnostics[0].ActivationBlocking);
+        Assert.Equal("ERROR", result.Diagnostics[1].Severity);
+        Assert.True(result.Diagnostics[1].ActivationBlocking);
+    }
+
     [Theory]
     [InlineData("printf 'not-json'", "VALIDATOR_PROTOCOL_ERROR")]
     [InlineData("exit 7", "VALIDATOR_CRASHED")]

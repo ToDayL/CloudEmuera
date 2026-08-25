@@ -9,18 +9,22 @@ static class JSONConfig
 	public static JSONConfigData Data;
 
 	const string _configFileName = "setting.json";
-	static string _configFilePath = Program.ExeDir + _configFileName;
+	// CloudEmuera modification: headless Sessions reuse the pinned process but
+	// each Session has a different Program.ExeDir. Resolve this path per call so
+	// JSON settings never remain bound to the first SessionRoot.
+	static string ConfigFilePath => Program.ExeDir + _configFileName;
 
 	public static void Load()
 	{
-		if (!File.Exists(_configFilePath))
+		string configFilePath = ConfigFilePath;
+		if (!File.Exists(configFilePath))
 		{
 			var defaultData = new JSONConfigData();
 			var defaultJson = JsonSerializer.Serialize(defaultData);
-			File.WriteAllText(_configFilePath, defaultJson);
+			File.WriteAllText(configFilePath, defaultJson);
 		}
 
-		var json = File.ReadAllText(_configFilePath);
+		var json = File.ReadAllText(configFilePath);
 
 		Data = JsonSerializer.Deserialize<JSONConfigData>(json);
 	}
@@ -28,6 +32,6 @@ static class JSONConfig
 	public static void Save()
 	{
 		var json = JsonSerializer.Serialize(Data);
-		File.WriteAllText(_configFilePath, json);
+		File.WriteAllText(ConfigFilePath, json);
 	}
 }

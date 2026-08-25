@@ -1944,6 +1944,87 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task LoadingReportMessageIsNonBlockingWhileParserFailureRemainsFatal()
+    {
+        using var validFixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nQUIT\n",
+            configuration: "Use sav folder:NO\nロード時にレポートを表示する:YES\n");
+        await using (EmueraRuntimeHost validHost = validFixture.CreateHost())
+        {
+            EmueraRuntimeResult valid = await validHost.InitializeAsync();
+
+            Assert.Equal(EmueraRuntimeStatus.Completed, valid.Status);
+            Assert.Contains(valid.Diagnostics, diagnostic =>
+                diagnostic.Code == "runtime_message" && !diagnostic.IsFatal);
+            Assert.DoesNotContain(valid.Diagnostics, diagnostic => diagnostic.IsFatal);
+        }
+
+        using var invalidFixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n+NOT_INCREMENT\nQUIT\n");
+        await using EmueraRuntimeHost invalidHost = invalidFixture.CreateHost();
+
+        EmueraRuntimeResult invalid = await invalidHost.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.InitializationFailed, invalid.Status);
+        Assert.Contains(invalid.Diagnostics, diagnostic =>
+            diagnostic.Code == "runtime_initialization_failed" && diagnostic.IsFatal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task HeadlessRuntimeCreatesMissingSettingJsonInsideSessionRoot()
+    {
+        // SESS-011/SAVE-011: upstream JSON settings are runtime state. A
+        // missing file is created in the private SessionRoot, never in the
+        // Game source tree used to materialize that Session.
+        using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
+        string sourceSettingPath = Path.Combine(fixture.GameContentRoot, "setting.json");
+        string sessionSettingPath = Path.Combine(fixture.Paths.SessionRoot, "setting.json");
+
+        Assert.False(File.Exists(sourceSettingPath));
+        Assert.False(File.Exists(sessionSettingPath));
+
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        EmueraRuntimeResult result = await host.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.False(File.Exists(sourceSettingPath));
+        Assert.True(File.Exists(sessionSettingPath));
+        Assert.Contains("\"UseScopedVariableInstruction\":false", File.ReadAllText(sessionSettingPath), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task HeadlessRuntimeLoadsScopedVariableSettingPerSessionRoot()
+    {
+        // COMP-002: VARI is registered only when the Session-local upstream
+        // setting enables the Emuera.NET scoped-variable extension. Reusing a
+        // process must not make a later Session inherit the first path/data.
+        using var firstFixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nVARI IDX\nQUIT\n",
+            configureGame: game => File.WriteAllText(
+                Path.Combine(game, "setting.json"),
+                "{\"UseScopedVariableInstruction\":true}"));
+        await using (EmueraRuntimeHost firstHost = firstFixture.CreateHost())
+        {
+            Assert.Equal(EmueraRuntimeStatus.Completed, (await firstHost.InitializeAsync()).Status);
+        }
+
+        using RuntimeHostFixture secondFixture = firstFixture.CreateAdditionalSession();
+        File.WriteAllText(
+            Path.Combine(secondFixture.Paths.SessionRoot, "setting.json"),
+            "{\"UseScopedVariableInstruction\":false}");
+        await using EmueraRuntimeHost secondHost = secondFixture.CreateHost();
+
+        EmueraRuntimeResult second = await secondHost.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.InitializationFailed, second.Status);
+        Assert.Contains(second.Diagnostics, diagnostic =>
+            diagnostic.Code == "runtime_initialization_failed" && diagnostic.IsFatal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task DynamicComAbleCallbackWithArgumentRemainsCallableAndWarningStaysOutOfConsole()
     {
         // GAME-007/COMP-002: real games dynamically invoke @COM_ABLE<n>(ARG)

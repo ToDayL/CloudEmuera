@@ -85,7 +85,16 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
         if (response.Diagnostics.Any(item => string.IsNullOrWhiteSpace(item.Code) || item.Code.Length > 100 || item.Message.Length > 500))
             return Failure("VALIDATOR_PROTOCOL_ERROR");
         IReadOnlyList<GameValidationDiagnostic> diagnostics = response.Diagnostics.Select(item =>
-            new GameValidationDiagnostic(item.Code, item.Severity, item.Path, item.Message, item.ActivationBlocking)).ToArray();
+            // The blocking flag is the protocol's authoritative severity bit.
+            // Normalize the display severity at this boundary so a malformed or
+            // stale Validator cannot persist an ERROR that does not block, or a
+            // blocking diagnostic that is labelled as a warning.
+            new GameValidationDiagnostic(
+                item.Code,
+                item.ActivationBlocking ? "ERROR" : "WARNING",
+                item.Path,
+                item.Message,
+                item.ActivationBlocking)).ToArray();
         bool canActivate = response.CanActivate && !diagnostics.Any(item => item.ActivationBlocking);
         return new(canActivate, diagnostics);
     }

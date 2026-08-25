@@ -434,11 +434,7 @@ internal sealed partial class FunctionIdentifier
 		addFunction(FunctionCode.DT_COLUMN_OPTIONS, new DT_COLUMN_OPTIONS_Instruction());
 		#endregion
 		#region Emuera.NET
-		if (JSONConfig.Data.UseScopedVariableInstruction)
-		{
-			addFunction(FunctionCode.VARI, new VARI_Instruction());
-			addFunction(FunctionCode.VARS, new VARS_Instruction());
-		}
+		ReloadJsonConfiguredInstructions();
 		addFunction(FunctionCode.HTML_PRINT_ISLAND, new HTML_PRINT_ISLAND_Instruction());
 		addFunction(FunctionCode.HTML_PRINT_ISLAND_CLEAR, new HTML_PRINT_ISLAND_CLEAR_Instruction());
 
@@ -490,6 +486,27 @@ internal sealed partial class FunctionIdentifier
 		funcParent[FunctionCode.NEXT] = FunctionCode.FOR;
 		funcParent[FunctionCode.WEND] = FunctionCode.WHILE;
 		funcParent[FunctionCode.LOOP] = FunctionCode.DO;
+	}
+
+	// CloudEmuera modification: headless runtime sessions are serialized but
+	// may load different SessionRoot/setting.json files in one process (tests
+	// and embedded callers). Keep the optional Emuera.NET instructions aligned
+	// with the setting loaded for the current Session instead of only evaluating
+	// it during this type's first static initialization.
+	internal static void ReloadJsonConfiguredInstructions()
+	{
+		if (JSONConfig.Data.UseScopedVariableInstruction)
+		{
+			if (!funcDic.ContainsKey(nameof(FunctionCode.VARI)))
+				addFunction(FunctionCode.VARI, new VARI_Instruction());
+			if (!funcDic.ContainsKey(nameof(FunctionCode.VARS)))
+				addFunction(FunctionCode.VARS, new VARS_Instruction());
+		}
+		else
+		{
+			funcDic.Remove(nameof(FunctionCode.VARI));
+			funcDic.Remove(nameof(FunctionCode.VARS));
+		}
 	}
 
 	private static FunctionIdentifier setFunc;

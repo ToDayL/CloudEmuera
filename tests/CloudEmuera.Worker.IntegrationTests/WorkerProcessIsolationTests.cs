@@ -188,6 +188,9 @@ public sealed class WorkerProcessIsolationTests
             ProjectTranscript(session.OutputHub.CurrentSnapshot!));
         Assert.True(Directory.Exists(fixture.SessionRoot));
         Assert.True(File.Exists(Path.Combine(fixture.SessionRoot, SessionRootLayoutBuilder.BindingMetadataFileName)));
+        // SAVE-011: the real Worker uses the same SessionRoot-local upstream
+        // setting lifecycle as the headless Validator.
+        Assert.True(File.Exists(Path.Combine(fixture.SessionRoot, "setting.json")));
         Assert.Equal(fixture.PublishedDigest, fixture.ComputePublishedDigest());
     }
 

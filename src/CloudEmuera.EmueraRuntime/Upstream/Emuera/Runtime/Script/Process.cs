@@ -33,6 +33,11 @@ internal sealed partial class Process(EmueraConsole view)
 #if CLOUDEMUERA_HEADLESS
 	private CancellationToken headlessCancellationToken;
 
+	// CloudEmuera: the desktop path reports ERB parser errors later from the
+	// title state. The parser-only Validator must observe the loader result
+	// without running the game loop, so expose that state at the headless seam.
+	internal bool HasScriptInitializationError => !noError;
+
 	public void SetHeadlessCancellationToken(CancellationToken cancellationToken)
 	{
 		headlessCancellationToken = cancellationToken;

@@ -10,7 +10,7 @@ namespace CloudEmuera.EmueraRuntime.Headless;
 public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
 {
     private static readonly TimeSpan DeadlineCancellationGrace = TimeSpan.FromSeconds(1);
-    private const int MaxInitializationWarnings = 128;
+    private const int MaxRuntimeDiagnostics = 128;
     private readonly object sync = new();
     private readonly EmueraRuntimeOptions options;
     private readonly List<EmueraRuntimeDiagnostic> diagnostics = [];
@@ -65,10 +65,19 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 state = HostState.Initialized;
             }
 
-            foreach (string warning in loaded.Session.InitializationWarnings.Take(MaxInitializationWarnings))
-            {
-                AddDiagnostic("runtime_warning", EmueraRuntimePhase.Initialization, warning, fatal: false);
-            }
+            // Upstream uses several output methods for text with different
+            // presentation purposes. None of those collections is itself a
+            // fatality signal: Process.Initialize's bool and HasFatalError are
+            // the only runtime-owned error transitions. Preserve non-fatal text
+            // as diagnostics without turning it into an activation failure.
+            AddRuntimeDiagnostics(
+                loaded.Session.InitializationMessages,
+                "runtime_message",
+                EmueraRuntimePhase.Initialization);
+            AddRuntimeDiagnostics(
+                loaded.Session.InitializationWarnings,
+                "runtime_warning",
+                EmueraRuntimePhase.Initialization);
             return Result(EmueraRuntimeStatus.Completed);
         }
         catch (RuntimeDeadlineException)
@@ -164,6 +173,10 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 {
                     token.ThrowIfCancellationRequested();
                     loaded.Run(token);
+                    AddRuntimeDiagnostics(
+                        loaded.ExecutionMessages,
+                        "runtime_message",
+                        EmueraRuntimePhase.Execution);
                     return true;
                 },
                 options.RunDeadline,
@@ -759,6 +772,18 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         var diagnostic = new EmueraRuntimeDiagnostic(code, phase, message, fatal, sourcePath, lineNumber);
         diagnostics.Add(diagnostic);
         options.DiagnosticSink?.Invoke(diagnostic);
+    }
+
+    private void AddRuntimeDiagnostics(
+        IEnumerable<string> messages,
+        string code,
+        EmueraRuntimePhase phase)
+    {
+        foreach (string message in messages.Take(MaxRuntimeDiagnostics))
+        {
+            if (!string.IsNullOrWhiteSpace(message))
+                AddDiagnostic(code, phase, message, fatal: false);
+        }
     }
 
     private EmueraRuntimeResult Result(

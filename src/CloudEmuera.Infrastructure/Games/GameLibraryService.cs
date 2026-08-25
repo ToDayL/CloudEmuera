@@ -857,7 +857,8 @@ public sealed class GameLibraryService(
         diagnostic.ActivationBlocking, diagnostic.OverridePolicy, diagnostic.OverriddenBy, diagnostic.OverriddenAt);
 
     private static string DiagnosticStage(string code) => code.StartsWith("TEXT_", StringComparison.Ordinal) ? "ENCODING"
-        : code.StartsWith("CALLSHARP", StringComparison.Ordinal) ? "CAPABILITY" : "STRUCTURE";
+        : code.StartsWith("CALLSHARP", StringComparison.Ordinal) ? "CAPABILITY"
+        : code.StartsWith("RUNTIME_", StringComparison.Ordinal) ? "RUNTIME" : "STRUCTURE";
 
     private void AddAudit(CurrentActor actor, string action, string gameId, DateTimeOffset now, string metadata = "{}") => db.AuditEvents.Add(new AuditEventRow
     {
