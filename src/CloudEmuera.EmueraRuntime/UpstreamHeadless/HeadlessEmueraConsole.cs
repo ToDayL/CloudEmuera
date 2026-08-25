@@ -206,9 +206,11 @@ internal sealed class EmueraConsole
     public void PrintSingleLine(string value, bool temporary) => EmitLine(value, temporary);
     // Upstream status/progress output (for example the DEBUG-only elapsed-time
     // reports) must not be treated as script diagnostics. Warnings are recorded
-    // separately from errors so the headless session only gates activation on
-    // real errors. Neither warnings nor recoverable errors are written into the
-    // player's console transcript; fatal error reporting flushes its diagnostics.
+    // separately, while PrintError remains an output channel rather than a
+    // fatality transition. Initialization's bool result and HasFatalError are
+    // the authoritative error signals. Neither warnings nor recoverable
+    // messages are written into the player's console transcript; fatal error
+    // reporting flushes its diagnostics.
     public void PrintSystemLine(string value) => RecordSystemMessage(value);
     public void PrintError(string value)
     {

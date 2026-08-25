@@ -24,6 +24,49 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-26 — Unified runtime diagnostic severity
+
+- `UpstreamHeadless/UpstreamRuntimeSession.cs` no longer treats a non-empty
+  `RuntimeMessages` collection as initialization failure. The pinned upstream
+  `Process.Initialize` result plus its headless ERB-loader error state are the
+  initialization error signals; the headless `HasFatalError` transition remains
+  the execution error signal. The loader state is exposed only at the headless
+  seam because desktop Emuera reports it later from the title state.
+- `Headless/EmueraRuntimeHost.cs` preserves initialization and execution
+  messages as bounded non-fatal `runtime_message` diagnostics. Warnings remain
+  `runtime_warning`; only fatal runtime transitions produce blocking errors.
+- `Infrastructure/Games/GameValidatorProcessClient.cs` normalizes persisted
+  severity from `activationBlocking`, preventing an informational message from
+  being stored as `ERROR` and preventing a blocking error from being labelled a
+  warning. Scope: ADR-0011, P1-04 GAME-007.
+- Verification: the loading-report Validator regression accepts the package
+  with a non-blocking diagnostic, while malformed ERB remains a blocking
+  `RUNTIME_INITIALIZATION_FAILED`; direct runtime and protocol normalization
+  regressions cover both sides of the boundary.
+
+## 2026-08-26 — Session-local upstream JSON settings
+
+- `UpstreamHeadless/UpstreamRuntimeSession.cs` now calls the pinned upstream
+  `JSONConfig.Load()` after binding `Program.ExeDir` to the current SessionRoot.
+  A missing `setting.json` is therefore created with upstream defaults inside
+  that root; Validator uses a temporary root and Worker uses the persistent
+  SessionRoot, so Game source content is never modified by this lifecycle.
+- `Upstream/Emuera/Runtime/Config/JSON/JSONConfig.cs` resolves the file path on
+  every load/save instead of caching the first `Program.ExeDir`. This preserves
+  isolation when the process-global pinned runtime is reused for another
+  Session. The runtime gate still serializes upstream sessions, and JSON data is
+  reloaded for each initialization.
+- `Upstream/Emuera/Runtime/Script/Statements/FunctionIdentifier.cs` refreshes
+  the optional `VARI`/`VARS` registrations after each JSON load, so a reused
+  headless process cannot retain the previous Session's extension set.
+- Scope: SESS-011/SAVE-011, COMP-002 and the SessionRoot rules in ADR-0007 and
+  ADR-0035. A missing file keeps the upstream default
+  `UseScopedVariableInstruction:false`; packages that use `VARI`/`VARS` must
+  provide the setting explicitly.
+- Verification: headless creation, per-SessionRoot reload, Validator setting
+  loading, real Worker creation and input-root immutability regressions in the
+  RuntimeCompatibility, Worker Integration and Infrastructure suites.
+
 ## 2026-08-25 — WebP asset and upstream Sprite compatibility
 
 - `Headless/WebpMetadataReader.cs` validates bounded RIFF/WEBP containers and

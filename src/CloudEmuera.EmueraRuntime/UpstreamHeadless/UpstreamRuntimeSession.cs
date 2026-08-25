@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using CloudEmuera.RuntimeAdapter;
 using MinorShift.Emuera;
 using MinorShift.Emuera.GameProc;
+using MinorShift.Emuera.GameProc.Function;
 using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Config.JSON;
@@ -169,7 +170,13 @@ public sealed class UpstreamRuntimeSession : IDisposable
             throw new UpstreamSaveLayoutMismatchException(paths.SaveLayout, actualLayout);
         }
 
-        JSONConfig.Data = new JSONConfigData();
+        // The pinned upstream JSON settings are Session-local runtime state.
+        // Program.ExeDir is already the private SessionRoot, so Load() reads
+        // SessionRoot/setting.json and creates an upstream-default file there
+        // when it is absent. Validator uses a temporary SessionRoot; Worker
+        // uses the persistent one. Neither path touches the Game source tree.
+        JSONConfig.Load();
+        FunctionIdentifier.ReloadJsonConfiguredInstructions();
         HeadlessAudioBridge.Configure(audioPort, cancellationToken);
         debugTrace = RuntimeDebugTrace.CreateWhenEnabled(paths.SessionRoot);
         debugTrace?.Activate();
@@ -185,21 +192,24 @@ public sealed class UpstreamRuntimeSession : IDisposable
         MinorShift.Emuera.GlobalStatic.Process = process;
         bool initialized = await process.Initialize(null).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        if (!initialized)
+        if (!initialized || process.HasScriptInitializationError)
         {
-            string details = string.Join(" | ", console.RuntimeMessages.Take(8));
+            string details = string.Join(
+                " | ",
+                console.RuntimeMessages
+                    .Concat(console.RuntimeWarnings)
+                    .Take(8));
             throw new InvalidDataException($"The pinned upstream Emuera loader rejected the controlled game content. {details}");
-        }
-
-        if (console.RuntimeMessages.Count > 0)
-        {
-            string details = string.Join(" | ", console.RuntimeMessages.Take(8));
-            throw new InvalidDataException($"The pinned upstream Emuera loader reported script diagnostics. {details}");
         }
 
         // Stock Emuera treats @SYSTEM_TITLE as optional: when the label is absent it
         // falls back to the GAMEBASE-derived title screen. The headless session must
         // not reject games that legitimately omit it (P1-04 GAME-007 compatibility).
+        // RuntimeMessages is an upstream presentation channel, not a fatality
+        // signal. It also contains the optional loading report emitted through
+        // PrintError. The Process.Initialize result and the headless parser
+        // error state are the authoritative initialization signals; runtime
+        // fatality during execution is represented by HasFatalError.
         initializationMessageCount = console.RuntimeMessages.Count;
         console.BeginExecutionOutput();
         return initialized;
@@ -225,6 +235,9 @@ public sealed class UpstreamRuntimeSession : IDisposable
 
     public IReadOnlyList<string> InitializationMessages => console?.RuntimeMessages ?? Array.Empty<string>();
     public IReadOnlyList<string> InitializationWarnings => console?.RuntimeWarnings ?? Array.Empty<string>();
+    public IReadOnlyList<string> ExecutionMessages => console is null
+        ? Array.Empty<string>()
+        : console.RuntimeMessages.Skip(initializationMessageCount).ToArray();
 
     private static AConfigItem GetHeadlessConfigItem(ConfigCode code) =>
         ConfigData.Instance.GetConfigItem(code) ?? throw new InvalidDataException($"The pinned upstream config item '{code}' is unavailable.");
