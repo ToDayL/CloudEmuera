@@ -301,6 +301,7 @@ public sealed class HeadlessRuntimeFixtureTests
             Assert.Null(error);
             Assert.NotNull(AppContents.GetSprite("立絵_服_通常_1"));
             Assert.NotNull(AppContents.GetSprite("立絵_服_通常_1".ToUpperInvariant()));
+            Assert.NotNull(AppContents.GetSprite("WEBP_SPRITE"));
         }
         finally
         {

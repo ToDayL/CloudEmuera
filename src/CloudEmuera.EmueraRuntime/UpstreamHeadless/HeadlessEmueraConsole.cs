@@ -45,6 +45,9 @@ internal sealed class EmueraConsole
     private bool isTimeOut;
     private string windowTitle = string.Empty;
     private int generation;
+    private int upstreamNewButtonGeneration = 1;
+    private int upstreamLastButtonGeneration = 1;
+    private bool upstreamLastButtonIsInput = true;
     private long lineId;
     private long logicalLineCount;
     private long deletedLines;
@@ -61,6 +64,11 @@ internal sealed class EmueraConsole
     private long canvasDrawableId;
     private readonly List<ConsoleNode> pendingLine = [];
     private readonly List<PendingBufferedLine> pendingBufferedLines = [];
+    // The structured ButtonNode is the browser-facing representation. Keep a
+    // small identity set for integer buttons so the pinned BINPUT code can
+    // receive the same typed button through DisplayLineList without exposing
+    // upstream UI types in RuntimeAdapter.
+    private readonly HashSet<ButtonNode> integerButtonNodes = [];
     private ConsoleLineAlignment? pendingLineAlignment;
     private bool pendingLineNoWrap;
     private bool pendingLineEnd = true;
@@ -116,11 +124,12 @@ internal sealed class EmueraConsole
         this.webFontAssetDigest = webFontAssetDigest ?? string.Empty;
         this.convertBackslashToYen = convertBackslashToYen;
         stringStyle = new StringStyle(Config.ForeColor, FontStyle.Regular, string.Empty);
+        // BINPUT/BINPUTS access the upstream print buffer even though the
+        // headless structured path does not use it to render output. Keep the
+        // compatibility object available in the font-less test/fallback path.
+        printBuffer = new PrintStringBuffer(this);
         if (Config.DefaultFont is not null)
-        {
             stringMeasure = new StringMeasure();
-            printBuffer = new PrintStringBuffer(this);
-        }
         GlobalStatic.Console = this;
     }
 
@@ -158,8 +167,9 @@ internal sealed class EmueraConsole
     public ConsoleButtonString[] bitmapCacheArray = new ConsoleButtonString[256];
     public const nint bitmapCacheArrayCap = 256;
     public nint bitmapCacheArrayIndex;
-    public int LastButtonGeneration => generation;
+    public int LastButtonGeneration => upstreamLastButtonGeneration;
     public int NewButtonGeneration => generation;
+    internal int LegacyNewButtonGeneration => upstreamNewButtonGeneration;
     public int GetLineNo => checked((int)logicalLineCount);
     public long LineCount => logicalLineCount;
     public long DeletedLines => deletedLines;
@@ -221,10 +231,10 @@ internal sealed class EmueraConsole
         pendingLine.Add(new TextNode(DisplayText(FormatPrintCValue(value, alignmentRight)), ToConsoleTextStyle()));
         pendingLineEnd = true;
     }
-    public void PrintButton(string value, string input) => EmitButton(value, input);
-    public void PrintButton(string value, long input) => EmitButton(value, input.ToString(CultureInfo.InvariantCulture));
-    public void PrintButtonC(string value, string input, bool isRight) => EmitPrintCButton(value, input, isRight);
-    public void PrintButtonC(string value, long input, bool isRight) => EmitPrintCButton(value, input.ToString(CultureInfo.InvariantCulture), isRight);
+    public void PrintButton(string value, string input) => EmitButton(value, input, isInteger: false);
+    public void PrintButton(string value, long input) => EmitButton(value, input.ToString(CultureInfo.InvariantCulture), isInteger: true);
+    public void PrintButtonC(string value, string input, bool isRight) => EmitPrintCButton(value, input, isRight, isInteger: false);
+    public void PrintButtonC(string value, long input, bool isRight) => EmitPrintCButton(value, input.ToString(CultureInfo.InvariantCulture), isRight, isInteger: true);
     public void NewLine()
     {
         if (outputEnabled)
@@ -236,13 +246,24 @@ internal sealed class EmueraConsole
     public void PrintFlush(bool force) => FlushPendingLine(force);
     // Upstream RefreshStrings only repaints already committed display lines;
     // it must not turn a partial PRINT/PRINTC buffer into a logical line.
-    // It is nevertheless the visibility boundary for a deferred CLEARLINE.
-    public void RefreshStrings(bool forcePaint) => FlushDeferredReplacementDelete();
+    // BINPUT is the exception in the headless bridge: direct PRINTBUTTON calls
+    // are held in pendingLine rather than the desktop PrintStringBuffer, so a
+    // button-bearing pending line must be committed before the pinned
+    // interpreter inspects DisplayLineList.
+    public void RefreshStrings(bool forcePaint)
+    {
+        if (pendingLine.Any(node => node is ButtonNode) ||
+            pendingBufferedLines.Any(line => line.Nodes.Any(node => node is ButtonNode)))
+            FlushPendingLine();
+        FlushDeferredReplacementDelete();
+    }
     public void ClearText()
     {
         FlushPendingLine();
         FlushDeferredReplacementDelete();
         EmitStructured(ConsoleOperation.ClearConsole());
+        DisplayLineList.Clear();
+        integerButtonNodes.Clear();
         lastLineId = null;
         lastPhysicalLineId = null;
         lastLineCanAppend = false;
@@ -492,6 +513,7 @@ internal sealed class EmueraConsole
                 GlobalStatic.Process.InputSystemInteger(request.DefIntValue);
             else
                 GlobalStatic.Process.InputInteger(request.DefIntValue);
+            CompleteInputButtonGeneration(request.InputType);
             return;
         }
 
@@ -525,6 +547,7 @@ internal sealed class EmueraConsole
                 GlobalStatic.Process.InputString(input.Value);
             }
         }
+        CompleteInputButtonGeneration(request.InputType);
     }
 
     public void ReadAnyKey(bool anykey = false, bool stopMesskip = false)
@@ -600,8 +623,23 @@ internal sealed class EmueraConsole
             EmitStructured(ConsoleOperation.SetWindow(CurrentWindowMetadata()));
     }
     public string GetWindowTitle() => windowTitle;
-    public void UpdateGeneration() => generation++;
-    public void forceUpdateGeneration() => generation++;
+    public void UpdateGeneration()
+    {
+        generation++;
+        upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+        updatedGeneration = true;
+    }
+
+    internal void UpdateLegacyGeneration() =>
+        upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+
+    public void forceUpdateGeneration()
+    {
+        generation++;
+        upstreamNewButtonGeneration = checked(upstreamNewButtonGeneration + 1);
+        upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+        updatedGeneration = true;
+    }
     public bool ButtonIsSelected(ConsoleButtonString button) => false;
     public bool ButtonIsPointing(ConsoleButtonString button) => false;
     public Point GetMousePosition() => Point.Empty;
@@ -834,16 +872,21 @@ internal sealed class EmueraConsole
 
     private void EmitText(string value) => AppendText(value);
 
-    private void EmitButton(string label, string input)
+    private void EmitButton(string label, string input, bool isInteger)
     {
         if (outputEnabled && !string.IsNullOrEmpty(label))
-            AppendNode(new ButtonNode(
+        {
+            ButtonNode button = new(
                 [new TextNode(DisplayText(label), ToConsoleTextStyle())],
                 input,
-                generation: generation));
+                generation: generation);
+            if (isInteger)
+                integerButtonNodes.Add(button);
+            AppendNode(button);
+        }
     }
 
-    private void EmitPrintCButton(string value, string input, bool alignmentRight)
+    private void EmitPrintCButton(string value, string input, bool alignmentRight, bool isInteger)
     {
         if (!outputEnabled || string.IsNullOrEmpty(value))
             return;
@@ -856,7 +899,7 @@ internal sealed class EmueraConsole
         // branch.
         if (stringMeasure is null || Config.DefaultFont is null)
         {
-            EmitButton(formatted, input);
+            EmitButton(formatted, input, isInteger);
             return;
         }
 
@@ -864,7 +907,7 @@ internal sealed class EmueraConsole
         string leading = formatted[..labelStart];
         string trailing = formatted[(labelStart + value.Length)..];
         AppendText(leading);
-        EmitButton(value, input);
+        EmitButton(value, input, isInteger);
         AppendText(trailing);
         pendingLineEnd = true;
     }
@@ -1359,7 +1402,7 @@ internal sealed class EmueraConsole
                 if (existingReplacementGroup.Count == 0)
                 {
                     logicalLineCount = checked(logicalLineCount + 1);
-                    DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+                    DisplayLineList.Add(CreateUpstreamDisplayLine(projectedNodes, temporary, line.LineEnd));
                 }
                 lastLineCanAppend = !line.LineEnd;
                 continue;
@@ -1398,7 +1441,7 @@ internal sealed class EmueraConsole
                 lastLineTemporary = temporary;
                 if (!replaced)
                     logicalLineCount = checked(logicalLineCount + 1);
-                DisplayLineList.Add(new ConsoleDisplayLine([], isLogical: true, temporary: temporary));
+                DisplayLineList.Add(CreateUpstreamDisplayLine(projectedNodes, temporary, line.LineEnd));
             }
 
             lastLineCanAppend = !line.LineEnd;
@@ -1499,10 +1542,12 @@ internal sealed class EmueraConsole
             TextNode[] children = SliceStyledText(textNodes, offset, primitive.Str.Length);
             if (primitive.CanSelect)
             {
-                destination.Add(new ButtonNode(
+                ButtonNode button = new(
                     children,
                     primitive.Input.ToString(CultureInfo.InvariantCulture),
-                    generation: generation));
+                    generation: generation);
+                integerButtonNodes.Add(button);
+                destination.Add(button);
             }
             else
             {
@@ -1510,6 +1555,62 @@ internal sealed class EmueraConsole
             }
             offset = checked(offset + primitive.Str.Length);
         }
+    }
+
+    /// <summary>
+    /// Keeps the pinned interpreter's legacy button inventory in step with
+    /// the structured output inventory. BINPUT/BINPUTS do not inspect the
+    /// browser-facing nodes; they inspect ConsoleDisplayLine.Buttons.
+    /// </summary>
+    private ConsoleDisplayLine CreateUpstreamDisplayLine(
+        IReadOnlyList<ConsoleNode> nodes,
+        bool temporary,
+        bool lineEnd)
+    {
+        var buttons = new List<ConsoleButtonString>();
+        foreach (ButtonNode button in nodes.OfType<ButtonNode>())
+        {
+            if (!button.Enabled)
+                continue;
+
+            if (integerButtonNodes.Contains(button))
+            {
+                if (long.TryParse(button.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long input))
+                    buttons.Add(new ConsoleButtonString(this, [], input));
+                continue;
+            }
+
+            buttons.Add(new ConsoleButtonString(this, [], button.Value));
+        }
+
+        return new ConsoleDisplayLine([.. buttons], isLogical: true, temporary: temporary, lineEnd: lineEnd);
+    }
+
+    private void CompleteInputButtonGeneration(InputType inputType)
+    {
+        if (inputType is InputType.IntValue or InputType.IntButton)
+        {
+            if (upstreamLastButtonGeneration == upstreamNewButtonGeneration)
+                upstreamNewButtonGeneration = checked(upstreamNewButtonGeneration + 1);
+            else if (!upstreamLastButtonIsInput)
+                upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+            upstreamLastButtonIsInput = true;
+        }
+        else if (inputType is InputType.StrValue or InputType.StrButton or InputType.AnyValue)
+        {
+            if (upstreamLastButtonGeneration == upstreamNewButtonGeneration)
+                upstreamNewButtonGeneration = checked(upstreamNewButtonGeneration + 1);
+            else if (upstreamLastButtonIsInput)
+                upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+            upstreamLastButtonIsInput = false;
+        }
+
+        // The synchronous headless Read returns after the input has already
+        // been applied. Advance the active generation now so a subsequent
+        // BINPUT cannot count buttons from the consumed prompt. New buttons
+        // emitted by the script will call UpdateGeneration and adopt this
+        // generation before the next BINPUT scan.
+        upstreamLastButtonGeneration = upstreamNewButtonGeneration;
     }
 
     private string FormatPrintCValue(string value, bool alignmentRight)
