@@ -7,12 +7,14 @@ describe("AssetResolver", () => {
       schemaVersion: 1,
       assets: [
         { assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", mediaType: "image/png", byteLength: 10, contentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        { assetId: "sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", mediaType: "image/webp", byteLength: 12, contentDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
         { assetId: "external", mediaType: "text/html", byteLength: 1, contentDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
       ],
       fonts: [],
       fontDiagnostics: [],
     });
     expect(resolver.url("sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toContain("/api/v1/sessions/s%2F..%2Fhidden/assets/");
+    expect(resolver.url("sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")).toContain("/assets/");
     expect(resolver.url("external")).toBeNull();
     expect(resolver.url("../../etc/passwd")).toBeNull();
   });

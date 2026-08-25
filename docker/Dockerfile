@@ -22,7 +22,7 @@ RUN dotnet publish src/CloudEmuera.Migrator/CloudEmuera.Migrator.csproj --no-res
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libgdiplus && \
+    apt-get install -y --no-install-recommends libgdiplus libwebp7 && \
     ln -sf /usr/lib/libgdiplus.so /usr/lib/libgdiplus.dll.so && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app/api

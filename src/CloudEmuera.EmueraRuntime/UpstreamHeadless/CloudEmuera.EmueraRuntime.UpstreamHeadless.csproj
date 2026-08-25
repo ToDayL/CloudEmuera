@@ -25,6 +25,7 @@
     <Compile Include="../Upstream/Emuera/Runtime/**/*.cs"
              Exclude="../Upstream/Emuera/Runtime/Script/Statements/Clipboard.cs;../Upstream/Emuera/Runtime/Utils/PluginSystem/PluginManager.cs;../Upstream/Emuera/Runtime/Utils/Sound.NAudio.cs;../Upstream/Emuera/Runtime/Utils/Sound.WMP.cs;../Upstream/Emuera/Runtime/Utils/NAudio_LoopStream.cs;../Upstream/Emuera/Runtime/Utils/WebPWrapper.cs" />
     <Compile Include="HeadlessPlatformStubs.cs" />
+    <Compile Include="HeadlessWebpDecoder.cs" />
     <Compile Include="HeadlessFontMetrics.cs" />
     <Compile Include="HeadlessFileSystem.cs" />
     <Compile Include="HeadlessStringConverter.cs" />

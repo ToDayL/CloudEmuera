@@ -84,8 +84,8 @@
       "adapterTypes": ["SpriteNode", "SpriteAnimationFrame", "ImageNode", "RuntimeImageMetadataPort"],
       "ipcTypes": ["SpriteNode", "SpriteAnimationFrame", "ImageNode", "Rect"],
       "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip", "animated-sprite-csv"],
-      "testNames": ["HeadlessRuntimeFixtureTests.TranscriptProjectionDoesNotInventImageText", "HeadlessRuntimeFixtureTests.AnimatedSpriteCsvPublishesAllFramesWithTiming", "StructuredConsoleWireMapperTests.SnapshotMapperPreservesScrollbackSceneMediaAndPrompt"],
-      "securityNotes": ["Only Session manifest asset IDs and validated source/destination rectangles cross the protocol."]
+      "testNames": ["HeadlessRuntimeFixtureTests.TranscriptProjectionDoesNotInventImageText", "HeadlessRuntimeFixtureTests.AnimatedSpriteCsvPublishesAllFramesWithTiming", "HeadlessRuntimeFixtureTests.WebpSpriteLoadsThroughMetadataAndNativeSpritePaths", "HeadlessRuntimeFixtureTests.WebpMetadataRejectsMalformedAndOversizedContainers", "StructuredConsoleWireMapperTests.SnapshotMapperPreservesScrollbackSceneMediaAndPrompt"],
+      "securityNotes": ["Only Session manifest asset IDs and validated source/destination rectangles cross the protocol.", "Static PNG and WebP resources are signature-checked and dimension-bounded; dynamic raster payloads remain PNG-only."]
     },
     {
       "capabilityId": "console.shapes",
