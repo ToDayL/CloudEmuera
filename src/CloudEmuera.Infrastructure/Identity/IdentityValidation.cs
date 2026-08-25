@@ -41,12 +41,35 @@ public static partial class IdentityValidation
         return string.Concat(local.ToUpperInvariant(), "@", domain.ToUpperInvariant());
     }
 
-    public static void ValidatePassword(string password)
+    public static void ValidatePassword(string? password)
     {
-        if (password is null || password.Contains('\0')) throw new IdentityValidationException("INVALID_PASSWORD");
-        int scalarCount;
-        try { scalarCount = password.EnumerateRunes().Count(); }
-        catch (ArgumentException) { throw new IdentityValidationException("INVALID_PASSWORD"); }
-        if (scalarCount is < 12 or > 128) throw new IdentityValidationException("INVALID_PASSWORD");
+        if (!TryReadPassword(password, out int scalarCount) || scalarCount is < 8 or > 128)
+            throw new IdentityValidationException("INVALID_PASSWORD");
+    }
+
+    public static void ValidateBootstrapPassword(string? password)
+    {
+        if (string.IsNullOrWhiteSpace(password)
+            || !TryReadPassword(password, out _))
+            throw new IdentityValidationException("INVALID_PASSWORD");
+    }
+
+    private static bool TryReadPassword(string? password, out int scalarCount)
+    {
+        scalarCount = 0;
+        if (password is null || password.Contains('\0')) return false;
+
+        try
+        {
+            foreach (Rune _ in password.EnumerateRunes())
+            {
+                scalarCount++;
+            }
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 }

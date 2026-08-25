@@ -85,7 +85,7 @@ public sealed partial class BootstrapAdminInitializer(
             return BootstrapAttemptResult.ConfigurationInvalid;
         string normalizedUsername = IdentityValidation.NormalizeUsername(username);
         string normalizedEmail = IdentityValidation.NormalizeEmail(email);
-        IdentityValidation.ValidatePassword(password);
+        IdentityValidation.ValidateBootstrapPassword(password);
         if (await db.Users.AnyAsync(user => user.NormalizedEmail == normalizedEmail || user.NormalizedLoginName == normalizedUsername, cancellationToken).ConfigureAwait(false))
             return BootstrapAttemptResult.ConfigurationInvalid;
 
