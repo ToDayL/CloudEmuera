@@ -78,6 +78,15 @@ internal static class WorkerProcess
         }
         catch (Exception)
         {
+            WorkerErrorLog.Append(
+                bootstrap,
+                bootstrap.Binding,
+                "registration_wait_failed",
+                "registration_wait_failed",
+                "registration",
+                "The Worker did not complete registration before the deadline.",
+                LogLevel.Error,
+                fatal: true);
             await connection.StopAsync().ConfigureAwait(false);
             return 11;
         }
@@ -91,7 +100,13 @@ internal static class WorkerProcess
                 try { await connectionTask.ConfigureAwait(false); }
                 catch (Exception exception) when (exception is IOException or RpcException or OperationCanceledException)
                 {
-                    WorkerLifecycleLog.Write(connectionLogger, bootstrap.Binding, "control_stream_closed", exception.GetType().Name, LogLevel.Warning);
+                    WorkerLifecycleLog.Write(
+                        connectionLogger,
+                        bootstrap.Binding,
+                        "control_stream_closed",
+                        exception.GetType().Name,
+                        LogLevel.Warning,
+                        bootstrap);
                 }
                 await controller.RequestShutdownAsync().ConfigureAwait(false);
             }
@@ -108,7 +123,13 @@ internal static class WorkerProcess
         try { await connectionTask.ConfigureAwait(false); }
         catch (Exception exception) when (exception is IOException or RpcException or OperationCanceledException)
         {
-            WorkerLifecycleLog.Write(connectionLogger, bootstrap.Binding, "control_stream_closed", exception.GetType().Name, LogLevel.Warning);
+            WorkerLifecycleLog.Write(
+                connectionLogger,
+                bootstrap.Binding,
+                "control_stream_closed",
+                exception.GetType().Name,
+                LogLevel.Warning,
+                bootstrap);
         }
         return exitCode;
     }

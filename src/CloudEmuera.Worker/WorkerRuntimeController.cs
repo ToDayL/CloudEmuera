@@ -511,7 +511,13 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 $"runtime_worker_failure:{exception.GetType().Name}:{SafeMessage(exception.Message)}",
                 LogLevel.Error);
             await CommitFailureFrameAndDrainAsync().ConfigureAwait(false);
-            await SendFailureCodeAsync("runtime_worker_failure", "execution", SafeMessage(exception.Message), fatal: true).ConfigureAwait(false);
+            await SendFailureCodeAsync(
+                    "runtime_worker_failure",
+                    "execution",
+                    SafeMessage(exception.Message),
+                    fatal: true,
+                    exceptionType: exception.GetType().Name)
+                .ConfigureAwait(false);
             await WaitForTerminalAcknowledgementAsync().ConfigureAwait(false);
             Complete(WorkerExitCodes.RuntimeExecutionFailed);
         }
@@ -845,13 +851,31 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 true);
     }
 
-    private Task SendFailureCodeAsync(
+    private async Task SendFailureCodeAsync(
         string code,
         string phase,
         string message,
         bool fatal,
-        long? lastSequence = null) =>
-        connection.SendControlAsync(new WorkerEnvelope
+        long? lastSequence = null,
+        string? exceptionType = null)
+    {
+        string normalizedCode = NormalizeCode(code);
+        string normalizedPhase = NormalizeCode(phase);
+        string safeMessage = SafeMessage(message);
+        long outputSequence = lastSequence ?? Interlocked.Read(ref lastSentCommittedSequence);
+        WorkerErrorLog.Append(
+            bootstrap,
+            binding,
+            "runtime_failed",
+            normalizedCode,
+            normalizedPhase,
+            safeMessage,
+            fatal ? LogLevel.Error : LogLevel.Warning,
+            fatal,
+            outputSequence,
+            exceptionType);
+
+        await connection.SendControlAsync(new WorkerEnvelope
         {
             ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
             MessageId = IpcProtocol.NewMessageId("failed"),
@@ -862,15 +886,16 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             CapabilitySetDigest = bootstrap.CapabilitySetDigest,
             RuntimeFailed = new RuntimeFailed
             {
-                StableCode = NormalizeCode(code),
-                Phase = NormalizeCode(phase),
-                SafeMessage = message.Length > StructuredIpcLimits.MaxProtocolErrorMessageLength
-                    ? message[..StructuredIpcLimits.MaxProtocolErrorMessageLength]
-                    : message,
+                StableCode = normalizedCode,
+                Phase = normalizedPhase,
+                SafeMessage = safeMessage.Length > StructuredIpcLimits.MaxProtocolErrorMessageLength
+                    ? safeMessage[..StructuredIpcLimits.MaxProtocolErrorMessageLength]
+                    : safeMessage,
                 Fatal = fatal,
-                LastOutputSequence = lastSequence ?? Interlocked.Read(ref lastSentCommittedSequence)
+                LastOutputSequence = outputSequence
             }
-        });
+        }).ConfigureAwait(false);
+    }
 
     private async Task FinishAfterCancellationAsync()
     {
@@ -992,7 +1017,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         string eventName,
         string reason = "",
         LogLevel level = LogLevel.Information) =>
-        WorkerLifecycleLog.Write(logger, binding, eventName, reason, level);
+        WorkerLifecycleLog.Write(logger, binding, eventName, reason, level, bootstrap);
 
     private string SafeMessage(string message)
     {

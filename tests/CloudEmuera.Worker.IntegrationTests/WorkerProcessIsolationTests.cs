@@ -218,6 +218,18 @@ public sealed class WorkerProcessIsolationTests
         Assert.Equal("initialization", failure.RuntimeFailed.Phase);
         Assert.True(failure.RuntimeFailed.Fatal);
         Assert.Equal(13, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
+
+        string errorLogPath = Path.Combine(
+            Path.GetDirectoryName(fixture.SessionRoot)!,
+            "metadata",
+            WorkerErrorLog.FileName);
+        Assert.True(File.Exists(errorLogPath));
+        string errorLog = File.ReadAllText(errorLogPath);
+        Assert.Contains("\"eventName\":\"runtime_failed\"", errorLog, StringComparison.Ordinal);
+        Assert.Contains("\"code\":\"font_catalog_mismatch\"", errorLog, StringComparison.Ordinal);
+        Assert.Contains("\"phase\":\"initialization\"", errorLog, StringComparison.Ordinal);
+        Assert.DoesNotContain(fixture.SessionRoot, errorLog, StringComparison.Ordinal);
+        Assert.DoesNotContain(manager.SocketPath, errorLog, StringComparison.Ordinal);
     }
 
     [Fact]
