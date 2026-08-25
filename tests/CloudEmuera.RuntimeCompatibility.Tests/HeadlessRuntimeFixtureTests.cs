@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
@@ -17,6 +18,8 @@ namespace CloudEmuera.RuntimeCompatibility.Tests;
 [Trait("Category", "RuntimeCompatibility")]
 public sealed class HeadlessRuntimeFixtureTests
 {
+    private const string ValidWebpBase64 = "UklGRhwAAABXRUJQVlA4TA8AAAAvA4AAAAcQ/Y/+ByKi/wEA";
+
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     public void EraYenCompatibilityTransformsOnlyVisibleTextAndCanBeDisabled()
@@ -205,6 +208,54 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task WebpSpriteLoadsThroughMetadataAndNativeSpritePaths()
+    {
+        byte[] webp = Convert.FromBase64String(ValidWebpBase64);
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINT_IMG \"WEBP\"\nQUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.WriteAllBytes(Path.Combine(resources, "webp.webp"), webp);
+                File.WriteAllText(
+                    Path.Combine(resources, "sprites.csv"),
+                    "WEBP,webp.webp,0,0,4,3\n");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.True(
+            initialized.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", initialized.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+
+        EmueraRuntimeResult result = await host.RunAsync();
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+
+        SpriteNode sprite = Assert.IsType<SpriteNode>(
+            fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes).Single(node => node is SpriteNode));
+        Assert.Equal(new ConsoleRect(0, 0, 4, 3), sprite.SourceRect);
+        Assert.Equal(
+            $"sha256-{Convert.ToHexString(SHA256.HashData(webp)).ToLowerInvariant()}",
+            sprite.AssetId.Value);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void WebpMetadataRejectsMalformedAndOversizedContainers()
+    {
+        byte[] malformed = "RIFF\u0004\u0000\u0000\u0000WEBP"u8.ToArray();
+        Assert.Throws<InvalidDataException>(() =>
+            WebpMetadataReader.Read(new MemoryStream(malformed), malformed.Length));
+
+        byte[] oversized = CreateVp8xMetadataWebp(8_193, 1);
+        Assert.Throws<InvalidDataException>(() =>
+            WebpMetadataReader.Read(new MemoryStream(oversized), oversized.Length));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void AppContentsRegistryLoadsLinuxResourcesForSpriteCreatedLookup()
     {
         // COMP-007: eraTW gates portraits on SPRITECREATED (Look.ERB →
@@ -224,9 +275,13 @@ public sealed class HeadlessRuntimeFixtureTests
                 RuntimeCompatibilityCli.FindRepositoryRoot(),
                 "data", "sessions", "sess_01a00f1017c0715798ed61a24837cfc7", "root", "resources", "1.png");
             File.Copy(sourceImage, Path.Combine(root, "resources", "1.png"));
+            File.WriteAllBytes(
+                Path.Combine(root, "resources", "webp.webp"),
+                Convert.FromBase64String(ValidWebpBase64));
             File.WriteAllText(
                 Path.Combine(root, "resources", "立ち絵.csv"),
-                "立絵_服_通常_1,1.png,0,0,180,180\n");
+                "立絵_服_通常_1,1.png,0,0,180,180\n" +
+                "WEBP_SPRITE,webp.webp,0,0,4,3\n");
 
             HeadlessPathResolver.Configure(root);
             MinorShift.Emuera.Program.ConfigureHeadless(
@@ -2342,6 +2397,62 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task BinputSeesHeadlessPrintButtonBeforeLineBreak()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTBUTTON \"START\", 0\nBINPUT\n" +
+            "PRINTFORML RESULT={RESULT}\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        if (!SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)))
+        {
+            EmueraRuntimeResult earlyResult = await run;
+            string diagnostics = string.Join(" | ", earlyResult.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message));
+            Assert.Fail("BINPUT did not open a prompt: " + earlyResult.Status + "; " + diagnostics);
+        }
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputType.IntegerButton, prompt.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("binput-start", "0", ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
+        Assert.Contains("RESULT=0", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task BinputDoesNotReuseConsumedButtonGeneration()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTBUTTON \"START\", 0\nBINPUT\n" +
+            "PRINTL NO-CURRENT-BUTTON\nBINPUT\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("consume-start", "0", ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.ScriptFailed, result.Status);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "runtime_script_failed" &&
+                diagnostic.Message.Contains("BINPUT", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task PrintButtonAllowsEmptyStringSubmissionValue()
     {
         using var fixture = RuntimeHostFixture.Create(
@@ -2800,6 +2911,41 @@ public sealed class HeadlessRuntimeFixtureTests
             {
             }
         }
+    }
+
+    private static byte[] CreateVp8xMetadataWebp(int width, int height)
+    {
+        const int vp8xPayloadLength = 10;
+        const int vp8PayloadLength = 10;
+        const int riffPayloadLength = 4 + 8 + vp8xPayloadLength + 8 + vp8PayloadLength;
+        byte[] result = new byte[8 + riffPayloadLength];
+        "RIFF"u8.CopyTo(result.AsSpan(0, 4));
+        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(4, 4), riffPayloadLength);
+        "WEBP"u8.CopyTo(result.AsSpan(8, 4));
+
+        int offset = 12;
+        "VP8X"u8.CopyTo(result.AsSpan(offset, 4));
+        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(offset + 4, 4), vp8xPayloadLength);
+        WriteUInt24LittleEndian(result.AsSpan(offset + 12, 3), checked(width - 1));
+        WriteUInt24LittleEndian(result.AsSpan(offset + 15, 3), checked(height - 1));
+        offset += 8 + vp8xPayloadLength;
+
+        "VP8 "u8.CopyTo(result.AsSpan(offset, 4));
+        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(offset + 4, 4), vp8PayloadLength);
+        result[offset + 8] = 0;
+        result[offset + 11] = 0x9d;
+        result[offset + 12] = 0x01;
+        result[offset + 13] = 0x2a;
+        BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(offset + 14, 2), checked((ushort)width));
+        BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(offset + 16, 2), checked((ushort)height));
+        return result;
+    }
+
+    private static void WriteUInt24LittleEndian(Span<byte> destination, int value)
+    {
+        destination[0] = (byte)value;
+        destination[1] = (byte)(value >> 8);
+        destination[2] = (byte)(value >> 16);
     }
 
     private static async Task<string> RunWithInputAsync(RuntimeHostFixture fixture, string input)

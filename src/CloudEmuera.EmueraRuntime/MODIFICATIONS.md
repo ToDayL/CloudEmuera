@@ -24,6 +24,39 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-25 — WebP asset and upstream Sprite compatibility
+
+- `Headless/WebpMetadataReader.cs` validates bounded RIFF/WEBP containers and
+  extracts dimensions from VP8, VP8L, VP8X and animated WebP payloads without
+  decoding untrusted pixels in the metadata path.
+- `Headless/RuntimeImageMetadataPort.cs` now accepts validated WebP resources
+  as `image/webp`; `UpstreamHeadless/HeadlessWebpDecoder.cs` bridges the
+  pinned upstream Bitmap-based Sprite path through the container's `libwebp7`.
+- Scope: P1-07/COMP-007 manifest sprites, including `PRINT_IMG`,
+  `SPRITECREATED`, `GDRAWSPRITE` and `CBGSETSPRITE`. Dynamic browser raster
+  surfaces remain bounded PNG payloads.
+- Verification: WebP metadata rejection, `PRINT_IMG` WebP resolution and
+  upstream AppContents Sprite loading in the RuntimeCompatibility suite.
+
+## 2026-08-25 — Preserve headless PRINTBUTTON state for BINPUT
+
+- UpstreamHeadless/HeadlessEmueraConsole.cs now mirrors structured
+  PRINTBUTTON and implicit numeric-button nodes into the pinned upstream
+  ConsoleDisplayLine.Buttons inventory. Integer and string submission
+  values retain their upstream distinction; BINPUT/BINPUTS therefore
+  validate the same button set that the browser receives.
+- Upstream/Emuera/UI/Game/ConsoleButtonString.cs uses a headless-only
+  legacy-generation seam so this compatibility mirror does not alter the
+  structured RuntimeAdapter generation exposed to HTML/buttons.
+- The headless compatibility PrintStringBuffer is initialized even when
+  no runtime font is bound, and a pending button-bearing line is committed at
+  the upstream RefreshStrings boundary. CLEAR removes the compatibility
+  inventory together with the structured console.
+- Scope: COMP-002/007, PLAY-003 and the real erablue startup menu. Verification:
+  BinputSeesHeadlessPrintButtonBeforeLineBreak,
+  BinputDoesNotReuseConsumedButtonGeneration and all 114 tests in the
+  RuntimeCompatibility suite pass in the development Docker environment.
+
 ## 2026-08-24 — Use the bundled face for GRAPHICS-mode layout measurement
 
 - `Upstream/Emuera/UI/Game/StringMeasure.cs` now consults the bound TTF's

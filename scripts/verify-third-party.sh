@@ -61,7 +61,8 @@ grep -Fq "CloudEmuera modification" "$source_root/Emuera/Runtime/Script/Statemen
 grep -Fq "System.Drawing.Common\" Version=\"6.0.0" "$repo_root/Directory.Packages.props"
 grep -Fq "## System.Drawing.Common" "$repo_root/THIRD_PARTY_NOTICES.md"
 grep -Fq "## libgdiplus" "$repo_root/THIRD_PARTY_NOTICES.md"
-grep -Fq "apt-get install -y --no-install-recommends libgdiplus" "$repo_root/docker/Dockerfile"
-grep -Fq "apt-get install -y --no-install-recommends libgdiplus" "$repo_root/docker/Dockerfile.dev"
+grep -Fq "## libwebp" "$repo_root/THIRD_PARTY_NOTICES.md"
+grep -Fq "apt-get install -y --no-install-recommends libgdiplus libwebp7" "$repo_root/docker/Dockerfile"
+grep -Fq "apt-get install -y --no-install-recommends libgdiplus libwebp7" "$repo_root/docker/Dockerfile.dev"
 
 echo "Integrated Emuera.EM+EE source provenance verified at $expected_commit ($expected_integration_version)"

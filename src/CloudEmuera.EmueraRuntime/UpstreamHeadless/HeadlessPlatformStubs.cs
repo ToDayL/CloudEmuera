@@ -275,7 +275,7 @@ namespace MinorShift.Emuera.Runtime.Utils
 {
     internal sealed class WebP : IDisposable
     {
-        public System.Drawing.Bitmap Load(string path) => null;
+        public System.Drawing.Bitmap Load(string path) => HeadlessWebpDecoder.Decode(path);
         public void Dispose() { }
     }
 }

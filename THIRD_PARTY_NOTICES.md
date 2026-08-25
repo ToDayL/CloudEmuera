@@ -61,3 +61,14 @@ are only served to the browser through the runtime-font endpoint.
 - License: <https://github.com/mono/libgdiplus/blob/main/LICENSE>
 
 `libgdiplus` is present only in the Worker/runtime container image and implements the native GDI+ compatibility calls used by the pinned Emuera source.
+
+## libwebp
+
+- Source: <https://chromium.googlesource.com/webm/libwebp>
+- Distribution: installed from the Debian base-image package repository as `libwebp7`
+- License: BSD-style Google libwebp license
+- Complete local notice: `src/CloudEmuera.EmueraRuntime/Upstream/Readme/License/LibWebp.LICENSE.txt`
+
+`libwebp7` is present in the API/Worker runtime images. The headless runtime uses
+its C decoder for upstream Bitmap-based Sprite operations; browser-facing WebP
+assets remain Session-manifest files validated by the asset boundary.
