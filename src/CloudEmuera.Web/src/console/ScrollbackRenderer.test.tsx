@@ -5,8 +5,8 @@ import { AssetResolver } from "./AssetResolver";
 import { ScrollbackRenderer, leadingVisualOverflow, trailingVisualOverflow, trimTrailingEmptyLines } from "./ScrollbackRenderer";
 import type { RealtimeLine } from "../realtime/protocol";
 
-const assets = new AssetResolver("s1", { schemaVersion: 1, assets: [], fonts: [], fontDiagnostics: [] });
-const clockAssets = new AssetResolver("s1", { schemaVersion: 1, assets: [{ assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", mediaType: "image/png", byteLength: 128, contentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", eTag: null }], fonts: [], fontDiagnostics: [] });
+const assets = new AssetResolver("s1");
+const clockAssets = new AssetResolver("s1");
 const line = (id: string, text: string): RealtimeLine => ({ lineId: id, nodes: [{ type: "text", text, style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], alignment: "left", temporary: false });
 
 function scrollContainer(atLatest: boolean) {
@@ -124,7 +124,7 @@ describe("ScrollbackRenderer", () => {
   it("keeps escaped portrait pixels inside the scrollable scrollback extent", () => {
     const portraitLine: RealtimeLine = {
       lineId: "portrait-line",
-      nodes: [{ type: "sprite", assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRect: { x: 0, y: 0, width: 180, height: 180 }, destination: { x: 0, y: 32, width: 180, height: 180 }, frame: 0, zIndex: 0, opacity: 1, altText: "portrait", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
+      nodes: [{ type: "sprite", assetId: "path-YXNzZXQ", sourceRect: { x: 0, y: 0, width: 180, height: 180 }, destination: { x: 0, y: 32, width: 180, height: 180 }, frame: 0, zIndex: 0, opacity: 1, altText: "portrait", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
       alignment: "left",
       temporary: false,
       lineHeight: 20,
@@ -143,7 +143,7 @@ describe("ScrollbackRenderer", () => {
   it("reserves leading space for a title image with a negative ypos", () => {
     const titleLine: RealtimeLine = {
       lineId: "title-line",
-      nodes: [{ type: "sprite", assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRect: { x: 0, y: 0, width: 486, height: 648 }, destination: { x: 0, y: -594, width: 486, height: 648 }, frame: 0, zIndex: 0, opacity: 1, altText: "title", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
+      nodes: [{ type: "sprite", assetId: "path-YXNzZXQ", sourceRect: { x: 0, y: 0, width: 486, height: 648 }, destination: { x: 0, y: -594, width: 486, height: 648 }, frame: 0, zIndex: 0, opacity: 1, altText: "title", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
       alignment: "left",
       temporary: false,
       lineHeight: 20,
@@ -211,7 +211,7 @@ describe("ScrollbackRenderer", () => {
   it("keeps sprite destination offsets without inflating the text line height", () => {
     const spriteLine: RealtimeLine = {
       lineId: "clock-line",
-      nodes: [{ type: "sprite", assetId: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRect: { x: 0, y: 0, width: 54, height: 16 }, destination: { x: 12, y: 4, width: 54, height: 16 }, frame: 0, zIndex: 0, opacity: 1, altText: "clock", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
+      nodes: [{ type: "sprite", assetId: "path-YXNzZXQ", sourceRect: { x: 0, y: 0, width: 54, height: 16 }, destination: { x: 12, y: 4, width: 54, height: 16 }, frame: 0, zIndex: 0, opacity: 1, altText: "clock", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
       alignment: "right",
       temporary: false,
     };

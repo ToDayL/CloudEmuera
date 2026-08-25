@@ -6,7 +6,22 @@ namespace CloudEmuera.Application.GamePackages;
 public sealed record GamePackageIngestionRequest(
     string OwnerUserId,
     Stream Content,
-    string? RequestId = null);
+    string? RequestId = null,
+    Func<GamePackageProgressUpdate, CancellationToken, Task>? ProgressAsync = null);
+
+public enum GamePackageProgressStage
+{
+    Receiving,
+    InspectingArchive,
+    Extracting,
+    NormalizingEncoding,
+    Analyzing,
+    Ready,
+}
+
+public sealed record GamePackageProgressUpdate(
+    GamePackageProgressStage Stage,
+    string? CurrentItem = null);
 
 public sealed record GamePackageIngestionLimits
 {

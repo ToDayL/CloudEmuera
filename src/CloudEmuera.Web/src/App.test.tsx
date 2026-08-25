@@ -84,10 +84,6 @@ function session(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function emptyPresentationManifest() {
-  return { schemaVersion: 1, assets: [], fonts: [], fontDiagnostics: [] };
-}
-
 class SilentWebSocket {
   static readonly OPEN = 1;
   static readonly CLOSED = 3;
@@ -95,6 +91,53 @@ class SilentWebSocket {
   addEventListener(): void { /* connection remains pending for this test */ }
   send(): void { /* no server is needed for the reconnect UI assertion */ }
   close(): void { /* no-op */ }
+}
+
+class TestUploadXmlHttpRequest {
+  static readonly DONE = 4;
+  static responseText = "{}";
+  static responseStatus = 201;
+  static fail = false;
+  static hold = false;
+  static pending: TestUploadXmlHttpRequest | null = null;
+  readyState = 1;
+  status = TestUploadXmlHttpRequest.responseStatus;
+  responseText = TestUploadXmlHttpRequest.responseText;
+  readonly upload = {
+    addEventListener: (_type: string, listener: (event: ProgressEvent) => void) => { this.progressListener = listener; },
+  };
+  private readonly listeners = new Map<string, (event: Event) => void>();
+  private progressListener: ((event: ProgressEvent) => void) | undefined;
+  private bodySize = 0;
+
+  open(): void { /* no-op */ }
+  setRequestHeader(): void { /* no-op */ }
+  addEventListener(type: string, listener: (event: Event) => void): void { this.listeners.set(type, listener); }
+  send(body: File): void {
+    this.bodySize = body.size;
+    this.progressListener?.({ lengthComputable: true, loaded: Math.floor(body.size / 2), total: body.size } as ProgressEvent);
+    if (TestUploadXmlHttpRequest.hold) {
+      TestUploadXmlHttpRequest.pending = this;
+      return;
+    }
+    this.complete();
+  }
+  static completePending(): void {
+    const request = TestUploadXmlHttpRequest.pending;
+    TestUploadXmlHttpRequest.pending = null;
+    request?.complete();
+  }
+  private complete(): void {
+    this.progressListener?.({ lengthComputable: true, loaded: this.bodySize, total: this.bodySize } as ProgressEvent);
+    this.readyState = TestUploadXmlHttpRequest.DONE;
+    const event = new Event(TestUploadXmlHttpRequest.fail ? "error" : "load");
+    this.listeners.get(event.type)?.(event);
+  }
+  abort(): void {
+    if (TestUploadXmlHttpRequest.pending === this) TestUploadXmlHttpRequest.pending = null;
+    this.readyState = TestUploadXmlHttpRequest.DONE;
+    this.listeners.get("abort")?.(new Event("abort"));
+  }
 }
 
 describe("App", () => {
@@ -214,11 +257,16 @@ describe("App", () => {
     const created = game({ id: "g-new", name: "My Era Game" });
     let gamesList: unknown[] = [];
     const fetchMock = mockFetch((url, init) => {
-      if (url === "/api/v1/games?name=My+Era+Game&visibility=PRIVATE" && init?.method === "POST") { gamesList = [created]; return jsonResponse(created, 201); }
       if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
       if (url === "/api/v1/games") return jsonResponse({ items: gamesList });
       return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
     });
+    TestUploadXmlHttpRequest.responseText = JSON.stringify(created);
+    TestUploadXmlHttpRequest.responseStatus = 201;
+    TestUploadXmlHttpRequest.fail = false;
+    TestUploadXmlHttpRequest.hold = false;
+    TestUploadXmlHttpRequest.pending = null;
+    vi.stubGlobal("XMLHttpRequest", TestUploadXmlHttpRequest);
     renderAt("/games");
 
     expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
@@ -231,7 +279,41 @@ describe("App", () => {
 
     expect(await within(dialog).findByText("游戏已加载并启用")).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: /查看游戏/ })).toHaveAttribute("href", "/games/g-new");
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/games?name=My+Era+Game&visibility=PRIVATE", expect.objectContaining({ method: "POST", body: expect.any(File) }));
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/games?name=My+Era+Game&visibility=PRIVATE", expect.anything());
+    vi.unstubAllGlobals();
+  });
+
+  it("shows byte upload progress while the server task is still running", async () => {
+    const created = game({ id: "g-progress", name: "Progress Game" });
+    const fetchMock = mockFetch((url) => {
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/games") return jsonResponse({ items: [] });
+      if (url.startsWith("/api/v1/games/uploads/")) return jsonResponse({ code: "UPLOAD_NOT_FOUND", message: "not ready", requestId: "req" }, 404);
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    TestUploadXmlHttpRequest.responseText = JSON.stringify(created);
+    TestUploadXmlHttpRequest.responseStatus = 201;
+    TestUploadXmlHttpRequest.fail = false;
+    TestUploadXmlHttpRequest.hold = true;
+    TestUploadXmlHttpRequest.pending = null;
+    vi.stubGlobal("XMLHttpRequest", TestUploadXmlHttpRequest);
+    renderAt("/games");
+
+    expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "上传游戏" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "上传游戏" });
+    fireEvent.change(within(dialog).getByLabelText("ZIP 游戏包"), { target: { files: [new File(["x".repeat(100)], "progress.zip", { type: "application/zip" })] } });
+    const uploadButton = within(dialog).getByRole("button", { name: "上传、加载并启用" });
+    await waitFor(() => expect(uploadButton).toBeEnabled());
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+
+    const byteProgress = await within(dialog).findByRole("progressbar", { name: "ZIP 上传进度" });
+    expect(byteProgress).toHaveValue(50);
+    expect(within(dialog).getByText("上传并接收 ZIP")).toBeInTheDocument();
+
+    TestUploadXmlHttpRequest.completePending();
+    expect(await within(dialog).findByText("游戏已加载并启用")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
@@ -285,6 +367,12 @@ describe("App", () => {
       if (url.startsWith("/api/v1/games?") && init?.method === "POST") return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve(jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404));
     });
+    TestUploadXmlHttpRequest.responseText = "{}";
+    TestUploadXmlHttpRequest.responseStatus = 0;
+    TestUploadXmlHttpRequest.fail = true;
+    TestUploadXmlHttpRequest.hold = false;
+    TestUploadXmlHttpRequest.pending = null;
+    vi.stubGlobal("XMLHttpRequest", TestUploadXmlHttpRequest);
     vi.stubGlobal("fetch", fetchMock);
     renderAt("/games");
     expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
@@ -298,6 +386,7 @@ describe("App", () => {
     fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
 
     expect(await within(dialog).findByText(/网络错误：上传未能完成/)).toBeInTheDocument();
+    expect(dialog.querySelector(".upload-task.failed .upload-task-mark")).toHaveTextContent("×");
     expect(within(dialog).getByRole("button", { name: "返回修改" })).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
@@ -308,7 +397,6 @@ describe("App", () => {
       if (url === "/api/v1/sessions/sess-world") return jsonResponse(currentSession);
       if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
       if (url === `/api/v1/runtime-fonts/assets/${runtimeFontDigest}.woff2`) return new Response(new TextEncoder().encode("font-test"), { headers: { "Content-Type": "font/woff2", "Content-Length": "9" } });
-      if (url === "/api/v1/sessions/sess-world/presentation-manifest") return jsonResponse(emptyPresentationManifest());
       return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
     });
     const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");

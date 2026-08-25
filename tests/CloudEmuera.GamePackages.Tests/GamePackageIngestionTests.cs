@@ -89,6 +89,36 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Progress")]
+    public async Task ReportsArchiveStagesAndCurrentFilesWithoutChangingIngestionResult()
+    {
+        byte[] zip = CreateZip(
+            ("ERB/START.ERB", "@SYSTEM_TITLE\nQUIT\n"u8.ToArray(), null),
+            ("CSV/GAMEBASE.CSV", "title,test\n"u8.ToArray(), null),
+            ("emuera.config", "Use sav folder:NO\n"u8.ToArray(), null));
+        List<GamePackageProgressUpdate> updates = [];
+
+        IngestedGamePackage result = await Service().IngestAsync(
+            new GamePackageIngestionRequest(
+                userId,
+                new MemoryStream(zip),
+                "progress-test",
+                (update, _) =>
+                {
+                    updates.Add(update);
+                    return Task.CompletedTask;
+                }),
+            Limits());
+
+        Assert.Equal(3, result.Manifest.FileCount);
+        Assert.Contains(updates, update => update.Stage == GamePackageProgressStage.Receiving);
+        Assert.Contains(updates, update => update.Stage == GamePackageProgressStage.InspectingArchive);
+        Assert.Contains(updates, update => update.Stage == GamePackageProgressStage.Extracting && update.CurrentItem == "ERB/START.ERB");
+        Assert.Contains(updates, update => update.Stage == GamePackageProgressStage.Analyzing && update.CurrentItem == "ERB/START.ERB");
+        Assert.Equal(GamePackageProgressStage.Ready, updates[^1].Stage);
+    }
+
+    [Fact]
     [Trait("Category", "Encoding")]
     public async Task ConvertsUtf16TextFilesToUtf8OnIngestion()
     {

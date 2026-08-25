@@ -121,7 +121,7 @@ public static class LegacyGameDataRootMigrator
         using (SafeFileHandle? existingStaging = LinuxFileOperations.TryOpenDirectoryAt(gameDirectoryHandle, stagingName))
         {
             if (existingStaging is null)
-                LinuxFileOperations.CopyTree(sourceHandle, gameDirectoryHandle, stagingName);
+                LinuxFileOperations.CopyTree(sourceHandle, gameDirectoryHandle, stagingName, syncToDisk: true);
         }
 
         MakeReadOnlyIfNeeded(stagingPath, role);

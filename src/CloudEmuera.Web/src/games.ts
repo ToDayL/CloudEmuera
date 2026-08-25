@@ -1,4 +1,4 @@
-import { apiRequest, getCsrfToken, newIdempotencyKey } from "./api";
+import { ApiError, apiRequest, getCsrfToken, newIdempotencyKey } from "./api";
 
 export type GameVisibility = "PRIVATE" | "SERVER_SHARED";
 export type GameStatus = "ACTIVE" | "BLOCKED" | "DELETED";
@@ -17,6 +17,24 @@ export interface GameLibraryItem {
   stateVersion: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface GameUploadProgress {
+  gameId: string;
+  operationId: string;
+  status: "PENDING" | "RUNNING" | "CONTENT_READY" | "COMMITTED" | "FAILED";
+  stage: string;
+  currentItem: string | null;
+  errorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface GameUploadOptions {
+  signal?: AbortSignal;
+  onRequestId?: (requestId: string) => void;
+  onUploadProgress?: (loadedBytes: number, totalBytes: number) => void;
 }
 
 export interface GameFileItem {
@@ -104,18 +122,58 @@ export async function setGameBlocked(gameId: string, stateVersion: number, block
   });
 }
 
-export async function uploadGame(name: string, visibility: GameVisibility, file: File): Promise<GameLibraryItem> {
+export async function uploadGame(name: string, visibility: GameVisibility, file: File, options: GameUploadOptions = {}): Promise<GameLibraryItem> {
+  const idempotencyKey = newIdempotencyKey();
+  options.onRequestId?.(idempotencyKey);
   const token = await getCsrfToken();
   const query = new URLSearchParams({ name, visibility });
-  return apiRequest<GameLibraryItem>(`/games?${query.toString()}`, {
-    method: "POST",
-    headers: {
-      "X-CSRF-TOKEN": token,
-      "Idempotency-Key": newIdempotencyKey(),
-      "Content-Type": "application/zip",
-    },
-    body: file,
+  if (options.signal?.aborted) throw options.signal.reason ?? new DOMException("上传已取消。", "AbortError");
+
+  return new Promise<GameLibraryItem>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    let settled = false;
+    const abort = () => {
+      if (request.readyState !== XMLHttpRequest.DONE) request.abort();
+    };
+    const cleanup = () => options.signal?.removeEventListener("abort", abort);
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    request.open("POST", `/api/v1/games?${query.toString()}`);
+    request.withCredentials = true;
+    request.setRequestHeader("X-CSRF-TOKEN", token);
+    request.setRequestHeader("Idempotency-Key", idempotencyKey);
+    request.setRequestHeader("Content-Type", "application/zip");
+    request.upload.addEventListener("progress", event => {
+      if (event.lengthComputable) options.onUploadProgress?.(event.loaded, event.total);
+    });
+    request.addEventListener("load", () => finish(() => {
+      let body: GameLibraryItem | { message?: string; code?: string; requestId?: string } | null;
+      try {
+        body = request.responseText ? JSON.parse(request.responseText) as GameLibraryItem | { message?: string; code?: string; requestId?: string } : null;
+      } catch {
+        reject(new ApiError("服务器返回了无法识别的响应。", "INVALID_RESPONSE", request.status));
+        return;
+      }
+      if (request.status >= 200 && request.status < 300) {
+        resolve(body as GameLibraryItem);
+        return;
+      }
+      const error = body as { message?: string; code?: string; requestId?: string } | null;
+      reject(new ApiError(error?.message ?? "上传失败。", error?.code ?? "REQUEST_FAILED", request.status, error?.requestId));
+    }));
+    request.addEventListener("error", () => finish(() => reject(new Error("网络错误，上传未能完成。"))));
+    request.addEventListener("abort", () => finish(() => reject(options.signal?.reason ?? new DOMException("上传已取消。", "AbortError"))));
+    options.signal?.addEventListener("abort", abort, { once: true });
+    request.send(file);
   });
+}
+
+export async function getGameUploadProgress(requestId: string): Promise<GameUploadProgress> {
+  return apiRequest<GameUploadProgress>(`/games/uploads/${encodeURIComponent(requestId)}`);
 }
 
 export async function listFiles(gameId: string, scope: ContentScope, path?: string | null): Promise<GameFileItem[]> {

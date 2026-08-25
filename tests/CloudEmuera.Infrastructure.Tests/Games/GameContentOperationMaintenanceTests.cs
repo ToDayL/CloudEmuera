@@ -57,7 +57,7 @@ public sealed class GameContentOperationMaintenanceTests
         Assert.Equal("games/game_fixture/content", recovered.CurrentContentPath);
         Assert.Null(recovered.ContentDigest);
         Assert.Equal(1, recovered.ContentRevision);
-        Assert.Equal(1, await scope.Context.GameFiles.AsNoTracking().CountAsync(file => file.Scope == "CURRENT"));
+        Assert.Equal(0, await scope.Context.GameFiles.AsNoTracking().CountAsync(file => file.Scope == "CURRENT"));
     }
 
     [Fact]

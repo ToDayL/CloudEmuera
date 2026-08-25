@@ -6,7 +6,7 @@ public sealed class GameContentTreeScannerTests
 {
     [Fact]
     [Trait("Category", "GameLibrary")]
-    public async Task LargeManifestIsRejectedAtTheBoundedEntryLimit()
+    public async Task LargeContentTreeIsRejectedAtTheBoundedEntryLimit()
     {
         string root = Path.Combine(Path.GetTempPath(), $"cloudemuera-scan-{Guid.CreateVersion7():N}");
         Directory.CreateDirectory(root);

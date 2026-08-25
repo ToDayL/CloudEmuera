@@ -1,9 +1,9 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ApiError, apiRequest } from "../api";
+import { ApiError } from "../api";
 import { closeSession, useRuntimeFontCatalog, useSession, waitForSession, type SessionState } from "../sessions/api";
-import { presentationManifestUrl, AssetResolver, type PresentationManifest } from "./AssetResolver";
+import { AssetResolver } from "./AssetResolver";
 import { CanvasRenderer } from "./CanvasRenderer";
 import { MediaController } from "./media";
 import { PromptController, type PromptControllerHandle } from "./PromptController";
@@ -41,13 +41,6 @@ export function ConsolePage() {
   const gameConsoleRef = useRef<HTMLElement>(null);
   const promptControllerRef = useRef<PromptControllerHandle>(null);
   const endedSessionRef = useRef<string | null>(null);
-  const manifest = useQuery({
-    queryKey: ["presentation-manifest", sessionId],
-    queryFn: () => apiRequest<PresentationManifest>(presentationManifestUrlPath(sessionId!)),
-    enabled: Boolean(sessionId),
-    staleTime: 60_000,
-    retry: 1,
-  });
   useEffect(() => {
     const update = () => {
       setVisualViewport(currentVisualViewport());
@@ -65,7 +58,7 @@ export function ConsolePage() {
   const runtimeCssFamily = useMemo(() => runtimeFont ? runtimeFontCssFamily(runtimeFont) : undefined, [runtimeFont]);
   const [runtimeFontReady, setRuntimeFontReady] = useState(false);
   const [runtimeFontFailed, setRuntimeFontFailed] = useState(false);
-  const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", manifest.data, runtimeCssFamily), [manifest.data, runtimeCssFamily, sessionId]);
+  const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", runtimeCssFamily), [runtimeCssFamily, sessionId]);
   const media = useRef<MediaController | null>(null);
 
   if (!media.current) media.current = new MediaController(message => setRendererError(message));
@@ -163,7 +156,7 @@ export function ConsolePage() {
 
   const state = stream.consoleState;
   const terminalSession = session.data.state === "CLOSED" || session.data.state === "CRASHED";
-  const fatal = stream.fatalRenderError ?? rendererError ?? (manifest.isError ? "Presentation manifest 无法加载，已停止渲染资源。" : null);
+  const fatal = stream.fatalRenderError ?? rendererError;
   return <div className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
     <div className="console-overlay-actions">
       <Link className="console-overlay-back" to="/sessions" aria-label="离开游戏">←</Link>
@@ -181,7 +174,6 @@ export function ConsolePage() {
         {(closeError || stream.pendingInput?.status === "unknown") && <div className="error-banner" role="alert"><strong>实时操作提示</strong><small>{closeError ?? "上次输入的结果未知；服务端可能已经处理，请确认当前提示后再决定是否重试。"}</small>{stream.pendingInput?.status === "unknown" && <button className="secondary-button" onClick={() => manager.retryUnknownInput(sessionId)}>重试上次输入</button>}</div>}
         {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
-        {assets.diagnostics().length > 0 && <div className="console-compat-warning" role="status"><strong>兼容性提示</strong><small>{assets.diagnostics().map(fontDiagnosticLabel).join("；")}</small></div>}
         {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} /></> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
         </div>
@@ -231,10 +223,6 @@ function currentVisualViewport(): { height: number; offsetTop: number } {
   };
 }
 
-function presentationManifestUrlPath(sessionId: string): string {
-  return presentationManifestUrl(sessionId).replace(/^\/api\/v1/, "");
-}
-
 function inputReceiptLabel(status: string): string {
   return ({ ACCEPTED: "已接受", DUPLICATE: "已处理（重复消息）", CONFLICT: "冲突：其他设备已回答", NO_ACTIVE_PROMPT: "已失效：当前没有提示", INVALID_FORMAT: "格式无效", INVALID_COMMAND: "命令无效", CANCELLED: "已取消", TIMED_OUT: "已超时", SESSION_NOT_ACCEPTING_INPUT: "Session 当前不接受输入", STALE_EPOCH: "Worker 已更换", SESSION_NOT_RUNNING: "Session 未运行", INPUT_BACKPRESSURE: "服务繁忙，可使用相同 ID 重试", WORKER_UNAVAILABLE: "Worker 暂不可用，可使用相同 ID 重试", FORBIDDEN: "没有输入权限" } as Record<string, string>)[status] ?? "服务端返回了未分类回执";
 }
@@ -247,14 +235,4 @@ function emptyConsoleLabel(phase: SessionStoreState["phase"]): string {
       : phase === "error" || phase === "forbidden"
         ? "无法获取 Worker 快照"
         : "等待 Worker 快照…";
-}
-
-function fontDiagnosticLabel(code: string): string {
-  return ({
-    FONT_FAMILY_COLLISION: "多个字体文件已使用独立 family，避免浏览器合并",
-    FONT_FAMILY_UNMAPPED: "部分字体文件没有可确定的逻辑 family，已使用摘要 family",
-    FONT_DEFAULT_FALLBACK_ASSIGNED: "未找到 default 字体，已选择确定性的首个字体作为 default",
-    FONT_MULTIPLE_ASSETS_ISOLATED: "检测到多个字体资源，已分别加载",
-    FONT_LOAD_FAILED: "字体资源加载失败，文本已使用清单 fallback",
-  } as Record<string, string>)[code] ?? "字体资源存在兼容性差异，已使用安全回退";
 }

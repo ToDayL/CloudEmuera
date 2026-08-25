@@ -54,6 +54,13 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.True(game.HasCurrentContent);
         Assert.Equal(1, game.ContentRevision);
 
+        GameUploadProgressItem uploadProgress = await (await client.GetAsync("/api/v1/games/uploads/http-fixture-upload"))
+            .Content.ReadFromJsonAsync<GameUploadProgressItem>() ?? throw new Xunit.Sdk.XunitException("Upload progress response was missing.");
+        Assert.Equal(game.Id, uploadProgress.GameId);
+        Assert.Equal("COMMITTED", uploadProgress.Status);
+        Assert.Equal("COMPLETED", uploadProgress.Stage);
+        Assert.Null(uploadProgress.CurrentItem);
+
         using MemoryStream replayArchive = CreateArchive();
         HttpResponseMessage replay = await UploadAsync(client, "HTTP Fixture", replayArchive, csrf, "http-fixture-upload");
         GameLibraryItem replayed = await replay.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Upload replay response was missing.");

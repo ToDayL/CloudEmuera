@@ -47,7 +47,7 @@ export class MediaController {
     if (!url) {
       element.pause();
       element.removeAttribute("src");
-      this.onError?.("音频资源未通过 Session manifest 授权，已停止该媒体频道。");
+      this.onError?.("音频资源路径引用无效，已停止该媒体频道。");
       return;
     }
     if (element.src !== new URL(url, window.location.origin).href) element.src = url;

@@ -18,7 +18,8 @@ public sealed record GameLibraryItem(
 public sealed record GameFileItem(string Path, bool IsDirectory, long Bytes, string? ETag = null);
 public sealed record GameTextFile(string Path, string Content, string Encoding, bool HasBom, long Bytes, string? ETag, int StateVersion);
 public sealed record GameFileDownload(string FileName, long Bytes, string? ETag, Stream Content);
-public sealed record GameContentOperationItem(string Id, string Type, string Status, string? ContentDigest, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt);
+public sealed record GameContentOperationItem(string Id, string Type, string Status, string Stage, string? CurrentItem, string? ContentDigest, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt);
+public sealed record GameUploadProgressItem(string GameId, string OperationId, string Status, string Stage, string? CurrentItem, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt);
 public sealed record GameDiagnosticItem(string Id, string Code, string Severity, string? Path, string Message, string MessageKey, bool ActivationBlocking, string OverridePolicy, string? OverriddenBy, DateTimeOffset? OverriddenAt);
 
 public sealed record GameValidationDiagnostic(
@@ -90,6 +91,7 @@ public interface IGameLibraryService
     Task<GameTextFile> ReadTextFileAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default);
     Task<GameFileDownload> OpenDownloadAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default);
     Task<GameContentOperationItem?> GetOperationAsync(CurrentActor actor, string gameId, string operationId, CancellationToken cancellationToken = default);
+    Task<GameUploadProgressItem?> GetUploadProgressAsync(CurrentActor actor, string requestId, CancellationToken cancellationToken = default);
     Task<GameDiagnosticItem> OverrideDiagnosticAsync(CurrentActor actor, string gameId, string diagnosticId, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<GameDiagnosticItem>> ListDiagnosticsAsync(CurrentActor actor, string gameId, CancellationToken cancellationToken = default);
     Task<GameValidationResult> ValidateAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);

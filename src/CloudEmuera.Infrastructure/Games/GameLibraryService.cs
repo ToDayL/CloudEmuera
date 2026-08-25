@@ -18,6 +18,8 @@ public sealed class GameLibraryService(
     TimeProvider timeProvider) : IGameLibraryService
 {
     private const int MaxTextPreviewBytes = 4 * 1024 * 1024;
+    private static readonly TimeSpan ProgressPersistInterval = TimeSpan.FromMilliseconds(250);
+    private DateTimeOffset CurrentTime => timeProvider.GetUtcNow();
 
     public async Task<IReadOnlyList<GameLibraryItem>> ListAsync(CurrentActor actor, CancellationToken cancellationToken = default) =>
         await db.Games.AsNoTracking()
@@ -35,26 +37,54 @@ public sealed class GameLibraryService(
         string requestId,
         CancellationToken cancellationToken = default)
     {
-        // The public product operation is deliberately one step. The existing
-        // ingestion/workspace/content operations remain internal durable
-        // boundaries so a process crash can still be reconciled safely.
         GameLibraryItem game = await CreateAsync(actor, name, visibility, cancellationToken).ConfigureAwait(false);
+        GameContentOperationRow? uploadOperation = null;
         try
         {
+            GameRow createdRow = await FindOwnedAsync(actor, game.Id, cancellationToken).ConfigureAwait(false);
+            uploadOperation = await StartOperationAsync(
+                createdRow,
+                GameContentOperationType.Import,
+                ingestionId: null,
+                contentDigest: null,
+                workPath: null,
+                cancellationToken,
+                requestId,
+                GameContentOperationStage.Receiving).ConfigureAwait(false);
+            var progress = new OperationProgressReporter(this, uploadOperation.Id, ProgressPersistInterval);
             IngestedGamePackage package = await ingestions.IngestAsync(
-                new GamePackageIngestionRequest(actor.UserId, content, requestId),
+                new GamePackageIngestionRequest(actor.UserId, content, requestId, progress.ReportPackageAsync),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
-            GameLibraryItem draft = await BindPackageAsync(
+            // A public upload is already a complete content replacement.  The
+            // staged ZIP content is copied once into a private content staging
+            // directory, validated there, and renamed to `content`; it never
+            // takes the legacy workspace -> content copy detour.
+            return await ImportAndActivateAsync(
                 actor,
                 game.Id,
                 package.IngestionId,
-                package.Manifest.ContentDigest,
                 game.StateVersion,
+                uploadOperation.Id,
+                progress,
                 cancellationToken).ConfigureAwait(false);
-            return await ActivateAsync(actor, game.Id, draft.StateVersion, cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception exception)
         {
+            if (uploadOperation is not null)
+            {
+                string errorCode = exception switch
+                {
+                    GamePackageIngestionException ingestionException => ingestionException.Code,
+                    GameLibraryException libraryException => libraryException.Code,
+                    _ => GameLibraryErrorCodes.Conflict,
+                };
+                await FailOperationAsync(uploadOperation.Id, errorCode).ConfigureAwait(false);
+                // FailOperationAsync uses ExecuteUpdate and advances the durable
+                // operation state without synchronizing EF's tracked instance.
+                // Do not let that stale operation participate in the Game
+                // tombstone SaveChanges below.
+                db.ChangeTracker.Clear();
+            }
             // A failed upload/load must not leave a user-visible empty Game that
             // can only be repaired through the removed multi-step workflow.
             try
@@ -62,7 +92,10 @@ public sealed class GameLibraryService(
                 GameRow? row = await db.Games.SingleOrDefaultAsync(
                     value => value.Id == game.Id && value.OwnerUserId == actor.UserId && value.Status != GameStatus.Deleted,
                     CancellationToken.None).ConfigureAwait(false);
-                if (row is not null && row.ContentDigest is null)
+                bool hasPublishedTree = row?.CurrentContentPath is not null || (row is not null && await db.GameContentOperations.AnyAsync(
+                    operation => operation.GameId == row.Id && operation.Status == GameContentOperationStatus.ContentReady,
+                    CancellationToken.None).ConfigureAwait(false));
+                if (row is not null && !hasPublishedTree)
                 {
                     row.Status = GameStatus.Deleted;
                     row.DeletedBy = actor.UserId;
@@ -110,6 +143,103 @@ public sealed class GameLibraryService(
             throw new GameLibraryException(GameLibraryErrorCodes.NameConflict, "同名游戏已存在。");
         }
         return ToItem(row);
+    }
+
+    private async Task<GameLibraryItem> ImportAndActivateAsync(
+        CurrentActor actor,
+        string gameId,
+        string ingestionId,
+        int expectedStateVersion,
+        string operationId,
+        OperationProgressReporter progress,
+        CancellationToken cancellationToken)
+    {
+        await using FileStream mutationLock = AcquireMutationLock(gameId);
+        GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
+        EnsureVersion(row, expectedStateVersion);
+        GameContentOperationRow operation = await db.GameContentOperations.SingleOrDefaultAsync(
+            value => value.Id == operationId && value.GameId == gameId && value.Status == GameContentOperationStatus.Running,
+            cancellationToken).ConfigureAwait(false) ?? throw Conflict("The game upload operation is no longer active.");
+        operation.IngestionId = ingestionId;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await using GamePackageConsumption consumption = await ingestions.BeginConsumeAsync(
+            ingestionId, actor.UserId, expectedContentDigest: null, cancellationToken).ConfigureAwait(false);
+        await progress.ReportAsync(GameContentOperationStage.ConsumingStaging, null, cancellationToken).ConfigureAwait(false);
+
+        string gameDirectory = GameDirectory(gameId);
+        string staging = Path.Combine(gameDirectory, $".content-{Guid.CreateVersion7():N}");
+        operation.WorkPath = Path.GetRelativePath(databaseOptions.DataRoot, staging).Replace('\\', '/');
+        bool contentReady = false;
+        try
+        {
+            if (!OperatingSystem.IsLinux())
+                throw new PlatformNotSupportedException("Secure game content import requires Linux openat semantics.");
+
+            await progress.ReportAsync(GameContentOperationStage.CopyingContent, null, cancellationToken).ConfigureAwait(false);
+            using (SafeFileHandle gameDirectoryHandle = LinuxFileOperations.OpenDirectory(gameDirectory))
+                LinuxFileOperations.CopyTree(consumption.ContentDirectoryHandle, gameDirectoryHandle, Path.GetFileName(staging), syncToDisk: false);
+            await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
+
+            await progress.ReportAsync(GameContentOperationStage.ValidatingContent, null, cancellationToken).ConfigureAwait(false);
+            MakeReadOnly(staging);
+            WorkspaceInspection inspection = await InspectWithParserAsync(staging, progress, cancellationToken).ConfigureAwait(false);
+            await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
+            if (!inspection.CanActivate)
+            {
+                MakeWritable(staging);
+                DeleteKnownTree(staging);
+                await FailOperationAsync(operation.Id, GameLibraryErrorCodes.ValidationFailed).ConfigureAwait(false);
+                throw new GameLibraryException(GameLibraryErrorCodes.ActivationValidationFailed, "The uploaded game content failed validation.");
+            }
+
+            await progress.ReportAsync(GameContentOperationStage.PublishingContent, null, cancellationToken).ConfigureAwait(false);
+            _ = PublishContentTree(gameDirectory, operation.Id, staging);
+            DateTimeOffset now = timeProvider.GetUtcNow();
+            operation.Status = GameContentOperationStatus.ContentReady;
+            operation.ContentDigest = inspection.ContentDigest;
+            operation.WorkPath = RelativeContent(gameId);
+            operation.UpdatedAt = now;
+            operation.StateVersion++;
+            // The content rename completes before metadata is committed. If
+            // the process exits after this save, maintenance can finish this
+            // exact operation without copying or scanning a second tree. The
+            // product does not promise power-loss durability for Game files.
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            contentReady = true;
+
+            row.CurrentContentPath = RelativeContent(gameId);
+            row.ContentDigest = inspection.ContentDigest;
+            row.ContentRevision++;
+            row.CompatibilitySummaryJson = JsonSerializer.Serialize(new { inspection.CanActivate, inspection.Diagnostics });
+            row.ActivatedBy = actor.UserId;
+            row.ActivatedAt = now;
+            row.Status = GameStatus.Active;
+            row.WorkspacePath = null;
+            row.WorkspaceStatus = GameWorkspaceStatus.None;
+            GameFileRow[] oldFiles = await db.GameFiles.Where(file => file.GameId == gameId).ToArrayAsync(cancellationToken).ConfigureAwait(false);
+            db.GameFiles.RemoveRange(oldFiles);
+            await ReplaceDiagnosticsAsync(row, inspection.Diagnostics, cancellationToken).ConfigureAwait(false);
+            Touch(row, now);
+            AddAudit(actor, "GAME_UPLOAD_ACTIVATE", row.Id, now, JsonSerializer.Serialize(new { row.ContentRevision }));
+            CompleteOperation(operation, inspection.ContentDigest, now);
+            await SaveAsync(cancellationToken).ConfigureAwait(false);
+            await ingestions.CompleteConsumeAsync(ingestionId, actor.UserId, cancellationToken).ConfigureAwait(false);
+            return ToItem(row);
+        }
+        catch
+        {
+            if (!contentReady)
+            {
+                if (Directory.Exists(staging))
+                {
+                    try { MakeWritable(staging); } catch (IOException) { }
+                    try { DeleteKnownTree(staging); } catch (IOException) { }
+                }
+                await FailOperationAsync(operation.Id, GameLibraryErrorCodes.Conflict).ConfigureAwait(false);
+                await ingestions.AbandonAsync(ingestionId, actor.UserId, CancellationToken.None).ConfigureAwait(false);
+            }
+            throw;
+        }
     }
 
     public async Task<GameLibraryItem?> GetAsync(CurrentActor actor, string gameId, CancellationToken cancellationToken = default)
@@ -194,7 +324,7 @@ public sealed class GameLibraryService(
             if (OperatingSystem.IsLinux())
             {
                 using SafeFileHandle gameDirectoryHandle = LinuxFileOperations.OpenDirectory(GameDirectory(gameId));
-                LinuxFileOperations.CopyTree(consumption.ContentDirectoryHandle, gameDirectoryHandle, Path.GetFileName(staging));
+                LinuxFileOperations.CopyTree(consumption.ContentDirectoryHandle, gameDirectoryHandle, Path.GetFileName(staging), syncToDisk: false);
             }
             else
             {
@@ -202,8 +332,8 @@ public sealed class GameLibraryService(
             }
             await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
             string? retiredWorkspace = ReplaceWorkspace(gameId, staging, operation.Id);
-            WorkspaceInspection workspaceInspection = InspectWorkspace(Path.Combine(GameDirectory(gameId), "workspace"));
-            await ReplaceFileIndexAsync(gameId, "WORKSPACE", workspaceInspection.Entries, cancellationToken).ConfigureAwait(false);
+            GameFileRow[] staleFiles = await db.GameFiles.Where(file => file.GameId == gameId && file.Scope == "WORKSPACE").ToArrayAsync(cancellationToken).ConfigureAwait(false);
+            db.GameFiles.RemoveRange(staleFiles);
             row.WorkspaceStatus = GameWorkspaceStatus.Draft;
             row.WorkspacePath = RelativeWorkspace(gameId);
             row.CompatibilitySummaryJson = "{}";
@@ -292,7 +422,31 @@ public sealed class GameLibraryService(
             operation.Id,
             OperationTypeText(operation.OperationType),
             OperationStatusText(operation.Status),
+            OperationStageText(operation.Stage),
+            operation.CurrentItem,
             operation.ContentDigest,
+            operation.ErrorCode,
+            operation.CreatedAt,
+            operation.UpdatedAt,
+            operation.CompletedAt);
+    }
+
+    public async Task<GameUploadProgressItem?> GetUploadProgressAsync(CurrentActor actor, string requestId, CancellationToken cancellationToken = default)
+    {
+        GameContentOperationRow? operation = await db.GameContentOperations.AsNoTracking()
+            .Where(value => value.RequestId == requestId
+                && value.OperationType == GameContentOperationType.Import
+                && value.Game != null
+                && value.Game.OwnerUserId == actor.UserId)
+            .OrderByDescending(value => value.CreatedAt)
+            .ThenByDescending(value => value.Id)
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        return operation is null ? null : new GameUploadProgressItem(
+            operation.GameId,
+            operation.Id,
+            OperationStatusText(operation.Status),
+            OperationStageText(operation.Stage),
+            operation.CurrentItem,
             operation.ErrorCode,
             operation.CreatedAt,
             operation.UpdatedAt,
@@ -337,18 +491,18 @@ public sealed class GameLibraryService(
         GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
         EnsureVersion(row, expectedStateVersion);
         GameContentOperationRow operation = await StartOperationAsync(row, GameContentOperationType.Validate, null, null, row.WorkspacePath, cancellationToken).ConfigureAwait(false);
-        string snapshot = Path.Combine(GameDirectory(gameId), $".validate-{operation.Id}");
         try
         {
             row.WorkspaceStatus = GameWorkspaceStatus.Validating;
             Touch(row);
             await SaveAsync(cancellationToken).ConfigureAwait(false);
-            CopyTree(RequireWorkspace(row), snapshot);
+            string workspace = RequireWorkspace(row);
             await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
-            MakeReadOnly(snapshot);
-            WorkspaceInspection inspection = await InspectWithParserAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            // Validation is parser-only and the mutation lock prevents API
+            // edits during this call.  Inspect the existing workspace directly;
+            // creating a validation snapshot would be another full tree copy.
+            WorkspaceInspection inspection = await InspectWithParserAsync(workspace, cancellationToken).ConfigureAwait(false);
             await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
-            await ReplaceFileIndexAsync(gameId, "WORKSPACE", inspection.Entries, cancellationToken).ConfigureAwait(false);
             MarkWorkspaceChanged(row);
             row.CompatibilitySummaryJson = JsonSerializer.Serialize(new { inspection.CanActivate, inspection.Diagnostics });
             await ReplaceDiagnosticsAsync(row, inspection.Diagnostics, cancellationToken).ConfigureAwait(false);
@@ -373,14 +527,6 @@ public sealed class GameLibraryService(
             }
             throw;
         }
-        finally
-        {
-            if (Directory.Exists(snapshot))
-            {
-                MakeWritable(snapshot);
-                DeleteKnownTree(snapshot);
-            }
-        }
     }
 
     public async Task<GameLibraryItem> ActivateAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default)
@@ -398,7 +544,6 @@ public sealed class GameLibraryService(
         CopyTree(workspace, staging);
         await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
         MakeReadOnly(staging);
-        FlushTreeToDisk(staging);
         WorkspaceInspection inspection = await InspectWithParserAsync(staging, cancellationToken).ConfigureAwait(false);
         await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
         inspection = await ApplyDiagnosticOverridesAsync(operation, inspection, cancellationToken).ConfigureAwait(false);
@@ -420,23 +565,21 @@ public sealed class GameLibraryService(
         operation.WorkPath = RelativeContent(gameId);
         operation.UpdatedAt = now;
         operation.StateVersion++;
-        // CONTENT_READY is the durable boundary between the filesystem rename and
-        // the metadata transaction. A restart can now finish or roll this exact
-        // operation without guessing which tree was published.
+        // CONTENT_READY is the operation boundary between the filesystem rename
+        // and the metadata transaction. A restart can now finish or roll this
+        // exact operation without guessing which tree was published. The
+        // product does not promise power-loss durability for Game files.
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         row.CurrentContentPath = RelativeContent(gameId);
         row.ContentDigest = inspection.ContentDigest;
         row.ContentRevision++;
-        row.ManifestJson = inspection.ManifestJson;
-        row.RuntimeConfigJson = inspection.RuntimeConfigJson;
         row.CompatibilitySummaryJson = JsonSerializer.Serialize(new { inspection.CanActivate, inspection.Diagnostics });
         row.ActivatedBy = actor.UserId;
         row.ActivatedAt = now;
         row.Status = GameStatus.Active;
         row.WorkspacePath = null;
         row.WorkspaceStatus = GameWorkspaceStatus.None;
-        await ReplaceFileIndexAsync(gameId, "CURRENT", inspection.Entries, cancellationToken).ConfigureAwait(false);
-        db.GameFiles.RemoveRange(await db.GameFiles.Where(file => file.GameId == gameId && file.Scope == "WORKSPACE").ToArrayAsync(cancellationToken).ConfigureAwait(false));
+        db.GameFiles.RemoveRange(await db.GameFiles.Where(file => file.GameId == gameId).ToArrayAsync(cancellationToken).ConfigureAwait(false));
         await ReplaceDiagnosticsAsync(row, inspection.Diagnostics, cancellationToken).ConfigureAwait(false);
         Touch(row, now);
         AddAudit(actor, "GAME_ACTIVATE", row.Id, now, JsonSerializer.Serialize(new { row.ContentDigest, row.ContentRevision }));
@@ -445,12 +588,15 @@ public sealed class GameLibraryService(
         return ToItem(row);
     }
 
-    private async Task<WorkspaceInspection> InspectWithParserAsync(string snapshot, CancellationToken token)
+    private Task<WorkspaceInspection> InspectWithParserAsync(string snapshot, CancellationToken token) =>
+        InspectWithParserAsync(snapshot, progress: null, token);
+
+    private async Task<WorkspaceInspection> InspectWithParserAsync(string snapshot, OperationProgressReporter? progress, CancellationToken token)
     {
         WorkspaceInspection inspection;
         try
         {
-            inspection = InspectWorkspace(snapshot);
+            inspection = await InspectWorkspaceAsync(snapshot, progress, token).ConfigureAwait(false);
         }
         catch (GameContentLimitException exception)
         {
@@ -459,17 +605,14 @@ public sealed class GameLibraryService(
                 null,
                 0,
                 0,
-                [new GameValidationDiagnostic(exception.Code, "ERROR", null, "The game content manifest exceeds a configured safety limit.", true)],
-                [],
-                "{}",
-                "{}");
+                [new GameValidationDiagnostic(exception.Code, "ERROR", null, "The game content exceeds a configured safety limit.", true)]);
         }
+        if (progress is not null)
+            await progress.ReportAsync(GameContentOperationStage.RunningValidator, null, token).ConfigureAwait(false);
         GameParserValidationResult parsed = await validator.ValidateAsync(snapshot, token).ConfigureAwait(false);
         IReadOnlyList<GameValidationDiagnostic> diagnostics = inspection.Diagnostics.Concat(parsed.Diagnostics).ToArray();
-        // The manifest scan only enforces storage limits and builds immutable
-        // metadata; it no longer contributes content-policy diagnostics. Keep
-        // those mandatory capacity limits alongside the authoritative runtime
-        // load result.
+        // The structural scan only enforces storage limits. The parser remains
+        // the authority for game compatibility diagnostics.
         return inspection with { CanActivate = inspection.CanActivate && parsed.CanActivate, Diagnostics = diagnostics };
     }
 
@@ -531,7 +674,9 @@ public sealed class GameLibraryService(
         string? ingestionId,
         string? contentDigest,
         string? workPath,
-        CancellationToken token)
+        CancellationToken token,
+        string? requestId = null,
+        GameContentOperationStage stage = GameContentOperationStage.Preparing)
     {
         DateTimeOffset now = timeProvider.GetUtcNow();
         var operation = new GameContentOperationRow
@@ -540,9 +685,12 @@ public sealed class GameLibraryService(
             GameId = game.Id,
             OperationType = type,
             Status = GameContentOperationStatus.Running,
+            Stage = stage,
+            CurrentItem = null,
             ExpectedGameStateVersion = game.StateVersion,
             ExpectedContentRevision = game.ContentRevision,
             IngestionId = ingestionId,
+            RequestId = requestId,
             WorkPath = workPath,
             ContentDigest = contentDigest,
             LeaseExpiresAt = now.AddMinutes(15),
@@ -564,6 +712,8 @@ public sealed class GameLibraryService(
     private static void CompleteOperation(GameContentOperationRow operation, string? digest, DateTimeOffset now)
     {
         operation.Status = GameContentOperationStatus.Committed;
+        operation.Stage = GameContentOperationStage.Completed;
+        operation.CurrentItem = null;
         operation.ContentDigest = digest ?? operation.ContentDigest;
         operation.UpdatedAt = now;
         operation.CompletedAt = now;
@@ -581,6 +731,25 @@ public sealed class GameLibraryService(
             .ConfigureAwait(false);
     }
 
+    private async Task UpdateOperationProgressAsync(
+        string operationId,
+        GameContentOperationStage stage,
+        string? currentItem,
+        CancellationToken token)
+    {
+        DateTimeOffset now = timeProvider.GetUtcNow();
+        string? normalizedItem = NormalizeProgressItem(currentItem);
+        await db.GameContentOperations
+            .Where(operation => operation.Id == operationId
+                && (operation.Status == GameContentOperationStatus.Pending || operation.Status == GameContentOperationStatus.Running))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(operation => operation.Stage, stage)
+                .SetProperty(operation => operation.CurrentItem, normalizedItem)
+                .SetProperty(operation => operation.LeaseExpiresAt, now.AddMinutes(15))
+                .SetProperty(operation => operation.UpdatedAt, now), token)
+            .ConfigureAwait(false);
+    }
+
     private async Task FailOperationAsync(string operationId, string errorCode)
     {
         DateTimeOffset now = timeProvider.GetUtcNow();
@@ -588,7 +757,7 @@ public sealed class GameLibraryService(
         {
             await db.GameContentOperations.Where(operation => operation.Id == operationId && operation.Status != GameContentOperationStatus.Committed)
                 .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(operation => operation.Status, GameContentOperationStatus.Failed)
+                .SetProperty(operation => operation.Status, GameContentOperationStatus.Failed)
                     .SetProperty(operation => operation.ErrorCode, errorCode)
                     .SetProperty(operation => operation.UpdatedAt, now)
                     .SetProperty(operation => operation.CompletedAt, now)
@@ -600,22 +769,37 @@ public sealed class GameLibraryService(
         }
     }
 
-    private async Task ReplaceFileIndexAsync(string gameId, string scope, IReadOnlyList<InspectedEntry> entries, CancellationToken token)
+    private sealed class OperationProgressReporter(
+        GameLibraryService owner,
+        string operationId,
+        TimeSpan persistInterval)
     {
-        GameFileRow[] existing = await db.GameFiles.Where(file => file.GameId == gameId && file.Scope == scope).ToArrayAsync(token).ConfigureAwait(false);
-        db.GameFiles.RemoveRange(existing);
-        db.GameFiles.AddRange(entries.Select(entry => new GameFileRow
+        private DateTimeOffset lastPersistedAt = DateTimeOffset.MinValue;
+        private GameContentOperationStage? lastStage;
+
+        public Task ReportPackageAsync(GamePackageProgressUpdate update, CancellationToken token) =>
+            ReportAsync(Map(update.Stage), update.CurrentItem, token);
+
+        public async Task ReportAsync(GameContentOperationStage stage, string? currentItem, CancellationToken token)
         {
-            GameId = gameId,
-            Scope = scope,
-            LogicalPath = entry.Path,
-            EntryKind = entry.EntryKind,
-            ByteLength = entry.Bytes,
-            ContentDigest = entry.Digest,
-            FileKind = entry.FileKind,
-            TextEncoding = entry.Encoding,
-            HasBom = entry.HasBom,
-        }));
+            DateTimeOffset now = owner.CurrentTime;
+            if (lastStage == stage && now - lastPersistedAt < persistInterval)
+                return;
+            await owner.UpdateOperationProgressAsync(operationId, stage, currentItem, token).ConfigureAwait(false);
+            lastStage = stage;
+            lastPersistedAt = now;
+        }
+
+        private static GameContentOperationStage Map(GamePackageProgressStage stage) => stage switch
+        {
+            GamePackageProgressStage.Receiving => GameContentOperationStage.Receiving,
+            GamePackageProgressStage.InspectingArchive => GameContentOperationStage.InspectingArchive,
+            GamePackageProgressStage.Extracting => GameContentOperationStage.Extracting,
+            GamePackageProgressStage.NormalizingEncoding => GameContentOperationStage.NormalizingEncoding,
+            GamePackageProgressStage.Analyzing => GameContentOperationStage.Analyzing,
+            GamePackageProgressStage.Ready => GameContentOperationStage.ConsumingStaging,
+            _ => GameContentOperationStage.Preparing,
+        };
     }
 
     private async Task ReplaceDiagnosticsAsync(GameRow game, IReadOnlyList<GameValidationDiagnostic> diagnostics, CancellationToken token)
@@ -682,57 +866,16 @@ public sealed class GameLibraryService(
         ResourceType = "GAME", ResourceId = gameId, Result = AuditResult.Succeeded, MetadataJson = metadata,
     });
 
-    private static WorkspaceInspection InspectWorkspace(string root)
+    private static async Task<WorkspaceInspection> InspectWorkspaceAsync(string root, OperationProgressReporter? progress, CancellationToken token)
     {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        var diagnostics = new List<GameValidationDiagnostic>();
-        string[] regularFiles = EnumerateRegularFiles(root).Order(StringComparer.Ordinal).ToArray();
-        string[] regularDirectories = EnumerateRegularDirectories(root).Order(StringComparer.Ordinal).ToArray();
-        if ((long)regularFiles.Length + regularDirectories.Length > GameContentScanLimits.MaxEntryCount)
-            throw new GameContentLimitException("GAME_CONTENT_ENTRY_LIMIT");
-        string configurationPath = Path.Combine(root, "emuera.config");
-        string runtimeConfig = "{}";
-        var entries = new List<InspectedEntry>();
-        long total = 0;
-        foreach (string directory in regularDirectories)
-            entries.Add(new(Path.GetRelativePath(root, directory).Replace('\\', '/'), "DIRECTORY", 0, null, null, null, null));
-        foreach (string file in regularFiles)
-        {
-            var info = new FileInfo(file);
-            RejectLink(info);
-            if (info.Length > GameContentScanLimits.MaxSingleFileBytes)
-                throw new GameContentLimitException("GAME_CONTENT_FILE_LIMIT");
-            total = checked(total + info.Length);
-            if (total > GameContentScanLimits.MaxTotalBytes)
-                throw new GameContentLimitException("GAME_CONTENT_TOTAL_LIMIT");
-            using (Microsoft.Win32.SafeHandles.SafeFileHandle handle = File.OpenHandle(file, FileMode.Open, FileAccess.Read, FileShare.Read))
-                if (LinuxFileOperations.ReadIdentity(handle).LinkCount != 1) throw UnsafePath();
-            string logical = Path.GetRelativePath(root, file).Replace('\\', '/');
-            if (logical.StartsWith(".cloudemuera-", StringComparison.Ordinal)) continue;
-            string? encoding = null;
-            bool hasBom = false;
-            if (IsGameTextFile(file))
-            {
-                if (TryReadGameText(file, out string text, out encoding, out hasBom))
-                {
-                    if (string.Equals(file, configurationPath, StringComparison.Ordinal))
-                        runtimeConfig = JsonSerializer.Serialize(new { emueraConfig = text, encoding, hasBom });
-                }
-            }
-            bool isText = IsGameTextFile(file);
-            entries.Add(new(logical, "FILE", info.Length, null, isText ? "TEXT" : "BINARY", encoding, isText ? hasBom : null));
-        }
-        int fileCount = entries.Count(entry => entry.EntryKind == "FILE");
-        string manifest = JsonSerializer.Serialize(new { schemaVersion = 2, contentDigest = (string?)null, fileCount, directoryCount = entries.Count - fileCount, totalBytes = total });
-        return new(!diagnostics.Any(item => item.ActivationBlocking), null, fileCount, total, diagnostics, entries, manifest, runtimeConfig);
-    }
-
-    private static IEnumerable<string> EnumerateRegularFiles(string root)
-    {
+        if (!Directory.Exists(root)) throw new IOException("The game content directory is missing.");
         var pending = new Stack<(DirectoryInfo Directory, int Depth)>();
         pending.Push((new DirectoryInfo(root), 0));
+        var diagnostics = new List<GameValidationDiagnostic>();
         int entryCount = 0;
-        while (pending.Count != 0)
+        int fileCount = 0;
+        long total = 0;
+        while (pending.Count > 0)
         {
             (DirectoryInfo directory, int depth) = pending.Pop();
             RejectLink(directory);
@@ -741,38 +884,29 @@ public sealed class GameLibraryService(
                 if (++entryCount > GameContentScanLimits.MaxEntryCount)
                     throw new GameContentLimitException("GAME_CONTENT_ENTRY_LIMIT");
                 RejectLink(entry);
+                string logical = Path.GetRelativePath(root, entry.FullName).Replace('\\', '/');
+                if (logical.StartsWith(".cloudemuera-", StringComparison.Ordinal)) continue;
                 if (entry is DirectoryInfo child)
                 {
                     if (depth >= GameContentScanLimits.MaxDirectoryDepth)
                         throw new GameContentLimitException("GAME_CONTENT_DEPTH_LIMIT");
                     pending.Push((child, depth + 1));
+                    continue;
                 }
-                else if (entry is FileInfo file) yield return file.FullName;
-                else throw UnsafePath();
+                if (entry is not FileInfo file) throw UnsafePath();
+                if (file.Length > GameContentScanLimits.MaxSingleFileBytes)
+                    throw new GameContentLimitException("GAME_CONTENT_FILE_LIMIT");
+                if (progress is not null)
+                    await progress.ReportAsync(GameContentOperationStage.ValidatingContent, logical, token).ConfigureAwait(false);
+                total = checked(total + file.Length);
+                if (total > GameContentScanLimits.MaxTotalBytes)
+                    throw new GameContentLimitException("GAME_CONTENT_TOTAL_LIMIT");
+                using Microsoft.Win32.SafeHandles.SafeFileHandle handle = File.OpenHandle(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
+                if (LinuxFileOperations.ReadIdentity(handle).LinkCount != 1) throw UnsafePath();
+                fileCount++;
             }
         }
-    }
-
-    private static IEnumerable<string> EnumerateRegularDirectories(string root)
-    {
-        var pending = new Stack<(DirectoryInfo Directory, int Depth)>();
-        pending.Push((new DirectoryInfo(root), 0));
-        int entryCount = 0;
-        while (pending.Count != 0)
-        {
-            (DirectoryInfo directory, int depth) = pending.Pop();
-            RejectLink(directory);
-            foreach (DirectoryInfo child in directory.EnumerateDirectories().OrderByDescending(item => item.Name, StringComparer.Ordinal))
-            {
-                if (++entryCount > GameContentScanLimits.MaxEntryCount)
-                    throw new GameContentLimitException("GAME_CONTENT_ENTRY_LIMIT");
-                if (depth >= GameContentScanLimits.MaxDirectoryDepth)
-                    throw new GameContentLimitException("GAME_CONTENT_DEPTH_LIMIT");
-                RejectLink(child);
-                yield return child.FullName;
-                pending.Push((child, depth + 1));
-            }
-        }
+        return new(!diagnostics.Any(item => item.ActivationBlocking), null, fileCount, total, diagnostics);
     }
 
     private static bool IsGameTextFile(string path) => Path.GetExtension(path).ToUpperInvariant() is
@@ -819,7 +953,7 @@ public sealed class GameLibraryService(
             string? parentPath = Path.GetDirectoryName(destination);
             if (parentPath is null) throw UnsafePath();
             using SafeFileHandle destinationParent = LinuxFileOperations.OpenDirectory(parentPath);
-            LinuxFileOperations.CopyTree(sourceHandle, destinationParent, Path.GetFileName(destination));
+            LinuxFileOperations.CopyTree(sourceHandle, destinationParent, Path.GetFileName(destination), syncToDisk: false);
             return;
         }
         CopyTreeManaged(source, destination);
@@ -870,21 +1004,6 @@ public sealed class GameLibraryService(
         }
     }
 
-    private static void FlushTreeToDisk(string root)
-    {
-        if (!OperatingSystem.IsLinux()) return;
-        foreach (string file in EnumerateRegularFiles(root))
-        {
-            using SafeFileHandle handle = File.OpenHandle(file, FileMode.Open, FileAccess.Read, FileShare.Read);
-            LinuxFileOperations.Sync(handle);
-        }
-        foreach (string directory in EnumerateRegularDirectories(root).Append(root))
-        {
-            using SafeFileHandle handle = LinuxFileOperations.OpenDirectory(directory);
-            LinuxFileOperations.Sync(handle);
-        }
-    }
-
     private string? ReplaceWorkspace(string gameId, string staging, string operationId)
     {
         if (OperatingSystem.IsLinux())
@@ -896,7 +1015,6 @@ public sealed class GameLibraryService(
             string? retiredPath = existing is null ? null : Path.Combine(GameDirectory(gameId), retiredName);
             if (existing is not null) LinuxFileOperations.RenameAt(gameDirectoryHandle, "workspace", retiredName);
             LinuxFileOperations.RenameAt(gameDirectoryHandle, Path.GetFileName(staging), "workspace");
-            LinuxFileOperations.Sync(gameDirectoryHandle);
             return retiredPath;
         }
         return ReplaceWorkspaceManaged(gameId, staging, operationId);
@@ -933,7 +1051,6 @@ public sealed class GameLibraryService(
                 using SafeFileHandle? retiredHandle = LinuxFileOperations.TryOpenDirectoryAt(parent, retiredName);
                 if (retiredHandle is not null) LinuxFileOperations.RenameAt(parent, retiredName, currentName);
             }
-            LinuxFileOperations.Sync(parent);
             return;
         }
         if (Directory.Exists(current))
@@ -954,7 +1071,6 @@ public sealed class GameLibraryService(
         if (parentPath is null) throw new IOException("The game tree has no parent.");
         using SafeFileHandle parent = LinuxFileOperations.OpenDirectory(parentPath);
         LinuxFileOperations.TryDeleteTreeAt(parent, Path.GetFileName(path), allowReadOnly: true);
-        LinuxFileOperations.Sync(parent);
     }
 
     internal static void DeleteKnownTreeManaged(string path)
@@ -981,8 +1097,23 @@ public sealed class GameLibraryService(
         }
         LinuxFileOperations.RenameAt(gameDirectoryHandle, stagingName, "content");
         LinuxFileOperations.RenameAt(gameDirectoryHandle, workspaceName, retiredWorkspaceName);
-        LinuxFileOperations.Sync(gameDirectoryHandle);
         return (retiredContent is null ? null : Path.Combine(gameDirectory, retiredContentName), Path.Combine(gameDirectory, retiredWorkspaceName));
+    }
+
+    private static string? PublishContentTree(string gameDirectory, string operationId, string staging)
+    {
+        if (!OperatingSystem.IsLinux())
+            return PublishContentTreeManaged(gameDirectory, operationId, staging);
+
+        using SafeFileHandle gameDirectoryHandle = LinuxFileOperations.OpenDirectory(gameDirectory);
+        string stagingName = Path.GetFileName(staging);
+        string retiredContentName = $"content-retired-{operationId}";
+        using SafeFileHandle? existingContent = LinuxFileOperations.TryOpenDirectoryAt(gameDirectoryHandle, "content");
+        string? retiredContent = existingContent is null ? null : Path.Combine(gameDirectory, retiredContentName);
+        if (existingContent is not null)
+            LinuxFileOperations.RenameAt(gameDirectoryHandle, "content", retiredContentName);
+        LinuxFileOperations.RenameAt(gameDirectoryHandle, stagingName, "content");
+        return retiredContent;
     }
 
     internal static (string? RetiredContent, string RetiredWorkspace) PublishActivationTreeManaged(string gameDirectory, string operationId, string staging, string workspace)
@@ -998,6 +1129,19 @@ public sealed class GameLibraryService(
         string retiredWorkspacePath = Path.Combine(gameDirectory, $"workspace-activated-{operationId}");
         Directory.Move(workspace, retiredWorkspacePath);
         return (retired, retiredWorkspacePath);
+    }
+
+    internal static string? PublishContentTreeManaged(string gameDirectory, string operationId, string staging)
+    {
+        string currentPath = Path.Combine(gameDirectory, "content");
+        string? retired = null;
+        if (Directory.Exists(currentPath))
+        {
+            retired = Path.Combine(gameDirectory, $"content-retired-{operationId}");
+            Directory.Move(currentPath, retired);
+        }
+        Directory.Move(staging, currentPath);
+        return retired;
     }
 
     private FileStream AcquireMutationLock(string gameId)
@@ -1086,12 +1230,38 @@ public sealed class GameLibraryService(
     private static string WorkspaceStatusText(GameWorkspaceStatus value) => value switch { GameWorkspaceStatus.None => "NONE", GameWorkspaceStatus.Draft => "DRAFT", _ => "VALIDATING" };
     private static string OperationTypeText(GameContentOperationType value) => value switch { GameContentOperationType.Import => "IMPORT", GameContentOperationType.ResetWorkspace => "RESET_WORKSPACE", GameContentOperationType.Validate => "VALIDATE", _ => "ACTIVATE" };
     private static string OperationStatusText(GameContentOperationStatus value) => value switch { GameContentOperationStatus.Pending => "PENDING", GameContentOperationStatus.Running => "RUNNING", GameContentOperationStatus.ContentReady => "CONTENT_READY", GameContentOperationStatus.Committed => "COMMITTED", _ => "FAILED" };
+    private static string OperationStageText(GameContentOperationStage value) => value switch
+    {
+        GameContentOperationStage.Preparing => "PREPARING",
+        GameContentOperationStage.Receiving => "RECEIVING",
+        GameContentOperationStage.InspectingArchive => "INSPECTING_ARCHIVE",
+        GameContentOperationStage.Extracting => "EXTRACTING",
+        GameContentOperationStage.NormalizingEncoding => "NORMALIZING_ENCODING",
+        GameContentOperationStage.Analyzing => "ANALYZING",
+        GameContentOperationStage.ConsumingStaging => "CONSUMING_STAGING",
+        GameContentOperationStage.CopyingContent => "COPYING_CONTENT",
+        GameContentOperationStage.ValidatingContent => "VALIDATING_CONTENT",
+        GameContentOperationStage.RunningValidator => "RUNNING_VALIDATOR",
+        GameContentOperationStage.PublishingContent => "PUBLISHING_CONTENT",
+        GameContentOperationStage.Completed => "COMPLETED",
+        _ => "PREPARING",
+    };
+
+    private static string? NormalizeProgressItem(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        string normalized = value.Normalize(NormalizationForm.FormC).Replace('\\', '/');
+        if (normalized.Length == 0 || normalized.StartsWith('/') || normalized.Contains('\0')
+            || normalized.Contains("../", StringComparison.Ordinal) || normalized.EndsWith("/..", StringComparison.Ordinal)
+            || Encoding.UTF8.GetByteCount(normalized) > PersistenceLimits.PathMaxLength)
+            return null;
+        return normalized;
+    }
 
     private static GameLibraryException NotFound() => new(GameLibraryErrorCodes.NotFound, "The game was not found.");
     private static GameLibraryException Conflict(string message, Exception? inner = null) => new(GameLibraryErrorCodes.Conflict, inner is null ? message : $"{message} {inner.Message}");
     private static GameLibraryException UnsafePath() => new(GameLibraryErrorCodes.UnsafePath, "The game path is unsafe.");
 
-    private sealed record InspectedEntry(string Path, string EntryKind, long Bytes, string? Digest, string? FileKind, string? Encoding, bool? HasBom);
     private sealed record WorkspaceInspection(bool CanActivate, string? ContentDigest, int FileCount, long TotalBytes,
-        IReadOnlyList<GameValidationDiagnostic> Diagnostics, IReadOnlyList<InspectedEntry> Entries, string ManifestJson, string RuntimeConfigJson);
+        IReadOnlyList<GameValidationDiagnostic> Diagnostics);
 }

@@ -147,6 +147,25 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .scan-state p { margin: 0; color: var(--muted); font-size: 11px; }
 .progress { width: 70%; height: 5px; margin-top: 23px; overflow: hidden; border-radius: 4px; background: #ecebe5; }
 .progress span { display: block; width: 76%; height: 100%; background: var(--accent); animation: progress 1s ease; }
+.progress.indeterminate span { width: 34%; animation: progress-indeterminate 1.2s ease-in-out infinite; }
+.upload-scan-state { min-height: 0; }
+.upload-progress-meter { width: 90%; margin-top: 22px; }
+.upload-progress-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; color: #62665e; font-size: 10px; }
+.upload-progress-heading strong { color: var(--accent); font-size: 12px; }
+.upload-progress-heading small { color: #999c94; font-size: 9px; }
+.upload-progress-meter > progress { display: block; width: 100%; height: 8px; accent-color: var(--accent); }
+.upload-task-list { display: grid; width: 90%; gap: 6px; margin: 22px 0 0; padding: 0; list-style: none; text-align: left; }
+.upload-task { display: grid; min-height: 29px; grid-template-columns: 22px 1fr; align-items: center; gap: 8px; color: #a0a39b; font-size: 10px; }
+.upload-task-mark { display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid #d8d9d1; border-radius: 50%; color: transparent; font-size: 12px; font-weight: 800; }
+.upload-task strong, .upload-task small { display: block; }
+.upload-task small { margin-top: 2px; overflow: hidden; color: #9a9d95; font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.upload-task.complete { color: #26755d; }
+.upload-task.complete .upload-task-mark { border-color: #8ac4ac; color: #26755d; background: #e5f3ec; }
+.upload-task.active { color: #42473f; font-weight: 700; }
+.upload-task.active .upload-task-mark { border-color: #e6a58d; color: var(--accent); background: #fff3ed; }
+.upload-task.failed { color: #b84236; font-weight: 700; }
+.upload-task.failed .upload-task-mark { border-color: #d98a7d; color: #b84236; background: #fbe8e4; }
+.upload-error-state .upload-task-list { margin-top: 17px; }
 .success-ring { display: grid; width: 62px; height: 62px; place-items: center; border-radius: 50%; color: var(--green); background: #e1f0e9; }
 .scan-state.done .primary-button { margin-top: 24px; }
 
@@ -331,6 +350,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px) scale(.985); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes progress { from { width: 10%; } }
+@keyframes progress-indeterminate { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
 @keyframes classic-blink { 50% { opacity: 0; } }
 
 /* ---- P1-04 Game library UI ---- */

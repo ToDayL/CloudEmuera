@@ -556,9 +556,19 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("ingestion_id");
 
+                    b.Property<string>("CurrentItem")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("current_item");
+
                     b.Property<long>("LeaseExpiresAt")
                         .HasColumnType("INTEGER")
                         .HasColumnName("lease_expires_at");
+
+                    b.Property<string>("RequestId")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("request_id");
 
                     b.Property<string>("OperationType")
                         .IsRequired()
@@ -571,6 +581,14 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(0)
                         .HasColumnName("state_version");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("stage")
+                        .HasDefaultValue("PREPARING");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -599,12 +617,17 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ux_game_content_operations_ingestion")
                         .HasFilter("ingestion_id IS NOT NULL");
 
+                    b.HasIndex("RequestId")
+                        .HasDatabaseName("ix_game_content_operations_request");
+
                     b.HasIndex("GameId", "CreatedAt")
                         .HasDatabaseName("ix_game_content_operations_game_created");
 
                     b.ToTable("game_content_operations", null, t =>
                         {
                             t.HasCheckConstraint("ck_game_content_operations_completion", "(status IN ('COMMITTED', 'FAILED') AND completed_at IS NOT NULL) OR (status NOT IN ('COMMITTED', 'FAILED') AND completed_at IS NULL)");
+
+                            t.HasCheckConstraint("ck_game_content_operations_current_item", "current_item IS NULL OR (length(current_item) BETWEEN 1 AND 512 AND substr(current_item, 1, 1) <> '/' AND instr(current_item, char(92)) = 0 AND instr(current_item, char(0)) = 0 AND instr(current_item, '//') = 0 AND instr('/' || current_item || '/', '/./') = 0 AND instr('/' || current_item || '/', '/../') = 0)");
 
                             t.HasCheckConstraint("ck_game_content_operations_digest", "content_digest IS NULL OR (length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
 
@@ -615,6 +638,10 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_game_content_operations_id", "substr(id, 1, 4) = 'gop_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_game_content_operations_status", "status IN ('PENDING', 'RUNNING', 'CONTENT_READY', 'COMMITTED', 'FAILED')");
+
+                            t.HasCheckConstraint("ck_game_content_operations_request_id", "request_id IS NULL OR (length(request_id) BETWEEN 1 AND 256 AND instr(request_id, char(0)) = 0)");
+
+                            t.HasCheckConstraint("ck_game_content_operations_stage", "stage IN ('PREPARING', 'RECEIVING', 'INSPECTING_ARCHIVE', 'EXTRACTING', 'NORMALIZING_ENCODING', 'ANALYZING', 'CONSUMING_STAGING', 'COPYING_CONTENT', 'VALIDATING_CONTENT', 'RUNNING_VALIDATOR', 'PUBLISHING_CONTENT', 'COMPLETED')");
 
                             t.HasCheckConstraint("ck_game_content_operations_time", "created_at >= 0 AND updated_at >= created_at AND lease_expires_at >= created_at AND (completed_at IS NULL OR completed_at >= created_at)");
 

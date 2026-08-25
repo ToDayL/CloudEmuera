@@ -181,7 +181,7 @@ internal static class SessionRootProtectedMarkerStore
             writer.Write(JsonSerializer.Serialize(marker, JsonOptions));
             writer.Write('\n');
             writer.Flush();
-            stream.Flush(flushToDisk: true);
+            stream.Flush(flushToDisk: false);
         }
         SetPrivateFileMode(path);
         return marker;
@@ -201,7 +201,7 @@ internal static class SessionRootProtectedMarkerStore
         writer.Write(runtimeManifestJson);
         writer.Write('\n');
         writer.Flush();
-        stream.Flush(flushToDisk: true);
+        stream.Flush(flushToDisk: false);
         SetPrivateFileMode(path);
     }
 
@@ -244,12 +244,10 @@ internal static class SessionRootProtectedMarkerStore
                     writer.Write(JsonSerializer.Serialize(marker, JsonOptions));
                     writer.Write('\n');
                     writer.Flush();
-                    stream.Flush(flushToDisk: true);
-                    LinuxFileOperations.Sync(temporary);
+                    stream.Flush(flushToDisk: false);
                 }
 
                 LinuxFileOperations.RenameAt(metadata, temporaryName, "session-root.json");
-                LinuxFileOperations.Sync(metadata);
             }
             finally
             {
@@ -268,7 +266,7 @@ internal static class SessionRootProtectedMarkerStore
                 writer.Write(JsonSerializer.Serialize(marker, JsonOptions));
                 writer.Write('\n');
                 writer.Flush();
-                stream.Flush(flushToDisk: true);
+                stream.Flush(flushToDisk: false);
             }
 
             File.Move(temporaryPath, path, overwrite: true);

@@ -17,7 +17,10 @@ internal static class ValidatorProcess
         try
         {
             Directory.CreateDirectory(temporary);
-            SessionRootLayout layout = new SessionRootLayoutBuilder(root, Path.Combine(temporary, "session"), temporary).Build();
+            // Validation only needs a private runtime root. Use the root-only
+            // materializer so the validator does not build the legacy
+            // per-file manifest before starting the parser.
+            SessionRootLayout layout = new SessionRootLayoutBuilder(root, Path.Combine(temporary, "session"), temporary).BuildRootOnly();
             var fileSystem = new LocalRuntimeFileSystem(layout.RuntimePaths);
             var console = new StructuredGameConsole();
             double initTimeoutSeconds = double.TryParse(

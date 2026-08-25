@@ -27,10 +27,9 @@ public static class GameStorageOwnerMarker
             {
                 writer.Write(JsonSerializer.Serialize(marker, MarkerJson));
                 writer.Flush();
-                stream.Flush(flushToDisk: true);
+                stream.Flush(flushToDisk: false);
             }
             LinuxFileOperations.RenameAt(directoryHandle, temporaryName, "owner.json");
-            LinuxFileOperations.Sync(directoryHandle);
         }
         catch
         {
@@ -117,11 +116,9 @@ public static class GameStorageOwnerMarker
                 writer.Write(JsonSerializer.Serialize(marker, MarkerJson));
                 writer.Write('\n');
                 writer.Flush();
-                stream.Flush(flushToDisk: true);
-                LinuxFileOperations.Sync(temporary);
+                stream.Flush(flushToDisk: false);
             }
             LinuxFileOperations.RenameAt(directoryHandle, temporaryName, "owner.json");
-            LinuxFileOperations.Sync(directoryHandle);
         }
         catch
         {

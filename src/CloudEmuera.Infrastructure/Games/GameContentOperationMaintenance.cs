@@ -103,8 +103,13 @@ public sealed class GameContentOperationMaintenance(
                 return true;
             }
 
-            if (game.ContentRevision != operation.ExpectedContentRevision
-                || game.WorkspaceStatus != GameWorkspaceStatus.Validating)
+            bool directImport = operation.OperationType == GameContentOperationType.Import
+                && game.ContentRevision == operation.ExpectedContentRevision
+                && game.WorkspaceStatus == GameWorkspaceStatus.None
+                && game.CurrentContentPath is null;
+            bool stagedActivation = game.ContentRevision == operation.ExpectedContentRevision
+                && game.WorkspaceStatus == GameWorkspaceStatus.Validating;
+            if (!directImport && !stagedActivation)
             {
                 RestoreActivationTrees(gameDirectory, operation.Id);
                 await MarkFailedAsync(operation.Id, "CONTENT_READY_STATE_CONFLICT", now, token).ConfigureAwait(false);
@@ -114,8 +119,6 @@ public sealed class GameContentOperationMaintenance(
             game.CurrentContentPath = $"games/{game.Id}/content";
             game.ContentDigest = tree.ContentDigest;
             game.ContentRevision++;
-            game.ManifestJson = tree.ManifestJson;
-            game.RuntimeConfigJson = tree.RuntimeConfigJson;
             game.CompatibilitySummaryJson = "{}";
             game.ActivatedBy = game.OwnerUserId;
             game.ActivatedAt = now;
@@ -125,20 +128,8 @@ public sealed class GameContentOperationMaintenance(
             game.UpdatedAt = now;
             game.StateVersion++;
 
-            GameFileRow[] oldCurrent = await db.GameFiles.Where(file => file.GameId == game.Id && file.Scope == "CURRENT").ToArrayAsync(token).ConfigureAwait(false);
-            db.GameFiles.RemoveRange(oldCurrent);
-            db.GameFiles.AddRange(tree.Entries.Select(entry => new GameFileRow
-            {
-                GameId = game.Id,
-                Scope = "CURRENT",
-                LogicalPath = entry.Path,
-                EntryKind = entry.EntryKind,
-                ByteLength = entry.Bytes,
-                ContentDigest = entry.Digest,
-                FileKind = entry.FileKind,
-                TextEncoding = entry.Encoding,
-                HasBom = entry.HasBom,
-            }));
+            GameFileRow[] oldFiles = await db.GameFiles.Where(file => file.GameId == game.Id).ToArrayAsync(token).ConfigureAwait(false);
+            db.GameFiles.RemoveRange(oldFiles);
             await MarkCommittedAsync(operation, now, token).ConfigureAwait(false);
             await db.SaveChangesAsync(token).ConfigureAwait(false);
             return true;
@@ -180,7 +171,6 @@ public sealed class GameContentOperationMaintenance(
                     if (existing is null) continue;
                     if (LinuxFileOperations.TryDeleteTreeAt(parent, name, allowReadOnly: true)) count++;
                 }
-                LinuxFileOperations.Sync(parent);
             }
             catch (Exception exception) when (exception is IOException or GameLibraryException) { }
         }
@@ -235,7 +225,6 @@ public sealed class GameContentOperationMaintenance(
                     if (existing is null) continue;
                     if (LinuxFileOperations.TryDeleteTreeAt(parent, name, allowReadOnly: true)) removed = true;
                 }
-                LinuxFileOperations.Sync(parent);
                 if (removed) handled++;
             }
             catch (Exception exception) when (exception is IOException or GameLibraryException) { }
@@ -252,7 +241,6 @@ public sealed class GameContentOperationMaintenance(
             using SafeFileHandle parent = LinuxFileOperations.OpenDirectory(directory);
             foreach (string name in new[] { $".content-{operationId}", $".validate-{operationId}" })
                 LinuxFileOperations.TryDeleteTreeAt(parent, name, allowReadOnly: true);
-            LinuxFileOperations.Sync(parent);
         }
         catch (Exception exception) when (exception is IOException or GameLibraryException) { }
     }
@@ -273,6 +261,8 @@ public sealed class GameContentOperationMaintenance(
                 && operation.Status == GameContentOperationStatus.ContentReady)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(operation => operation.Status, GameContentOperationStatus.Committed)
+                .SetProperty(operation => operation.Stage, GameContentOperationStage.Completed)
+                .SetProperty(operation => operation.CurrentItem, (string?)null)
                 .SetProperty(operation => operation.UpdatedAt, now)
                 .SetProperty(operation => operation.CompletedAt, now)
                 .SetProperty(operation => operation.StateVersion, operation => operation.StateVersion + 1), token)
@@ -281,6 +271,8 @@ public sealed class GameContentOperationMaintenance(
     private static Task MarkCommittedAsync(GameContentOperationRow operation, DateTimeOffset now, CancellationToken token)
     {
         operation.Status = GameContentOperationStatus.Committed;
+        operation.Stage = GameContentOperationStage.Completed;
+        operation.CurrentItem = null;
         operation.UpdatedAt = now;
         operation.CompletedAt = now;
         operation.StateVersion++;
@@ -322,6 +314,5 @@ public sealed class GameContentOperationMaintenance(
         using SafeFileHandle? workspace = LinuxFileOperations.TryOpenDirectoryAt(parent, "workspace");
         if (activatedWorkspace is not null && workspace is null)
             LinuxFileOperations.RenameAt(parent, $"workspace-activated-{operationId}", "workspace");
-        LinuxFileOperations.Sync(parent);
     }
 }
