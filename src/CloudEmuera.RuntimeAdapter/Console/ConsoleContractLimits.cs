@@ -16,7 +16,9 @@ public sealed record ConsoleContractLimits
 
     public int MaxAltTextLength { get; init; } = 16_384;
 
-    public int MaxAssetIdLength { get; init; } = 128;
+    // Path-based asset ids encode a validated logical path and therefore need a
+    // separate budget from the short ids used by the rest of the console.
+    public int MaxAssetIdLength { get; init; } = 2_048;
 
     public int MaxBatchNodeCount { get; init; } = 512;
 

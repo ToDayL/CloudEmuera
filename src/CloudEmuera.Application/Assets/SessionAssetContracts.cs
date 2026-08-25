@@ -27,7 +27,7 @@ public sealed record SessionPresentationAsset(
     string AssetId,
     string MediaType,
     long ByteLength,
-    string ContentDigest,
+    string? ContentDigest,
     string? ETag = null);
 
 public sealed record SessionPresentationFont(
@@ -47,7 +47,7 @@ public sealed record SessionAssetRead(
     string AssetId,
     string MediaType,
     long ByteLength,
-    string ContentDigest,
+    string? ContentDigest,
     Stream Content);
 
 public interface ISessionAssetService

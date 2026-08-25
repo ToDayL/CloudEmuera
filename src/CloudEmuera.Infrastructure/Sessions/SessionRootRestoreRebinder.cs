@@ -148,13 +148,16 @@ public static class SessionRootRestoreRebinder
             !string.Equals(marker.OwnerUserId, session.OwnerUserId, StringComparison.Ordinal) ||
             !string.Equals(marker.GameId, session.GameId, StringComparison.Ordinal) ||
             marker.SourceContentRevision != session.SourceContentRevision ||
-            !string.Equals(marker.SourceContentDigest, session.SourceContentDigest, StringComparison.Ordinal) ||
-            !string.Equals(marker.SourceManifestDigest, session.SessionRootManifestDigest, StringComparison.Ordinal) ||
-            !string.Equals(marker.MaterializedManifestDigest, session.SessionRootManifestDigest, StringComparison.Ordinal) ||
+            BothPresentAndDifferent(marker.SourceContentDigest, session.SourceContentDigest) ||
+            BothPresentAndDifferent(marker.SourceManifestDigest, session.SessionRootManifestDigest) ||
+            BothPresentAndDifferent(marker.MaterializedManifestDigest, session.SessionRootManifestDigest) ||
             (int)marker.SaveLayout != session.SaveLayout ||
             !string.Equals(marker.RuntimeVersion, session.RuntimeVersion, StringComparison.Ordinal))
         {
             throw new SessionRuntimeException(SessionRuntimeResultCodes.SessionRootInvalid, "The restored SessionRoot marker does not match the durable Session row.");
         }
     }
+
+    private static bool BothPresentAndDifferent(string? left, string? right) =>
+        left is not null && right is not null && !string.Equals(left, right, StringComparison.Ordinal);
 }

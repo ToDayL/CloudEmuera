@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-
 namespace CloudEmuera.RuntimeAdapter;
 
 /// <summary>
@@ -25,10 +22,15 @@ public sealed class StructuredRuntimeAudioPort : IRuntimeAudioPort
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
-        if (fileSystem is not null && !fileSystem.FileExists(request.ResourcePath, cancellationToken))
-            return RuntimeAudioPlaybackResult.Unsupported;
+        RuntimeFilePath assetPath = request.ResourcePath;
+        if (fileSystem is not null)
+        {
+            if (!fileSystem.FileExists(assetPath, cancellationToken))
+                return RuntimeAudioPlaybackResult.Unsupported;
+            assetPath = fileSystem.ResolveExistingPath(assetPath, cancellationToken);
+        }
 
-        ConsoleAssetId assetId = ToAssetId(request.ResourcePath, cancellationToken);
+        ConsoleAssetId assetId = ToAssetId(assetPath);
         MediaChannelState? previous = console.Snapshot.MediaState.Channels
             .FirstOrDefault(channel => string.Equals(channel.Channel, request.Channel, StringComparison.Ordinal));
         long revision = previous is null ? 1 : checked(previous.Revision + 1);
@@ -55,7 +57,10 @@ public sealed class StructuredRuntimeAudioPort : IRuntimeAudioPort
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ConsoleAssetId assetId = ToAssetId(resourcePath, cancellationToken);
+        RuntimeFilePath assetPath = resourcePath;
+        if (fileSystem is not null && fileSystem.FileExists(assetPath, cancellationToken))
+            assetPath = fileSystem.ResolveExistingPath(assetPath, cancellationToken);
+        ConsoleAssetId assetId = ToAssetId(assetPath);
         string[] channels = console.Snapshot.MediaState.Channels
             .Where(channel => channel.AssetId == assetId)
             .Select(channel => channel.Channel)
@@ -94,15 +99,6 @@ public sealed class StructuredRuntimeAudioPort : IRuntimeAudioPort
             console.EmitTransaction(new ConsoleTransaction([ConsoleOperation.StopAllMedia()]));
     }
 
-    private ConsoleAssetId ToAssetId(RuntimeFilePath resourcePath, CancellationToken cancellationToken)
-    {
-        if (fileSystem is null)
-        {
-            string logicalDigest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourcePath.LogicalPath))).ToLowerInvariant();
-            return new ConsoleAssetId($"logical-{logicalDigest}");
-        }
-        using Stream stream = fileSystem.OpenRead(resourcePath, cancellationToken);
-        string digest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-        return new ConsoleAssetId($"sha256-{digest}");
-    }
+    private static ConsoleAssetId ToAssetId(RuntimeFilePath resourcePath) =>
+        new(ConsoleAssetIdCodec.EncodePath(resourcePath.LogicalPath));
 }

@@ -26,6 +26,20 @@ public sealed class LocalRuntimeFileSystemTests
     }
 
     [Fact]
+    public void ExistingPathResolutionReturnsTheStoredCaseForAssetIdentity()
+    {
+        using var workspace = new RuntimeTestWorkspace();
+        RuntimePaths paths = workspace.BuildPaths();
+        var fileSystem = new LocalRuntimeFileSystem(paths);
+
+        RuntimeFilePath requested = RuntimeFilePath.Parse(RuntimeFileArea.GameContent, "csv/gamebase.csv");
+
+        RuntimeFilePath resolved = fileSystem.ResolveExistingPath(requested);
+
+        Assert.Equal("CSV/GAMEBASE.CSV", resolved.LogicalPath);
+    }
+
+    [Fact]
     public void SaveAndTemporaryWritesStayInTheirPrivateAreas()
     {
         using var workspace = new RuntimeTestWorkspace();

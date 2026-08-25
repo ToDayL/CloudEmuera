@@ -10,11 +10,15 @@ public sealed class SessionRow
 
     public string GameId { get; set; } = string.Empty;
 
-    public string SourceContentDigest { get; set; } = string.Empty;
+    public string? SourceContentDigest { get; set; }
+
+    public string SessionIdentityMode { get; set; } = "LEGACY_DIGEST";
+
+    public string SessionSnapshotId { get; set; } = string.Empty;
 
     public long SourceContentRevision { get; set; }
 
-    public string SessionRootManifestDigest { get; set; } = string.Empty;
+    public string? SessionRootManifestDigest { get; set; }
 
     public int SaveLayout { get; set; }
 

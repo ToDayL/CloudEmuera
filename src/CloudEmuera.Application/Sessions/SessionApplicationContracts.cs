@@ -86,7 +86,7 @@ public sealed record SessionView(
     string Id,
     string Name,
     SessionGameSummary Game,
-    string SourceContentDigest,
+    string? SourceContentDigest,
     long SourceContentRevision,
     string RuntimeVersion,
     int FontSize,

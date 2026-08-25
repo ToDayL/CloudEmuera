@@ -9,6 +9,7 @@ const outputPath = path.join(root, "src/CloudEmuera.Web/src/realtime/generated.t
 
 const refTypes = {
   identifier: "string",
+  assetIdentifier: "string",
   digest: "string",
   empty: "EmptyPayload",
   clientHello: "ClientHelloPayload",

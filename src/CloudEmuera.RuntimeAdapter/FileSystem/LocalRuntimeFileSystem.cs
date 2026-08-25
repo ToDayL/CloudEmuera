@@ -173,6 +173,16 @@ public sealed class LocalRuntimeFileSystem : IRuntimeFileSystem
         throw EntryNotFound(path);
     }
 
+    public RuntimeFilePath ResolveExistingPath(RuntimeFilePath path, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string physicalPath = guard.Resolve(path, RuntimeFileOperation.ReadEntry, requireExisting: true);
+        EnsureFile(physicalPath, path);
+        string relativePath = Path.GetRelativePath(paths.GetAreaRoot(path.Area), physicalPath)
+            .Replace(Path.DirectorySeparatorChar, '/');
+        return new RuntimeFilePath(path.Area, RuntimeRelativePath.Parse(relativePath));
+    }
+
     public void Move(
         RuntimeFilePath source,
         RuntimeFilePath destination,

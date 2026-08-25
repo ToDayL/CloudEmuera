@@ -70,7 +70,7 @@ public sealed class GameLibraryServiceTests
         CurrentActor actor = new("usr_fixture", "PLAYER", "auths_fixture");
         GameValidationResult validation = await service.ValidateAsync(actor, game.Id, 0);
         Assert.True(validation.CanActivate);
-        Assert.StartsWith("sha256:", validation.ContentDigest, StringComparison.Ordinal);
+        Assert.Null(validation.ContentDigest);
 
         GameLibraryItem activated = await service.ActivateAsync(actor, game.Id, validation.StateVersion);
         Assert.True(activated.HasCurrentContent);
@@ -141,14 +141,19 @@ public sealed class GameLibraryServiceTests
         var service = new GameLibraryService(scope.Context, new UnusedIngestionService(), new AcceptingValidator(), database.Options, TimeProvider.System);
         CurrentActor actor = new("usr_fixture", "PLAYER", "auths_fixture");
         GameTextFile read = await service.ReadTextFileAsync(actor, game.Id, "WORKSPACE", "a.TXT");
-        Assert.StartsWith("sha256:", read.ETag, StringComparison.Ordinal);
+        Assert.Null(read.ETag);
         Assert.Equal("UTF8", read.Encoding);
+
+        await File.WriteAllTextAsync(Path.Combine(workspace, "a.TXT"), "owner replacement\n");
+        GameTextFile replaced = await service.ReadTextFileAsync(actor, game.Id, "WORKSPACE", "a.TXT");
+        Assert.Equal("owner replacement\n", replaced.Content);
+        Assert.Null(replaced.ETag);
 
         GameFileDownload download = await service.OpenDownloadAsync(actor, game.Id, "WORKSPACE", "a.TXT");
         await using (download.Content)
         using (var reader = new StreamReader(download.Content))
-            Assert.Equal("needle one\nneedle two\n", await reader.ReadToEndAsync());
-        Assert.StartsWith("sha256:", download.ETag, StringComparison.Ordinal);
+            Assert.Equal("owner replacement\n", await reader.ReadToEndAsync());
+        Assert.Null(download.ETag);
     }
 
     [Fact]
@@ -653,8 +658,8 @@ public sealed class GameLibraryServiceTests
     private sealed class UnusedIngestionService : IGamePackageIngestionService
     {
         public Task<IngestedGamePackage> IngestAsync(GamePackageIngestionRequest request, GamePackageIngestionLimits? requestedLimits = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<GamePackageConsumption> BeginConsumeAsync(string ingestionId, string ownerUserId, string expectedContentDigest, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<DateTimeOffset> RenewConsumeAsync(string ingestionId, string ownerUserId, string expectedContentDigest, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<GamePackageConsumption> BeginConsumeAsync(string ingestionId, string ownerUserId, string? expectedContentDigest, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<DateTimeOffset> RenewConsumeAsync(string ingestionId, string ownerUserId, string? expectedContentDigest, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task CompleteConsumeAsync(string ingestionId, string ownerUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task AbandonAsync(string ingestionId, string ownerUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }

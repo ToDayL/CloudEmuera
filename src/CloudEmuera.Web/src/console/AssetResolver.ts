@@ -9,7 +9,8 @@ export interface ResolvedPresentationFont extends PresentationFont {
   aliases: string[];
 }
 
-const safeAssetId = /^[A-Za-z0-9._~-]{1,128}$/;
+const safeAssetId = /^(?:path-[A-Za-z0-9_-]{1,2043}|[A-Za-z0-9._~-]{1,128})$/;
+const safeContentDigest = /^sha256:[0-9a-fA-F]{64}$/;
 const safeFamily = /^[A-Za-z0-9._~ -]{1,128}$/;
 const safeCssFamily = /^cloudemuera-font-[a-f0-9]{16}$/;
 const allowedMedia = /^(?:image\/(?:png|jpeg|gif|webp|bmp)|audio\/(?:ogg|mpeg|wav|webm|flac)|font\/(?:woff2?|ttf|otf))$/;
@@ -21,7 +22,7 @@ export class AssetResolver {
   private readonly fontDiagnostics: readonly string[];
 
   constructor(private readonly sessionId: string, manifest: PresentationManifest | null | undefined, private readonly runtimeFontFamily?: string) {
-    this.assets = new Map((manifest?.assets ?? []).filter(asset => safeAssetId.test(asset.assetId) && allowedMedia.test(asset.mediaType) && Number.isSafeInteger(asset.byteLength) && asset.byteLength >= 0 && /^sha256:[0-9A-Fa-f]{64}$/.test(asset.contentDigest)).map(asset => [asset.assetId, asset]));
+    this.assets = new Map((manifest?.assets ?? []).filter(asset => safeAssetId.test(asset.assetId) && allowedMedia.test(asset.mediaType) && Number.isSafeInteger(asset.byteLength) && asset.byteLength >= 0 && (asset.contentDigest === null || safeContentDigest.test(asset.contentDigest))).map(asset => [asset.assetId, asset]));
     this.fonts = (manifest?.fonts ?? [])
       .filter(font => safeFamily.test(font.family) && safeAssetId.test(font.assetId))
       .map(font => ({

@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 
 namespace CloudEmuera.RuntimeAdapter;
@@ -19,7 +18,7 @@ public sealed record SessionRootManifestEntry
         string relativePath,
         SessionRootManifestEntryKind kind,
         long length,
-        string sha256)
+        string? sha256 = null)
     {
         RelativePath = RuntimeRelativePath.Parse(relativePath).Value;
         if (!Enum.IsDefined(kind))
@@ -32,11 +31,6 @@ public sealed record SessionRootManifestEntry
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        if (kind == SessionRootManifestEntryKind.File && !IsSha256(sha256))
-        {
-            throw new ArgumentException("A file manifest entry must contain a SHA-256 digest.", nameof(sha256));
-        }
-
         if (kind == SessionRootManifestEntryKind.Directory && !string.IsNullOrEmpty(sha256))
         {
             throw new ArgumentException("A directory manifest entry must not contain a content digest.", nameof(sha256));
@@ -44,7 +38,7 @@ public sealed record SessionRootManifestEntry
 
         Kind = kind;
         Length = length;
-        Sha256 = sha256.ToUpperInvariant();
+        Sha256 = sha256?.ToUpperInvariant();
     }
 
     public string RelativePath { get; }
@@ -53,21 +47,19 @@ public sealed record SessionRootManifestEntry
 
     public long Length { get; }
 
-    public string Sha256 { get; }
+    /// <summary>
+    /// Legacy file digest, retained only when reading an old manifest. New
+    /// manifests intentionally leave this field null.
+    /// </summary>
+    public string? Sha256 { get; }
 
-    private static bool IsSha256(string? value) =>
-        value is not null &&
-        value.Length == 64 &&
-        value.All(static character =>
-            character is >= '0' and <= '9' or
-            >= 'a' and <= 'f' or
-            >= 'A' and <= 'F');
 }
 
 /// <summary>
 /// Validated publication identity consumed by the SessionRoot materializer.
-/// The manifest digest is content-addressed from canonical relative paths,
-/// entry kinds, lengths and file hashes.
+/// New manifests use an explicit GameId/revision identity. The old digest
+/// property remains as a wire-compatible label for legacy SessionRoots; it is
+/// never computed from file bytes.
 /// </summary>
 public sealed class SessionRootPublishedManifest
 {
@@ -113,10 +105,8 @@ public sealed class SessionRootPublishedManifest
             .OrderBy(entry => entry.RelativePath, StringComparer.Ordinal)
             .ThenBy(entry => entry.Kind)
             .ToArray();
-        ManifestDigest = ComputeDigest(Entries);
-        GameContentIdentity = string.IsNullOrWhiteSpace(gameContentIdentity)
-            ? ManifestDigest
-            : gameContentIdentity;
+        ManifestDigest = string.IsNullOrWhiteSpace(gameContentIdentity) ? "path-v2" : gameContentIdentity;
+        GameContentIdentity = ManifestDigest;
     }
 
     public IReadOnlyList<SessionRootManifestEntry> Entries { get; }
@@ -169,8 +159,7 @@ public sealed class SessionRootPublishedManifest
                 entries.Add(new SessionRootManifestEntry(
                     relative,
                     SessionRootManifestEntryKind.File,
-                    file.Length,
-                    HashFile(file.FullName, relative)));
+                    file.Length));
             }
             else
             {
@@ -183,49 +172,6 @@ public sealed class SessionRootPublishedManifest
         }
     }
 
-    internal static string ComputeDigest(IEnumerable<SessionRootManifestEntry> entries)
-    {
-        var builder = new StringBuilder();
-        foreach (SessionRootManifestEntry entry in entries
-                     .OrderBy(item => item.RelativePath, StringComparer.Ordinal)
-                     .ThenBy(item => item.Kind))
-        {
-            builder.Append(entry.Kind == SessionRootManifestEntryKind.Directory ? 'D' : 'F')
-                .Append('\t')
-                .Append(entry.RelativePath)
-                .Append('\t')
-                .Append(entry.Length)
-                .Append('\t')
-                .Append(entry.Sha256)
-                .Append('\n');
-        }
-
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
-    }
-
-    private static string HashFile(string path, string logicalPath)
-    {
-        try
-        {
-            using FileStream stream = new(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                64 * 1024,
-                FileOptions.SequentialScan);
-            return Convert.ToHexString(SHA256.HashData(stream));
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            throw new RuntimePathException(
-                RuntimePathReasonCodes.UnsupportedRuntimeFile,
-                "A GameContent file could not be read as a regular file.",
-                logicalPath,
-                RuntimeFileArea.GameContent,
-                exception);
-        }
-    }
 }
 
 /// <summary>

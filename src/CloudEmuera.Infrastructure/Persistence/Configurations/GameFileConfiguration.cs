@@ -14,7 +14,7 @@ internal sealed class GameFileConfiguration : IEntityTypeConfiguration<GameFileR
             table.HasCheckConstraint("ck_game_files_path", SqliteCheckExpressions.RelativePath("logical_path"));
             table.HasCheckConstraint("ck_game_files_kind", "entry_kind IN ('FILE', 'DIRECTORY')");
             table.HasCheckConstraint("ck_game_files_length", "byte_length >= 0 AND (entry_kind = 'FILE' OR byte_length = 0)");
-            table.HasCheckConstraint("ck_game_files_digest", "(entry_kind = 'DIRECTORY' AND content_digest IS NULL) OR (entry_kind = 'FILE' AND length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
+            table.HasCheckConstraint("ck_game_files_digest", "entry_kind = 'DIRECTORY' OR content_digest IS NULL OR (length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
             table.HasCheckConstraint("ck_game_files_file_metadata", "(entry_kind = 'DIRECTORY' AND file_kind IS NULL AND text_encoding IS NULL AND has_bom IS NULL) OR (entry_kind = 'FILE' AND file_kind IN ('TEXT', 'BINARY') AND ((file_kind = 'BINARY' AND text_encoding IS NULL AND has_bom IS NULL) OR (file_kind = 'TEXT' AND text_encoding IN ('UTF8', 'UTF8_BOM', 'SHIFT_JIS', 'UNKNOWN') AND has_bom IN (0, 1))))");
         });
         builder.HasKey(row => new { row.GameId, row.Scope, row.LogicalPath }).HasName("pk_game_files");

@@ -89,7 +89,8 @@ public sealed class GameContentOperationMaintenance(
             GameStorageOwnerMarker.Validate(gameDirectory, game.Id);
             string current = Path.Combine(gameDirectory, "content");
             ScannedGameTree tree = GameContentTreeScanner.Scan(current);
-            if (!string.Equals(tree.ContentDigest, operation.ContentDigest, StringComparison.Ordinal))
+            if (operation.ContentDigest is not null && tree.ContentDigest is not null &&
+                !string.Equals(tree.ContentDigest, operation.ContentDigest, StringComparison.Ordinal))
             {
                 RestoreActivationTrees(gameDirectory, operation.Id);
                 await MarkFailedAsync(operation.Id, "CONTENT_READY_TREE_MISMATCH", now, token).ConfigureAwait(false);

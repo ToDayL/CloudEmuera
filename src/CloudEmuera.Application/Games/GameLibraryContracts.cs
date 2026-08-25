@@ -16,8 +16,8 @@ public sealed record GameLibraryItem(
     DateTimeOffset UpdatedAt);
 
 public sealed record GameFileItem(string Path, bool IsDirectory, long Bytes, string? ETag = null);
-public sealed record GameTextFile(string Path, string Content, string Encoding, bool HasBom, long Bytes, string ETag, int StateVersion);
-public sealed record GameFileDownload(string FileName, long Bytes, string ETag, Stream Content);
+public sealed record GameTextFile(string Path, string Content, string Encoding, bool HasBom, long Bytes, string? ETag, int StateVersion);
+public sealed record GameFileDownload(string FileName, long Bytes, string? ETag, Stream Content);
 public sealed record GameContentOperationItem(string Id, string Type, string Status, string? ContentDigest, string? ErrorCode, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? CompletedAt);
 public sealed record GameDiagnosticItem(string Id, string Code, string Severity, string? Path, string Message, string MessageKey, bool ActivationBlocking, string OverridePolicy, string? OverriddenBy, DateTimeOffset? OverriddenAt);
 
@@ -30,7 +30,7 @@ public sealed record GameValidationDiagnostic(
 
 public sealed record GameValidationResult(
     bool CanActivate,
-    string ContentDigest,
+    string? ContentDigest,
     int FileCount,
     long TotalBytes,
     IReadOnlyList<GameValidationDiagnostic> Diagnostics,
@@ -54,7 +54,7 @@ public abstract class GameContentCopyLease : IAsyncDisposable
     public abstract string LeaseId { get; }
     public abstract string GameId { get; }
     public abstract long ContentRevision { get; }
-    public abstract string ContentDigest { get; }
+    public abstract string? ContentDigest { get; }
     public abstract string ContentRootPath { get; }
     public abstract ValueTask RenewAsync(CancellationToken cancellationToken = default);
     public abstract ValueTask DisposeAsync();
@@ -65,7 +65,7 @@ public interface IGameContentCopyLeaseStore
     Task<GameContentCopyLease> AcquireAsync(
         string gameId,
         long contentRevision,
-        string contentDigest,
+        string? contentDigest,
         string consumerType,
         string consumerId,
         CancellationToken cancellationToken = default);
@@ -85,7 +85,7 @@ public interface IGameLibraryService
     Task<GameLibraryItem> UpdateAsync(CurrentActor actor, string gameId, string? name, string? visibility, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task DeleteAsync(CurrentActor actor, string gameId, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<GameLibraryItem> SetBlockedAsync(CurrentActor actor, string gameId, bool blocked, int expectedStateVersion, CancellationToken cancellationToken = default);
-    Task<GameLibraryItem> BindPackageAsync(CurrentActor actor, string gameId, string ingestionId, string contentDigest, int expectedStateVersion, CancellationToken cancellationToken = default);
+    Task<GameLibraryItem> BindPackageAsync(CurrentActor actor, string gameId, string ingestionId, string? contentDigest, int expectedStateVersion, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<GameFileItem>> ListFilesAsync(CurrentActor actor, string gameId, string? scope, string? directory, CancellationToken cancellationToken = default);
     Task<GameTextFile> ReadTextFileAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default);
     Task<GameFileDownload> OpenDownloadAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default);

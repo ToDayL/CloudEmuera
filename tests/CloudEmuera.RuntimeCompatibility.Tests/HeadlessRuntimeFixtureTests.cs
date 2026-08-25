@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Security.Cryptography;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
@@ -7,7 +8,6 @@ using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.UI.Game.Image;
 using MinorShift.Emuera.UI.Game;
 using System.Drawing;
-using System.Security.Cryptography;
 using System.Text;
 using static MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
 using RuntimeConsoleColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
@@ -219,7 +219,7 @@ public sealed class HeadlessRuntimeFixtureTests
                 File.WriteAllBytes(Path.Combine(resources, "webp.webp"), webp);
                 File.WriteAllText(
                     Path.Combine(resources, "sprites.csv"),
-                    "WEBP,webp.webp,0,0,4,3\n");
+                    "WEBP,WEBP.WEBP,0,0,4,3\n");
             });
         await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
 
@@ -236,9 +236,7 @@ public sealed class HeadlessRuntimeFixtureTests
         SpriteNode sprite = Assert.IsType<SpriteNode>(
             fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes).Single(node => node is SpriteNode));
         Assert.Equal(new ConsoleRect(0, 0, 4, 3), sprite.SourceRect);
-        Assert.Equal(
-            $"sha256-{Convert.ToHexString(SHA256.HashData(webp)).ToLowerInvariant()}",
-            sprite.AssetId.Value);
+        Assert.Equal("path-cmVzb3VyY2VzL3dlYnAud2VicA", sprite.AssetId.Value);
     }
 
     [Fact]

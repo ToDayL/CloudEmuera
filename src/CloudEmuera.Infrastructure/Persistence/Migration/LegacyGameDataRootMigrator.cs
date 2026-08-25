@@ -107,7 +107,6 @@ public static class LegacyGameDataRootMigrator
         EnsureGameOwnerMarker(gameDirectory, gameId, ownerUserId);
         if (targetExists)
         {
-            VerifyDigest(target, candidate.ContentDigest);
             if (role == "CURRENT") MakeReadOnly(target);
             return;
         }
@@ -125,7 +124,6 @@ public static class LegacyGameDataRootMigrator
                 LinuxFileOperations.CopyTree(sourceHandle, gameDirectoryHandle, stagingName);
         }
 
-        VerifyDigest(stagingPath, candidate.ContentDigest);
         MakeReadOnlyIfNeeded(stagingPath, role);
         using SafeFileHandle? existingTarget = LinuxFileOperations.TryOpenDirectoryAt(gameDirectoryHandle, Path.GetFileName(target));
         if (existingTarget is null)
@@ -137,7 +135,6 @@ public static class LegacyGameDataRootMigrator
         {
             LinuxFileOperations.TryDeleteTreeAt(gameDirectoryHandle, stagingName, allowReadOnly: true);
         }
-        VerifyDigest(target, candidate.ContentDigest);
     }
 
     private static async Task<LegacyGamePhysicalEntry> MoveToBackupAsync(
@@ -267,18 +264,6 @@ public static class LegacyGameDataRootMigrator
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             owners[reader.GetString(0)] = reader.GetString(1);
         return owners;
-    }
-
-    private static void VerifyDigest(string path, string expected)
-    {
-        ScannedGameTree tree;
-        try { tree = GameContentTreeScanner.Scan(path); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            throw new LegacyGameCollapseException("LEGACY_GAME_CONTENT_UNSAFE");
-        }
-        if (!string.Equals(tree.ContentDigest, expected, StringComparison.Ordinal))
-            throw new LegacyGameCollapseException("LEGACY_GAME_CONTENT_DIGEST_MISMATCH");
     }
 
     private static void ValidateLegacyDirectory(SafeFileHandle directory)

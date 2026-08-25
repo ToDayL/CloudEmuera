@@ -655,7 +655,8 @@ games.MapGet("/{id}/file", async (string id, string? scope, string path, HttpCon
     return await ApiIdentity.GameResultAsync(async () =>
     {
         GameTextFile file = await library.ReadTextFileAsync(actor, id, scope, path, context.RequestAborted).ConfigureAwait(false);
-        context.Response.Headers.ETag = ApiIdentity.QuoteETag(file.ETag);
+        if (file.ETag is not null)
+            context.Response.Headers.ETag = ApiIdentity.QuoteETag(file.ETag);
         return file;
     }, file => Results.Ok(file)).ConfigureAwait(false);
 }).RequireRateLimiting("game-read");
@@ -792,7 +793,7 @@ sessions.MapGet("/{sessionId}/presentation-manifest", async (string sessionId, H
     try
     {
         SessionPresentationManifest manifest = await service.GetManifestAsync(actor, sessionId, context.RequestAborted).ConfigureAwait(false);
-        context.Response.Headers.CacheControl = "private, max-age=60";
+        context.Response.Headers.CacheControl = "private, no-store";
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         return Results.Ok(manifest);
     }
@@ -815,16 +816,9 @@ sessions.MapGet("/{sessionId}/assets/{assetId}", async (string sessionId, string
     try
     {
         SessionAssetRead asset = await service.OpenReadAsync(actor, sessionId, assetId, context.RequestAborted).ConfigureAwait(false);
-        context.Response.Headers.ETag = ApiIdentity.QuoteETag(asset.ContentDigest);
-        context.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+        context.Response.Headers.CacheControl = "private, no-store";
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
         context.Response.Headers.AcceptRanges = "bytes";
-        string ifNoneMatch = context.Request.Headers.IfNoneMatch.ToString();
-        if (ifNoneMatch.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(value => string.Equals(value.Trim(), ApiIdentity.QuoteETag(asset.ContentDigest), StringComparison.Ordinal)))
-        {
-            await asset.Content.DisposeAsync().ConfigureAwait(false);
-            return Results.StatusCode(StatusCodes.Status304NotModified);
-        }
 
         if (!ApiIdentity.TrySingleRange(context.Request.Headers.Range.ToString(), asset.ByteLength, out long start, out long length))
         {
@@ -1336,7 +1330,8 @@ internal static class ApiIdentity
 
     public static IResult SetDownloadHeaders(HttpContext context, GameFileDownload download)
     {
-        context.Response.Headers.ETag = QuoteETag(download.ETag);
+        if (download.ETag is not null)
+            context.Response.Headers.ETag = QuoteETag(download.ETag);
         return Results.Stream(download.Content, "application/octet-stream", download.FileName, enableRangeProcessing: false);
     }
 

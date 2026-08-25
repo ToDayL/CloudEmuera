@@ -21,7 +21,7 @@ export interface SessionResponseDto {
   id: string;
   name: string;
   game: SessionGameSummaryDto;
-  sourceContentDigest: string;
+  sourceContentDigest: string | null;
   sourceContentRevision: number;
   runtimeVersion: string;
   fontFaceId: string;
@@ -63,7 +63,7 @@ export interface SessionPresentationAssetDto {
   assetId: string;
   mediaType: string;
   byteLength: number;
-  contentDigest: string;
+  contentDigest: string | null;
   eTag?: string | null;
 }
 

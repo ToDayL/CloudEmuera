@@ -12,7 +12,8 @@ internal sealed class GameContentCopyLeaseConfiguration : IEntityTypeConfigurati
             table.HasCheckConstraint("ck_game_content_copy_leases_id", SqliteCheckExpressions.IdentifierPrefix("id", "gcl_"));
             table.HasCheckConstraint("ck_game_content_copy_leases_game_id", SqliteCheckExpressions.IdentifierPrefix("game_id", "game_"));
             table.HasCheckConstraint("ck_game_content_copy_leases_revision", "content_revision > 0");
-            table.HasCheckConstraint("ck_game_content_copy_leases_digest", "length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64");
+            table.HasCheckConstraint("ck_game_content_copy_leases_digest", "content_digest IS NULL OR (length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
+            table.HasCheckConstraint("ck_game_content_copy_leases_source_path", $"source_content_path IS NULL OR ({SqliteCheckExpressions.RelativePath("source_content_path")})");
             table.HasCheckConstraint("ck_game_content_copy_leases_consumer", "consumer_type IN ('SESSION_CREATE', 'VALIDATION') AND length(consumer_id) BETWEEN 1 AND 64 AND instr(consumer_id, char(0)) = 0");
             table.HasCheckConstraint("ck_game_content_copy_leases_time", "created_at >= 0 AND expires_at > created_at");
         });
@@ -20,7 +21,8 @@ internal sealed class GameContentCopyLeaseConfiguration : IEntityTypeConfigurati
         builder.Property(row => row.Id).HasColumnName("id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IdMaxLength).IsRequired();
         builder.Property(row => row.GameId).HasColumnName("game_id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IdMaxLength).IsRequired();
         builder.Property(row => row.ContentRevision).HasColumnName("content_revision").HasColumnType("INTEGER").IsRequired();
-        builder.Property(row => row.ContentDigest).HasColumnName("content_digest").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.DigestLength).IsRequired();
+        builder.Property(row => row.ContentDigest).HasColumnName("content_digest").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.DigestLength);
+        builder.Property(row => row.SourceContentPath).HasColumnName("source_content_path").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.PathMaxLength);
         builder.Property(row => row.ConsumerType).HasColumnName("consumer_type").HasColumnType("TEXT").HasMaxLength(32).IsRequired();
         builder.Property(row => row.ConsumerId).HasColumnName("consumer_id").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.IdMaxLength).IsRequired();
         ConfigureTime(builder.Property(row => row.ExpiresAt), "expires_at");

@@ -15,7 +15,7 @@ public sealed class GameContentCopyLeaseStore(
     public async Task<GameContentCopyLease> AcquireAsync(
         string gameId,
         long contentRevision,
-        string contentDigest,
+        string? contentDigest,
         string consumerType,
         string consumerId,
         CancellationToken cancellationToken = default)
@@ -26,10 +26,10 @@ public sealed class GameContentCopyLeaseStore(
         await using FileStream mutationLock = AcquireMutationLock(gameId);
         var snapshot = await db.Games.AsNoTracking()
             .Where(game => game.Id == gameId && game.Status == GameStatus.Active)
-            .Select(game => new { game.CurrentContentPath, game.ContentRevision, game.ContentDigest })
+            .Select(game => new { game.CurrentContentPath, game.ContentRevision })
             .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false)
             ?? throw new GameLibraryException(GameLibraryErrorCodes.NotFound, "The game was not found.");
-        if (snapshot.CurrentContentPath is null || snapshot.ContentRevision != contentRevision || snapshot.ContentDigest != contentDigest)
+        if (snapshot.CurrentContentPath is null || snapshot.ContentRevision != contentRevision)
             throw new GameLibraryException(GameLibraryErrorCodes.StateVersionConflict, "The requested game content is no longer current.");
 
         string path = Path.GetFullPath(Path.Combine(databaseOptions.DataRoot, snapshot.CurrentContentPath));
@@ -45,6 +45,7 @@ public sealed class GameContentCopyLeaseStore(
             GameId = gameId,
             ContentRevision = contentRevision,
             ContentDigest = contentDigest,
+            SourceContentPath = snapshot.CurrentContentPath,
             ConsumerType = normalizedConsumer,
             ConsumerId = consumerId,
             CreatedAt = now,
@@ -56,7 +57,7 @@ public sealed class GameContentCopyLeaseStore(
             handle.Dispose();
             throw new GameLibraryException(GameLibraryErrorCodes.Conflict, $"A content-copy lease already exists for this consumer. {exception.Message}");
         }
-        return new Lease(leaseId, gameId, contentRevision, contentDigest, handle, scopeFactory, timeProvider);
+        return new Lease(leaseId, gameId, contentRevision, contentDigest, snapshot.CurrentContentPath, handle, scopeFactory, timeProvider);
     }
 
     private FileStream AcquireMutationLock(string gameId)
@@ -85,7 +86,8 @@ public sealed class GameContentCopyLeaseStore(
         string leaseId,
         string gameId,
         long revision,
-        string digest,
+        string? digest,
+        string sourceContentPath,
         SafeFileHandle handle,
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider) : GameContentCopyLease
@@ -94,7 +96,7 @@ public sealed class GameContentCopyLeaseStore(
         public override string LeaseId => leaseId;
         public override string GameId => gameId;
         public override long ContentRevision => revision;
-        public override string ContentDigest => digest;
+        public override string? ContentDigest => digest;
         public override string ContentRootPath => LinuxFileOperations.GetProcFileDescriptorPath(handle);
 
         public override async ValueTask RenewAsync(CancellationToken cancellationToken = default)
@@ -105,7 +107,7 @@ public sealed class GameContentCopyLeaseStore(
             DateTimeOffset now = timeProvider.GetUtcNow();
             int changed = await scopedDb.GameContentCopyLeases
                 .Where(row => row.Id == leaseId && row.GameId == gameId && row.ContentRevision == revision
-                    && row.ContentDigest == digest && row.ExpiresAt > now)
+                    && row.SourceContentPath == sourceContentPath && row.ExpiresAt > now)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.ExpiresAt, now.AddMinutes(5)), cancellationToken)
                 .ConfigureAwait(false);
             if (changed != 1) throw new GameLibraryException(GameLibraryErrorCodes.Conflict, "The content-copy lease expired.");

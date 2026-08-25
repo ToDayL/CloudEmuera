@@ -3,7 +3,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
-using System.Security.Cryptography;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using CloudEmuera.Application.GamePackages;
@@ -63,9 +62,9 @@ public sealed class SessionSaveApiContractTests : IDisposable
         PresentationManifestResponse manifest = await manifestResponse.Content.ReadFromJsonAsync<PresentationManifestResponse>()
             ?? throw new Xunit.Sdk.XunitException("Presentation manifest response was missing.");
         byte[] expectedPng = FixturePng();
-        string expectedDigest = Convert.ToHexString(SHA256.HashData(expectedPng)).ToLowerInvariant();
         PresentationAssetResponse asset = Assert.Single(manifest.Assets, item => item.MediaType == "image/png");
-        Assert.Equal($"sha256-{expectedDigest}", asset.AssetId);
+        Assert.Equal("path-SU1BR0UvaGVyby5wbmc", asset.AssetId);
+        Assert.Null(asset.ContentDigest);
         PresentationFontResponse[] fonts = manifest.Fonts;
         Assert.Empty(fonts);
         Assert.Empty(manifest.FontDiagnostics);
@@ -74,14 +73,13 @@ public sealed class SessionSaveApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, assetResponse.StatusCode);
         Assert.Equal("image/png", assetResponse.Content.Headers.ContentType?.MediaType);
         Assert.Equal(expectedPng, await assetResponse.Content.ReadAsByteArrayAsync());
-        Assert.Contains("private", assetResponse.Headers.CacheControl?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("immutable", assetResponse.Headers.CacheControl?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no-store", assetResponse.Headers.CacheControl?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("bytes", assetResponse.Headers.AcceptRanges.ToString());
-        Assert.False(string.IsNullOrWhiteSpace(assetResponse.Headers.ETag?.ToString()));
+        Assert.Null(assetResponse.Headers.ETag);
         using HttpRequestMessage cachedRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
-        cachedRequest.Headers.TryAddWithoutValidation("If-None-Match", assetResponse.Headers.ETag?.ToString());
+        cachedRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"legacy-etag\"");
         using HttpResponseMessage cachedResponse = await client.SendAsync(cachedRequest);
-        Assert.Equal(HttpStatusCode.NotModified, cachedResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, cachedResponse.StatusCode);
         using HttpRequestMessage rangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
         rangeRequest.Headers.Range = new RangeHeaderValue(0, 7);
         using HttpResponseMessage rangeResponse = await client.SendAsync(rangeRequest);
@@ -102,15 +100,19 @@ public sealed class SessionSaveApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, invalidRangeResponse.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/not-a-digest")).StatusCode);
 
-        // SEC-008: a frozen entry is fail-closed when the opened file is
-        // replaced with bytes that no longer match its MIME or digest.
+        // SEC-008: a replacement must still obey filesystem and MIME safety,
+        // but content bytes are intentionally owner-controlled.
         string assetPath = Path.Combine(dataRoot, "sessions", session.Id, "root", "IMAGE", "hero.png");
         File.WriteAllBytes(assetPath, Encoding.ASCII.GetBytes("not-a-png"));
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode);
-        byte[] digestMismatch = expectedPng.ToArray();
-        digestMismatch[^1] ^= 0x01;
-        File.WriteAllBytes(assetPath, digestMismatch);
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode);
+        byte[] replacement = expectedPng.ToArray();
+        replacement[^1] ^= 0x01;
+        File.WriteAllBytes(assetPath, replacement);
+        using (HttpResponseMessage replacementResponse = await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}"))
+        {
+            Assert.Equal(HttpStatusCode.OK, replacementResponse.StatusCode);
+            Assert.Equal(replacement, await replacementResponse.Content.ReadAsByteArrayAsync());
+        }
         File.WriteAllBytes(assetPath, expectedPng);
         if (OperatingSystem.IsLinux())
         {
@@ -478,7 +480,7 @@ public sealed class SessionSaveApiContractTests : IDisposable
 
     private sealed record CsrfResponse(string Token);
     private sealed record PresentationManifestResponse(int SchemaVersion, PresentationAssetResponse[] Assets, PresentationFontResponse[] Fonts, string[] FontDiagnostics);
-    private sealed record PresentationAssetResponse(string AssetId, string MediaType, long ByteLength, string ContentDigest, string? ETag);
+    private sealed record PresentationAssetResponse(string AssetId, string MediaType, long ByteLength, string? ContentDigest, string? ETag);
     private sealed record PresentationFontResponse(string Family, string AssetId, string Fallback, string CssFamily, string[] Aliases);
 
     [SuppressMessage("Security", "CA2101", Justification = "The test P/Invoke explicitly marshals both paths as UTF-8.")]
