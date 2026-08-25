@@ -45,8 +45,12 @@ internal sealed class ConsoleButtonString
 		getLastImg();
 		if (console != null)
 		{
-			Generation = parent.NewButtonGeneration;
+			Generation = parent.LegacyNewButtonGeneration;
+			#if CLOUDEMUERA_HEADLESS
+			console.UpdateLegacyGeneration();
+			#else
 			console.UpdateGeneration();
+			#endif
 		}
 		ErrPos = null;
 	}
@@ -59,8 +63,12 @@ internal sealed class ConsoleButtonString
 		getLastImg();
 		if (console != null)
 		{
-			Generation = parent.NewButtonGeneration;
+			Generation = parent.LegacyNewButtonGeneration;
+			#if CLOUDEMUERA_HEADLESS
+			console.UpdateLegacyGeneration();
+			#else
 			console.UpdateGeneration();
+			#endif
 		}
 		ErrPos = null;
 	}
@@ -75,8 +83,12 @@ internal sealed class ConsoleButtonString
 		getLastImg();
 		if (console != null)
 		{
-			Generation = parent.NewButtonGeneration;
+			Generation = parent.LegacyNewButtonGeneration;
+			#if CLOUDEMUERA_HEADLESS
+			console.UpdateLegacyGeneration();
+			#else
 			console.UpdateGeneration();
+			#endif
 		}
 		ErrPos = null;
 	}
@@ -89,8 +101,12 @@ internal sealed class ConsoleButtonString
 		getLastImg();
 		if (console != null)
 		{
-			Generation = parent.NewButtonGeneration;
+			Generation = parent.LegacyNewButtonGeneration;
+			#if CLOUDEMUERA_HEADLESS
+			console.UpdateLegacyGeneration();
+			#else
 			console.UpdateGeneration();
+			#endif
 		}
 		ErrPos = pos;
 	}
