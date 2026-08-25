@@ -44,7 +44,8 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
             RuntimePathUtilities.ThrowIfReparsePoint(metadataPath, SessionRootLayoutBuilder.BindingMetadataFileName, RuntimeFileArea.GameContent, missingIsAllowed: false);
             RuntimePathUtilities.ThrowIfHardLink(metadataPath, SessionRootLayoutBuilder.BindingMetadataFileName, RuntimeFileArea.GameContent);
             BindingMetadata metadata = ReadMetadata(metadataPath);
-            if (metadata.SchemaVersion != 1 || string.IsNullOrWhiteSpace(metadata.ManifestDigest) || metadata.ManifestDigest.Length > 128 ||
+            if (metadata.SchemaVersion is not (1 or 2) ||
+                (metadata.ManifestDigest is not null && metadata.ManifestDigest.Length > 128) ||
                 metadata.SaveLayout is not (RuntimeSaveLayout.Root or RuntimeSaveLayout.SavDirectory))
                 throw InvalidRoot("The SessionRoot binding marker is invalid.");
 
@@ -54,8 +55,10 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
             if (!string.IsNullOrWhiteSpace(lease.Binding.SessionRootManifestDigest) &&
                 !string.Equals(lease.Binding.SessionRootManifestDigest, metadata.ManifestDigest, StringComparison.OrdinalIgnoreCase))
                 throw InvalidRoot("The SessionRoot manifest digest does not match its persisted binding.");
-            if (!string.Equals(protectedMarker.SourceManifestDigest, metadata.ManifestDigest, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(protectedMarker.MaterializedManifestDigest, metadata.ManifestDigest, StringComparison.OrdinalIgnoreCase))
+            if ((protectedMarker.SourceManifestDigest is not null && metadata.ManifestDigest is not null &&
+                 !string.Equals(protectedMarker.SourceManifestDigest, metadata.ManifestDigest, StringComparison.OrdinalIgnoreCase)) ||
+                (protectedMarker.MaterializedManifestDigest is not null && metadata.ManifestDigest is not null &&
+                 !string.Equals(protectedMarker.MaterializedManifestDigest, metadata.ManifestDigest, StringComparison.OrdinalIgnoreCase)))
                 throw InvalidRoot("The protected and runtime SessionRoot markers disagree.");
 
             string configurationPath = Path.Combine(root, "emuera.config");
@@ -69,7 +72,7 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
             return Task.FromResult(new SessionRootRuntimeDescriptor(
                 root,
                 saveLayout,
-                metadata.ManifestDigest,
+                metadata.ManifestDigest ?? "path-v2",
                 lease.Binding.CompatibilityProfile));
         }
         catch (SessionRuntimeException)
@@ -114,7 +117,7 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
         string root,
         SessionRootProtectedMarker marker)
     {
-        if (marker.SchemaVersion != 1 ||
+        if (marker.SchemaVersion is not (1 or 2) ||
             !string.Equals(marker.SessionId, lease.Binding.SessionId, StringComparison.Ordinal) ||
             (!string.IsNullOrEmpty(lease.Binding.OwnerUserId) && !string.Equals(marker.OwnerUserId, lease.Binding.OwnerUserId, StringComparison.Ordinal)) ||
             (!string.IsNullOrEmpty(lease.Binding.GameId) && !string.Equals(marker.GameId, lease.Binding.GameId, StringComparison.Ordinal)) ||
@@ -205,7 +208,7 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
     private sealed record BindingMetadata
     {
         public int SchemaVersion { get; init; }
-        public string ManifestDigest { get; init; } = string.Empty;
+        public string? ManifestDigest { get; init; }
         public RuntimeSaveLayout SaveLayout { get; init; }
     }
 }

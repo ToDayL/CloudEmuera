@@ -19,6 +19,19 @@ describe("AssetResolver", () => {
     expect(resolver.url("../../etc/passwd")).toBeNull();
   });
 
+  it("resolves path-based assets without a content digest", () => {
+    const assetId = "path-c2F2L2JhY2tncm91bmQucG5n";
+    const resolver = new AssetResolver("s1", {
+      schemaVersion: 2,
+      assets: [{ assetId, mediaType: "image/png", byteLength: 10, contentDigest: null }],
+      fonts: [],
+      fontDiagnostics: [],
+    });
+
+    expect(resolver.url(assetId)).toBe("/api/v1/sessions/s1/assets/path-c2F2L2JhY2tncm91bmQucG5n");
+    expect(resolver.asset(assetId)?.contentDigest).toBeNull();
+  });
+
   it("maps logical font names to a fixed CSS family and validates fallback", () => {
     const assetId = "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const resolver = new AssetResolver("s1", {

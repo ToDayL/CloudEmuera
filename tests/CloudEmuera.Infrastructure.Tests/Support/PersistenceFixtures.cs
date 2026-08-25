@@ -56,6 +56,7 @@ internal static class PersistenceFixtures
         OwnerUserId = "usr_fixture",
         GameId = gameId,
         SourceContentDigest = "sha256:" + new string('a', 64),
+        SessionSnapshotId = id,
         SourceContentRevision = 1,
         SessionRootManifestDigest = "sha256:" + new string('a', 64),
         SaveLayout = 0,

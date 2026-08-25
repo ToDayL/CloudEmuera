@@ -86,7 +86,7 @@ public sealed class PersistenceConstraintTests
 
     [Fact]
     [Trait("Category", "PersistenceConstraint")]
-    public async Task InvalidDigestJsonEnumBooleanAndCounterValues_AreRejected()
+    public async Task InvalidJsonEnumBooleanAndCounterValuesAreRejected_LegacyDigestIsNotUsed()
     {
         using TemporarySqliteDatabase database = await CreateSeededDatabaseAsync();
         await using DbContextScope scope = database.OpenContext();
@@ -96,7 +96,8 @@ public sealed class PersistenceConstraintTests
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET waiting_for_input = 2 WHERE id = 'sess_fixture';"));
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET state_version = -1 WHERE id = 'sess_fixture';"));
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE sessions SET last_output_sequence = -1 WHERE id = 'sess_fixture';"));
-        await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(scope.Connection, "UPDATE games SET content_digest = 'sha256:bad' WHERE id = 'game_fixture';"));
+        await ExecuteAsync(scope.Connection, "UPDATE games SET content_digest = 'sha256:bad' WHERE id = 'game_fixture';");
+        Assert.Equal("sha256:bad", await ExecuteScalarAsync(database, "SELECT content_digest FROM games WHERE id = 'game_fixture';"));
     }
 
     [Fact]

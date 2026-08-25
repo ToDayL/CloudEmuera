@@ -21,7 +21,6 @@ public sealed class GameContentOperationMaintenanceTests
         byte[] bytes = Encoding.UTF8.GetBytes("restart-safe\n");
         await File.WriteAllBytesAsync(Path.Combine(content, "main.TXT"), bytes);
         GameStorageOwnerMarker.Initialize(gameDirectory, "game_fixture", "usr_fixture");
-        string digest = ComputeDigest("main.TXT", bytes);
 
         await using DbContextScope scope = database.OpenContext();
         scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
@@ -36,7 +35,7 @@ public sealed class GameContentOperationMaintenanceTests
             GameId = game.Id,
             OperationType = GameContentOperationType.Activate,
             Status = GameContentOperationStatus.ContentReady,
-            ContentDigest = digest,
+            ContentDigest = null,
             WorkPath = "games/game_fixture/content",
             ExpectedGameStateVersion = game.StateVersion,
             ExpectedContentRevision = game.ContentRevision,
@@ -56,14 +55,14 @@ public sealed class GameContentOperationMaintenanceTests
         Assert.Equal(GameStatus.Active, recovered.Status);
         Assert.Equal(GameWorkspaceStatus.None, recovered.WorkspaceStatus);
         Assert.Equal("games/game_fixture/content", recovered.CurrentContentPath);
-        Assert.Equal(digest, recovered.ContentDigest);
+        Assert.Null(recovered.ContentDigest);
         Assert.Equal(1, recovered.ContentRevision);
         Assert.Equal(1, await scope.Context.GameFiles.AsNoTracking().CountAsync(file => file.Scope == "CURRENT"));
     }
 
     [Fact]
     [Trait("Category", "GameLibrary")]
-    public async Task ContentReadyTreeMismatchRestoresRetiredTreesAndPreservesRecoveryEvidence()
+    public async Task ContentReadyReplacementIsAcceptedWithoutDigestVerification()
     {
         using TemporarySqliteDatabase database = new();
         Assert.True((await database.MigrateAsync()).Succeeded);
@@ -109,12 +108,14 @@ public sealed class GameContentOperationMaintenanceTests
         var maintenance = new GameContentOperationMaintenance(scope.Context, database.Options, TimeProvider.System);
         Assert.Equal(1, await maintenance.ReconcileAsync());
 
-        Assert.Equal("old-current\n", await File.ReadAllTextAsync(Path.Combine(gameDirectory, "content", "main.TXT")));
-        Assert.Equal("new-current\n", await File.ReadAllTextAsync(Path.Combine(gameDirectory, "content-recovery-gop_mismatch", "main.TXT")));
-        Assert.Equal("draft\n", await File.ReadAllTextAsync(Path.Combine(gameDirectory, "workspace", "draft.TXT")));
+        Assert.Equal("new-current\n", await File.ReadAllTextAsync(Path.Combine(gameDirectory, "content", "main.TXT")));
+        Assert.Equal("old-current\n", await File.ReadAllTextAsync(Path.Combine(retired, "main.TXT")));
+        Assert.Equal("draft\n", await File.ReadAllTextAsync(Path.Combine(activatedWorkspace, "draft.TXT")));
         scope.Context.ChangeTracker.Clear();
-        Assert.Equal(GameContentOperationStatus.Failed, (await scope.Context.GameContentOperations.AsNoTracking().SingleAsync()).Status);
-        Assert.Equal("CONTENT_READY_TREE_MISMATCH", (await scope.Context.GameContentOperations.AsNoTracking().SingleAsync()).ErrorCode);
+        GameContentOperationRow operation = await scope.Context.GameContentOperations.AsNoTracking().SingleAsync();
+        Assert.Equal(GameContentOperationStatus.Committed, operation.Status);
+        Assert.Null(operation.ErrorCode);
+        Assert.Null((await scope.Context.Games.AsNoTracking().SingleAsync()).ContentDigest);
     }
 
     [Fact]

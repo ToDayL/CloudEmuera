@@ -11,10 +11,11 @@ internal sealed record SessionRootProtectedMarker
     public string SessionId { get; init; } = string.Empty;
     public string OwnerUserId { get; init; } = string.Empty;
     public string GameId { get; init; } = string.Empty;
+    public string SessionSnapshotId { get; init; } = string.Empty;
     public long SourceContentRevision { get; init; }
-    public string SourceContentDigest { get; init; } = string.Empty;
-    public string SourceManifestDigest { get; init; } = string.Empty;
-    public string MaterializedManifestDigest { get; init; } = string.Empty;
+    public string? SourceContentDigest { get; init; }
+    public string? SourceManifestDigest { get; init; }
+    public string? MaterializedManifestDigest { get; init; }
     public RuntimeSaveLayout SaveLayout { get; init; }
     public string RuntimeVersion { get; init; } = string.Empty;
     public uint RootDeviceMajor { get; init; }
@@ -110,9 +111,9 @@ internal static class SessionRootProtectedMarkerStore
         string ownerUserId,
         string gameId,
         long sourceContentRevision,
-        string sourceContentDigest,
-        string sourceManifestDigest,
-        string materializedManifestDigest,
+        string? sourceContentDigest,
+        string? sourceManifestDigest,
+        string? materializedManifestDigest,
         RuntimeSaveLayout saveLayout,
         string runtimeVersion,
         DateTimeOffset createdAt,
@@ -120,8 +121,7 @@ internal static class SessionRootProtectedMarkerStore
     {
         ValidateSessionId(sessionId);
         if (string.IsNullOrWhiteSpace(ownerUserId) || string.IsNullOrWhiteSpace(gameId) ||
-            sourceContentRevision <= 0 || string.IsNullOrWhiteSpace(sourceContentDigest) ||
-            string.IsNullOrWhiteSpace(sourceManifestDigest) || string.IsNullOrWhiteSpace(materializedManifestDigest) ||
+            sourceContentRevision <= 0 ||
             string.IsNullOrWhiteSpace(runtimeVersion))
             throw new ArgumentException("Protected SessionRoot marker identity is incomplete.");
 
@@ -138,10 +138,11 @@ internal static class SessionRootProtectedMarkerStore
             LinuxFileOperations.FileIdentity identity = LinuxFileOperations.ReadIdentity(handle);
             marker = new SessionRootProtectedMarker
             {
-                SchemaVersion = 1,
+                SchemaVersion = 2,
                 SessionId = sessionId,
                 OwnerUserId = ownerUserId,
                 GameId = gameId,
+                SessionSnapshotId = sessionId,
                 SourceContentRevision = sourceContentRevision,
                 SourceContentDigest = sourceContentDigest,
                 SourceManifestDigest = sourceManifestDigest,
@@ -158,10 +159,11 @@ internal static class SessionRootProtectedMarkerStore
         {
             marker = new SessionRootProtectedMarker
             {
-                SchemaVersion = 1,
+                SchemaVersion = 2,
                 SessionId = sessionId,
                 OwnerUserId = ownerUserId,
                 GameId = gameId,
+                SessionSnapshotId = sessionId,
                 SourceContentRevision = sourceContentRevision,
                 SourceContentDigest = sourceContentDigest,
                 SourceManifestDigest = sourceManifestDigest,

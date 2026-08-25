@@ -457,7 +457,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnName("consumer_type");
 
                     b.Property<string>("ContentDigest")
-                        .IsRequired()
                         .HasMaxLength(71)
                         .HasColumnType("TEXT")
                         .HasColumnName("content_digest");
@@ -480,6 +479,11 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("game_id");
 
+                    b.Property<string>("SourceContentPath")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_content_path");
+
                     b.HasKey("Id")
                         .HasName("pk_game_content_copy_leases");
 
@@ -494,13 +498,15 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_game_content_copy_leases_consumer", "consumer_type IN ('SESSION_CREATE', 'VALIDATION') AND length(consumer_id) BETWEEN 1 AND 64 AND instr(consumer_id, char(0)) = 0");
 
-                            t.HasCheckConstraint("ck_game_content_copy_leases_digest", "length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64");
+                            t.HasCheckConstraint("ck_game_content_copy_leases_digest", "content_digest IS NULL OR (length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
 
                             t.HasCheckConstraint("ck_game_content_copy_leases_game_id", "substr(game_id, 1, 5) = 'game_' AND length(game_id) BETWEEN 5 AND 64 AND instr(game_id, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_game_content_copy_leases_id", "substr(id, 1, 4) = 'gcl_' AND length(id) BETWEEN 5 AND 64 AND instr(id, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_game_content_copy_leases_revision", "content_revision > 0");
+
+                            t.HasCheckConstraint("ck_game_content_copy_leases_source_path", "source_content_path IS NULL OR (length(source_content_path) BETWEEN 1 AND 512 AND substr(source_content_path, 1, 1) <> '/' AND instr(source_content_path, char(92)) = 0 AND instr(source_content_path, char(0)) = 0 AND instr(source_content_path, '//') = 0 AND instr('/' || source_content_path || '/', '/./') = 0 AND instr('/' || source_content_path || '/', '/../') = 0)");
 
                             t.HasCheckConstraint("ck_game_content_copy_leases_time", "created_at >= 0 AND expires_at > created_at");
                         });
@@ -674,7 +680,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                     b.ToTable("game_files", null, t =>
                         {
-                            t.HasCheckConstraint("ck_game_files_digest", "(entry_kind = 'DIRECTORY' AND content_digest IS NULL) OR (entry_kind = 'FILE' AND length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
+                            t.HasCheckConstraint("ck_game_files_digest", "entry_kind = 'DIRECTORY' OR content_digest IS NULL OR (length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64)");
 
                             t.HasCheckConstraint("ck_game_files_file_metadata", "(entry_kind = 'DIRECTORY' AND file_kind IS NULL AND text_encoding IS NULL AND has_bom IS NULL) OR (entry_kind = 'FILE' AND file_kind IN ('TEXT', 'BINARY') AND ((file_kind = 'BINARY' AND text_encoding IS NULL AND has_bom IS NULL) OR (file_kind = 'TEXT' AND text_encoding IN ('UTF8', 'UTF8_BOM', 'SHIFT_JIS', 'UNKNOWN') AND has_bom IN (0, 1))))");
 
@@ -952,7 +958,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_games_compatibility_json", "length(compatibility_summary_json) BETWEEN 2 AND 1048576 AND json_valid(compatibility_summary_json) = 1 AND compatibility_summary_json <> ''");
 
-                            t.HasCheckConstraint("ck_games_content", "(current_content_path IS NULL AND content_digest IS NULL AND content_revision = 0 AND activated_by IS NULL AND activated_at IS NULL) OR (current_content_path IS NOT NULL AND length(content_digest) = 71 AND substr(content_digest, 1, 7) = 'sha256:' AND lower(content_digest) = content_digest AND substr(content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(content_digest, 8)) = 64 AND content_revision > 0 AND activated_by IS NOT NULL AND activated_at IS NOT NULL)");
+                            t.HasCheckConstraint("ck_games_content", "(current_content_path IS NULL AND content_digest IS NULL AND content_revision = 0 AND activated_by IS NULL AND activated_at IS NULL) OR (current_content_path IS NOT NULL AND content_revision > 0 AND activated_by IS NOT NULL AND activated_at IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_games_content_path", "current_content_path IS NULL OR (length(current_content_path) BETWEEN 1 AND 512 AND substr(current_content_path, 1, 1) <> '/' AND instr(current_content_path, char(92)) = 0 AND instr(current_content_path, char(0)) = 0 AND instr(current_content_path, '//') = 0 AND instr('/' || current_content_path || '/', '/./') = 0 AND instr('/' || current_content_path || '/', '/../') = 0)");
 
@@ -1570,6 +1576,20 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("game_id");
 
+                    b.Property<string>("SessionIdentityMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("LEGACY_DIGEST")
+                        .HasColumnName("session_identity_mode");
+
+                    b.Property<string>("SessionSnapshotId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("session_snapshot_id");
+
                     b.Property<int>("FontSize")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
@@ -1624,7 +1644,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnName("session_root_path");
 
                     b.Property<string>("SourceContentDigest")
-                        .IsRequired()
                         .HasMaxLength(71)
                         .HasColumnType("TEXT")
                         .HasColumnName("source_content_digest");
@@ -1638,7 +1657,6 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasColumnName("save_layout");
 
                     b.Property<string>("SessionRootManifestDigest")
-                        .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("TEXT")
                         .HasColumnName("session_root_manifest_digest");
@@ -1717,18 +1735,22 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_sessions_font_face_id", "length(font_face_id) BETWEEN 1 AND 128 AND instr(font_face_id, char(0)) = 0");
 
+                            t.HasCheckConstraint("ck_sessions_identity_mode", "session_identity_mode IN ('LEGACY_DIGEST', 'PATH_REVISION')");
+
 
                             t.HasCheckConstraint("ck_sessions_owner_id", "substr(owner_user_id, 1, 4) = 'usr_' AND length(owner_user_id) BETWEEN 5 AND 64 AND instr(owner_user_id, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_sessions_root_path", "length(session_root_path) BETWEEN 1 AND 512 AND substr(session_root_path, 1, 1) <> '/' AND instr(session_root_path, char(92)) = 0 AND instr(session_root_path, char(0)) = 0 AND instr(session_root_path, '//') = 0 AND instr('/' || session_root_path || '/', '/./') = 0 AND instr('/' || session_root_path || '/', '/../') = 0");
 
-                            t.HasCheckConstraint("ck_sessions_manifest_digest", "length(session_root_manifest_digest) BETWEEN 1 AND 128 AND instr(session_root_manifest_digest, char(0)) = 0");
+                            t.HasCheckConstraint("ck_sessions_manifest_digest", "session_root_manifest_digest IS NULL OR (length(session_root_manifest_digest) BETWEEN 1 AND 128 AND instr(session_root_manifest_digest, char(0)) = 0)");
 
                             t.HasCheckConstraint("ck_sessions_save_layout", "save_layout IN (0, 1)");
 
                             t.HasCheckConstraint("ck_sessions_runtime_version", "length(runtime_version) BETWEEN 1 AND 128 AND instr(runtime_version, char(0)) = 0");
 
-                            t.HasCheckConstraint("ck_sessions_source_digest", "length(source_content_digest) = 71 AND substr(source_content_digest, 1, 7) = 'sha256:' AND lower(source_content_digest) = source_content_digest AND substr(source_content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(source_content_digest, 8)) = 64");
+                            t.HasCheckConstraint("ck_sessions_snapshot_id", "length(session_snapshot_id) BETWEEN 1 AND 128 AND instr(session_snapshot_id, char(0)) = 0");
+
+                            t.HasCheckConstraint("ck_sessions_source_digest", "source_content_digest IS NULL OR (length(source_content_digest) = 71 AND substr(source_content_digest, 1, 7) = 'sha256:' AND lower(source_content_digest) = source_content_digest AND substr(source_content_digest, 8) NOT GLOB '*[^0-9a-f]*' AND length(substr(source_content_digest, 8)) = 64)");
 
                             t.HasCheckConstraint("ck_sessions_source_revision", "source_content_revision > 0");
 

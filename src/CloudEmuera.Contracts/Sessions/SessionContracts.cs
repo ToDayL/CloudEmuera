@@ -35,7 +35,7 @@ public sealed record SessionResponse(
     string Id,
     string Name,
     SessionGameResponse Game,
-    string SourceContentDigest,
+    string? SourceContentDigest,
     long SourceContentRevision,
     string RuntimeVersion,
     string FontFaceId,

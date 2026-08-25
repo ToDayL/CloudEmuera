@@ -337,6 +337,10 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9._~-]{1,128}$"
     },
+    "assetIdentifier": {
+      "type": "string",
+      "pattern": "^(?:path-[A-Za-z0-9_-]{1,2043}|[A-Za-z0-9._~-]{1,128})$"
+    },
     "digest": {
       "type": "string",
       "pattern": "^[A-Za-z0-9:_-]{1,256}$"
@@ -1173,7 +1177,7 @@
             "assetId": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/identifier"
+                  "$ref": "#/$defs/assetIdentifier"
                 },
                 {
                   "type": "null"
@@ -1292,7 +1296,7 @@
               "const": "image"
             },
             "assetId": {
-              "$ref": "#/$defs/identifier"
+              "$ref": "#/$defs/assetIdentifier"
             },
             "sourceRect": {
               "anyOf": [
@@ -1350,7 +1354,7 @@
               "const": "sprite"
             },
             "assetId": {
-              "$ref": "#/$defs/identifier"
+              "$ref": "#/$defs/assetIdentifier"
             },
             "sourceRect": {
               "$ref": "#/$defs/rect"
@@ -1383,7 +1387,7 @@
             "hoverAssetId": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/identifier"
+                  "$ref": "#/$defs/assetIdentifier"
                 },
                 {
                   "type": "null"
@@ -1403,7 +1407,7 @@
             "mappingAssetId": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/identifier"
+                  "$ref": "#/$defs/assetIdentifier"
                 },
                 {
                   "type": "null"
@@ -1606,7 +1610,7 @@
       ],
       "properties": {
         "assetId": {
-          "$ref": "#/$defs/identifier"
+          "$ref": "#/$defs/assetIdentifier"
         },
         "sourceRect": {
           "$ref": "#/$defs/rect"
@@ -1635,7 +1639,7 @@
           "$ref": "#/$defs/identifier"
         },
         "assetId": {
-          "$ref": "#/$defs/identifier"
+          "$ref": "#/$defs/assetIdentifier"
         },
         "mode": {
           "enum": [
@@ -1691,7 +1695,7 @@
               "maximum": 1
             },
             "assetId": {
-              "$ref": "#/$defs/identifier"
+              "$ref": "#/$defs/assetIdentifier"
             },
             "sourceRect": {
               "$ref": "#/$defs/rect"
@@ -1954,7 +1958,7 @@
         "assetId": {
           "anyOf": [
             {
-              "$ref": "#/$defs/identifier"
+              "$ref": "#/$defs/assetIdentifier"
             },
             {
               "type": "null"

@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -269,7 +268,7 @@ public sealed class SessionRootLayoutBuilder
         }
 
         paths.ValidateSessionRoot();
-        ValidateManifestEntries(paths.SessionRoot, manifest, verifyHashes: false);
+        ValidateManifestEntries(paths.SessionRoot, manifest, verifyLengths: false);
         RuntimeSaveLayout currentLayout = InspectSaveLayout(Path.Combine(paths.SessionRoot, "emuera.config"));
         if (currentLayout != saveLayout)
         {
@@ -346,7 +345,7 @@ public sealed class SessionRootLayoutBuilder
                 savDirectoryRoot: Path.Combine(staging, "sav"),
                 otherSessionWorkspaceRoots: null);
             stagingPaths.ValidateSessionRoot();
-            ValidateManifestEntries(staging, manifest, verifyHashes: true);
+            ValidateManifestEntries(staging, manifest, verifyLengths: true);
             WriteBindingMetadata(staging, manifest, paths.SaveLayout);
             stagingPaths.ValidateSessionRoot();
 
@@ -399,7 +398,6 @@ public sealed class SessionRootLayoutBuilder
         byte[] buffer = new byte[64 * 1024];
         using var sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length, FileOptions.SequentialScan);
         using var targetStream = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length, FileOptions.SequentialScan);
-        using IncrementalHash copiedHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long copiedLength = 0;
         int read;
         while ((read = sourceStream.Read(buffer, 0, buffer.Length)) != 0)
@@ -411,14 +409,12 @@ public sealed class SessionRootLayoutBuilder
             }
 
             targetStream.Write(buffer, 0, read);
-            copiedHash.AppendData(buffer, 0, read);
         }
 
         targetStream.Flush(flushToDisk: true);
-        if (copiedLength != manifestEntry.Length ||
-            !string.Equals(Convert.ToHexString(copiedHash.GetHashAndReset()), manifestEntry.Sha256, StringComparison.OrdinalIgnoreCase))
+        if (copiedLength != manifestEntry.Length)
         {
-            throw LayoutConflict("A copied file did not match its manifest digest.", manifestEntry.RelativePath);
+            throw LayoutConflict("A copied file did not retain its manifest length.", manifestEntry.RelativePath);
         }
 
         RuntimePathUtilities.ThrowIfReparsePoint(target, manifestEntry.RelativePath, RuntimeFileArea.GameContent, false);
@@ -429,11 +425,9 @@ public sealed class SessionRootLayoutBuilder
             throw LayoutConflict("A copied file did not retain its manifest length.", manifestEntry.RelativePath);
         }
 
-        (long sourceLength, string sourceDigest) = HashFile(source, manifestEntry.RelativePath);
-        if (sourceLength != manifestEntry.Length ||
-            !string.Equals(sourceDigest, manifestEntry.Sha256, StringComparison.OrdinalIgnoreCase))
+        if (new FileInfo(source).Length != manifestEntry.Length)
         {
-            throw LayoutConflict("The GameContent changed while it was being copied.", manifestEntry.RelativePath);
+            throw LayoutConflict("The GameContent changed size while it was being copied.", manifestEntry.RelativePath);
         }
 
         SetSafeFileMode(target);
@@ -506,8 +500,7 @@ public sealed class SessionRootLayoutBuilder
         {
             SessionRootManifestEntry actualEntry = actual[path];
             if (actualEntry.Kind != expectedEntry.Kind ||
-                actualEntry.Length != expectedEntry.Length ||
-                !string.Equals(actualEntry.Sha256, expectedEntry.Sha256, StringComparison.OrdinalIgnoreCase))
+                actualEntry.Length != expectedEntry.Length)
             {
                 throw LayoutConflict("A GameContent entry does not match the published manifest.", path);
             }
@@ -551,12 +544,10 @@ public sealed class SessionRootLayoutBuilder
             else if (entry is FileInfo file)
             {
                 RuntimePathUtilities.ThrowIfHardLink(file.FullName, relative, RuntimeFileArea.GameContent);
-                (long length, string digest) = HashFile(file.FullName, relative);
                 result.Add(relative, new SessionRootManifestEntry(
                     relative,
                     SessionRootManifestEntryKind.File,
-                    length,
-                    digest));
+                    file.Length));
             }
             else
             {
@@ -703,7 +694,7 @@ public sealed class SessionRootLayoutBuilder
     private static void ValidateManifestEntries(
         string root,
         SessionRootPublishedManifest manifest,
-        bool verifyHashes)
+        bool verifyLengths)
     {
         foreach (SessionRootManifestEntry entry in manifest.Entries)
         {
@@ -726,18 +717,9 @@ public sealed class SessionRootLayoutBuilder
 
             RuntimePathUtilities.ThrowIfHardLink(path, entry.RelativePath, RuntimeFileArea.GameContent);
             FileInfo file = new(path);
-            if (verifyHashes && file.Length != entry.Length)
+            if (verifyLengths && file.Length != entry.Length)
             {
                 throw LayoutConflict("A copied manifest file has an unexpected length.", entry.RelativePath);
-            }
-
-            if (verifyHashes)
-            {
-                (_, string digest) = HashFile(path, entry.RelativePath);
-                if (!string.Equals(digest, entry.Sha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw LayoutConflict("A copied manifest file has an unexpected digest.", entry.RelativePath);
-                }
             }
         }
     }
@@ -782,33 +764,6 @@ public sealed class SessionRootLayoutBuilder
         SetSafeFileMode(path);
     }
 
-    private static (long Length, string Digest) HashFile(string path, string logicalPath)
-    {
-        try
-        {
-            using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
-            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            byte[] buffer = new byte[64 * 1024];
-            long length = 0;
-            int read;
-            while ((read = stream.Read(buffer, 0, buffer.Length)) != 0)
-            {
-                length = checked(length + read);
-                hash.AppendData(buffer, 0, read);
-            }
-
-            return (length, Convert.ToHexString(hash.GetHashAndReset()));
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            throw new RuntimePathException(
-                RuntimePathReasonCodes.UnsupportedRuntimeFile,
-                "A manifest file could not be read as a regular file.",
-                logicalPath,
-                RuntimeFileArea.GameContent,
-                exception);
-        }
-    }
 
     private static string CombineRelative(string root, string relativePath)
     {

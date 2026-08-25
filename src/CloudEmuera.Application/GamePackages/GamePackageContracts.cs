@@ -56,7 +56,7 @@ public enum GamePackageTextEncoding { None, Utf8, Utf8Bom, ShiftJis, Unknown }
 public sealed record GamePackageFileManifest(
     string Path,
     long Bytes,
-    string Digest,
+    string? Digest,
     GamePackageFileKind Kind,
     GamePackageTextEncoding Encoding,
     bool HasBom);
@@ -64,20 +64,20 @@ public sealed record GamePackageFileManifest(
 public sealed record GamePackageManifest(
     int SchemaVersion,
     long ArchiveBytes,
-    string ArchiveDigest,
+    string? ArchiveDigest,
     long ContentBytes,
     int FileCount,
     int DirectoryCount,
-    string ContentDigest,
+    string? ContentDigest,
     IReadOnlyList<GamePackageFileManifest> Files,
     IReadOnlyList<string> Directories,
     IReadOnlyList<GamePackageDiagnostic> Diagnostics)
 {
     public static GamePackageManifest Create(
         long archiveBytes,
-        string archiveDigest,
+        string? archiveDigest,
         long contentBytes,
-        string contentDigest,
+        string? contentDigest,
         IEnumerable<GamePackageFileManifest> files,
         IEnumerable<string> directories,
         IEnumerable<GamePackageDiagnostic> diagnostics)
@@ -102,7 +102,7 @@ public sealed class GamePackageConsumption : IAsyncDisposable
     public GamePackageConsumption(
         string ingestionId,
         string ownerUserId,
-        string contentDigest,
+        string? contentDigest,
         SafeFileHandle contentDirectoryHandle,
         string manifestJson)
     {
@@ -115,7 +115,7 @@ public sealed class GamePackageConsumption : IAsyncDisposable
 
     public string IngestionId { get; }
     public string OwnerUserId { get; }
-    public string ContentDigest { get; }
+    public string? ContentDigest { get; }
     public SafeFileHandle ContentDirectoryHandle { get; }
     public string ManifestJson { get; }
 
@@ -136,13 +136,13 @@ public interface IGamePackageIngestionService
     Task<GamePackageConsumption> BeginConsumeAsync(
         string ingestionId,
         string ownerUserId,
-        string expectedContentDigest,
+        string? expectedContentDigest,
         CancellationToken cancellationToken = default);
 
     Task<DateTimeOffset> RenewConsumeAsync(
         string ingestionId,
         string ownerUserId,
-        string expectedContentDigest,
+        string? expectedContentDigest,
         CancellationToken cancellationToken = default);
 
     Task CompleteConsumeAsync(string ingestionId, string ownerUserId, CancellationToken cancellationToken = default);

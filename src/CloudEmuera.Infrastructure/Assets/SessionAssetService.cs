@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Security.Cryptography;
 using System.Text.Json;
 using CloudEmuera.Application.Assets;
 using CloudEmuera.Application.Authorization;
@@ -14,8 +13,10 @@ using Microsoft.Win32.SafeHandles;
 namespace CloudEmuera.Infrastructure.Assets;
 
 /// <summary>
-/// Projects a session's frozen ordinary-file manifest into opaque, digest-based
-/// presentation assets.  Logical paths never cross the HTTP boundary.
+/// Projects a session's frozen ordinary-file manifest into path-based
+/// presentation assets. Logical paths are encoded as opaque ids and never
+/// cross the HTTP boundary as request paths. Legacy digest aliases remain
+/// readable for old SessionRoots.
 /// </summary>
 public sealed class SessionAssetService(
     CloudEmueraDbContext db,
@@ -62,22 +63,19 @@ public sealed class SessionAssetService(
         IDisposable? readLease = null;
         try
         {
-            if (!readGate.TryAcquire(asset.ByteLength, out readLease))
-                throw CapacityExceeded("Presentation asset 并发容量暂时已用尽。");
             stream = OpenSecureRead(context.RootPath, asset.Path);
-            if (stream.Length != asset.ByteLength) throw StorageFailure("Presentation asset 长度与冻结清单不一致。");
+            long actualLength = stream.Length;
+            if (actualLength <= 0 || actualLength > assetOptions.MaxAssetBytes)
+                throw CapacityExceeded("Presentation asset 超过实例单资源上限。");
+            if (!readGate.TryAcquire(actualLength, out readLease))
+                throw CapacityExceeded("Presentation asset 并发容量暂时已用尽。");
             if (!HasAllowedSignature(stream, asset.MediaType))
             {
                 stream.Dispose();
                 throw StorageFailure("Presentation asset MIME 与文件签名不一致。");
             }
-            string actualDigest = Convert.ToHexString(SHA256.HashData(stream));
             stream.Position = 0;
-            if (!string.Equals(actualDigest, asset.ContentDigest["sha256:".Length..], StringComparison.OrdinalIgnoreCase))
-            {
-                stream.Dispose();
-                throw StorageFailure("Presentation asset 摘要与冻结清单不一致。");
-            }
+            asset = asset with { ByteLength = actualLength };
         }
         catch (SessionAssetException)
         {
@@ -148,10 +146,8 @@ public sealed class SessionAssetService(
                 throw StorageFailure("SessionRoot identity 校验失败。");
             string runtimeManifestJson = SessionRootProtectedMarkerStore.ReadRuntimeManifest(databaseOptions, session.Id);
             using JsonDocument runtimeManifest = JsonDocument.Parse(runtimeManifestJson);
-            if (runtimeManifest.RootElement.ValueKind != JsonValueKind.Object ||
-                !TryReadManifestDigest(runtimeManifest.RootElement, out string? manifestDigest) ||
-                !string.Equals(manifestDigest, marker.MaterializedManifestDigest, StringComparison.OrdinalIgnoreCase))
-                throw StorageFailure("Session runtime manifest 摘要与受保护标记不一致。");
+            if (runtimeManifest.RootElement.ValueKind != JsonValueKind.Object)
+                throw StorageFailure("Session runtime manifest 无效。");
             entries = ParseEntries(runtimeManifestJson);
         }
         catch (SessionAssetException)
@@ -168,12 +164,12 @@ public sealed class SessionAssetService(
     private static SessionPresentationManifest BuildManifest(IReadOnlyList<ManifestEntry> entries)
     {
         ManifestAsset[] projected = BuildAssets(entries).ToArray();
-        SessionPresentationAsset[] assets = projected.Select(asset => new SessionPresentationAsset(asset.AssetId, asset.MediaType, asset.ByteLength, asset.ContentDigest, $"\"{asset.ContentDigest}\"")).ToArray();
+        SessionPresentationAsset[] assets = projected.Select(asset => new SessionPresentationAsset(asset.AssetId, asset.MediaType, asset.ByteLength, asset.ContentDigest, null)).ToArray();
         // Game fonts are deliberately absent: the Worker binds the immutable
         // product font catalog, and the browser loads that same face through
         // the runtime-font endpoint. Keep the response fields for protocol
         // compatibility, but never infer a CSS default from game files.
-        return new SessionPresentationManifest(1, assets, Array.Empty<SessionPresentationFont>(), Array.Empty<string>());
+        return new SessionPresentationManifest(2, assets, Array.Empty<SessionPresentationFont>(), Array.Empty<string>());
     }
 
     private static IEnumerable<ManifestAsset> BuildAssets(IEnumerable<ManifestEntry> entries)
@@ -184,10 +180,14 @@ public sealed class SessionAssetService(
             if (!string.Equals(entry.EntryKind, "FILE", StringComparison.OrdinalIgnoreCase) || entry.Bytes < 0) continue;
             string extension = Path.GetExtension(entry.Path);
             if (!MediaTypes.TryGetValue(extension, out string? mediaType) || mediaType is null) continue;
+            string assetId = ConsoleAssetIdCodec.EncodePath(entry.Path);
+            if (seen.Add(assetId)) yield return new ManifestAsset(assetId, entry.Path, mediaType, entry.Bytes, null);
             string? digest = NormalizeDigest(entry.Digest);
-            if (digest is null) continue;
-            string assetId = $"sha256-{digest["sha256:".Length..].ToLowerInvariant()}";
-            if (seen.Add(assetId)) yield return new ManifestAsset(assetId, entry.Path, mediaType, entry.Bytes, digest);
+            if (digest is not null)
+            {
+                string legacyId = $"sha256-{digest["sha256:".Length..].ToLowerInvariant()}";
+                if (seen.Add(legacyId)) yield return new ManifestAsset(legacyId, entry.Path, mediaType, entry.Bytes, digest);
+            }
         }
     }
 
@@ -196,13 +196,17 @@ public sealed class SessionAssetService(
         try
         {
             FrozenRuntimeManifest? manifest = JsonSerializer.Deserialize<FrozenRuntimeManifest>(json, JsonOptions);
-            if (manifest is null || manifest.Entries.Count == 0 || manifest.Entries.Count > 200_000) throw new InvalidDataException("runtime manifest entries are invalid");
+            if (manifest is null || manifest.Entries is null || manifest.Entries.Count == 0 || manifest.Entries.Count > 200_000) throw new InvalidDataException("runtime manifest entries are invalid");
             var entries = new List<ManifestEntry>(manifest.Entries.Count);
             foreach (FrozenManifestEntry entry in manifest.Entries)
             {
-                if (string.IsNullOrWhiteSpace(entry.Path) || entry.Path.Contains('\\') || entry.Path.Split('/').Any(segment => segment is "" or "." or ".."))
+                string entryKind = entry.EntryKind?.ToUpperInvariant() ?? throw new InvalidDataException("runtime manifest entry kind is missing");
+                if (!RuntimeRelativePath.TryParse(entry.Path, out RuntimeRelativePath path) ||
+                    (entryKind != "FILE" && entryKind != "DIRECTORY") ||
+                    entry.Bytes < 0 ||
+                    (entryKind == "DIRECTORY" && entry.Bytes != 0))
                     throw new InvalidDataException("runtime manifest path is invalid");
-                entries.Add(new ManifestEntry(entry.Path, entry.EntryKind, entry.Bytes, entry.Digest));
+                entries.Add(new ManifestEntry(path.Value, entryKind, entry.Bytes, entry.Digest));
             }
             return entries;
         }
@@ -214,16 +218,6 @@ public sealed class SessionAssetService(
         {
             throw StorageFailure("Session runtime manifest 无效。", exception);
         }
-    }
-
-    private static bool TryReadManifestDigest(JsonElement root, out string? digest)
-    {
-        digest = null;
-        if (root.TryGetProperty("sourceManifestDigest", out JsonElement source) && source.ValueKind == JsonValueKind.String)
-            digest = source.GetString();
-        else if (root.TryGetProperty("manifestDigest", out JsonElement materialized) && materialized.ValueKind == JsonValueKind.String)
-            digest = materialized.GetString();
-        return !string.IsNullOrWhiteSpace(digest);
     }
 
     private string ResolveRoot(string relativePath, string sessionId)
@@ -268,7 +262,7 @@ public sealed class SessionAssetService(
         return new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
     }
 
-    private static string? NormalizeDigest(string value)
+    private static string? NormalizeDigest(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         string normalized = value.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) ? $"sha256:{value["sha256:".Length..]}" : value.Length == 64 ? $"sha256:{value}" : string.Empty;
@@ -277,7 +271,9 @@ public sealed class SessionAssetService(
         return $"sha256:{digest.ToLowerInvariant()}";
     }
 
-    private static bool IsSafeAssetId(string value) => value.Length is > 7 and <= 128 && value.StartsWith("sha256-", StringComparison.Ordinal) && value[7..].All(Uri.IsHexDigit);
+    private static bool IsSafeAssetId(string value) =>
+        value.Length is > 7 and <= 2_048 &&
+        (ConsoleAssetIdCodec.TryDecodePath(value, out _) || ConsoleAssetIdCodec.IsLegacyDigestId(value));
     private static SessionAssetException NotFound() => new(SessionAssetErrorCodes.NotFound, "资源不存在。", 404);
     private static SessionAssetException CapacityExceeded(string message) => new(SessionAssetErrorCodes.CapacityExceeded, message, 503);
     private static SessionAssetException StorageFailure(string message, Exception? inner = null) => new(SessionAssetErrorCodes.StorageFailure, message, 503, inner);
@@ -321,9 +317,9 @@ public sealed class SessionAssetService(
 
     private sealed record SessionAssetRow(string Id, string OwnerUserId, string SessionRootPath);
     private sealed record SessionAssetContext(string SessionId, string RootPath, IReadOnlyList<ManifestEntry> Entries);
-    private sealed record ManifestEntry(string Path, string EntryKind, long Bytes, string Digest);
-    private sealed record ManifestAsset(string AssetId, string Path, string MediaType, long ByteLength, string ContentDigest);
-    private sealed record FrozenManifestEntry(string Path, string EntryKind, long Bytes, string Digest);
+    private sealed record ManifestEntry(string Path, string EntryKind, long Bytes, string? Digest);
+    private sealed record ManifestAsset(string AssetId, string Path, string MediaType, long ByteLength, string? ContentDigest);
+    private sealed record FrozenManifestEntry(string Path, string EntryKind, long Bytes, string? Digest);
     private sealed record FrozenRuntimeManifest(IReadOnlyList<FrozenManifestEntry> Entries);
 
     private sealed class LeaseStream(Stream inner, IDisposable lease) : Stream

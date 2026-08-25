@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CloudEmuera.Application.GamePackages;
@@ -180,7 +179,7 @@ public sealed class GameLibraryService(
         return ToItem(row);
     }
 
-    public async Task<GameLibraryItem> BindPackageAsync(CurrentActor actor, string gameId, string ingestionId, string contentDigest, int expectedStateVersion, CancellationToken cancellationToken = default)
+    public async Task<GameLibraryItem> BindPackageAsync(CurrentActor actor, string gameId, string ingestionId, string? contentDigest, int expectedStateVersion, CancellationToken cancellationToken = default)
     {
         await using FileStream mutationLock = AcquireMutationLock(gameId);
         GameRow row = await FindOwnedAsync(actor, gameId, cancellationToken).ConfigureAwait(false);
@@ -248,7 +247,7 @@ public sealed class GameLibraryService(
                 RejectLink(entry);
                 string relative = Path.GetRelativePath(root, entry.FullName).Replace('\\', '/');
                 return new GameFileItem(relative, entry is DirectoryInfo, entry is FileInfo file ? file.Length : 0,
-                    entry is FileInfo ? ComputeFileETag(entry.FullName) : null);
+                    null);
             }).ToArray();
     }
 
@@ -264,7 +263,7 @@ public sealed class GameLibraryService(
         byte[] bytes = await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
         if (!TryReadGameText(bytes, out string text, out string? encoding, out bool hasBom))
             throw new GameLibraryException(GameLibraryErrorCodes.TextEncodingUnsupported, "The text encoding is unsupported.");
-        return new GameTextFile(path, text, encoding!, hasBom, bytes.LongLength, ComputeETag(bytes), row.StateVersion);
+        return new GameTextFile(path, text, encoding!, hasBom, bytes.LongLength, null, row.StateVersion);
     }
 
     public async Task<GameFileDownload> OpenDownloadAsync(CurrentActor actor, string gameId, string? scope, string path, CancellationToken cancellationToken = default)
@@ -280,9 +279,7 @@ public sealed class GameLibraryService(
             await stream.DisposeAsync().ConfigureAwait(false);
             throw UnsafePath();
         }
-        string etag = ComputeETag(stream);
-        stream.Position = 0;
-        return new GameFileDownload(info.Name, info.Length, etag, stream);
+        return new GameFileDownload(info.Name, info.Length, null, stream);
     }
 
     public async Task<GameContentOperationItem?> GetOperationAsync(CurrentActor actor, string gameId, string operationId, CancellationToken cancellationToken = default)
@@ -459,7 +456,7 @@ public sealed class GameLibraryService(
         {
             inspection = new WorkspaceInspection(
                 false,
-                "sha256:" + new string('0', 64),
+                null,
                 0,
                 0,
                 [new GameValidationDiagnostic(exception.Code, "ERROR", null, "The game content manifest exceeds a configured safety limit.", true)],
@@ -697,7 +694,6 @@ public sealed class GameLibraryService(
         string runtimeConfig = "{}";
         var entries = new List<InspectedEntry>();
         long total = 0;
-        using IncrementalHash aggregate = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         foreach (string directory in regularDirectories)
             entries.Add(new(Path.GetRelativePath(root, directory).Replace('\\', '/'), "DIRECTORY", 0, null, null, null, null));
         foreach (string file in regularFiles)
@@ -723,17 +719,12 @@ public sealed class GameLibraryService(
                         runtimeConfig = JsonSerializer.Serialize(new { emueraConfig = text, encoding, hasBom });
                 }
             }
-            string digest;
-            using (FileStream stream = File.OpenRead(file)) digest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
             bool isText = IsGameTextFile(file);
-            entries.Add(new(logical, "FILE", info.Length, $"sha256:{digest}", isText ? "TEXT" : "BINARY", encoding, isText ? hasBom : null));
-            byte[] identity = Encoding.UTF8.GetBytes($"{logical}\0{info.Length}\0{digest}\n");
-            aggregate.AppendData(identity);
+            entries.Add(new(logical, "FILE", info.Length, null, isText ? "TEXT" : "BINARY", encoding, isText ? hasBom : null));
         }
-        string contentDigest = $"sha256:{Convert.ToHexString(aggregate.GetHashAndReset()).ToLowerInvariant()}";
         int fileCount = entries.Count(entry => entry.EntryKind == "FILE");
-        string manifest = JsonSerializer.Serialize(new { schemaVersion = 1, contentDigest, fileCount, directoryCount = entries.Count - fileCount, totalBytes = total });
-        return new(!diagnostics.Any(item => item.ActivationBlocking), contentDigest, fileCount, total, diagnostics, entries, manifest, runtimeConfig);
+        string manifest = JsonSerializer.Serialize(new { schemaVersion = 2, contentDigest = (string?)null, fileCount, directoryCount = entries.Count - fileCount, totalBytes = total });
+        return new(!diagnostics.Any(item => item.ActivationBlocking), null, fileCount, total, diagnostics, entries, manifest, runtimeConfig);
     }
 
     private static IEnumerable<string> EnumerateRegularFiles(string root)
@@ -819,22 +810,6 @@ public sealed class GameLibraryService(
             }
         }
     }
-
-    private static string ComputeFileETag(string path)
-    {
-        using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
-        return ComputeETag(stream);
-    }
-
-    private static string ComputeETag(SafeFileHandle handle)
-    {
-        using FileStream stream = LinuxFileOperations.CreateFileStream(handle, FileAccess.Read);
-        return ComputeETag(stream);
-    }
-
-    private static string ComputeETag(Stream stream) => $"sha256:{Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant()}";
-
-    private static string ComputeETag(ReadOnlySpan<byte> bytes) => $"sha256:{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
 
     private static void CopyTree(string source, string destination)
     {
@@ -1117,6 +1092,6 @@ public sealed class GameLibraryService(
     private static GameLibraryException UnsafePath() => new(GameLibraryErrorCodes.UnsafePath, "The game path is unsafe.");
 
     private sealed record InspectedEntry(string Path, string EntryKind, long Bytes, string? Digest, string? FileKind, string? Encoding, bool? HasBom);
-    private sealed record WorkspaceInspection(bool CanActivate, string ContentDigest, int FileCount, long TotalBytes,
+    private sealed record WorkspaceInspection(bool CanActivate, string? ContentDigest, int FileCount, long TotalBytes,
         IReadOnlyList<GameValidationDiagnostic> Diagnostics, IReadOnlyList<InspectedEntry> Entries, string ManifestJson, string RuntimeConfigJson);
 }

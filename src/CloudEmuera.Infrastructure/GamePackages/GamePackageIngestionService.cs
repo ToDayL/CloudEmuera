@@ -1,6 +1,4 @@
-using System.Buffers.Binary;
 using System.IO.Compression;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -104,8 +102,8 @@ public sealed class GamePackageIngestionService(
             await TransitionAsync(ingestionId, GamePackageIngestionStatus.Reserved, GamePackageIngestionStatus.Receiving, deadline.Token).ConfigureAwait(false);
             using (SafeFileHandle archiveTarget = LinuxGamePackageStagingStore.CreateFile(ingestionRoot, ArchiveFileName))
             {
-                (long archiveBytes, string archiveDigest) = await ReceiveAsync(request.Content, archiveTarget, effectiveArchiveLimit, deadline.Token).ConfigureAwait(false);
-                await UpdateArchiveAsync(ingestionId, archiveBytes, archiveDigest, deadline.Token).ConfigureAwait(false);
+                long archiveBytes = await ReceiveAsync(request.Content, archiveTarget, effectiveArchiveLimit, deadline.Token).ConfigureAwait(false);
+                await UpdateArchiveAsync(ingestionId, archiveBytes, deadline.Token).ConfigureAwait(false);
 
                 using SafeFileHandle archiveSource = LinuxGamePackageStagingStore.OpenFile(ingestionRoot, ArchiveFileName);
                 IReadOnlyList<ValidatedZipEntry> inspected = ZipStructureInspector.Inspect(LinuxGamePackageStagingStore.DescriptorPath(archiveSource), effectiveLimits);
@@ -121,7 +119,7 @@ public sealed class GamePackageIngestionService(
                 var encodingDiagnostics = new DiagnosticCollector(effectiveLimits.MaxDiagnostics);
                 extraction = ConvertTextEncodings(content, extraction, effectiveLimits, encodingDiagnostics);
                 List<GamePackageDiagnostic> conversionDiagnostics = encodingDiagnostics.Build();
-                GamePackageManifest manifest = Analyze(archiveBytes, archiveDigest, content, extraction, effectiveLimits);
+                GamePackageManifest manifest = Analyze(archiveBytes, content, extraction, effectiveLimits);
                 if (conversionDiagnostics.Count > 0)
                     manifest = manifest with { Diagnostics = manifest.Diagnostics.Concat(conversionDiagnostics).ToArray() };
                 await AdjustReservationAsync(ingestionId, archiveBytes, extraction.TotalBytes, deadline.Token).ConfigureAwait(false);
@@ -178,12 +176,13 @@ public sealed class GamePackageIngestionService(
         finally { ingestionRoot?.Dispose(); }
     }
 
-    public async Task<GamePackageConsumption> BeginConsumeAsync(string ingestionId, string ownerUserId, string expectedContentDigest, CancellationToken cancellationToken = default)
+    public async Task<GamePackageConsumption> BeginConsumeAsync(string ingestionId, string ownerUserId, string? expectedContentDigest, CancellationToken cancellationToken = default)
     {
         DateTimeOffset now = timeProvider.GetUtcNow();
         GamePackageIngestionRow row = await db.GamePackageIngestions.AsNoTracking()
             .SingleOrDefaultAsync(item => item.Id == ingestionId && item.OwnerUserId == ownerUserId
-                && item.Status == GamePackageIngestionStatus.Ready && item.ContentDigest == expectedContentDigest
+                && item.Status == GamePackageIngestionStatus.Ready
+                && (expectedContentDigest == null || item.ContentDigest == expectedContentDigest)
                 && item.ExpiresAt > now, cancellationToken).ConfigureAwait(false)
             ?? throw new GamePackageIngestionException("INGESTION_NOT_READY", "The package ingestion is not ready for consumption.");
         ValidateStagingPath(row, ingestionId);
@@ -197,12 +196,16 @@ public sealed class GamePackageIngestionService(
             manifest = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
         GamePackageManifest parsed = JsonSerializer.Deserialize<GamePackageManifest>(manifest, JsonOptions)
             ?? throw new GamePackageIngestionException(GamePackageRejectionCodes.StagedContentChanged, "The staged manifest is invalid.");
-        if (!string.Equals(parsed.ContentDigest, expectedContentDigest, StringComparison.Ordinal))
+        if (!IsValidStagedManifest(parsed))
+            throw new GamePackageIngestionException(GamePackageRejectionCodes.StagedContentChanged, "The staged manifest is invalid.");
+        if (expectedContentDigest is not null && parsed.ContentDigest is not null &&
+            !string.Equals(parsed.ContentDigest, expectedContentDigest, StringComparison.Ordinal))
             throw new GamePackageIngestionException(GamePackageRejectionCodes.StagedContentChanged, "The staged manifest digest changed.");
         SafeFileHandle content = LinuxGamePackageStagingStore.OpenDirectory(ready, ContentDirectoryName);
         int changed = await db.GamePackageIngestions
             .Where(item => item.Id == ingestionId && item.OwnerUserId == ownerUserId && item.Status == GamePackageIngestionStatus.Ready
-                && item.ContentDigest == expectedContentDigest && item.ExpiresAt > now && item.StateVersion == row.StateVersion)
+                && (expectedContentDigest == null || item.ContentDigest == expectedContentDigest)
+                && item.ExpiresAt > now && item.StateVersion == row.StateVersion)
             .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, GamePackageIngestionStatus.Consuming)
                 .SetProperty(item => item.ExpiresAt, now + storageOptions.ConsumptionLifetime)
                 .SetProperty(item => item.UpdatedAt, now).SetProperty(item => item.StateVersion, item => item.StateVersion + 1), cancellationToken).ConfigureAwait(false);
@@ -214,13 +217,25 @@ public sealed class GamePackageIngestionService(
         return new(ingestionId, ownerUserId, expectedContentDigest, content, manifest);
     }
 
-    public async Task<DateTimeOffset> RenewConsumeAsync(string ingestionId, string ownerUserId, string expectedContentDigest, CancellationToken cancellationToken = default)
+    private static bool IsValidStagedManifest(GamePackageManifest manifest) =>
+        manifest.SchemaVersion == 1 &&
+        manifest.ArchiveBytes >= 0 &&
+        manifest.ContentBytes >= 0 &&
+        manifest.FileCount >= 0 &&
+        manifest.DirectoryCount >= 0 &&
+        manifest.Files is not null &&
+        manifest.Directories is not null &&
+        manifest.Diagnostics is not null &&
+        manifest.Files.Count == manifest.FileCount &&
+        manifest.Directories.Count == manifest.DirectoryCount;
+
+    public async Task<DateTimeOffset> RenewConsumeAsync(string ingestionId, string ownerUserId, string? expectedContentDigest, CancellationToken cancellationToken = default)
     {
         DateTimeOffset now = timeProvider.GetUtcNow();
         DateTimeOffset expiresAt = now + storageOptions.ConsumptionLifetime;
         int changed = await db.GamePackageIngestions
             .Where(item => item.Id == ingestionId && item.OwnerUserId == ownerUserId
-                && item.ContentDigest == expectedContentDigest
+                && (expectedContentDigest == null || item.ContentDigest == expectedContentDigest)
                 && item.Status == GamePackageIngestionStatus.Consuming
                 && item.ExpiresAt > now)
             .ExecuteUpdateAsync(setters => setters
@@ -407,7 +422,6 @@ public sealed class GamePackageIngestionService(
             using Stream source = item.Entry.Method == 8
                 ? new DeflateStream(bounded, CompressionMode.Decompress, leaveOpen: false)
                 : bounded;
-            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             byte[] buffer = new byte[64 * 1024];
             long fileBytes = 0;
             uint crc32 = uint.MaxValue;
@@ -418,7 +432,6 @@ public sealed class GamePackageIngestionService(
                 if (fileBytes > limits.MaxSingleFileBytes - read) Reject(GamePackageRejectionCodes.EntryTooLarge, "ZIP entry actual size exceeds the single-file limit.", item.Path);
                 if (total > limits.MaxExpandedBytes - read) Reject(GamePackageRejectionCodes.ExpandedSizeExceeded, "ZIP actual expanded size exceeds the limit.", item.Path);
                 await target.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
-                hash.AppendData(buffer, 0, read);
                 crc32 = UpdateCrc32(crc32, buffer.AsSpan(0, read));
                 fileBytes += read;
                 total += read;
@@ -428,7 +441,7 @@ public sealed class GamePackageIngestionService(
                 metadataMismatchPath ??= item.Path;
             if (LinuxFileOperations.ReadIdentity(target.SafeFileHandle).LinkCount != 1)
                 Reject(GamePackageRejectionCodes.StagedContentChanged, "Extracted files must not share an inode.", item.Path);
-            files.Add(new(item.Path, fileBytes, Digest(hash.GetHashAndReset())));
+            files.Add(new(item.Path, fileBytes));
         }
         if (metadataMismatchPath is not null)
             Reject(GamePackageRejectionCodes.ArchiveCorrupt, "ZIP entry actual size or CRC32 differs from its declaration.", metadataMismatchPath);
@@ -453,10 +466,10 @@ public sealed class GamePackageIngestionService(
         foreach (ExtractedFile file in extraction.Files)
         {
             if (IsText(file.Path)
-                && TryConvertUtf16Or32ToUtf8(contentRoot, file.Path, limits, out (long Bytes, string Digest) rewritten))
+                && TryConvertUtf16Or32ToUtf8(contentRoot, file.Path, limits, out long rewrittenBytes))
             {
-                files.Add(file with { Bytes = rewritten.Bytes, Digest = rewritten.Digest });
-                total = checked(total + rewritten.Bytes);
+                files.Add(file with { Bytes = rewrittenBytes });
+                total = checked(total + rewrittenBytes);
                 convertedAny = true;
                 diagnostics.Add("TEXT_ENCODING_CONVERTED", GamePackageDiagnosticSeverity.Info, "ENCODING", file.Path,
                     "gamePackage.diagnostic.textEncodingConverted", publishBlocking: false);
@@ -476,9 +489,9 @@ public sealed class GamePackageIngestionService(
         SafeFileHandle contentRoot,
         string logicalPath,
         GamePackageIngestionLimits limits,
-        out (long Bytes, string Digest) rewritten)
+        out long rewrittenBytes)
     {
-        rewritten = default;
+        rewrittenBytes = 0;
         byte[] source = ReadAll(contentRoot, logicalPath);
         Encoding? sourceEncoding = DetectUtf16Or32(source);
         if (sourceEncoding is null) return false;
@@ -495,7 +508,7 @@ public sealed class GamePackageIngestionService(
         }
         if (utf8.Length == 0 || utf8.Length > limits.MaxSingleFileBytes) return false;
         RewriteUtf8(contentRoot, logicalPath, utf8);
-        rewritten = (utf8.Length, Digest(SHA256.HashData(utf8)));
+        rewrittenBytes = utf8.Length;
         return true;
     }
 
@@ -545,7 +558,7 @@ public sealed class GamePackageIngestionService(
         LinuxGamePackageStagingStore.Rename(parent, tmpName, name);
     }
 
-    private static GamePackageManifest Analyze(long archiveBytes, string archiveDigest, SafeFileHandle contentRoot, ExtractionResult extraction, GamePackageIngestionLimits limits)
+    private static GamePackageManifest Analyze(long archiveBytes, SafeFileHandle contentRoot, ExtractionResult extraction, GamePackageIngestionLimits limits)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         var diagnostics = new DiagnosticCollector(limits.MaxDiagnostics);
@@ -558,20 +571,19 @@ public sealed class GamePackageIngestionService(
             using SafeFileHandle handle = LinuxGamePackageStagingStore.OpenFilePath(contentRoot, file.Path, create: false);
             LinuxFileOperations.FileIdentity identity = LinuxFileOperations.ReadIdentity(handle);
             if (identity.LinkCount != 1 || identity.UserId != LinuxFileOperations.CurrentUserId
-                || (identity.Mode & 0x1FF) != 0x180 || ComputeFileDigest(handle) != file.Digest)
+                || (identity.Mode & 0x1FF) != 0x180)
                 Reject(GamePackageRejectionCodes.StagedContentChanged, "Staged content changed during analysis.", file.Path);
             bool text = IsText(file.Path);
             TextAnalysis textAnalysis = text ? AnalyzeText(handle) : new(GamePackageTextEncoding.None, false, []);
             foreach (string code in textAnalysis.DiagnosticCodes)
                 diagnostics.Add(code, GamePackageDiagnosticSeverity.Warning, "ENCODING", file.Path,
                     $"gamePackage.diagnostic.{ToCamelCase(code)}", publishBlocking: false);
-            files.Add(new(file.Path, file.Bytes, file.Digest,
+            files.Add(new(file.Path, file.Bytes, null,
                 text ? GamePackageFileKind.Text : GamePackageFileKind.Binary,
                 textAnalysis.Encoding,
                 textAnalysis.Encoding == GamePackageTextEncoding.Utf8Bom));
         }
-        string contentDigest = ComputeContentDigest(files, extraction.Directories);
-        return GamePackageManifest.Create(archiveBytes, archiveDigest, extraction.TotalBytes, contentDigest, files, extraction.Directories, diagnostics.Build());
+        return GamePackageManifest.Create(archiveBytes, null, extraction.TotalBytes, null, files, extraction.Directories, diagnostics.Build());
     }
 
     private static TextAnalysis AnalyzeText(SafeFileHandle handle)
@@ -635,33 +647,8 @@ public sealed class GamePackageIngestionService(
         catch (DecoderFallbackException) { return false; }
     }
 
-    private static string ComputeContentDigest(IReadOnlyList<GamePackageFileManifest> files, IReadOnlyList<string> directories)
+    private async Task<long> ReceiveAsync(Stream input, SafeFileHandle target, long limit, CancellationToken token)
     {
-        using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        hash.AppendData("CloudEmuera.GamePackageContent\0"u8);
-        Span<byte> number = stackalloc byte[8];
-        BinaryPrimitives.WriteUInt32BigEndian(number, 1);
-        hash.AppendData(number[..4]);
-        var entries = directories.Select(path => (Path: path, Kind: (byte)0, Bytes: 0L, Digest: (string?)null))
-            .Concat(files.Select(file => (file.Path, Kind: (byte)1, file.Bytes, Digest: (string?)file.Digest)))
-            .OrderBy(entry => Encoding.UTF8.GetBytes(entry.Path), ByteArrayComparer.Instance);
-        foreach (var entry in entries)
-        {
-            hash.AppendData([entry.Kind]);
-            byte[] path = Encoding.UTF8.GetBytes(entry.Path);
-            BinaryPrimitives.WriteUInt32BigEndian(number, checked((uint)path.Length));
-            hash.AppendData(number[..4]);
-            hash.AppendData(path);
-            BinaryPrimitives.WriteUInt64BigEndian(number, checked((ulong)entry.Bytes));
-            hash.AppendData(number);
-            hash.AppendData(entry.Digest is null ? new byte[32] : Convert.FromHexString(entry.Digest[7..]));
-        }
-        return Digest(hash.GetHashAndReset());
-    }
-
-    private async Task<(long Bytes, string Digest)> ReceiveAsync(Stream input, SafeFileHandle target, long limit, CancellationToken token)
-    {
-        using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         await using FileStream output = LinuxGamePackageStagingStore.Stream(target, FileAccess.Write, async: true);
         byte[] buffer = new byte[64 * 1024];
         long total = 0;
@@ -672,11 +659,10 @@ public sealed class GamePackageIngestionService(
             if (total > limit - read) Reject(GamePackageRejectionCodes.ArchiveTooLarge, "ZIP archive exceeds the configured limit.");
             if (faultInjector is not null) await faultInjector.InjectAsync(GamePackageIngestionFaultPoint.BeforeArchiveWrite, token).ConfigureAwait(false);
             await output.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
-            hash.AppendData(buffer, 0, read);
             total += read;
         }
         await output.FlushAsync(token).ConfigureAwait(false);
-        return (total, Digest(hash.GetHashAndReset()));
+        return total;
     }
 
     /// <summary>
@@ -705,12 +691,12 @@ public sealed class GamePackageIngestionService(
         await transaction.CommitAsync(token).ConfigureAwait(false);
     }
 
-    private async Task UpdateArchiveAsync(string id, long bytes, string digest, CancellationToken token)
+    private async Task UpdateArchiveAsync(string id, long bytes, CancellationToken token)
     {
         DateTimeOffset now = timeProvider.GetUtcNow();
         int changed = await db.GamePackageIngestions.Where(row => row.Id == id && row.Status == GamePackageIngestionStatus.Receiving)
             .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.Status, GamePackageIngestionStatus.Inspecting)
-                .SetProperty(row => row.ArchiveBytes, bytes).SetProperty(row => row.ArchiveDigest, digest)
+                .SetProperty(row => row.ArchiveBytes, bytes).SetProperty(row => row.ArchiveDigest, (string?)null)
                 .SetProperty(row => row.UpdatedAt, now).SetProperty(row => row.StateVersion, row => row.StateVersion + 1), token).ConfigureAwait(false);
         if (changed != 1) throw new GamePackageIngestionException("INGESTION_STATE_CONFLICT", "The package ingestion state changed concurrently.");
     }
@@ -724,7 +710,7 @@ public sealed class GamePackageIngestionService(
         int changed = await db.GamePackageIngestions.Where(row => row.Id == id && row.Status == GamePackageIngestionStatus.Analyzing)
             .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.Status, GamePackageIngestionStatus.Ready)
                 .SetProperty(row => row.ExpandedBytes, manifest.ContentBytes).SetProperty(row => row.EntryCount, manifest.FileCount + manifest.DirectoryCount)
-                .SetProperty(row => row.ContentDigest, manifest.ContentDigest).SetProperty(row => row.SummaryJson, summary)
+                .SetProperty(row => row.ContentDigest, (string?)null).SetProperty(row => row.SummaryJson, summary)
                 .SetProperty(row => row.UpdatedAt, now).SetProperty(row => row.StateVersion, row => row.StateVersion + 1), token).ConfigureAwait(false);
         if (changed != 1) throw new GamePackageIngestionException("INGESTION_STATE_CONFLICT", "The package ingestion state changed concurrently.");
         db.AuditEvents.Add(NewAudit(AuditActions.GamePackageIngested, id, ownerUserId, requestId, AuditResult.Succeeded, null, now));
@@ -804,13 +790,6 @@ public sealed class GamePackageIngestionService(
         || Path.GetExtension(path).Equals(".config", StringComparison.OrdinalIgnoreCase)
         || Path.GetExtension(path).Equals(".txt", StringComparison.OrdinalIgnoreCase);
 
-    private static string Digest(byte[] hash) => $"sha256:{Convert.ToHexStringLower(hash)}";
-    private static string ComputeFileDigest(SafeFileHandle handle)
-    {
-        using FileStream stream = OpenDescriptorStream(handle);
-        return Digest(SHA256.HashData(stream));
-    }
-
     private static FileStream OpenDescriptorStream(SafeFileHandle handle) =>
         new(LinuxGamePackageStagingStore.DescriptorPath(handle), FileMode.Open, FileAccess.Read, FileShare.Read);
 
@@ -837,7 +816,7 @@ public sealed class GamePackageIngestionService(
         return parts[0] + string.Concat(parts.Skip(1).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
     }
     private sealed record PreparedEntry(ValidatedZipEntry Entry, string Path, bool Directory, bool PathNormalized);
-    private sealed record ExtractedFile(string Path, long Bytes, string Digest);
+    private sealed record ExtractedFile(string Path, long Bytes);
     private sealed record ExtractionResult(long TotalBytes, IReadOnlyList<ExtractedFile> Files, IReadOnlyList<string> Directories, IReadOnlyList<string> NormalizedPaths);
     private sealed record TextAnalysis(GamePackageTextEncoding Encoding, bool HasBom, IReadOnlyList<string> DiagnosticCodes);
 

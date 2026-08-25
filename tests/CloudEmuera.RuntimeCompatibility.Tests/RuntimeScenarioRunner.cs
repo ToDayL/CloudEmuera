@@ -132,7 +132,7 @@ internal static class RuntimeScenarioRunner
             Check(
                 snapshot.VisibleNodes.Any(node =>
                     node is SpriteNode spriteNode &&
-                    spriteNode.AssetId.Value.StartsWith("sha256-", StringComparison.Ordinal) &&
+                    ConsoleAssetIdCodec.TryDecodePath(spriteNode.AssetId.Value, out _) &&
                     spriteNode.SourceRect == new ConsoleRect(0, 0, 2, 2)),
                 "Expected structured sprite node was not emitted.",
                 errors,

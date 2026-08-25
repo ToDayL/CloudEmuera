@@ -26,10 +26,11 @@ describe("realtime codec", () => {
 
   it("accepts the runtime HTML root and its canonical allowlisted elements", () => {
     const style = { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null };
+    const longPathAssetId = `path-${"a".repeat(300)}`;
     const html = { ...emptyState, scrollback: [{ lineId: "line-1", nodes: [{ type: "htmlIsland", root: {
       type: "element", tag: "div", style, assetId: null, altText: null, children: [
         { type: "element", tag: "p", style, assetId: null, altText: null, children: [{ type: "text", text: "safe" }] },
-        { type: "element", tag: "img", style, assetId: "sha256-image", altText: "fixture", children: [] },
+        { type: "element", tag: "img", style, assetId: longPathAssetId, altText: "fixture", children: [] },
       ],
     } }], alignment: "left", temporary: false }] };
     const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: html }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));

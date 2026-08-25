@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using CloudEmuera.RuntimeAdapter;
 
 namespace CloudEmuera.EmueraRuntime.Headless;
@@ -21,7 +20,8 @@ public sealed class RuntimeImageMetadataPort(IRuntimeFileSystem fileSystem) : IR
                 resourcePath.Area);
         }
 
-        using Stream stream = fileSystem.OpenRead(resourcePath, cancellationToken);
+        RuntimeFilePath canonicalPath = fileSystem.ResolveExistingPath(resourcePath, cancellationToken);
+        using Stream stream = fileSystem.OpenRead(canonicalPath, cancellationToken);
         long length = stream.CanSeek ? stream.Length : fileSystem.GetMetadata(resourcePath, cancellationToken).Length;
         if (length <= 0 || length > WebpMetadataReader.MaximumEncodedBytes)
             throw new InvalidDataException("The encoded image payload exceeds its limit.");
@@ -55,9 +55,11 @@ public sealed class RuntimeImageMetadataPort(IRuntimeFileSystem fileSystem) : IR
             throw new InvalidDataException("Only valid PNG or WebP resources are supported by the headless image port.");
         }
 
-        if (stream.CanSeek)
-            stream.Position = 0;
-        string digest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-        return new RuntimeImageMetadata($"sha256-{digest}", mediaType, width, height, length);
+        return new RuntimeImageMetadata(
+            ConsoleAssetIdCodec.EncodePath(canonicalPath.LogicalPath),
+            mediaType,
+            width,
+            height,
+            length);
     }
 }

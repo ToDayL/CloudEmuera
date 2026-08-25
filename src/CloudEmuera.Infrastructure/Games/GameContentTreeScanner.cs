@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CloudEmuera.Infrastructure.Persistence;
@@ -15,7 +14,7 @@ internal sealed record ScannedGameEntry(
     bool? HasBom);
 
 internal sealed record ScannedGameTree(
-    string ContentDigest,
+    string? ContentDigest,
     int FileCount,
     long TotalBytes,
     string ManifestJson,
@@ -57,7 +56,6 @@ internal static class GameContentTreeScanner
 
         List<ScannedGameEntry> entries = directories.Order(StringComparer.Ordinal)
             .Select(path => new ScannedGameEntry(path, "DIRECTORY", 0, null, null, null, null)).ToList();
-        using IncrementalHash aggregate = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long total = 0;
         foreach (string file in files.Order(StringComparer.Ordinal))
         {
@@ -69,26 +67,23 @@ internal static class GameContentTreeScanner
             if (total > GameContentScanLimits.MaxTotalBytes)
                 throw new GameContentLimitException("GAME_CONTENT_TOTAL_LIMIT");
             byte[] bytes = File.ReadAllBytes(file);
-            string digest = $"sha256:{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
             string logical = Path.GetRelativePath(root, file).Replace('\\', '/');
             string? encoding = null;
             bool hasBom = false;
             string fileKind = IsTextFile(file) && TryDecode(bytes, out _, out encoding, out hasBom) ? "TEXT" : "BINARY";
-            entries.Add(new ScannedGameEntry(logical, "FILE", info.Length, digest, fileKind, encoding, fileKind == "TEXT" ? hasBom : null));
-            aggregate.AppendData(Encoding.UTF8.GetBytes($"{logical}\0{info.Length}\0{digest[7..]}\n"));
+            entries.Add(new ScannedGameEntry(logical, "FILE", info.Length, null, fileKind, encoding, fileKind == "TEXT" ? hasBom : null));
         }
-        string contentDigest = $"sha256:{Convert.ToHexString(aggregate.GetHashAndReset()).ToLowerInvariant()}";
         string config = entries.FirstOrDefault(entry => entry.EntryKind == "FILE" && entry.Path == "emuera.config") is { } configEntry
-            ? JsonSerializer.Serialize(new { path = configEntry.Path, digest = configEntry.Digest }) : "{}";
+            ? JsonSerializer.Serialize(new { path = configEntry.Path }) : "{}";
         string manifest = JsonSerializer.Serialize(new
         {
-            schemaVersion = 1,
-            contentDigest,
+            schemaVersion = 2,
+            contentDigest = (string?)null,
             fileCount = files.Count,
             directoryCount = directories.Count,
             totalBytes = total,
         });
-        return new(contentDigest, files.Count, total, manifest, config, entries);
+        return new(null, files.Count, total, manifest, config, entries);
     }
 
     private static bool IsTextFile(string path) => Path.GetExtension(path).ToUpperInvariant() is ".ERB" or ".ERH" or ".CSV" or ".CONFIG" or ".TXT";

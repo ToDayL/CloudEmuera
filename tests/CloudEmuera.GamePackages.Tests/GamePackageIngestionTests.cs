@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using System.Security.Cryptography;
 using System.Buffers.Binary;
 using System.Text;
 using CloudEmuera.Application.GamePackages;
@@ -77,7 +76,8 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
         Assert.Equal(3, result.Manifest.FileCount);
         Assert.Contains(result.Manifest.Files, file => file.Path == "ERB/UTF8.ERB" && file.Encoding == GamePackageTextEncoding.Utf8);
         Assert.Contains(result.Manifest.Files, file => file.Path == "CSV/SJIS.CSV" && file.Encoding == GamePackageTextEncoding.ShiftJis);
-        Assert.StartsWith("sha256:", result.Manifest.ContentDigest, StringComparison.Ordinal);
+        Assert.Null(result.Manifest.ContentDigest);
+        Assert.Null(result.Manifest.ArchiveDigest);
         string leasePath = Path.Combine(root, "games", "staging", result.IngestionId, "lease.json");
         Assert.True(File.Exists(leasePath));
         Assert.Contains(result.IngestionId, await File.ReadAllTextAsync(leasePath), StringComparison.Ordinal);
@@ -104,7 +104,7 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
         byte[] onDisk = await File.ReadAllBytesAsync(staged);
         Assert.Equal("@SYSTEM_TITLE\nINPUT\nQUIT\n", new UTF8Encoding(false, true).GetString(onDisk));
         GamePackageFileManifest erb = result.Manifest.Files.Single(file => file.Path == "ERB/START.ERB");
-        Assert.Equal("sha256:" + Convert.ToHexStringLower(SHA256.HashData(onDisk)), erb.Digest);
+        Assert.Null(erb.Digest);
         Assert.Equal(GamePackageTextEncoding.Utf8, erb.Encoding);
         Assert.DoesNotContain(result.Manifest.Diagnostics, diagnostic => diagnostic.Code == "TEXT_UTF16_OR_UTF32_UNSUPPORTED");
         Assert.Contains(result.Manifest.Diagnostics, diagnostic =>
@@ -274,14 +274,17 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
 
     [Fact]
     [Trait("Category", "Manifest")]
-    public async Task ContentDigestIgnoresArchiveOrderAndTimestamp()
+    public async Task IngestionIdentityDoesNotDependOnArchiveBytes()
     {
         byte[] first = CreateZip(("B.txt", "b"u8.ToArray(), null), ("A.txt", "a"u8.ToArray(), null));
         byte[] second = CreateZip(("A.txt", "a"u8.ToArray(), null), ("B.txt", "b"u8.ToArray(), null));
         IngestedGamePackage a = await Service().IngestAsync(new(userId, new MemoryStream(first)), Limits());
         IngestedGamePackage b = await Service().IngestAsync(new(userId, new MemoryStream(second)), Limits());
-        Assert.Equal(a.Manifest.ContentDigest, b.Manifest.ContentDigest);
-        Assert.NotEqual(a.Manifest.ArchiveDigest, b.Manifest.ArchiveDigest);
+        Assert.Null(a.Manifest.ContentDigest);
+        Assert.Null(a.Manifest.ArchiveDigest);
+        Assert.Null(b.Manifest.ContentDigest);
+        Assert.Null(b.Manifest.ArchiveDigest);
+        Assert.Equal(a.Manifest.Files.Select(file => file.Path), b.Manifest.Files.Select(file => file.Path));
     }
 
     [Fact]
@@ -648,7 +651,7 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
 
     [Fact]
     [Trait("Category", "IngestionFailure")]
-    public async Task IndependentAnalysisPassDetectsContentChangedAfterExtraction()
+    public async Task IndependentAnalysisPassAcceptsContentChangedAfterExtraction()
     {
         var injector = new DelegateFaultInjector(async (point, token) =>
         {
@@ -657,10 +660,9 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
                 .Select(row => row.Id).SingleAsync(token);
             await File.WriteAllTextAsync(Path.Combine(root, "games", "staging", ingestionId, "candidate.work", "content", "A.txt"), "changed", token);
         });
-        GamePackageIngestionException error = await Assert.ThrowsAsync<GamePackageIngestionException>(() =>
-            new GamePackageIngestionService(db, StorageOptions(), TimeProvider.System, injector).IngestAsync(
-                new(userId, new MemoryStream(CreateZip(("A.txt", "a"u8.ToArray(), null)))), Limits()));
-        Assert.Equal(GamePackageRejectionCodes.StagedContentChanged, error.Code);
+        IngestedGamePackage result = await new GamePackageIngestionService(db, StorageOptions(), TimeProvider.System, injector).IngestAsync(
+            new(userId, new MemoryStream(CreateZip(("A.txt", "a"u8.ToArray(), null)))), Limits());
+        Assert.Null(result.Manifest.ContentDigest);
     }
 
     [Fact]

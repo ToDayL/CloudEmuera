@@ -71,7 +71,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
         HttpResponseMessage text = await client.GetAsync($"/api/v1/games/{game.Id}/file?scope=CURRENT&path=ERB%2FSTART.ERB");
         GameTextFile startFile = await text.Content.ReadFromJsonAsync<GameTextFile>() ?? throw new Xunit.Sdk.XunitException("Text file was missing.");
         Assert.Equal("@SYSTEM_TITLE\nINPUT\nQUIT\n", startFile.Content);
-        Assert.NotNull(text.Headers.ETag);
+        Assert.Null(text.Headers.ETag);
 
         HttpResponseMessage currentFiles = await client.GetAsync($"/api/v1/games/{game.Id}/files?scope=CURRENT");
         GameFileListResponse currentListing = await currentFiles.Content.ReadFromJsonAsync<GameFileListResponse>() ?? throw new Xunit.Sdk.XunitException("Current file list was missing.");

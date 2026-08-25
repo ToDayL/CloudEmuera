@@ -64,6 +64,14 @@ public interface IRuntimeFileSystem
 
     RuntimeFileMetadata GetMetadata(RuntimeFilePath path, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Resolves an existing entry to the canonical relative casing stored by
+    /// the runtime filesystem. Case-insensitive lookup is part of the game
+    /// compatibility contract; presentation asset IDs must use the same path
+    /// that the SessionRoot manifest exposes.
+    /// </summary>
+    RuntimeFilePath ResolveExistingPath(RuntimeFilePath path, CancellationToken cancellationToken = default);
+
     void Move(
         RuntimeFilePath source,
         RuntimeFilePath destination,
