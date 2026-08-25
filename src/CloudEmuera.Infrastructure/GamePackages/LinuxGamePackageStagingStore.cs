@@ -195,7 +195,10 @@ internal sealed class LinuxGamePackageStagingStore : IDisposable
         using (FileStream stream = Stream(lease, FileAccess.Write))
         {
             stream.Write(json);
-            stream.Flush(flushToDisk: true);
+            // The lease is a restart-recovery marker, not a power-loss
+            // durability boundary. Keep the write buffered and publish it
+            // with the following atomic rename.
+            stream.Flush(flushToDisk: false);
         }
         Rename(root, "lease.json.part", "lease.json");
     }

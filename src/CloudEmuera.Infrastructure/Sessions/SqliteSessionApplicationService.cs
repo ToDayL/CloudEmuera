@@ -686,21 +686,17 @@ public sealed partial class SqliteSessionApplicationService(
             throw new SessionApplicationException(SessionErrorCodes.GameHasNoCurrentContent, "游戏没有可运行的 current content。", 409);
 
         string currentRoot = ResolveDataPath(game.CurrentContentPath);
-        SessionRootPublishedManifest sourceManifest = CreatePublishedManifest(game, currentRoot);
+        SessionRootContentStatistics sourceStatistics = SessionRootContentStatistics.FromDirectory(currentRoot);
         RuntimeSaveLayout saveLayout = InspectSourceSaveLayout(game.CurrentContentPath);
-        long fileCount = sourceManifest.Entries.LongCount(entry => entry.Kind == SessionRootManifestEntryKind.File);
-        long directoryCount = sourceManifest.Entries.LongCount(entry => entry.Kind == SessionRootManifestEntryKind.Directory);
-        long contentBytes = sourceManifest.Entries.Where(entry => entry.Kind == SessionRootManifestEntryKind.File).Sum(entry => entry.Length);
+        long fileCount = sourceStatistics.FileCount;
+        long directoryCount = sourceStatistics.DirectoryCount;
+        long contentBytes = sourceStatistics.TotalBytes;
         if (fileCount > Capacity.MaxSessionRootFileCount)
             throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "SessionRoot 文件数量超过实例上限。", 413);
         string sessionId = $"sess_{Guid.CreateVersion7():N}";
         string operationId = $"scop_{Guid.CreateVersion7():N}";
         string stagingPath = $"sessions/.staging/{sessionId}-{operationId}";
-        string runtimeManifestJson = CreateRuntimeManifest(game, sourceManifest, saveLayout);
-        if (runtimeManifestJson.Length > PersistenceLimits.SessionRuntimeManifestMaxLength)
-            throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "Session runtime manifest 超过存储上限。", 413);
-        long runtimeManifestBytes = Encoding.UTF8.GetByteCount(runtimeManifestJson);
-        long reservedBytes = checked(contentBytes + 64 * 1024 + fileCount * 512 + directoryCount * 256 + runtimeManifestBytes);
+        long reservedBytes = checked(contentBytes + 64 * 1024 + fileCount * 512 + directoryCount * 256);
         if (reservedBytes > Capacity.MaxSessionRootBytes)
             throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "SessionRoot 超过实例存储上限。", 413);
         long alreadyReserved = await db.SessionCreationOperations
@@ -721,7 +717,7 @@ public sealed partial class SqliteSessionApplicationService(
             SessionIdentityMode = "PATH_REVISION",
             SessionSnapshotId = sessionId,
             SourceContentRevision = game.ContentRevision,
-            SessionRootManifestDigest = sourceManifest.ManifestDigest,
+            SessionRootManifestDigest = $"game/{game.Id}/revision/{game.ContentRevision}",
             SaveLayout = (int)saveLayout,
             RuntimeVersion = RuntimeBaseline.CloudEmueraIntegrationVersion,
             SessionRootPath = $"sessions/{sessionId}/root",
@@ -877,17 +873,12 @@ public sealed partial class SqliteSessionApplicationService(
                     row.ContentRevision == session.SourceContentRevision && row.CurrentContentPath != null)
                 .ConfigureAwait(false)
                 ?? throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session source content 已发生变化。", 503);
-            SessionRootPublishedManifest manifest = CreatePublishedManifest(game, lease.ContentRootPath);
-            if (manifest.Entries.LongCount(entry => entry.Kind == SessionRootManifestEntryKind.File) > Capacity.MaxSessionRootFileCount)
-                throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "SessionRoot 文件数量超过实例上限。", 413);
             if (!Enum.IsDefined((RuntimeSaveLayout)session.SaveLayout))
                 throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session save layout 无效。", 503);
             RuntimeSaveLayout saveLayout = (RuntimeSaveLayout)session.SaveLayout;
             if (InspectSourceSaveLayoutAtRoot(lease.ContentRootPath) != saveLayout)
                 throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "Session source save layout 已发生变化。", 503);
-            string runtimeManifestJson = CreateRuntimeManifest(game, manifest, saveLayout);
-            if (runtimeManifestJson.Length > PersistenceLimits.SessionRuntimeManifestMaxLength)
-                throw new SessionApplicationException(SessionErrorCodes.StorageBudgetExceeded, "Session runtime manifest 超过存储上限。", 413);
+            string contentIdentity = $"game/{game.Id}/revision/{game.ContentRevision}";
             if (Directory.Exists(finalContainer) || File.Exists(finalContainer) || RuntimePathUtilities.IsReparsePoint(finalContainer))
             {
                 if (!IsPublishedRootValid(sessionId))
@@ -907,9 +898,9 @@ public sealed partial class SqliteSessionApplicationService(
                 maxTotalBytes: Capacity.MaxSessionRootBytes,
                 maxSingleFileBytes: Capacity.MaxSessionRootBytes);
             SessionRootLayout layout = new SessionRootLayoutBuilder(lease.ContentRootPath, stagingContainer, saveLayout)
-                .WithPublishedManifest(manifest)
+                .WithRootOnlyContentIdentity(contentIdentity)
                 .WithCopyLimits(limits)
-                .Build();
+                .BuildRootOnly();
             SetPrivateDirectoryMode(stagingContainer);
             SetPrivateDirectoryMode(layout.SessionRoot);
             SessionRootProtectedMarkerStore.Write(
@@ -920,20 +911,17 @@ public sealed partial class SqliteSessionApplicationService(
                 session.GameId,
                 session.SourceContentRevision,
                 session.SourceContentDigest,
-                manifest.ManifestDigest,
+                contentIdentity,
                 layout.CopiedManifestDigest,
                 saveLayout,
                 session.RuntimeVersion,
                 session.CreatedAt,
                 layout.SessionRoot);
-            SessionRootProtectedMarkerStore.WriteRuntimeManifest(stagingContainer, runtimeManifestJson);
-            SyncDirectoryTree(stagingContainer);
             if (Directory.Exists(finalContainer) || File.Exists(finalContainer) || RuntimePathUtilities.IsReparsePoint(finalContainer))
                 throw new SessionApplicationException(SessionErrorCodes.SessionRootInvalid, "SessionRoot final container 已被占用。", 503);
             Directory.CreateDirectory(sessionsDirectory);
             SetPrivateDirectoryMode(sessionsDirectory);
             Directory.Move(stagingContainer, finalContainer);
-            SyncDirectoryTree(Path.GetDirectoryName(finalContainer)!);
             await MarkRootPublishedAsync(operationId, sessionId).ConfigureAwait(false);
         }
         finally
@@ -1820,29 +1808,6 @@ public sealed partial class SqliteSessionApplicationService(
         }
     }
 
-    private static SessionRootPublishedManifest CreatePublishedManifest(GameRow game, string contentRoot) =>
-        SessionRootPublishedManifest.FromDirectory(contentRoot, $"game/{game.Id}/revision/{game.ContentRevision}");
-
-    private static string CreateRuntimeManifest(GameRow game, SessionRootPublishedManifest manifest, RuntimeSaveLayout saveLayout)
-    {
-        FrozenRuntimeManifest value = new(
-            2,
-            game.ManifestJson,
-            game.RuntimeConfigJson,
-            game.CompatibilitySummaryJson,
-            RuntimeBaseline.CompatibilityProfile,
-            RuntimeBaseline.UpstreamCommit,
-            RuntimeBaseline.CloudEmueraIntegrationVersion,
-            saveLayout,
-            manifest.ManifestDigest,
-            manifest.Entries.Select(entry => new FrozenManifestEntry(
-                entry.RelativePath,
-                entry.Kind == SessionRootManifestEntryKind.Directory ? "DIRECTORY" : "FILE",
-                entry.Length,
-                entry.Sha256)).ToArray());
-        return JsonSerializer.Serialize(value, JsonOptions);
-    }
-
     private bool IsPublishedRootValid(string sessionId)
     {
         try
@@ -1927,7 +1892,6 @@ public sealed partial class SqliteSessionApplicationService(
             using Microsoft.Win32.SafeHandles.SafeFileHandle current = LinuxFileOperations.OpenDirectory(container);
             LinuxFileOperations.FileIdentity identity = LinuxFileOperations.ReadIdentity(current);
             LinuxFileOperations.DeleteTreeAt(parent, session.Id, expectedIdentity: identity, allowReadOnly: true);
-            LinuxFileOperations.Sync(parent);
             return;
         }
 
@@ -1953,13 +1917,6 @@ public sealed partial class SqliteSessionApplicationService(
             else if (entry is not DirectoryInfo) throw new IOException("Staging contains a special entry.");
         }
         Directory.Delete(path, recursive: true);
-    }
-
-    private static void SyncDirectoryTree(string path)
-    {
-        if (!OperatingSystem.IsLinux()) return;
-        using Microsoft.Win32.SafeHandles.SafeFileHandle handle = LinuxFileOperations.OpenDirectory(path);
-        LinuxFileOperations.Sync(handle);
     }
 
     private static void SetPrivateDirectoryMode(string path)
@@ -2137,22 +2094,6 @@ public sealed partial class SqliteSessionApplicationService(
         SessionView? ExistingView,
         string? OperationId = null,
         string? SessionId = null);
-
-    private sealed record FrozenManifestEntry(string Path, string EntryKind, long Bytes, string? Digest);
-
-    private sealed record FrozenRuntimeManifest(
-        int SchemaVersion,
-        string GameManifestJson,
-        string RuntimeConfigJson,
-        string CompatibilitySummaryJson,
-        string CompatibilityProfile,
-        string UpstreamCommit,
-        string RuntimeVersion,
-        RuntimeSaveLayout SaveLayout,
-        string SourceManifestDigest,
-        IReadOnlyList<FrozenManifestEntry> Entries,
-        string CapabilityMatrixVersion = RuntimeBaseline.CapabilityMatrixVersion,
-        string CapabilitySetDigest = RuntimeBaseline.CapabilitySetDigest);
 
     [LoggerMessage(EventId = 2601, Level = LogLevel.Error, Message = "session_lifecycle_failed sessionId={SessionId} operation={Operation}")]
     private static partial void LogLifecycleFailed(ILogger logger, string sessionId, string operation);

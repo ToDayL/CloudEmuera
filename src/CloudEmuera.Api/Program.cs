@@ -596,6 +596,16 @@ games.MapGet("", async (HttpContext context, IGameLibraryService library) =>
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     return Results.Ok(new { items = await library.ListAsync(actor, context.RequestAborted).ConfigureAwait(false) });
 }).RequireRateLimiting("game-read");
+games.MapGet("/uploads/{requestId}", async (string requestId, HttpContext context, IGameLibraryService library) =>
+{
+    if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
+    if (!ApiIdentity.TryIdempotencyKey(requestId, out string key))
+        return ApiIdentity.Error("UPLOAD_NOT_FOUND", "上传操作不存在。", StatusCodes.Status404NotFound);
+    GameUploadProgressItem? progress = await library.GetUploadProgressAsync(actor, key, context.RequestAborted).ConfigureAwait(false);
+    return progress is null
+        ? ApiIdentity.Error("UPLOAD_NOT_FOUND", "上传操作不存在。", StatusCodes.Status404NotFound)
+        : Results.Ok(progress);
+}).RequireRateLimiting("game-read");
 games.MapPost("", async (string name, string? visibility, HttpContext context, IAntiforgery antiforgery, IGameLibraryService library, ApiIdempotencyStore idempotency) =>
 {
     // Uploads may exceed Kestrel's default 30 MiB limit. The ingestion service

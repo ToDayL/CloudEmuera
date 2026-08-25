@@ -236,15 +236,31 @@ internal static class LinuxFileOperations
         }
     }
 
-    public static void CopyTree(SafeFileHandle sourceDirectory, SafeFileHandle destinationParent, string destinationName)
+    /// <summary>
+    /// Copies a protected ordinary-file tree. The normal product path keeps
+    /// writes buffered and relies on atomic publication plus the durable
+    /// operation row for process-restart recovery. Migrations may opt into
+    /// filesystem durability explicitly because they run outside that path.
+    /// </summary>
+    public static void CopyTree(
+        SafeFileHandle sourceDirectory,
+        SafeFileHandle destinationParent,
+        string destinationName,
+        bool syncToDisk = false)
     {
         using SafeFileHandle destination = CreateDirectoryAt(destinationParent, destinationName);
-        CopyDirectoryContents(sourceDirectory, destination);
-        Sync(destination);
-        Sync(destinationParent);
+        CopyDirectoryContents(sourceDirectory, destination, syncToDisk);
+        if (syncToDisk)
+        {
+            Sync(destination);
+            Sync(destinationParent);
+        }
     }
 
-    private static void CopyDirectoryContents(SafeFileHandle sourceDirectory, SafeFileHandle destinationDirectory)
+    private static void CopyDirectoryContents(
+        SafeFileHandle sourceDirectory,
+        SafeFileHandle destinationDirectory,
+        bool syncToDisk)
     {
         string descriptorPath = GetProcFileDescriptorPath(sourceDirectory);
         foreach (string path in Directory.EnumerateFileSystemEntries(descriptorPath).Order(StringComparer.Ordinal))
@@ -258,8 +274,8 @@ internal static class LinuxFileOperations
                 using SafeFileHandle childSource = TryOpenDirectoryAt(sourceDirectory, leaf)
                     ?? throw new IOException("The source directory disappeared during copy.");
                 using SafeFileHandle childDestination = CreateDirectoryAt(destinationDirectory, leaf);
-                CopyDirectoryContents(childSource, childDestination);
-                Sync(childDestination);
+                CopyDirectoryContents(childSource, childDestination, syncToDisk);
+                if (syncToDisk) Sync(childDestination);
             }
             else if (identity.IsRegularFile)
             {
@@ -269,15 +285,15 @@ internal static class LinuxFileOperations
                 using FileStream input = CreateFileStream(sourceFile, FileAccess.Read);
                 using FileStream output = CreateFileStream(destinationFile, FileAccess.Write);
                 input.CopyTo(output);
-                output.Flush(flushToDisk: true);
-                Sync(destinationFile);
+                output.Flush(flushToDisk: syncToDisk);
+                if (syncToDisk) Sync(destinationFile);
             }
             else
             {
                 throw new IOException("Refusing to copy a link or special file.");
             }
         }
-        Sync(destinationDirectory);
+        if (syncToDisk) Sync(destinationDirectory);
     }
 
     public static SafeFileHandle OpenRegularFileAt(

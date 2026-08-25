@@ -62,39 +62,37 @@ public sealed class SessionSaveApiContractTests : IDisposable
         PresentationManifestResponse manifest = await manifestResponse.Content.ReadFromJsonAsync<PresentationManifestResponse>()
             ?? throw new Xunit.Sdk.XunitException("Presentation manifest response was missing.");
         byte[] expectedPng = FixturePng();
-        PresentationAssetResponse asset = Assert.Single(manifest.Assets, item => item.MediaType == "image/png");
-        Assert.Equal("path-SU1BR0UvaGVyby5wbmc", asset.AssetId);
-        Assert.Null(asset.ContentDigest);
+        Assert.Empty(manifest.Assets);
+        const string assetId = "path-SU1BR0UvaGVyby5wbmc";
         PresentationFontResponse[] fonts = manifest.Fonts;
         Assert.Empty(fonts);
         Assert.Empty(manifest.FontDiagnostics);
-        Assert.DoesNotContain(manifest.Assets, item => item.MediaType.StartsWith("font/", StringComparison.Ordinal));
-        using HttpResponseMessage assetResponse = await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        using HttpResponseMessage assetResponse = await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{assetId}");
         Assert.Equal(HttpStatusCode.OK, assetResponse.StatusCode);
         Assert.Equal("image/png", assetResponse.Content.Headers.ContentType?.MediaType);
         Assert.Equal(expectedPng, await assetResponse.Content.ReadAsByteArrayAsync());
         Assert.Contains("no-store", assetResponse.Headers.CacheControl?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("bytes", assetResponse.Headers.AcceptRanges.ToString());
         Assert.Null(assetResponse.Headers.ETag);
-        using HttpRequestMessage cachedRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        using HttpRequestMessage cachedRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{assetId}");
         cachedRequest.Headers.TryAddWithoutValidation("If-None-Match", "\"legacy-etag\"");
         using HttpResponseMessage cachedResponse = await client.SendAsync(cachedRequest);
         Assert.Equal(HttpStatusCode.OK, cachedResponse.StatusCode);
-        using HttpRequestMessage rangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        using HttpRequestMessage rangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{assetId}");
         rangeRequest.Headers.Range = new RangeHeaderValue(0, 7);
         using HttpResponseMessage rangeResponse = await client.SendAsync(rangeRequest);
         Assert.Equal(HttpStatusCode.PartialContent, rangeResponse.StatusCode);
         Assert.Equal(expectedPng[..8], await rangeResponse.Content.ReadAsByteArrayAsync());
-        using HttpRequestMessage multiRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        using HttpRequestMessage multiRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{assetId}");
         multiRangeRequest.Headers.TryAddWithoutValidation("Range", "bytes=0-1,4-5");
         using HttpResponseMessage multiRangeResponse = await client.SendAsync(multiRangeRequest);
         Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, multiRangeResponse.StatusCode);
-        using HttpRequestMessage suffixRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        using HttpRequestMessage suffixRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{assetId}");
         suffixRangeRequest.Headers.TryAddWithoutValidation("Range", "bytes=-8");
         using HttpResponseMessage suffixRangeResponse = await client.SendAsync(suffixRangeRequest);
         Assert.Equal(HttpStatusCode.PartialContent, suffixRangeResponse.StatusCode);
         Assert.Equal(expectedPng[^8..], await suffixRangeResponse.Content.ReadAsByteArrayAsync());
-        using HttpRequestMessage invalidRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}");
+        using HttpRequestMessage invalidRangeRequest = new(HttpMethod.Get, $"/api/v1/sessions/{session.Id}/assets/{assetId}");
         invalidRangeRequest.Headers.TryAddWithoutValidation("Range", "bytes=999-");
         using HttpResponseMessage invalidRangeResponse = await client.SendAsync(invalidRangeRequest);
         Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, invalidRangeResponse.StatusCode);
@@ -104,11 +102,11 @@ public sealed class SessionSaveApiContractTests : IDisposable
         // but content bytes are intentionally owner-controlled.
         string assetPath = Path.Combine(dataRoot, "sessions", session.Id, "root", "IMAGE", "hero.png");
         File.WriteAllBytes(assetPath, Encoding.ASCII.GetBytes("not-a-png"));
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{assetId}")).StatusCode);
         byte[] replacement = expectedPng.ToArray();
         replacement[^1] ^= 0x01;
         File.WriteAllBytes(assetPath, replacement);
-        using (HttpResponseMessage replacementResponse = await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}"))
+        using (HttpResponseMessage replacementResponse = await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{assetId}"))
         {
             Assert.Equal(HttpStatusCode.OK, replacementResponse.StatusCode);
             Assert.Equal(replacement, await replacementResponse.Content.ReadAsByteArrayAsync());
@@ -120,7 +118,7 @@ public sealed class SessionSaveApiContractTests : IDisposable
             File.WriteAllBytes(linkTarget, expectedPng);
             File.Delete(assetPath);
             File.CreateSymbolicLink(assetPath, linkTarget);
-            HttpStatusCode symlinkStatus = (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode;
+            HttpStatusCode symlinkStatus = (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{assetId}")).StatusCode;
             Assert.Contains(symlinkStatus, new[] { HttpStatusCode.NotFound, HttpStatusCode.ServiceUnavailable });
             File.Delete(assetPath);
             File.WriteAllBytes(assetPath, expectedPng);
@@ -128,7 +126,7 @@ public sealed class SessionSaveApiContractTests : IDisposable
 
             string hardlinkTarget = Path.Combine(dataRoot, "sessions", session.Id, "root", "IMAGE", "hardlink.png");
             Assert.Equal(0, Link(assetPath, hardlinkTarget));
-            HttpStatusCode hardlinkStatus = (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode;
+            HttpStatusCode hardlinkStatus = (await client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{assetId}")).StatusCode;
             Assert.Contains(hardlinkStatus, new[] { HttpStatusCode.NotFound, HttpStatusCode.ServiceUnavailable });
             File.Delete(hardlinkTarget);
 
@@ -161,7 +159,7 @@ public sealed class SessionSaveApiContractTests : IDisposable
             try
             {
                 HttpResponseMessage[] raceResponses = await Task.WhenAll(
-                    Enumerable.Range(0, 12).Select(_ => client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")));
+                    Enumerable.Range(0, 12).Select(_ => client.GetAsync($"/api/v1/sessions/{session.Id}/assets/{assetId}")));
                 foreach (HttpResponseMessage response in raceResponses)
                 {
                     using (response)
@@ -196,7 +194,7 @@ public sealed class SessionSaveApiContractTests : IDisposable
         Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(playerClient, HttpMethod.Post, "/api/v1/auth/change-password",
             new ChangePasswordRequest("session-save-player-temporary", "session-save-player-permanent"), playerCsrf)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/sessions/{session.Id}/presentation-manifest")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/sessions/{session.Id}/assets/{asset.AssetId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/sessions/{session.Id}/assets/{assetId}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await playerClient.GetAsync($"/api/v1/sessions/{session.Id}/saves")).StatusCode);
         Assert.True(player.MustChangePassword);
 

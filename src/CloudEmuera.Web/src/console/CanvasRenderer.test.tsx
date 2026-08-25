@@ -6,12 +6,12 @@ import type { RealtimeDrawable } from "../realtime/protocol";
 import { AssetResolver } from "./AssetResolver";
 
 const bounds = { x: 0, y: 0, width: 10, height: 10 };
-const spriteAssets = new AssetResolver("s1", { schemaVersion: 1, assets: [{ assetId: "asset", mediaType: "image/png", byteLength: 1, contentDigest: `sha256:${"a".repeat(64)}`, eTag: null }], fonts: [], fontDiagnostics: [] });
+const spriteAssets = new AssetResolver("s1");
 
 describe("CanvasRenderer scene ordering", () => {
   it("does not treat an empty scene as a visible canvas", () => {
     expect(hasCanvasContent({ drawables: [], hitRegions: [] }, [])).toBe(false);
-    expect(hasCanvasContent({ drawables: [], hitRegions: [] }, [{ layerId: "bg", assetId: "asset", depth: 0, mode: "center", opacity: 1 }])).toBe(true);
+    expect(hasCanvasContent({ drawables: [], hitRegions: [] }, [{ layerId: "bg", assetId: "path-Ymc", depth: 0, mode: "center", opacity: 1 }])).toBe(true);
     expect(hasCanvasContent({ drawables: [{ type: "shape", drawableId: "shape", bounds, zIndex: 0, opacity: 1, shape: "space", points: [], fill: null, stroke: null }], hitRegions: [] }, [])).toBe(true);
   });
 
@@ -19,7 +19,7 @@ describe("CanvasRenderer scene ordering", () => {
     const drawables: RealtimeDrawable[] = [
       { type: "htmlIsland", drawableId: "html", bounds, zIndex: 5, opacity: 1, root: { type: "text", text: "safe" } },
       { type: "shape", drawableId: "shape", bounds, zIndex: 5, opacity: 1, shape: "rectangle", points: [], fill: null, stroke: null },
-      { type: "sprite", drawableId: "sprite", bounds, zIndex: 1, opacity: 1, assetId: "asset", sourceRect: bounds, frame: 0, animationFrames: [] },
+      { type: "sprite", drawableId: "sprite", bounds, zIndex: 1, opacity: 1, assetId: "path-YXNzZXQ", sourceRect: bounds, frame: 0, animationFrames: [] },
       { type: "raster", drawableId: "raster", bounds, zIndex: 5, opacity: 1, pngData: "iVBORw0KGgo=" },
     ];
     expect(orderCanvasDrawables(drawables).map(drawable => drawable.drawableId)).toEqual(["sprite", "html", "raster", "shape"]);
@@ -61,7 +61,7 @@ describe("CanvasRenderer scene ordering", () => {
   });
 
   it("scales SpriteCanvas with its responsive drawable instead of clipping its logical bitmap", () => {
-    const view = render(<CanvasRenderer scene={{ drawables: [{ type: "sprite", drawableId: "portrait", bounds: { x: 0, y: 0, width: 180, height: 360 }, zIndex: 1, opacity: 1, assetId: "asset", sourceRect: { x: 0, y: 0, width: 180, height: 360 }, frame: 0, animationFrames: [] }], hitRegions: [] }} backgroundLayers={[]} windowMetadata={{ title: "Game", viewportWidth: 800, viewportHeight: 600, defaultFont: { family: "default", size: 16, lineHeight: 19 } }} assets={spriteAssets} onInput={() => undefined} />);
+    const view = render(<CanvasRenderer scene={{ drawables: [{ type: "sprite", drawableId: "portrait", bounds: { x: 0, y: 0, width: 180, height: 360 }, zIndex: 1, opacity: 1, assetId: "path-YXNzZXQ", sourceRect: { x: 0, y: 0, width: 180, height: 360 }, frame: 0, animationFrames: [] }], hitRegions: [] }} backgroundLayers={[]} windowMetadata={{ title: "Game", viewportWidth: 800, viewportHeight: 600, defaultFont: { family: "default", size: 16, lineHeight: 19 } }} assets={spriteAssets} onInput={() => undefined} />);
     expect(view.container.querySelector(".canvas-sprite-drawable canvas")).toHaveStyle({ width: "100%", height: "100%" });
   });
 });

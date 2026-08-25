@@ -15,6 +15,33 @@ public sealed class GameLibraryServiceTests
 {
     [Fact]
     [Trait("Category", "GameLibrary")]
+    public async Task OneStepUploadCopiesIntoContentOnceAndDoesNotCreateGameMetadataIndex()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        await using DbContextScope scope = database.OpenContext();
+        scope.Context.QuotaProfiles.Add(PersistenceFixtures.CreateQuotaProfile());
+        scope.Context.Users.Add(PersistenceFixtures.CreateUser());
+        await scope.Context.SaveChangesAsync();
+
+        var ingestionService = new GamePackageIngestionService(scope.Context,
+            new GamePackageStorageOptions { DataRoot = database.RootPath, MinDataRootFreeBytes = 0 }, TimeProvider.System);
+        var library = new GameLibraryService(scope.Context, ingestionService, new AcceptingValidator(), database.Options, TimeProvider.System);
+        GameLibraryItem uploaded = await library.UploadAsync(
+            new CurrentActor("usr_fixture", "PLAYER", "auths_fixture"),
+            "Direct upload", "PRIVATE", CreateArchive(), "direct-upload");
+
+        Assert.True(uploaded.HasCurrentContent);
+        Assert.Equal(1, uploaded.ContentRevision);
+        string gameDirectory = Path.Combine(database.RootPath, "games", uploaded.Id);
+        Assert.True(File.Exists(Path.Combine(gameDirectory, "content", "ERB", "START.ERB")));
+        Assert.False(Directory.Exists(Path.Combine(gameDirectory, "workspace")));
+        Assert.False(File.Exists(Path.Combine(gameDirectory, "content", "manifest.json")));
+        Assert.Empty(await scope.Context.GameFiles.AsNoTracking().Where(file => file.GameId == uploaded.Id).ToArrayAsync());
+    }
+
+    [Fact]
+    [Trait("Category", "GameLibrary")]
     public async Task ReadyIngestionBindsToTheSingleGameWorkspace()
     {
         using TemporarySqliteDatabase database = new();
@@ -42,7 +69,7 @@ public sealed class GameLibraryServiceTests
         scope.Context.ChangeTracker.Clear();
         Assert.Equal(GamePackageIngestionStatus.Consumed, (await scope.Context.GamePackageIngestions.AsNoTracking().SingleAsync()).Status);
         Assert.Equal(GameContentOperationStatus.Committed, (await scope.Context.GameContentOperations.AsNoTracking().SingleAsync()).Status);
-        Assert.Equal(3, await scope.Context.GameFiles.AsNoTracking().CountAsync(file => file.Scope == "WORKSPACE"));
+        Assert.Equal(0, await scope.Context.GameFiles.AsNoTracking().CountAsync(file => file.Scope == "WORKSPACE"));
     }
 
     [Fact]

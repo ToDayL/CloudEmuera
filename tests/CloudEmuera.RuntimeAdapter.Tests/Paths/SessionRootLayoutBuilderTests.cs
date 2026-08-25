@@ -8,6 +8,61 @@ namespace CloudEmuera.RuntimeAdapter.Tests.Paths;
 public sealed class SessionRootLayoutBuilderTests
 {
     [Fact]
+    public void RootOnlyBuilderCopiesCompleteTreeWithoutPerFileManifest()
+    {
+        using var workspace = new RuntimeTestWorkspace();
+        string unknown = Path.Combine(workspace.GameContentRoot, "custom-data", "nested", "state.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(unknown)!);
+        File.WriteAllBytes(unknown, [1, 2, 3, 4]);
+        string identity = "game/game_test/revision/7";
+
+        SessionRootLayout layout = new SessionRootLayoutBuilder(
+                workspace.GameContentRoot,
+                Path.Combine(workspace.SessionWorkspaceRoot, "session-a"),
+                RuntimeSaveLayout.Root)
+            .WithRootOnlyContentIdentity(identity)
+            .WithCopyLimits(new SessionRootCopyLimits())
+            .BuildRootOnly();
+
+        Assert.Equal(identity, layout.CopiedManifestDigest);
+        Assert.Empty(layout.CopiedManifestEntries);
+        Assert.Equal([1, 2, 3, 4], File.ReadAllBytes(Path.Combine(layout.SessionRoot, "custom-data", "nested", "state.bin")));
+        Assert.True(File.Exists(Path.Combine(layout.SessionRoot, "CSV", "GAMEBASE.CSV")));
+        Assert.True(File.Exists(Path.Combine(layout.SessionRoot, SessionRootLayoutBuilder.BindingMetadataFileName)));
+        Assert.False(File.Exists(Path.Combine(workspace.SessionWorkspaceRoot, "session-a", "metadata", "runtime-manifest.json")));
+        Assert.Contains("manifest=none", layout.DiagnosticDescription, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RootOnlyBuilderMaterializesCaseAliasesAndPreservesExistingRoot()
+    {
+        using var workspace = new RuntimeTestWorkspace();
+        File.Delete(Path.Combine(workspace.GameContentRoot, "CSV", "GAMEBASE.CSV"));
+        File.WriteAllText(Path.Combine(workspace.GameContentRoot, "CSV", "GameBase.csv"), "; case variant\n");
+        string sessionRoot = Path.Combine(workspace.SessionWorkspaceRoot, "session-a");
+        string identity = "game/game_test/revision/8";
+        SessionRootLayout first = new SessionRootLayoutBuilder(
+                workspace.GameContentRoot,
+                sessionRoot,
+                RuntimeSaveLayout.Root)
+            .WithRootOnlyContentIdentity(identity)
+            .BuildRootOnly();
+
+        string runtimeFile = Path.Combine(first.SessionRoot, "ERB", "START.ERB");
+        File.AppendAllText(runtimeFile, "\n; runtime mutation\n");
+        SessionRootLayout second = new SessionRootLayoutBuilder(
+                workspace.GameContentRoot,
+                sessionRoot,
+                RuntimeSaveLayout.Root)
+            .WithRootOnlyContentIdentity(identity)
+            .BuildRootOnly();
+
+        Assert.Equal(identity, second.CopiedManifestDigest);
+        Assert.Contains("runtime mutation", File.ReadAllText(runtimeFile), StringComparison.Ordinal);
+        Assert.Equal("; case variant\n", File.ReadAllText(Path.Combine(second.SessionRoot, "CSV", "GAMEBASE.CSV")));
+    }
+
+    [Fact]
     public void BuilderCopiesEveryManifestEntryIncludingUnknownDirectories()
     {
         using var workspace = new RuntimeTestWorkspace();

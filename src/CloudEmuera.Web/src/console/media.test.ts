@@ -20,13 +20,8 @@ class FakeAudio {
   removeAttribute(name: string): void { if (name === "src") this.src = ""; }
 }
 
-const assetId = "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const assets = new AssetResolver("s1", {
-  schemaVersion: 1,
-  assets: [{ assetId, mediaType: "audio/ogg", byteLength: 4, contentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
-  fonts: [],
-  fontDiagnostics: [],
-});
+const assetId = "path-bXVzaWMub2dn";
+const assets = new AssetResolver("s1");
 
 function channel(revision: number, playbackState: MediaChannel["playbackState"], startPolicy: MediaChannel["startPolicy"] = "immediate"): MediaChannel {
   return { channel: "music", assetId, playbackState, loop: true, volume: 0.5, revision, startPolicy };
@@ -75,7 +70,7 @@ describe("MediaController", () => {
     expect(onError).toHaveBeenCalledWith("音频资源加载或解码失败，已停止该媒体频道。");
 
     controller.apply({ ...channel(2, "playing"), assetId: "sha256-missing" }, assets);
-    expect(onError).toHaveBeenCalledWith("音频资源未通过 Session manifest 授权，已停止该媒体频道。");
+    expect(onError).toHaveBeenCalledWith("音频资源路径引用无效，已停止该媒体频道。");
     controller.dispose();
     vi.unstubAllGlobals();
   });

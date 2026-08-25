@@ -620,7 +620,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         using (JsonDocument metadata = JsonDocument.Parse(await File.ReadAllTextAsync(metadataPath).ConfigureAwait(false)))
         {
             JsonElement document = metadata.RootElement;
-            if (!document.TryGetProperty("SchemaVersion", out JsonElement schema) || schema.GetInt32() != 1 ||
+            if (!document.TryGetProperty("SchemaVersion", out JsonElement schema) || schema.GetInt32() is not (1 or 2) ||
                 !document.TryGetProperty("SaveLayout", out JsonElement layout) ||
                 layout.GetInt32() != (int)actualLayout)
             {

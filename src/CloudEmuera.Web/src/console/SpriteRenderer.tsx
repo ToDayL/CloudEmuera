@@ -114,9 +114,7 @@ export function SpriteCanvas({ sprite, assets, width, height, alt, className, st
       image.onload = publishLoadedImage;
       image.onerror = () => { if (!cancelled) onRenderError?.("Sprite 资源加载失败，已停止渲染该节点。"); };
       image.src = url;
-      // A browser may satisfy a presentation-manifest request from its
-      // memory/disk cache before the effect gets another render opportunity.
-      // Check the completed image explicitly so a cached SpriteNode cannot
+      // Check the completed image explicitly so a cached path reference cannot
       // remain a blank canvas waiting for an onload notification.
       if (imageHasLoaded(image)) publishLoadedImage();
     }
@@ -161,7 +159,7 @@ export function SpriteCanvas({ sprite, assets, width, height, alt, className, st
     const assetId = hovered && sprite.hoverAssetId ? sprite.hoverAssetId : animation?.assetId ?? sprite.assetId;
     const url = assets.url(assetId);
     const image = url ? images.current.get(url) : undefined;
-    if (!url) { onRenderError?.("Sprite 资源未通过 Session presentation manifest 授权。"); return; }
+    if (!url) { onRenderError?.("Sprite 资源路径引用无效。"); return; }
     // Keep the last complete frame visible while a replacement asset is
     // loading. Clearing before this check produces a visible flash on every
     // realtime snapshot that changes the sprite object identity.

@@ -37,7 +37,6 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
             EnsurePrivateDirectory(root);
             SessionRootProtectedMarker protectedMarker = SessionRootProtectedMarkerStore.Read(databaseOptions, lease.Binding.SessionId);
             ValidateProtectedMarker(lease, root, protectedMarker);
-            ValidateProtectedRuntimeManifest(lease, root);
             ValidateTree(root);
 
             string metadataPath = Path.Combine(root, SessionRootLayoutBuilder.BindingMetadataFileName);
@@ -130,53 +129,6 @@ public sealed class SessionRootRuntimeInspector(SqliteDatabaseOptions databaseOp
 
         if (!SessionRootProtectedMarkerStore.SameRootIdentity(marker, root))
             throw InvalidRoot("The SessionRoot device or inode changed.");
-    }
-
-    private void ValidateProtectedRuntimeManifest(SessionRuntimeLease lease, string root)
-    {
-        string container = Directory.GetParent(root)?.FullName
-            ?? throw InvalidRoot("The SessionRoot container is missing.");
-        EnsurePrivateDirectory(container);
-        string metadataDirectory = Path.Combine(container, "metadata");
-        RuntimePathUtilities.ThrowIfReparsePoint(metadataDirectory, "protected-metadata", RuntimeFileArea.Configuration, missingIsAllowed: false);
-        EnsurePrivateDirectory(metadataDirectory);
-        using JsonDocument document = JsonDocument.Parse(
-            SessionRootProtectedMarkerStore.ReadRuntimeManifest(databaseOptions, lease.Binding.SessionId));
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
-            throw InvalidRoot("The protected runtime manifest is not an object.");
-        string? manifestDigest = ReadString(document.RootElement, "sourceManifestDigest") ?? ReadString(document.RootElement, "manifestDigest");
-        if (!string.IsNullOrWhiteSpace(lease.Binding.SessionRootManifestDigest) &&
-            !string.Equals(manifestDigest, lease.Binding.SessionRootManifestDigest, StringComparison.OrdinalIgnoreCase))
-            throw InvalidRoot("The protected runtime manifest digest does not match its persisted binding.");
-        if (TryReadLayout(document.RootElement, out int saveLayout) && saveLayout != lease.Binding.SaveLayout)
-            throw InvalidRoot("The protected runtime manifest save layout does not match its persisted binding.");
-        string? compatibilityProfile = ReadString(document.RootElement, "compatibilityProfile");
-        if (!string.IsNullOrWhiteSpace(compatibilityProfile) &&
-            !string.Equals(compatibilityProfile, lease.Binding.CompatibilityProfile, StringComparison.Ordinal))
-            throw InvalidRoot("The protected runtime manifest compatibility profile does not match its persisted binding.");
-    }
-
-    private static string? ReadString(JsonElement root, string propertyName) =>
-        root.TryGetProperty(propertyName, out JsonElement value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    private static bool TryReadLayout(JsonElement root, out int layout)
-    {
-        layout = 0;
-        if (!root.TryGetProperty("saveLayout", out JsonElement value))
-            return false;
-        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out layout))
-            return layout is 0 or 1;
-        if (value.ValueKind == JsonValueKind.String &&
-            Enum.TryParse(value.GetString(), ignoreCase: true, out RuntimeSaveLayout enumLayout) &&
-            enumLayout is RuntimeSaveLayout.Root or RuntimeSaveLayout.SavDirectory)
-        {
-            layout = (int)enumLayout;
-            return true;
-        }
-
-        return false;
     }
 
     private static void EnsurePrivateDirectory(string path)

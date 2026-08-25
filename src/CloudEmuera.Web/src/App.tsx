@@ -18,6 +18,7 @@ import {
   GameDiagnosticItem,
   GameFileItem,
   GameLibraryItem,
+  GameUploadProgress,
   GameTextFile,
   GameVisibility,
   deleteGame,
@@ -25,6 +26,7 @@ import {
   formatBytes,
   formatDateTime,
   getGame,
+  getGameUploadProgress,
   listDiagnostics,
   listFiles,
   listGames,
@@ -240,23 +242,62 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState("");
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [createdGame, setCreatedGame] = useState<GameLibraryItem | null>(null);
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
+  const [uploadRequestId, setUploadRequestId] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<GameUploadProgress | null>(null);
+  const [uploadFailed, setUploadFailed] = useState(false);
+  const [uploadController, setUploadController] = useState<AbortController | null>(null);
+
+  useEffect(() => {
+    if (step !== "uploading" || !uploadRequestId) return;
+    let disposed = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      while (!disposed) {
+        try {
+          const current = await getGameUploadProgress(uploadRequestId);
+          if (disposed) return;
+          setUploadProgress(current);
+          if (current.status === "COMMITTED" || current.status === "FAILED") return;
+        } catch (error) {
+          // The operation row is created just after the request starts. A 404
+          // during that small window is expected; the upload response remains
+          // the source of truth for the final result.
+          if (!(error instanceof ApiError && error.status === 404)) return;
+        }
+        await new Promise<void>(resolve => { timer = window.setTimeout(resolve, 500); });
+      }
+    };
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [step, uploadRequestId]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!file || !gameName.trim()) return;
-    setStep("uploading"); setError(""); setErrorCode(null);
+    setStep("uploading"); setError(""); setErrorCode(null); setUploadPercent(0); setUploadProgress(null); setUploadFailed(false);
+    const controller = new AbortController();
+    setUploadController(controller);
     try {
-      setCreatedGame(await uploadGame(gameName.trim(), visibility, file));
+      setCreatedGame(await uploadGame(gameName.trim(), visibility, file, {
+        signal: controller.signal,
+        onRequestId: setUploadRequestId,
+        onUploadProgress: (loaded, total) => setUploadPercent(total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null),
+      }));
       setStep("done");
     } catch (err) {
+      setUploadFailed(true);
       setErrorCode(err instanceof ApiError ? err.code : null);
       setError(err instanceof ApiError ? err.message : "网络错误：上传未能完成。请确认文件未超过容量限制，并检查网络后重试。");
       setStep("error");
-    }
+    } finally { setUploadController(null); }
   };
 
   return <div className="modal-layer" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
-    <button className="icon-button modal-close" onClick={onClose} aria-label="关闭"><Icon name="close"/></button>
+    <button className="icon-button modal-close" onClick={() => { uploadController?.abort(); onClose(); }} aria-label="关闭"><Icon name="close"/></button>
     <p className="eyebrow">NEW GAME</p><h2 id="upload-title">上传游戏</h2><p className="modal-intro">每个 ZIP 都会创建独立游戏；服务端只做容量与安全暂存处理，并用真实运行时加载测试后自动启用。</p>
     {step === "choose" && <form className="form-panel modal-form" onSubmit={submit}>
       <label><span>ZIP 游戏包</span><input type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); if (selected && !gameName) setGameName(selected.name.replace(/\.zip$/i, "")); }} required/></label>
@@ -265,10 +306,42 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
       <div className="modal-note"><Icon name="warning"/><p><strong>请确认你拥有游戏内容的使用权</strong><small>CloudEmuera 不提供或分发游戏资源。</small></p></div>
       <div className="form-actions"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={!file || !gameName.trim()}>上传、加载并启用</button></div>
     </form>}
-    {step === "uploading" && <div className="scan-state"><span className="spinner"/><h3>正在处理 {file?.name}</h3><p>上传到隔离区、运行加载测试并自动启用…</p><div className="progress"><span/></div></div>}
+    {step === "uploading" && <div className="scan-state upload-scan-state"><span className="spinner"/><h3>正在处理 {file?.name}</h3><p>{uploadProgress ? uploadStageDescription(uploadProgress.stage, uploadProgress.currentItem) : uploadPercent !== null && uploadPercent < 100 ? "正在上传 ZIP…" : "上传完成，等待服务端接收…"}</p><div className="upload-progress-meter">{uploadPercent !== null && uploadPercent < 100 ? <><div className="upload-progress-heading"><span>上传进度</span><strong>{uploadPercent}%</strong></div><progress max={100} value={uploadPercent} aria-label="ZIP 上传进度"/></> : <><div className="upload-progress-heading"><span>服务端处理进度</span><small>当前阶段无统一百分比</small></div><div className="progress indeterminate"><span/></div></>}</div><UploadTaskList fileName={file?.name ?? null} progress={uploadProgress} uploadPercent={uploadPercent} failed={false}/></div>}
     {step === "done" && createdGame && <div className="scan-state done"><span className="success-ring"><Icon name="check" size={30}/></span><h3>游戏已加载并启用</h3><p>现在可以直接创建 Session。</p><Link className="primary-button" to={`/games/${createdGame.id}`} onClick={onClose}>查看游戏<Icon name="arrow"/></Link></div>}
-    {step === "error" && <div className="scan-state error"><span className="error-ring"><Icon name="warning" size={30}/></span><h3>游戏未能启用</h3><p>{error}</p>{errorCode && <code className="error-code">{errorCode}</code>}<button className="secondary-button" onClick={() => { setError(""); setErrorCode(null); setStep("choose"); }}>返回修改</button></div>}
+    {step === "error" && <div className="scan-state error upload-error-state"><span className="error-ring"><Icon name="warning" size={30}/></span><h3>游戏未能启用</h3><p>{error}</p>{errorCode && <code className="error-code">{errorCode}</code>}<UploadTaskList fileName={file?.name ?? null} progress={uploadProgress} uploadPercent={uploadPercent} failed={uploadFailed}/><button className="secondary-button" onClick={() => { setError(""); setErrorCode(null); setUploadProgress(null); setUploadPercent(null); setUploadRequestId(null); setUploadFailed(false); setStep("choose"); }}>返回修改</button></div>}
   </section></div>;
+}
+
+const uploadTaskDefinitions = [
+  ["RECEIVING", "上传并接收 ZIP"],
+  ["INSPECTING_ARCHIVE", "检查 ZIP 结构"],
+  ["EXTRACTING", "解包游戏文件"],
+  ["NORMALIZING_ENCODING", "整理文本编码"],
+  ["ANALYZING", "分析摄取内容"],
+  ["CONSUMING_STAGING", "准备暂存内容"],
+  ["COPYING_CONTENT", "复制到 Game 内容目录"],
+  ["VALIDATING_CONTENT", "检查候选内容结构"],
+  ["RUNNING_VALIDATOR", "运行时加载校验"],
+  ["PUBLISHING_CONTENT", "发布当前内容"],
+] as const;
+
+function uploadStageDescription(stage: string, currentItem: string | null): string {
+  const label = uploadTaskDefinitions.find(([key]) => key === stage)?.[1] ?? "处理游戏内容";
+  return currentItem ? `${label}：${currentItem}` : `${label}…`;
+}
+
+function UploadTaskList({ fileName, progress, uploadPercent, failed }: { fileName: string | null; progress: GameUploadProgress | null; uploadPercent: number | null; failed: boolean }) {
+  const currentIndex = progress?.stage === "COMPLETED" ? uploadTaskDefinitions.length : Math.max(0, uploadTaskDefinitions.findIndex(([key]) => key === progress?.stage));
+  const serverFailed = progress?.status === "FAILED";
+  return <ol className="upload-task-list" aria-label="上传处理步骤">
+    {uploadTaskDefinitions.map(([key, label], index) => {
+      const isFailed = (serverFailed && index === currentIndex) || (failed && progress?.status !== "COMMITTED" && index === currentIndex);
+      const isComplete = !isFailed && (progress?.status === "COMMITTED" || index < currentIndex || (index === 0 && uploadPercent === 100 && currentIndex > 0));
+      const state = isFailed ? "failed" : isComplete ? "complete" : index === currentIndex ? "active" : "pending";
+      const item = index === 0 ? fileName : progress?.currentItem;
+      return <li className={`upload-task ${state}`} key={key}><span className="upload-task-mark" aria-hidden="true">{state === "complete" ? "✓" : state === "failed" ? "×" : state === "active" ? <span className="mini-spinner"/> : ""}</span><span><strong>{label}</strong>{state === "active" && item && <small>{item}</small>}{state === "failed" && progress?.errorCode && <small>{progress.errorCode}</small>}</span></li>;
+    })}
+  </ol>;
 }
 
 function EditGameDialog({ game, onClose, onSaved }: { game: GameLibraryItem; onClose: () => void; onSaved: () => void }) {

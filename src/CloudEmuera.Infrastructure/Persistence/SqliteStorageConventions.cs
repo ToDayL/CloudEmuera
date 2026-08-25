@@ -24,7 +24,7 @@ public static class SqliteStorageConventions
     public const string SessionCreationOperationsTable = "session_creation_operations";
     public const string SessionRootMutationLeasesTable = "session_root_mutation_leases";
     public const string SaveFileOperationsTable = "save_file_operations";
-    public const string CurrentSchemaCompatibilityVersion = "20260825100000_AddPathRevisionContentIdentity";
+    public const string CurrentSchemaCompatibilityVersion = "20260825110000_AddGameUploadProgress";
 }
 
 public static class PersistenceLimits
@@ -101,6 +101,21 @@ public enum GameWorkspaceStatus
 
 public enum GameContentOperationType { Import, ResetWorkspace, Validate, Activate }
 public enum GameContentOperationStatus { Pending, Running, ContentReady, Committed, Failed }
+public enum GameContentOperationStage
+{
+    Preparing,
+    Receiving,
+    InspectingArchive,
+    Extracting,
+    NormalizingEncoding,
+    Analyzing,
+    ConsumingStaging,
+    CopyingContent,
+    ValidatingContent,
+    RunningValidator,
+    PublishingContent,
+    Completed,
+}
 
 public enum WorkerLeaseStatus
 {
