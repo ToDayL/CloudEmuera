@@ -324,7 +324,7 @@ internal sealed class WorkerConnectionLoop : IAsyncDisposable
     };
 
     private void LogLifecycle(string eventName, string reason, LogLevel level)
-        => WorkerLifecycleLog.Write(logger, binding, eventName, reason, level);
+        => WorkerLifecycleLog.Write(logger, binding, eventName, reason, level, bootstrap);
 
     private async ValueTask<Stream> ConnectUnixSocketAsync(
         SocketsHttpConnectionContext _,

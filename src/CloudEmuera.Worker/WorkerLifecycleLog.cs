@@ -34,7 +34,8 @@ internal static class WorkerLifecycleLog
         WorkerBinding binding,
         string eventName,
         string reason,
-        LogLevel level)
+        LogLevel level,
+        WorkerBootstrapDocument? bootstrap = null)
     {
         Action<ILogger, string, string, string, ulong, string, Exception?> log = level switch
         {
@@ -43,6 +44,21 @@ internal static class WorkerLifecycleLog
             _ => Information
         };
         log(logger, eventName, binding.SessionId, binding.WorkerId, binding.WorkerEpoch, SafeReasonCode(reason), null);
+
+        if (bootstrap is not null &&
+            level is (LogLevel.Warning or LogLevel.Error or LogLevel.Critical) &&
+            !string.Equals(eventName, "runtime_failed", StringComparison.Ordinal))
+        {
+            WorkerErrorLog.Append(
+                bootstrap,
+                binding,
+                eventName,
+                eventName,
+                "worker",
+                reason,
+                level,
+                fatal: level is LogLevel.Error or LogLevel.Critical);
+        }
     }
 
     public static void WriteRuntimeWidth(ILogger logger, WorkerBinding binding, int browserWidth) =>
