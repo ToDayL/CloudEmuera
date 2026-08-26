@@ -33,6 +33,26 @@ describe("realtime reducer", () => {
     expect(result.state.scrollback.map(item => ({ lineId: item.lineId, text: item.nodes.filter(node => node.type === "text").map(node => node.text).join(""), alignment: item.alignment, temporary: item.temporary }))).toEqual(reducerFixture.expectedState.lines);
   });
 
+  it("preserves unchanged line and drawable identities for incremental frames", () => {
+    const existingLine = line("existing", [text("keep")]);
+    const existingDrawable: RealtimeOperation = {
+      type: "upsertDrawable",
+      drawable: { type: "shape", drawableId: "shape", bounds: { x: 0, y: 0, width: 10, height: 10 }, zIndex: 1, opacity: 1, shape: "rectangle", fill: null, stroke: null, points: [] },
+    };
+    const initial = createEmptyConsoleState();
+    initial.scrollback = [existingLine];
+    const withDrawable = applyTransaction(initial, transaction(1, [existingDrawable]));
+    const drawable = withDrawable.canvasScene.drawables[0];
+    const next = applyTransaction(withDrawable, transaction(2, [{ type: "appendLine", line: line("new", [text("new")]) }]));
+
+    expect(withDrawable.scrollback).not.toBe(initial.scrollback);
+    expect(next.scrollback).not.toBe(withDrawable.scrollback);
+    expect(next.scrollback[0]).toBe(existingLine);
+    expect(next.scrollback[0].nodes[0]).toBe(existingLine.nodes[0]);
+    expect(next.canvasScene.drawables[0]).toBe(drawable);
+    expect(initial.scrollback).toHaveLength(1);
+  });
+
   it("applies the complete operation union and keeps generated line IDs unique after deletion", () => {
     const initial = createEmptyConsoleState();
     const result = applyTransaction(initial, transaction(1, [

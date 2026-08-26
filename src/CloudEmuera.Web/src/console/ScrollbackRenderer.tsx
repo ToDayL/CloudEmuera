@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
@@ -11,38 +11,110 @@ export interface ConsoleInputEvent {
   key?: { keyCode: number; control: boolean; alt: boolean; shift: boolean };
 }
 
-export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion }: { lines: RealtimeLine[]; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void; scrollContainerRef?: RefObject<HTMLElement | null>; scrollVersion?: string | number; forceScrollVersion?: string | number }) {
+interface NodeRendererProps {
+  node: RealtimeNode;
+  assets: AssetResolver;
+  onInput: (event: ConsoleInputEvent) => void;
+  onRenderError?: (message: string) => void;
+}
+
+interface ConsoleLineViewProps extends Omit<NodeRendererProps, "node"> {
+  line: RealtimeLine;
+}
+
+const DEFAULT_RUNTIME_LINE_HEIGHT = 16;
+const VIRTUAL_OVERSCAN_SCREENS = 1;
+
+interface ScrollbackViewport {
+  scrollTop: number;
+  height: number;
+}
+
+interface ScrollbackLineMeasurement {
+  flowTop: number;
+  flowHeight: number;
+  visualTop: number;
+  visualBottom: number;
+}
+
+interface ScrollbackLayout {
+  lines: ScrollbackLineMeasurement[];
+  prefixHeights: number[];
+  flowHeight: number;
+  leadingOverflow: number;
+  trailingOverflow: number;
+}
+
+export interface ScrollbackRendererProps {
+  lines: RealtimeLine[];
+  assets: AssetResolver;
+  onInput: (event: ConsoleInputEvent) => void;
+  onRenderError?: (message: string) => void;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
+  scrollVersion?: string | number;
+  forceScrollVersion?: string | number;
+  defaultLineHeight?: number;
+}
+
+export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion, defaultLineHeight }: ScrollbackRendererProps) {
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
   const scrollbackShellRef = useRef<HTMLDivElement>(null);
-  const displayLines = trimTrailingEmptyLines(lines);
-  const leadingOverflow = leadingVisualOverflow(displayLines);
-  const visualOverflow = trailingVisualOverflow(displayLines);
+  const viewportFrameRef = useRef<number | null>(null);
+  const [viewport, setViewport] = useState<ScrollbackViewport>({ scrollTop: 0, height: 0 });
+  const displayLines = useMemo(() => trimTrailingEmptyLines(lines), [lines]);
+  const lineHeight = normalizeLineHeight(defaultLineHeight);
+  const layout = useMemo(() => buildScrollbackLayout(displayLines, lineHeight), [displayLines, lineHeight]);
+  const virtualRange = useMemo(() => getVirtualLineRange(layout, viewport), [layout, viewport]);
+  const visibleLines = displayLines.slice(virtualRange.startIndex, virtualRange.endIndex);
+  const topSpacerHeight = layout.leadingOverflow + layout.prefixHeights[virtualRange.startIndex];
+  const bottomSpacerHeight = layout.flowHeight - layout.prefixHeights[virtualRange.endIndex] + layout.trailingOverflow;
+  const readViewport = useCallback(() => {
+    const container = scrollContainerRef?.current;
+    if (!container) return;
+    const next = {
+      scrollTop: Math.max(0, container.scrollTop),
+      height: Math.max(0, container.clientHeight),
+    };
+    setViewport(previous => previous.scrollTop === next.scrollTop && previous.height === next.height ? previous : next);
+  }, [scrollContainerRef]);
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     const container = scrollContainerRef?.current;
     if (!container) return;
-    const top = Math.max(0, container.scrollHeight - container.clientHeight);
     atLatestRef.current = true;
     setAtLatest(true);
-    // Assigning scrollTop first makes the initial connection deterministic on
-    // browsers where an element scrollTo call can be deferred until after the
-    // first layout. Keep scrollTo for smooth user-invoked navigation.
-    if (behavior === "auto") container.scrollTop = top;
-    if (typeof container.scrollTo === "function") container.scrollTo({ top, behavior });
-    else container.scrollTop = top;
-  }, [scrollContainerRef]);
+    scrollContainerToBottom(container, behavior);
+    readViewport();
+  }, [readViewport, scrollContainerRef]);
   useEffect(() => {
     const container = scrollContainerRef?.current;
     if (!container) return;
     const updatePosition = () => {
       const next = container.scrollHeight - container.clientHeight - container.scrollTop <= 24;
       atLatestRef.current = next;
-      setAtLatest(next);
+      setAtLatest(previous => previous === next ? previous : next);
+      if (viewportFrameRef.current !== null || typeof requestAnimationFrame !== "function") {
+        if (typeof requestAnimationFrame !== "function") readViewport();
+        return;
+      }
+      viewportFrameRef.current = requestAnimationFrame(() => {
+        viewportFrameRef.current = null;
+        readViewport();
+      });
     };
     updatePosition();
     container.addEventListener("scroll", updatePosition, { passive: true });
-    return () => container.removeEventListener("scroll", updatePosition);
-  }, [scrollContainerRef]);
+    return () => {
+      container.removeEventListener("scroll", updatePosition);
+      if (viewportFrameRef.current !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(viewportFrameRef.current);
+        viewportFrameRef.current = null;
+      }
+    };
+  }, [readViewport, scrollContainerRef]);
+  useLayoutEffect(() => {
+    readViewport();
+  }, [readViewport]);
   useLayoutEffect(() => {
     if (forceScrollVersion === undefined) return;
     // Input is an explicit navigation action. It must win even when the
@@ -74,23 +146,110 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     observer.observe(shell);
     return () => observer.disconnect();
   }, [scrollToBottom]);
-  const scrollToLatest = useCallback(() => scrollToBottom("smooth"), [scrollToBottom]);
+  const scrollToLatest = useCallback(() => {
+    const container = scrollContainerRef?.current;
+    if (!container) return;
+
+    // The button is a sticky flow item. Hide it only after the first jump and
+    // settle again after React removes it, because that removal can change
+    // scrollHeight. An immediate jump also avoids a long smooth-scroll paint
+    // competing with a large bounded history.
+    const settle = () => {
+      scrollContainerToBottom(container, "auto");
+      readViewport();
+    };
+    settle();
+    atLatestRef.current = true;
+    setAtLatest(true);
+    if (typeof requestAnimationFrame !== "function") return;
+    requestAnimationFrame(() => {
+      settle();
+      requestAnimationFrame(settle);
+    });
+  }, [readViewport, scrollContainerRef]);
   return <div ref={scrollbackShellRef} className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
-      {leadingOverflow > 0 && <div className="console-overflow-leading" style={{ height: leadingOverflow }} aria-hidden="true" />}
-      {displayLines.map(line => <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} style={physicalLineStyle(line)} key={line.lineId}>
-        {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
-      </div>)}
-      {visualOverflow > 0 && <div className="console-overflow-reserve" style={{ height: visualOverflow }} aria-hidden="true" />}
+      {layout.leadingOverflow > 0 && <div className="console-overflow-leading" style={{ height: layout.leadingOverflow }} aria-hidden="true" />}
+      {topSpacerHeight - layout.leadingOverflow > 0 && <div className="console-virtual-spacer" style={{ height: topSpacerHeight - layout.leadingOverflow }} aria-hidden="true" />}
+      {visibleLines.map(line => <ConsoleLineView key={line.lineId} line={line} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
+      {bottomSpacerHeight - layout.trailingOverflow > 0 && <div className="console-virtual-spacer" style={{ height: bottomSpacerHeight - layout.trailingOverflow }} aria-hidden="true" />}
+      {layout.trailingOverflow > 0 && <div className="console-overflow-reserve" style={{ height: layout.trailingOverflow }} aria-hidden="true" />}
     </div>
     {!atLatest && <button className="scrollback-latest" type="button" onClick={scrollToLatest}>↓ 回到最新</button>}
   </div>;
 }
 
-export function trimTrailingEmptyLines(lines: readonly RealtimeLine[]): RealtimeLine[] {
+function scrollContainerToBottom(container: HTMLElement, behavior: ScrollBehavior): void {
+  const top = Math.max(0, container.scrollHeight - container.clientHeight);
+  // Assigning scrollTop first makes the jump deterministic on browsers where
+  // scrollTo can be deferred until after the current layout.
+  if (behavior === "auto") container.scrollTop = top;
+  if (typeof container.scrollTo === "function") container.scrollTo({ top, behavior });
+  else container.scrollTop = top;
+}
+
+function normalizeLineHeight(value: number | undefined): number {
+  return value && Number.isFinite(value) && value > 0 ? value : DEFAULT_RUNTIME_LINE_HEIGHT;
+}
+
+function buildScrollbackLayout(lines: readonly RealtimeLine[], defaultLineHeight: number): ScrollbackLayout {
+  const measurements: ScrollbackLineMeasurement[] = [];
+  const prefixHeights = [0];
+  let flowHeight = 0;
+  let minimumVisualTop = 0;
+  let maximumVisualBottom = 0;
+
+  for (const line of lines) {
+    const flowHeightForLine = effectiveLineFlowHeight(line, defaultLineHeight);
+    const visualTop = Math.min(0, nodeVisualTop(line.nodes));
+    const visualBottom = Math.max(flowHeightForLine, nodeVisualBottom(line.nodes));
+    measurements.push({ flowTop: flowHeight, flowHeight: flowHeightForLine, visualTop, visualBottom });
+    minimumVisualTop = Math.min(minimumVisualTop, flowHeight + visualTop);
+    maximumVisualBottom = Math.max(maximumVisualBottom, flowHeight + visualBottom);
+    flowHeight += flowHeightForLine;
+    prefixHeights.push(flowHeight);
+  }
+
+  return {
+    lines: measurements,
+    prefixHeights,
+    flowHeight,
+    leadingOverflow: Math.max(0, Math.ceil(-minimumVisualTop)),
+    trailingOverflow: Math.max(0, Math.ceil(maximumVisualBottom - flowHeight)),
+  };
+}
+
+function getVirtualLineRange(layout: ScrollbackLayout, viewport: ScrollbackViewport): { startIndex: number; endIndex: number } {
+  if (layout.lines.length === 0 || viewport.height <= 0)
+    return { startIndex: 0, endIndex: layout.lines.length };
+
+  // Keep one complete viewport mounted above and below the reader. The range
+  // also includes a line whose absolute visual overflow intersects the range,
+  // which is required for multi-row portraits positioned outside its line box.
+  const overscan = viewport.height * VIRTUAL_OVERSCAN_SCREENS;
+  const visibleStart = Math.max(0, viewport.scrollTop - overscan);
+  const visibleEnd = viewport.scrollTop + viewport.height + overscan;
+  let startIndex = layout.lines.length;
+  let endIndex = 0;
+  for (let index = 0; index < layout.lines.length; index++) {
+    const measurement = layout.lines[index];
+    const lineTop = layout.leadingOverflow + measurement.flowTop;
+    const visualTop = lineTop + measurement.visualTop;
+    const visualBottom = lineTop + measurement.visualBottom;
+    if (visualBottom < visibleStart || visualTop > visibleEnd) continue;
+    startIndex = Math.min(startIndex, index);
+    endIndex = Math.max(endIndex, index + 1);
+  }
+
+  if (startIndex === layout.lines.length)
+    return { startIndex: 0, endIndex: Math.min(1, layout.lines.length) };
+  return { startIndex, endIndex };
+}
+
+export function trimTrailingEmptyLines(lines: readonly RealtimeLine[]): readonly RealtimeLine[] {
   let end = lines.length;
   if (end > 0 && isEmptyLine(lines[end - 1])) end--;
-  return lines.slice(0, end);
+  return end === lines.length ? lines : lines.slice(0, end);
 }
 
 /**
@@ -102,7 +261,7 @@ export function leadingVisualOverflow(lines: readonly RealtimeLine[]): number {
   let flowHeight = 0;
   let visualTop = 0;
   for (const line of lines) {
-    const lineHeight = effectiveLineFlowHeight(line);
+    const lineHeight = effectiveLineFlowHeight(line, DEFAULT_RUNTIME_LINE_HEIGHT);
     visualTop = Math.min(visualTop, flowHeight + nodeVisualTop(line.nodes));
     flowHeight += lineHeight;
   }
@@ -113,10 +272,10 @@ function isEmptyLine(line: RealtimeLine): boolean {
   return line.nodes.length === 0 || line.nodes.every(node => node.type === "lineBreak" || (node.type === "text" && node.text.length === 0));
 }
 
-function trimTrailingLineBreaks(nodes: readonly RealtimeNode[]): RealtimeNode[] {
+function trimTrailingLineBreaks(nodes: readonly RealtimeNode[]): readonly RealtimeNode[] {
   let end = nodes.length;
   while (end > 0 && nodes[end - 1].type === "lineBreak") end--;
-  return nodes.slice(0, end);
+  return end === nodes.length ? nodes : nodes.slice(0, end);
 }
 
 function splitButtonLabel(children: readonly RealtimeNode[]): { leading: RealtimeNode[]; label: RealtimeNode[]; trailing: RealtimeNode[] } {
@@ -154,7 +313,13 @@ function sliceTextNodes(children: readonly Extract<RealtimeNode, { type: "text" 
   return result;
 }
 
-export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: RealtimeNode; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }): ReactNode {
+const ConsoleLineView = memo(function ConsoleLineView({ line, assets, onInput, onRenderError }: ConsoleLineViewProps) {
+  return <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} style={physicalLineStyle(line)}>
+    {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
+  </div>;
+});
+
+export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInput, onRenderError }: NodeRendererProps): ReactNode {
   switch (node.type) {
     case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{renderRuntimeText(node.text)}</span>;
     case "lineBreak": return <br />;
@@ -201,7 +366,7 @@ export function NodeRenderer({ node, assets, onInput, onRenderError }: { node: R
       ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)
       : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
-}
+});
 
 const eraWideCell = /[―∥\u2500-\u257F■□○●★☆]/u;
 const eraWideShape = /[■□○●★☆]/u;
@@ -237,16 +402,16 @@ export function trailingVisualOverflow(lines: readonly RealtimeLine[]): number {
   let flowHeight = 0;
   let visualBottom = 0;
   for (const line of lines) {
-    const lineHeight = effectiveLineFlowHeight(line);
+    const lineHeight = effectiveLineFlowHeight(line, DEFAULT_RUNTIME_LINE_HEIGHT);
     visualBottom = Math.max(visualBottom, flowHeight + nodeVisualBottom(line.nodes));
     flowHeight += lineHeight;
   }
   return Math.max(0, Math.ceil(visualBottom - flowHeight));
 }
 
-function effectiveLineFlowHeight(line: RealtimeLine): number {
+function effectiveLineFlowHeight(line: RealtimeLine, defaultLineHeight: number): number {
   if (line.lineHeight && line.lineHeight > 0) return line.lineHeight;
-  return Math.max(0, ...line.nodes.map(nodeTextLineHeight));
+  return Math.max(defaultLineHeight, ...line.nodes.map(nodeTextLineHeight));
 }
 
 function nodeTextLineHeight(node: RealtimeNode): number {

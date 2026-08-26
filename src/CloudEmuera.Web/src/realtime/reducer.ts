@@ -26,13 +26,29 @@ export function createEmptyConsoleState(): ConsoleState {
     canvasScene: { drawables: [], hitRegions: [] },
     mediaState: { channels: [] },
     currentPrompt: null,
-    windowMetadata: structuredClone(EMPTY_WINDOW),
+    windowMetadata: { ...EMPTY_WINDOW, defaultFont: { ...EMPTY_WINDOW.defaultFont } },
     truncation: { wasTruncated: false, droppedNodeCount: 0, droppedLineCount: 0, droppedTextLength: 0 },
   };
 }
 
 export function cloneConsoleState(state: ConsoleState): ConsoleState {
-  return structuredClone(state);
+  // The reducer only mutates collection containers and replaces changed
+  // lines/items. Keep immutable payload objects shared so memoized renderers
+  // can skip work for output that did not change in this frame.
+  return {
+    ...state,
+    scrollback: [...state.scrollback],
+    backgroundLayers: [...state.backgroundLayers],
+    canvasScene: {
+      ...state.canvasScene,
+      drawables: [...state.canvasScene.drawables],
+      hitRegions: [...state.canvasScene.hitRegions],
+    },
+    mediaState: {
+      ...state.mediaState,
+      channels: [...state.mediaState.channels],
+    },
+  };
 }
 
 /** Apply one transaction to a private candidate. The input state is never mutated. */
