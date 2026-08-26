@@ -87,18 +87,83 @@ describe("ScrollbackRenderer", () => {
     }
   });
 
-  it("shows a back-to-latest control after the reader scrolls upward", () => {
+  it("jumps to the latest output after the reader scrolls upward", () => {
     const { ref, element } = scrollContainer(true);
     render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
     element.scrollTop = 10;
     fireEvent.scroll(element);
     const button = screen.getByRole("button", { name: "↓ 回到最新" });
     fireEvent.click(button);
-    expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: "smooth" });
+    expect(element.scrollTop).toBe(100);
+    expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: "auto" });
+  });
+
+  it("recalculates the latest position after removing the jump control", () => {
+    const callbacks: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    try {
+      const { ref, element } = scrollContainer(true);
+      render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+      callbacks.length = 0;
+      element.scrollTop = 10;
+      fireEvent.scroll(element);
+      fireEvent.click(screen.getByRole("button", { name: "↓ 回到最新" }));
+
+      (element as HTMLElement & { scrollHeight: number }).scrollHeight = 300;
+      callbacks.shift()?.(0);
+      expect(element.scrollTop).toBe(200);
+      callbacks.shift()?.(0);
+      expect(element.scrollTop).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("mounts only the viewport plus one screen of physical lines", () => {
+    const { ref } = scrollContainer(true);
+    const lines = Array.from({ length: 200 }, (_, index) => line(`line-${index}`, `line ${index}`));
+
+    render(<ScrollbackRenderer lines={lines} assets={assets} onInput={() => undefined} scrollContainerRef={ref} defaultLineHeight={20} />);
+
+    const renderedLines = document.querySelectorAll(".console-line");
+    expect(renderedLines.length).toBeGreaterThan(0);
+    expect(renderedLines.length).toBeLessThan(lines.length);
+    expect(document.querySelector(".console-virtual-spacer")).toBeInTheDocument();
+  });
+
+  it("keeps a portrait mounted when its visual overflow enters the viewport", () => {
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    try {
+      const { ref, element } = scrollContainer(true);
+      const lines = Array.from({ length: 100 }, (_, index) => line(`line-${index}`, `line ${index}`));
+      const portraitLine: RealtimeLine = {
+        lineId: "portrait-line",
+        nodes: [{ type: "sprite", assetId: "path-YXNzZXQ", sourceRect: { x: 0, y: 0, width: 180, height: 600 }, destination: { x: 0, y: -400, width: 180, height: 600 }, frame: 0, zIndex: 0, opacity: 1, altText: "portrait", hoverAssetId: null, hoverSourceRect: null, mappingAssetId: null, mappingSourceRect: null, animationFrames: [] }],
+        alignment: "left",
+        temporary: false,
+        lineHeight: 20,
+      };
+      const initial = render(<ScrollbackRenderer lines={[]} assets={clockAssets} onInput={() => undefined} scrollContainerRef={ref} defaultLineHeight={20} />);
+      (element as HTMLElement & { scrollHeight: number }).scrollHeight = 2_000;
+      element.scrollTop = 0;
+      fireEvent.scroll(element);
+      initial.rerender(<ScrollbackRenderer lines={[...lines.slice(0, 20), portraitLine, ...lines.slice(21)]} assets={clockAssets} onInput={() => undefined} scrollContainerRef={ref} defaultLineHeight={20} />);
+
+      expect(screen.getByRole("img", { name: "portrait" })).toBeInTheDocument();
+      expect(document.querySelectorAll(".console-line").length).toBeGreaterThan(11);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("does not render the protocol cursor line left after a trailing line break", () => {
     const empty = line("cursor", "");
+    const stableLines = [line("stable", "stable")];
+    expect(trimTrailingEmptyLines(stableLines)).toBe(stableLines);
     const visible = trimTrailingEmptyLines([line("one", "one"), empty]);
     expect(visible.map(item => item.lineId)).toEqual(["one"]);
     expect(trimTrailingEmptyLines([line("one", "one"), line("blank", ""), empty])).toHaveLength(2);
