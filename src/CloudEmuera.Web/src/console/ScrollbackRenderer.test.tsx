@@ -3,7 +3,7 @@ import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AssetResolver } from "./AssetResolver";
 import { ScrollbackRenderer, leadingVisualOverflow, trailingVisualOverflow, trimTrailingEmptyLines } from "./ScrollbackRenderer";
-import type { RealtimeLine } from "../realtime/protocol";
+import type { RealtimeLine, RealtimeNode } from "../realtime/protocol";
 
 const assets = new AssetResolver("s1");
 const clockAssets = new AssetResolver("s1");
@@ -333,6 +333,32 @@ describe("ScrollbackRenderer", () => {
       ["absolute", "54px"],
       ["absolute", "54px"],
     ]);
+  });
+
+  it("keeps physical nonbutton layers opaque and pointer-transparent", () => {
+    const physicalLayer = (text: string): RealtimeNode => ({
+      type: "positionedInlineSegment",
+      positionX: 54,
+      measuredWidth: 54,
+      action: { value: "", tooltip: null, enabled: false, generation: 0 },
+      children: [{ type: "text", text, style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }],
+    });
+    const layeredLine: RealtimeLine = {
+      lineId: "physical-layered",
+      nodes: [physicalLayer("back"), physicalLayer("front")],
+      alignment: "left",
+      temporary: false,
+    };
+
+    render(<ScrollbackRenderer lines={[layeredLine]} assets={assets} onInput={() => undefined} />);
+
+    const layers = [...document.querySelectorAll<HTMLElement>(".positioned-inline-segment")];
+    expect(layers.map(layer => [layer.tagName, layer.textContent, layer.style.left, layer.classList.contains("console-nonbutton")])).toEqual([
+      ["SPAN", "back", "54px", true],
+      ["SPAN", "front", "54px", true],
+    ]);
+    expect(document.querySelectorAll(".positioned-inline-action")).toHaveLength(0);
+    expect(document.querySelectorAll("button:disabled")).toHaveLength(0);
   });
 
   it("renders structured upstream island nodes and enables nested buttons", () => {
