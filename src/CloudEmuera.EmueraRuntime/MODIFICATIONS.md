@@ -24,6 +24,25 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-26 — Browser right-click message skip (issue #2)
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` preserves the desktop
+  right-click message-skip mode while the headless interpreter advances
+  through consecutive `EnterKey`/`AnyKey` waits, and clears it at the first
+  value or forced wait boundary.
+- `RuntimeAdapter` carries the existing structured `POINTER` button `2`
+  gesture as `GameConsoleInput.SkipMessage`; the Realtime and IPC contracts
+  remain unchanged. The console surface accepts the same gesture from a
+  browser context menu or a two-finger touch start. Multi-touch is captured
+  at the console-page boundary before any descendant control can receive a
+  synthesized click; single-finger controls and game hit regions keep their
+  existing behavior.
+- Scope: issue #2, PLAY-009 and the cross-platform input behavior in
+  ADR-0018/ADR-0025. Verification: `PromptController`/console surface tests,
+  `StructuredGameConsoleInputTests`, and
+  `RightPointerSkipsConsecutivePressAnyKeyWaitsUntilValueInput` in the
+  development Docker environment.
+
 ## 2026-08-26 — Unified runtime diagnostic severity
 
 - `UpstreamHeadless/UpstreamRuntimeSession.cs` no longer treats a non-empty

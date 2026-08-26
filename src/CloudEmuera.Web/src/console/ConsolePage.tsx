@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../api";
 import { closeSession, useRuntimeFontCatalog, useSession, waitForSession, type SessionState } from "../sessions/api";
@@ -157,7 +157,7 @@ export function ConsolePage() {
   const state = stream.consoleState;
   const terminalSession = session.data.state === "CLOSED" || session.data.state === "CRASHED";
   const fatal = stream.fatalRenderError ?? rendererError;
-  return <div className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
+  return <ConsoleSurface promptControllerRef={promptControllerRef} className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
     <div className="console-overlay-actions">
       <Link className="console-overlay-back" to="/sessions" aria-label="离开游戏">←</Link>
       <span className={`connection-chip ${connectionPhase === "ready" && networkOnline ? "is-online" : ""}`} role="status" aria-live="polite"><span className={connectionPhase === "ready" && networkOnline ? "online" : "offline"}/>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</span>
@@ -182,11 +182,101 @@ export function ConsolePage() {
         <PromptController ref={promptControllerRef} prompt={state?.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>
       </div>
     </div>
-  </div>;
+  </ConsoleSurface>;
+}
+
+interface ConsoleSurfaceProps {
+  children: ReactNode;
+  promptControllerRef: { current: PromptControllerHandle | null };
+  className?: string;
+  style?: CSSProperties;
+}
+
+const touchSuppressionMilliseconds = 2_000;
+
+export function ConsoleSurface({ children, promptControllerRef, className, style }: ConsoleSurfaceProps) {
+  const suppressTouchContextMenuUntil = useRef(0);
+  const suppressTouchClickUntil = useRef(0);
+  const touchGestureActive = useRef(false);
+  const touchPointerIds = useRef(new Set<number>());
+  const handleClickCapture = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (Date.now() >= suppressTouchClickUntil.current) return;
+    suppressTouchClickUntil.current = 0;
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+  const handleContextMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (Date.now() < suppressTouchContextMenuUntil.current) {
+      suppressTouchContextMenuUntil.current = 0;
+      event.preventDefault();
+      return;
+    }
+    const stage = consoleStageElement(event.currentTarget);
+    if (!stage || !(event.target instanceof Node) || !stage.contains(event.target) || !isBlankConsoleSurfaceTarget(event.target)) return;
+    const handled = promptControllerRef.current?.submitRightClick(surfacePointerPosition(stage, event.clientX, event.clientY)) ?? false;
+    if (handled) event.preventDefault();
+  }, [promptControllerRef]);
+  const handleTouchStartCapture = useCallback((event: React.TouchEvent<HTMLElement>) => {
+    if (event.touches.length < 2) return;
+    if (touchGestureActive.current) {
+      return;
+    }
+    const stage = consoleStageElement(event.currentTarget);
+    const touch = event.touches[0];
+    const handled = promptControllerRef.current?.submitRightClick(touch ? surfacePointerPosition(stage ?? event.currentTarget, touch.clientX, touch.clientY) : undefined) ?? false;
+    if (!handled) return;
+    touchGestureActive.current = true;
+    const suppressionDeadline = Date.now() + touchSuppressionMilliseconds;
+    suppressTouchClickUntil.current = suppressionDeadline;
+    suppressTouchContextMenuUntil.current = Date.now() + 1_000;
+  }, [promptControllerRef]);
+  const handlePointerDownCapture = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerType !== "touch") return;
+    touchPointerIds.current.add(event.pointerId);
+    if (touchPointerIds.current.size < 2) return;
+    if (touchGestureActive.current) {
+      return;
+    }
+    const stage = consoleStageElement(event.currentTarget);
+    const handled = promptControllerRef.current?.submitRightClick(surfacePointerPosition(stage ?? event.currentTarget, event.clientX, event.clientY)) ?? false;
+    if (!handled) return;
+    touchGestureActive.current = true;
+    const suppressionDeadline = Date.now() + touchSuppressionMilliseconds;
+    suppressTouchClickUntil.current = suppressionDeadline;
+    suppressTouchContextMenuUntil.current = Date.now() + 1_000;
+  }, [promptControllerRef]);
+  const handlePointerEndCapture = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerType !== "touch") return;
+    touchPointerIds.current.delete(event.pointerId);
+    if (touchPointerIds.current.size === 0) touchGestureActive.current = false;
+  }, []);
+  const handleTouchEndCapture = useCallback((event: React.TouchEvent<HTMLElement>) => {
+    if (!touchGestureActive.current) return;
+    if (event.touches.length === 0) touchGestureActive.current = false;
+  }, []);
+  const handleTouchCancelCapture = useCallback((event: React.TouchEvent<HTMLElement>) => {
+    if (!touchGestureActive.current) return;
+    touchGestureActive.current = false;
+  }, []);
+  return <div className={className} style={style} onClickCapture={handleClickCapture} onContextMenu={handleContextMenu} onPointerDownCapture={handlePointerDownCapture} onPointerUpCapture={handlePointerEndCapture} onPointerCancelCapture={handlePointerEndCapture} onTouchStartCapture={handleTouchStartCapture} onTouchEndCapture={handleTouchEndCapture} onTouchCancelCapture={handleTouchCancelCapture}>{children}</div>;
 }
 
 export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean {
   return target instanceof Element && !target.closest("button, a, input, select, textarea, [role=\"button\"]");
+}
+
+function consoleStageElement(root: HTMLElement): HTMLElement | null {
+  return root.querySelector<HTMLElement>(".realtime-console-stage");
+}
+
+function surfacePointerPosition(target: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {
+  const bounds = target.getBoundingClientRect();
+  if (bounds.width <= 0 || bounds.height <= 0 || !Number.isFinite(clientX) || !Number.isFinite(clientY))
+    return { x: 0, y: 0 };
+  return {
+    x: Math.max(0, Math.round(clientX - bounds.left)),
+    y: Math.max(0, Math.round(clientY - bounds.top)),
+  };
 }
 
 export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, _screenWidth?: number, fontSize?: number, lineHeight?: number, runtimeCssFamily?: string): CSSProperties {

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { consoleSurfaceStyle, consoleViewportStyle, effectiveConsoleWidth, isBlankConsoleSurfaceTarget } from "./ConsolePage";
+import { createEvent, fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleWidth, isBlankConsoleSurfaceTarget } from "./ConsolePage";
 
 describe("console surface click filtering", () => {
   it("accepts non-control output areas and ignores buttons and form controls", () => {
@@ -16,6 +17,70 @@ describe("console surface click filtering", () => {
     expect(isBlankConsoleSurfaceTarget(buttonLabel)).toBe(false);
     expect(isBlankConsoleSurfaceTarget(input)).toBe(false);
     expect(isBlankConsoleSurfaceTarget(roleButton)).toBe(false);
+  });
+
+  it("consumes a two-finger gesture before a button can receive a synthetic click", () => {
+    const buttonClick = vi.fn();
+    const submitRightClick = vi.fn(() => true);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef}>
+      <button type="button" onClick={buttonClick}>游戏按钮</button>
+    </ConsoleSurface>);
+
+    const button = screen.getByRole("button", { name: "游戏按钮" });
+    fireEvent.touchStart(button, { touches: [{ clientX: 4, clientY: 4 }, { clientX: 8, clientY: 8 }] });
+    fireEvent.touchEnd(button, { touches: [] });
+    fireEvent.click(button);
+
+    expect(submitRightClick).toHaveBeenCalledTimes(1);
+    expect(buttonClick).not.toHaveBeenCalled();
+  });
+
+  it("keeps a single-finger button tap available", () => {
+    const buttonClick = vi.fn();
+    const submitRightClick = vi.fn(() => true);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef}>
+      <button type="button" onClick={buttonClick}>游戏按钮</button>
+    </ConsoleSurface>);
+
+    const button = screen.getByRole("button", { name: "游戏按钮" });
+    fireEvent.touchStart(button, { touches: [{ clientX: 4, clientY: 4 }] });
+    fireEvent.click(button);
+
+    expect(submitRightClick).not.toHaveBeenCalled();
+    expect(buttonClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cancel a single-finger touch, so native scrolling can start immediately", () => {
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick: vi.fn(() => true) } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef}><div>输出</div></ConsoleSurface>);
+
+    const output = screen.getByText("输出");
+    const touchStart = createEvent.touchStart(output, { touches: [{ clientX: 4, clientY: 4 }] });
+    fireEvent(output, touchStart);
+
+    expect(touchStart.defaultPrevented).toBe(false);
+    expect(promptControllerRef.current.submitRightClick).not.toHaveBeenCalled();
+  });
+
+  it("consumes a two-touch pointer gesture before a button can receive a click", () => {
+    const buttonClick = vi.fn();
+    const submitRightClick = vi.fn(() => true);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef}>
+      <button type="button" onClick={buttonClick}>游戏按钮</button>
+    </ConsoleSurface>);
+
+    const button = screen.getByRole("button", { name: "游戏按钮" });
+    fireEvent.pointerDown(button, { pointerId: 1, pointerType: "touch", clientX: 4, clientY: 4 });
+    fireEvent.pointerDown(button, { pointerId: 2, pointerType: "touch", clientX: 8, clientY: 8 });
+    fireEvent.pointerUp(button, { pointerId: 2, pointerType: "touch" });
+    fireEvent.pointerUp(button, { pointerId: 1, pointerType: "touch" });
+    fireEvent.click(button);
+
+    expect(submitRightClick).toHaveBeenCalledTimes(1);
+    expect(buttonClick).not.toHaveBeenCalled();
   });
 });
 

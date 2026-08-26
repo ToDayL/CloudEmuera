@@ -411,6 +411,66 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task RightPointerSkipsConsecutivePressAnyKeyWaitsUntilValueInput()
+    {
+        // Issue #2 / PLAY-009: a desktop right click is a message-skip gesture.
+        // It must skip both the EnterKey wait emitted by PRINTFORMW and a
+        // following explicit AnyKey wait, then stop at the first value input.
+        string erb =
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORMW FIRST-WAIT\n" +
+            "PRINTL BETWEEN-WAITS\n" +
+            "WAITANYKEY\n" +
+            "PRINTL AFTER-WAITS\n" +
+            "INPUT\n" +
+            "PRINTL DONE\n" +
+            "QUIT\n";
+        using var fixture = RuntimeHostFixture.Create(
+            erb,
+            configureGame: game => File.WriteAllText(
+                Path.Combine(game, "ERB", "START.ERB"),
+                erb,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)));
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        StructuredGameConsole console = fixture.Console;
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.Equal(ConsoleInputType.EnterKey, console.CurrentPrompt!.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            console.SubmitCurrentInput(new ConsoleInputAttempt(
+                "right-skip",
+                string.Empty,
+                ConsoleInputSource.Pointer,
+                pointer: new ConsolePointerPayload(0, 0, button: 2))).Kind);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => run.IsCompleted || console.CurrentPrompt?.InputType == ConsoleInputType.Integer,
+            TimeSpan.FromSeconds(2)));
+        Assert.Equal(ConsoleInputType.Integer, console.CurrentPrompt!.InputType);
+        Assert.Equal(
+            2,
+            console.StateStore.TransactionHistory
+                .SelectMany(item => item.Transaction.Operations)
+                .OfType<OpenPromptOperation>()
+                .Count());
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            console.SubmitCurrentInput(new ConsoleInputAttempt("value", "7")).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        string transcript = RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes);
+        Assert.Contains("FIRST-WAIT", transcript, StringComparison.Ordinal);
+        Assert.Contains("BETWEEN-WAITS", transcript, StringComparison.Ordinal);
+        Assert.Contains("AFTER-WAITS", transcript, StringComparison.Ordinal);
+        Assert.Contains("DONE", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task TwoPlainInputsOpenExactlyTwoPrompts()
     {
         // Control: without a PRINTFORMW the same shape opens exactly two
