@@ -183,7 +183,9 @@ public sealed class InputCoordinator
             }
 
             ConsolePrompt prompt = currentPrompt;
-            var input = new GameConsoleInput(prompt.PromptId, prompt.InputType, value);
+            bool skipMessage = attempt.IsMessageSkip &&
+                prompt.InputType is ConsoleInputType.EnterKey or ConsoleInputType.AnyKey;
+            var input = new GameConsoleInput(prompt.PromptId, prompt.InputType, value, skipMessage: skipMessage);
             result = ConsoleInputResult.Accepted(attempt, input);
             currentPrompt = null;
             MarkPromptCompleted(prompt.PromptId);

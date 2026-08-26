@@ -11,7 +11,8 @@ public sealed record GameConsoleInput
         string promptId,
         ConsoleInputType inputType,
         string value,
-        bool isDefaultValue = false)
+        bool isDefaultValue = false,
+        bool skipMessage = false)
     {
         ConsoleContractValidation.ValidateIdentifier(
             promptId,
@@ -29,6 +30,7 @@ public sealed record GameConsoleInput
         InputType = inputType;
         Value = value;
         IsDefaultValue = isDefaultValue;
+        SkipMessage = skipMessage;
     }
 
     public string PromptId { get; }
@@ -40,6 +42,12 @@ public sealed record GameConsoleInput
     public string RawValue => Value;
 
     public bool IsDefaultValue { get; }
+
+    /// <summary>
+    /// Whether the accepted input requested desktop-compatible message
+    /// skipping (the browser encodes this as a pressed right pointer button).
+    /// </summary>
+    public bool SkipMessage { get; }
 }
 
 /// <summary>

@@ -25,6 +25,48 @@ public sealed class StructuredGameConsoleInputTests
         Assert.Null(console.CurrentPrompt);
     }
 
+    [Theory]
+    [InlineData(ConsoleInputType.EnterKey)]
+    [InlineData(ConsoleInputType.AnyKey)]
+    public async Task RightPointerInputMarksMessageWaitAsMessageSkip(ConsoleInputType inputType)
+    {
+        var clock = new ManualRuntimeClock();
+        var console = new StructuredGameConsole(clock, new FixedPromptIdGenerator("generated"));
+        Task<GameConsoleInput> runtime = Task.Run(() => console.Read(new ConsolePrompt(inputType)));
+
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
+        ConsoleInputResult result = console.SubmitCurrentInput(new ConsoleInputAttempt(
+            "right-click",
+            string.Empty,
+            ConsoleInputSource.Pointer,
+            pointer: new ConsolePointerPayload(24, 12, button: 2)));
+
+        GameConsoleInput input = await runtime;
+        Assert.Equal(ConsoleInputResultKind.Accepted, result.Kind);
+        Assert.True(input.SkipMessage);
+        Assert.Equal(string.Empty, input.Value);
+    }
+
+    [Fact]
+    public async Task RightPointerInputDoesNotMarkValuePromptAsMessageSkip()
+    {
+        var clock = new ManualRuntimeClock();
+        var console = new StructuredGameConsole(clock, new FixedPromptIdGenerator("generated"));
+        Task<GameConsoleInput> runtime = Task.Run(() => console.Read(new ConsolePrompt(ConsoleInputType.Integer)));
+
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
+        ConsoleInputResult result = console.SubmitCurrentInput(new ConsoleInputAttempt(
+            "right-click-value",
+            "7",
+            ConsoleInputSource.Pointer,
+            pointer: new ConsolePointerPayload(24, 12, button: 2)));
+
+        GameConsoleInput input = await runtime;
+        Assert.Equal(ConsoleInputResultKind.Accepted, result.Kind);
+        Assert.False(input.SkipMessage);
+        Assert.Equal("7", input.Value);
+    }
+
     [Fact]
     public void ReadRejectsCallerSuppliedPromptId()
     {

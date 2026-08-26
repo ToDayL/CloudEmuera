@@ -548,6 +548,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   color-scheme: dark;
   -webkit-text-size-adjust: none;
   text-size-adjust: none;
+  /* Let the browser start native scrolling without waiting for JS gesture handlers. */
+  touch-action: manipulation;
   color: #d8e2d7;
   background: #080a09;
 }
@@ -645,6 +647,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   overflow-x: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
   padding: 56px 0 24px;
   background: #080a09;
 }

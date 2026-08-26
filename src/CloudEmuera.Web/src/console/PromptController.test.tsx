@@ -36,6 +36,26 @@ describe("PromptController", () => {
     expect(onInput).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["enterKey", "anyKey"] as const)("submits a right pointer press for %s waits", inputType => {
+    const onInput = vi.fn();
+    const controller = createRef<PromptControllerHandle>();
+    render(<PromptController ref={controller} prompt={prompt(inputType)} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+
+    expect(controller.current?.submitRightClick({ x: 24, y: 12 })).toBe(true);
+    expect(onInput).toHaveBeenCalledWith({ value: "", source: "POINTER", pointer: { x: 24, y: 12, button: 2, pressed: true } });
+  });
+
+  it("does not turn a right pointer press into a value or primitive-pointer input", () => {
+    const onInput = vi.fn();
+    const controller = createRef<PromptControllerHandle>();
+    const { rerender } = render(<PromptController ref={controller} prompt={prompt("text")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+
+    expect(controller.current?.submitRightClick()).toBe(false);
+    rerender(<PromptController ref={controller} prompt={prompt("primitivePointerKey")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+    expect(controller.current?.submitRightClick()).toBe(false);
+    expect(onInput).not.toHaveBeenCalled();
+  });
+
   it("does not use a waitOnly snapshot to block an input attempt", () => {
     const onInput = vi.fn();
     render(<PromptController prompt={prompt("waitOnly")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);

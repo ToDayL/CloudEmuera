@@ -55,6 +55,15 @@ public sealed class ConsoleInputAttempt
     public ConsoleKeyPayload? Key { get; }
 
     /// <summary>
+    /// A pressed right pointer button is the cross-platform message-skip
+    /// gesture. The current prompt still decides whether the gesture is
+    /// applicable; this property only preserves the input intent.
+    /// </summary>
+    public bool IsMessageSkip =>
+        Source.HasFlag(ConsoleInputSource.Pointer) &&
+        Pointer is { Button: 2, Pressed: true };
+
+    /// <summary>
     /// Stable length-delimited encoding for a single Worker epoch receipt.
     /// Internal prompt identity intentionally never participates in it.
     /// </summary>

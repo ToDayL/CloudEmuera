@@ -5,6 +5,7 @@ import type { ConsoleInputEvent } from "./ScrollbackRenderer";
 
 export interface PromptControllerHandle {
   submitBlankEnter: () => void;
+  submitRightClick: (position?: { x: number; y: number }) => boolean;
 }
 
 interface PromptControllerProps {
@@ -23,8 +24,9 @@ export const PromptController = forwardRef<PromptControllerHandle, PromptControl
   // input slot accepts the attempt when it arrives.
   const controlsDisabled = Boolean(disabled || pending);
   const submit = (source: ConsoleInputEvent["source"], nextValue = value, metadata: Pick<ConsoleInputEvent, "pointer" | "key"> = {}) => {
-    if (controlsDisabled) return;
+    if (controlsDisabled) return false;
     onInput({ value: nextValue, source, ...metadata });
+    return true;
   };
   const constrainValue = (nextValue: string): string => {
     if (!prompt) return nextValue;
@@ -57,7 +59,11 @@ export const PromptController = forwardRef<PromptControllerHandle, PromptControl
     if (!showInputForm || value.length !== 0) return;
     submit("KEYBOARD", "", { key: { keyCode: 13, control: false, alt: false, shift: false } });
   }, [showInputForm, submit, value]);
-  useImperativeHandle(ref, () => ({ submitBlankEnter }), [submitBlankEnter]);
+  const submitRightClick = (position: { x: number; y: number } = { x: 0, y: 0 }): boolean => {
+    if (prompt?.inputType !== "enterKey" && prompt?.inputType !== "anyKey") return false;
+    return submit("POINTER", "", { pointer: { x: position.x, y: position.y, button: 2, pressed: true } });
+  };
+  useImperativeHandle(ref, () => ({ submitBlankEnter, submitRightClick }), [submitBlankEnter, submitRightClick]);
 
   const promptLabel = prompt?.systemInput ? "游戏运行时输入" : "游戏输入提示";
   const enterButtonDisabled = controlsDisabled;

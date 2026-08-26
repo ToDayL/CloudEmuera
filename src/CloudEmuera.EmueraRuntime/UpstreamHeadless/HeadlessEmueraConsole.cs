@@ -79,6 +79,11 @@ internal sealed class EmueraConsole
     private readonly List<string> runtimeSystemMessages = [];
     private readonly List<string> runtimeDebugMessages = [];
     private readonly List<string> pendingDiagnosticLines = [];
+    // Issue #2: retain the desktop right-click message-skip mode while the
+    // interpreter advances through consecutive Enter/AnyKey waits. A
+    // separate flag prevents script-level SKIPLOG state from being cleared by
+    // an unrelated browser input.
+    private bool inputMessageSkipActive;
     private bool outputEnabled;
 
     private sealed record PendingBufferedLine(
@@ -459,6 +464,16 @@ internal sealed class EmueraConsole
         FlushPendingLine();
         FlushDeferredReplacementDelete();
         ConsoleInputType type = MapInputType(request.InputType);
+        if (ShouldSkipMessageWait(type, request.StopMesskip))
+        {
+            CompleteInputButtonGeneration(request.InputType);
+            return;
+        }
+
+        // Desktop PressEnterKey stops message skipping as soon as the next
+        // input needs a value (or is a forced wait). Keep that boundary when
+        // the headless adapter resumes the interpreter on its own thread.
+        ClearInputMessageSkip();
         // TINPUT's default is a timeout/result value, not text prefilled in
         // the desktop input box. Keep it hidden while the timer is active and
         // apply it after the adapter reports a timeout below.
@@ -489,6 +504,7 @@ internal sealed class EmueraConsole
         if (request.DisplayTime && timeout is not null)
             EmitTimeoutCountdown(timeout.Value);
         GameConsoleInput input = adapter.Read(prompt, cancellationToken);
+        ApplyInputMessageSkip(input);
         isTimeOut = adapter is StructuredGameConsole structured && structured.IsTimeOut;
         if (isTimeOut && request.TimeUpMes is not null)
         {
@@ -563,10 +579,37 @@ internal sealed class EmueraConsole
             GlobalStatic.Process.NeedWaitToEventComEnd = false;
         if (RuntimeDebugTrace.Current is not null)
             RuntimeDebugTrace.RecordErbWait(GlobalStatic.Process?.GetRunningPosition(), inputType, stopMesskip);
-        adapter.Read(new ConsolePrompt(
+        if (ShouldSkipMessageWait(inputType, stopMesskip))
+            return;
+
+        ClearInputMessageSkip();
+        GameConsoleInput input = adapter.Read(new ConsolePrompt(
             inputType,
             stopMessageSkip: stopMesskip,
             allowedSources: ConsoleInputSource.All), cancellationToken);
+        ApplyInputMessageSkip(input);
+    }
+
+    private bool ShouldSkipMessageWait(ConsoleInputType inputType, bool stopMessageSkip) =>
+        inputMessageSkipActive && MesSkip && !stopMessageSkip &&
+        inputType is ConsoleInputType.EnterKey or ConsoleInputType.AnyKey;
+
+    private void ApplyInputMessageSkip(GameConsoleInput input)
+    {
+        if (input.SkipMessage)
+        {
+            MesSkip = true;
+            inputMessageSkipActive = true;
+        }
+    }
+
+    private void ClearInputMessageSkip()
+    {
+        if (!inputMessageSkipActive)
+            return;
+
+        inputMessageSkipActive = false;
+        MesSkip = false;
     }
 
     /// <summary>
