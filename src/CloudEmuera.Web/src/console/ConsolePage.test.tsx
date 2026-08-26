@@ -82,6 +82,91 @@ describe("console surface click filtering", () => {
     expect(submitRightClick).toHaveBeenCalledTimes(1);
     expect(buttonClick).not.toHaveBeenCalled();
   });
+
+  it("clears an accidental selection after a stationary mouse click in the game stage", () => {
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    const removeAllRanges = vi.fn();
+    const getSelection = vi.spyOn(document, "getSelection").mockReturnValue({ removeAllRanges } as unknown as Selection);
+    try {
+      const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick: vi.fn(() => false) } };
+      render(<ConsoleSurface promptControllerRef={promptControllerRef}><div className="realtime-console-stage"><div>输出</div></div></ConsoleSurface>);
+      const output = screen.getByText("输出");
+      fireEvent.pointerDown(output, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerUp(output, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 4, clientY: 4 });
+
+      expect(removeAllRanges).toHaveBeenCalledTimes(1);
+    } finally {
+      getSelection.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps an intentional mouse drag available for text selection", () => {
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    const removeAllRanges = vi.fn();
+    const getSelection = vi.spyOn(document, "getSelection").mockReturnValue({ removeAllRanges } as unknown as Selection);
+    try {
+      const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick: vi.fn(() => false) } };
+      render(<ConsoleSurface promptControllerRef={promptControllerRef}><div className="realtime-console-stage"><div>输出</div></div></ConsoleSurface>);
+      const output = screen.getByText("输出");
+      fireEvent.pointerDown(output, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 4, clientY: 4 });
+      fireEvent.pointerMove(output, { pointerId: 1, pointerType: "mouse", clientX: 20, clientY: 4 });
+      fireEvent.pointerUp(output, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 20, clientY: 4 });
+
+      expect(removeAllRanges).not.toHaveBeenCalled();
+    } finally {
+      getSelection.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("suppresses the native context menu for ordinary game-stage output", () => {
+    const submitRightClick = vi.fn(() => false);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef}><main className="realtime-game-console"><div className="realtime-console-stage"><div>输出</div></div></main></ConsoleSurface>);
+    const output = screen.getByText("输出");
+    const contextMenu = createEvent.contextMenu(output, { button: 2, clientX: 24, clientY: 12 });
+    fireEvent(output, contextMenu);
+
+    expect(contextMenu.defaultPrevented).toBe(true);
+    expect(submitRightClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps right-click message skip while suppressing the native context menu", () => {
+    const submitRightClick = vi.fn(() => true);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef}><main className="realtime-game-console"><div className="realtime-console-stage"><div>等待</div></div></main></ConsoleSurface>);
+    const output = screen.getByText("等待");
+    const contextMenu = createEvent.contextMenu(output, { button: 2, clientX: 24, clientY: 12 });
+    fireEvent(output, contextMenu);
+
+    expect(contextMenu.defaultPrevented).toBe(true);
+    expect(submitRightClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends right-click message skip even when the pointer is over a game button", () => {
+    const submitRightClick = vi.fn(() => true);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef}><main className="realtime-game-console"><div className="realtime-console-stage"><button type="button" disabled>游戏选项</button></div></main></ConsoleSurface>);
+    const button = screen.getByRole("button", { name: "游戏选项" });
+    const contextMenu = createEvent.contextMenu(button, { button: 2, clientX: 24, clientY: 12 });
+    fireEvent(button, contextMenu);
+
+    expect(contextMenu.defaultPrevented).toBe(true);
+    expect(submitRightClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses the native context menu across the whole console surface", () => {
+    const submitRightClick = vi.fn(() => false);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef}><main className="realtime-game-console"><div className="realtime-console-stage">输出</div><div className="console-input-dock"><input aria-label="游戏输入" /></div></main></ConsoleSurface>);
+    const input = screen.getByRole("textbox", { name: "游戏输入" });
+    const contextMenu = createEvent.contextMenu(input, { button: 2 });
+    fireEvent(input, contextMenu);
+
+    expect(contextMenu.defaultPrevented).toBe(true);
+    expect(submitRightClick).not.toHaveBeenCalled();
+  });
 });
 
 describe("console surface background", () => {

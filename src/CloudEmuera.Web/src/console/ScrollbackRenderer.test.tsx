@@ -14,6 +14,7 @@ function scrollContainer(atLatest: boolean) {
   const element = document.createElement("main");
   Object.defineProperties(element, {
     clientHeight: { configurable: true, value: 100 },
+    offsetHeight: { configurable: true, value: 100 },
     scrollHeight: { configurable: true, writable: true, value: 200 },
     scrollTop: { configurable: true, writable: true, value: atLatest ? 100 : 10 },
   });
@@ -65,7 +66,7 @@ describe("ScrollbackRenderer", () => {
     expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 200, behavior: "auto" });
   });
 
-  it("re-synchronizes after the connected snapshot changes its measured height", () => {
+  it("re-synchronizes after the latest content changes its measured height", () => {
     let notifyResize: (() => void) | undefined;
     class ResizeObserverStub {
       constructor(callback: ResizeObserverCallback) {
@@ -79,9 +80,74 @@ describe("ScrollbackRenderer", () => {
     try {
       const { ref, element } = scrollContainer(true);
       render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+      vi.mocked(element.scrollTo).mockClear();
       (element as HTMLElement & { scrollHeight: number }).scrollHeight = 500;
       notifyResize?.();
+
       expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 400, behavior: "auto" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps following a large frame when the virtual content settles after the initial jump", () => {
+    const observed: Array<{ target: Element; callback: ResizeObserverCallback }> = [];
+    class ResizeObserverStub {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        observed.push({ target, callback: this.callback });
+      }
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    try {
+      const { ref, element } = scrollContainer(true);
+      const initial = [line("initial", "initial")];
+      const view = render(<ScrollbackRenderer lines={initial} assets={assets} onInput={() => undefined} scrollContainerRef={ref} defaultLineHeight={20} />);
+      vi.mocked(element.scrollTo).mockClear();
+
+      const largeFrame = Array.from({ length: 4096 }, (_, index) => line(`large-${index}`, `large frame line ${index}`));
+      view.rerender(<ScrollbackRenderer lines={largeFrame} assets={assets} onInput={() => undefined} scrollContainerRef={ref} defaultLineHeight={20} scrollVersion="large-frame" />);
+      expect(element.scrollTop).toBe(100);
+
+      const virtualContent = document.querySelector<HTMLElement>(".console-virtual-content");
+      expect(virtualContent).not.toBeNull();
+      const virtualContentObserver = observed.find(item => item.target === virtualContent);
+      expect(virtualContentObserver).toBeDefined();
+
+      (element as HTMLElement & { scrollHeight: number }).scrollHeight = 82_020;
+      virtualContentObserver?.callback([], {} as ResizeObserver);
+
+      expect(element.scrollTop).toBe(81_920);
+      expect(document.querySelector<HTMLButtonElement>(".scrollback-latest")).toHaveClass("is-hidden");
+      view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not force the reader to the bottom from a content resize", () => {
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    class ResizeObserverStub {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    try {
+      const { ref, element } = scrollContainer(false);
+      render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+      element.scrollTop = 10;
+      fireEvent.scroll(element);
+      vi.mocked(element.scrollTo).mockClear();
+      (element as HTMLElement & { scrollHeight: number }).scrollHeight = 500;
+      for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+      expect(element.scrollTo).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -98,26 +164,64 @@ describe("ScrollbackRenderer", () => {
     expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 100, behavior: "auto" });
   });
 
-  it("recalculates the latest position after removing the jump control", () => {
+  it("keeps the latest control mounted while only toggling its visibility", () => {
+    const { ref, element } = scrollContainer(true);
+    render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+    const button = document.querySelector<HTMLButtonElement>(".scrollback-latest");
+    expect(button).not.toBeNull();
+    expect(button).toHaveClass("is-hidden");
+
+    element.scrollTop = 10;
+    fireEvent.scroll(element);
+    expect(document.querySelector(".scrollback-latest")).toBe(button);
+    expect(button).not.toHaveClass("is-hidden");
+
+    element.scrollTop = 100;
+    fireEvent.scroll(element);
+    expect(document.querySelector(".scrollback-latest")).toBe(button);
+    expect(button).toHaveClass("is-hidden");
+
+    element.scrollTop = 76;
+    fireEvent.scroll(element);
+    expect(button).not.toHaveClass("is-hidden");
+
+    element.scrollTop = 99;
+    fireEvent.scroll(element);
+    expect(button).toHaveClass("is-hidden");
+  });
+
+  it("settles at the latest bottom after a late content-height update", () => {
     const callbacks: FrameRequestCallback[] = [];
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       callbacks.push(callback);
       return callbacks.length;
     });
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
     try {
       const { ref, element } = scrollContainer(true);
-      render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+      const lines = [line("one", "one")];
+      const view = render(<ScrollbackRenderer lines={lines} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
       callbacks.length = 0;
-      element.scrollTop = 10;
-      fireEvent.scroll(element);
-      fireEvent.click(screen.getByRole("button", { name: "↓ 回到最新" }));
+      vi.mocked(element.scrollTo).mockClear();
 
-      (element as HTMLElement & { scrollHeight: number }).scrollHeight = 300;
+      let scrollCalls = 0;
+      vi.mocked(element.scrollTo).mockImplementation(() => {
+        scrollCalls += 1;
+        if (scrollCalls === 1) {
+          (element as HTMLElement & { scrollHeight: number }).scrollHeight = 300;
+        }
+      });
+
+      view.rerender(<ScrollbackRenderer lines={lines} assets={assets} onInput={() => undefined} scrollContainerRef={ref} forceScrollVersion={1} />);
+
+      expect(element.scrollTop).toBe(100);
+      expect(callbacks).toHaveLength(1);
+
       callbacks.shift()?.(0);
+
       expect(element.scrollTop).toBe(200);
-      callbacks.shift()?.(0);
-      expect(element.scrollTop).toBe(200);
+      view.unmount();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -132,7 +236,7 @@ describe("ScrollbackRenderer", () => {
     const renderedLines = document.querySelectorAll(".console-line");
     expect(renderedLines.length).toBeGreaterThan(0);
     expect(renderedLines.length).toBeLessThan(lines.length);
-    expect(document.querySelector(".console-virtual-spacer")).toBeInTheDocument();
+    expect(document.querySelector<HTMLElement>(".console-virtual-content")).toHaveStyle({ height: "4000px" });
   });
 
   it("keeps a portrait mounted when its visual overflow enters the viewport", () => {
@@ -201,7 +305,7 @@ describe("ScrollbackRenderer", () => {
 
     expect(trailingVisualOverflow([portraitLine])).toBe(192);
     render(<ScrollbackRenderer lines={[positionedPortraitLine]} assets={clockAssets} onInput={() => undefined} />);
-    expect(document.querySelector<HTMLElement>(".console-overflow-reserve")).toHaveStyle({ height: "192px" });
+    expect(document.querySelector<HTMLElement>(".console-virtual-content")).toHaveStyle({ height: "212px" });
     expect(document.querySelector<HTMLElement>(".positioned-inline-segment")).toHaveStyle({ overflow: "visible" });
   });
 
@@ -216,7 +320,7 @@ describe("ScrollbackRenderer", () => {
 
     expect(leadingVisualOverflow([titleLine])).toBe(594);
     render(<ScrollbackRenderer lines={[titleLine]} assets={clockAssets} onInput={() => undefined} />);
-    expect(document.querySelector<HTMLElement>(".console-overflow-leading")).toHaveStyle({ height: "594px" });
+    expect(document.querySelector<HTMLElement>(".console-virtual-content")).toHaveStyle({ height: "648px" });
   });
 
   it("submits enabled choice buttons from old display frames to the current input slot", () => {

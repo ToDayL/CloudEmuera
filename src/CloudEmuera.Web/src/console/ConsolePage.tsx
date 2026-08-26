@@ -193,12 +193,45 @@ interface ConsoleSurfaceProps {
 }
 
 const touchSuppressionMilliseconds = 2_000;
+const mouseSelectionMovementThreshold = 4;
+
+interface MousePress {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  moved: boolean;
+}
 
 export function ConsoleSurface({ children, promptControllerRef, className, style }: ConsoleSurfaceProps) {
   const suppressTouchContextMenuUntil = useRef(0);
   const suppressTouchClickUntil = useRef(0);
   const touchGestureActive = useRef(false);
   const touchPointerIds = useRef(new Set<number>());
+  const mousePressRef = useRef<MousePress | null>(null);
+  const selectionClearFrameRef = useRef<number | null>(null);
+  const clearConsoleSelection = useCallback(() => {
+    document.getSelection()?.removeAllRanges();
+    if (selectionClearFrameRef.current !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(selectionClearFrameRef.current);
+      selectionClearFrameRef.current = null;
+    }
+    if (typeof requestAnimationFrame !== "function") return;
+    selectionClearFrameRef.current = requestAnimationFrame(() => {
+      selectionClearFrameRef.current = null;
+      document.getSelection()?.removeAllRanges();
+    });
+  }, []);
+  const cancelPendingSelectionClear = useCallback(() => {
+    if (selectionClearFrameRef.current !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(selectionClearFrameRef.current);
+      selectionClearFrameRef.current = null;
+    }
+  }, []);
+  useEffect(() => () => {
+    if (selectionClearFrameRef.current !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(selectionClearFrameRef.current);
+    }
+  }, []);
   const handleClickCapture = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (Date.now() >= suppressTouchClickUntil.current) return;
     suppressTouchClickUntil.current = 0;
@@ -212,9 +245,13 @@ export function ConsoleSurface({ children, promptControllerRef, className, style
       return;
     }
     const stage = consoleStageElement(event.currentTarget);
-    if (!stage || !(event.target instanceof Node) || !stage.contains(event.target) || !isBlankConsoleSurfaceTarget(event.target)) return;
-    const handled = promptControllerRef.current?.submitRightClick(surfacePointerPosition(stage, event.clientX, event.clientY)) ?? false;
-    if (handled) event.preventDefault();
+    if (stage && event.target instanceof Node && stage.contains(event.target)) {
+      promptControllerRef.current?.submitRightClick(surfacePointerPosition(stage, event.clientX, event.clientY));
+    }
+    // The console surface is an application surface. Do not expose the
+    // browser's context menu there, including when the current prompt cannot
+    // consume a right click.
+    event.preventDefault();
   }, [promptControllerRef]);
   const handleTouchStartCapture = useCallback((event: React.TouchEvent<HTMLElement>) => {
     if (event.touches.length < 2) return;
@@ -231,6 +268,14 @@ export function ConsoleSurface({ children, promptControllerRef, className, style
     suppressTouchContextMenuUntil.current = Date.now() + 1_000;
   }, [promptControllerRef]);
   const handlePointerDownCapture = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerType === "mouse") {
+      if (event.button !== 0) return;
+      cancelPendingSelectionClear();
+      const stage = consoleStageElement(event.currentTarget);
+      if (!stage || !(event.target instanceof Node) || !stage.contains(event.target)) return;
+      mousePressRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, moved: false };
+      return;
+    }
     if (event.pointerType !== "touch") return;
     touchPointerIds.current.add(event.pointerId);
     if (touchPointerIds.current.size < 2) return;
@@ -244,12 +289,29 @@ export function ConsoleSurface({ children, promptControllerRef, className, style
     const suppressionDeadline = Date.now() + touchSuppressionMilliseconds;
     suppressTouchClickUntil.current = suppressionDeadline;
     suppressTouchContextMenuUntil.current = Date.now() + 1_000;
-  }, [promptControllerRef]);
+  }, [cancelPendingSelectionClear, promptControllerRef]);
+  const handlePointerMoveCapture = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerType !== "mouse") return;
+    const press = mousePressRef.current;
+    if (!press || press.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - press.clientX, event.clientY - press.clientY) > mouseSelectionMovementThreshold) {
+      press.moved = true;
+    }
+  }, []);
   const handlePointerEndCapture = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerType === "mouse") {
+      const press = mousePressRef.current;
+      if (!press || press.pointerId !== event.pointerId) return;
+      mousePressRef.current = null;
+      if (event.type !== "pointerup" || press.moved) return;
+      const stage = consoleStageElement(event.currentTarget);
+      if (stage && event.target instanceof Node && stage.contains(event.target)) clearConsoleSelection();
+      return;
+    }
     if (event.pointerType !== "touch") return;
     touchPointerIds.current.delete(event.pointerId);
     if (touchPointerIds.current.size === 0) touchGestureActive.current = false;
-  }, []);
+  }, [clearConsoleSelection]);
   const handleTouchEndCapture = useCallback((event: React.TouchEvent<HTMLElement>) => {
     if (!touchGestureActive.current) return;
     if (event.touches.length === 0) touchGestureActive.current = false;
@@ -258,7 +320,7 @@ export function ConsoleSurface({ children, promptControllerRef, className, style
     if (!touchGestureActive.current) return;
     touchGestureActive.current = false;
   }, []);
-  return <div className={className} style={style} onClickCapture={handleClickCapture} onContextMenu={handleContextMenu} onPointerDownCapture={handlePointerDownCapture} onPointerUpCapture={handlePointerEndCapture} onPointerCancelCapture={handlePointerEndCapture} onTouchStartCapture={handleTouchStartCapture} onTouchEndCapture={handleTouchEndCapture} onTouchCancelCapture={handleTouchCancelCapture}>{children}</div>;
+  return <div className={className} style={style} onClickCapture={handleClickCapture} onContextMenuCapture={handleContextMenu} onPointerDownCapture={handlePointerDownCapture} onPointerMoveCapture={handlePointerMoveCapture} onPointerUpCapture={handlePointerEndCapture} onPointerCancelCapture={handlePointerEndCapture} onTouchStartCapture={handleTouchStartCapture} onTouchEndCapture={handleTouchEndCapture} onTouchCancelCapture={handleTouchCancelCapture}>{children}</div>;
 }
 
 export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean {
