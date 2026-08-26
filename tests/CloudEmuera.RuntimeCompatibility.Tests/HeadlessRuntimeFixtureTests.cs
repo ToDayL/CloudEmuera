@@ -676,6 +676,81 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "FontLayout")]
+    public async Task HtmlPrintKeepsExplicitPositionsForLayeredPortraits()
+    {
+        // PLAY-002/COMP-007: multiple portrait layers use the same
+        // button `pos` origin. The physical layout must preserve that
+        // absolute coordinate instead of advancing each layer by its width.
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "em-ee-core", "resources", "cloudemuera-em-ee.png");
+        const string layeredHtml = "<p align='left'><nobr>" +
+            "<button value='back' pos='0'><img src='PORTRAIT' width='153px' height='153px'></button>" +
+            "<button value='middle' pos='0'><img src='PORTRAIT' width='153px' height='153px'></button>" +
+            "<button value='front' pos='0'><img src='PORTRAIT' width='153px' height='153px'></button>" +
+            "</nobr></p>";
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            $"HTML_PRINT \"{layeredHtml}\"\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:870\n字体大小:18\n每行高度:21\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "portrait.png"));
+                File.WriteAllText(Path.Combine(resources, "list.csv"), "PORTRAIT,portrait.png,0,0,2,2\n");
+            });
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.True(
+            initialized.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", initialized.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        EmueraRuntimeResult result = await host.RunAsync();
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+
+        ConsoleLine line = Assert.Single(
+            fixture.Console.Snapshot.Scrollback,
+            item => item.Nodes.Count == 3 && item.Nodes.All(node =>
+                node is PositionedInlineSegmentNode segment && segment.Action is not null));
+        PositionedInlineSegmentNode[] layers = line.Nodes.Cast<PositionedInlineSegmentNode>().ToArray();
+        Assert.Collection(
+            layers,
+            layer =>
+            {
+                Assert.Equal(0, layer.PositionX);
+                Assert.Equal("back", layer.Action!.Value);
+                Assert.Equal(153, layer.MeasuredWidth);
+            },
+            layer =>
+            {
+                Assert.Equal(0, layer.PositionX);
+                Assert.Equal("middle", layer.Action!.Value);
+                Assert.Equal(153, layer.MeasuredWidth);
+            },
+            layer =>
+            {
+                Assert.Equal(0, layer.PositionX);
+                Assert.Equal("front", layer.Action!.Value);
+                Assert.Equal(153, layer.MeasuredWidth);
+            });
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HtmlPrintButtonsUseTheCurrentRuntimeGeneration()
     {
         var console = new StructuredGameConsole();

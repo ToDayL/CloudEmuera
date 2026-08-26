@@ -1043,7 +1043,7 @@ internal sealed class EmueraConsole
             noWrap = true;
             foreach (LayoutAtom atom in atoms)
             {
-                int position = atom.LockedX is { } locked ? Math.Max(cursor, locked) : cursor;
+                int position = ResolveAtomPosition(cursor, atom.LockedX);
                 bool fits = layoutWidth <= 0 || position + atom.Width <= layoutWidth;
                 if (fits)
                 {
@@ -1072,7 +1072,7 @@ internal sealed class EmueraConsole
                 LayoutAtom remaining = original;
                 while (true)
                 {
-                    int position = remaining.LockedX is { } locked ? Math.Max(cursor, locked) : cursor;
+                    int position = ResolveAtomPosition(cursor, remaining.LockedX);
                     bool fits = noWrap || layoutWidth <= 0 || position + remaining.Width <= layoutWidth;
                     if (fits)
                     {
@@ -1151,6 +1151,15 @@ internal sealed class EmueraConsole
                 index == 0));
         }
         return result;
+    }
+
+    private static int ResolveAtomPosition(int cursor, int? lockedX)
+    {
+        // An explicit Emuera `button pos` is an absolute overlay coordinate.
+        // It may intentionally move backwards to place several portrait
+        // layers on the same origin; only unpositioned atoms follow the flow
+        // cursor.
+        return lockedX is { } position ? Math.Max(0, position) : cursor;
     }
 
     private IReadOnlyList<LayoutAtom> CreateLayoutAtoms(IReadOnlyList<ConsoleNode> nodes)
@@ -1279,7 +1288,13 @@ internal sealed class EmueraConsole
             foreach (PositionedInlineSegmentNode segment in line.Nodes.OfType<PositionedInlineSegmentNode>())
             {
                 if (segment.Action is { } action)
-                    originalNodes.Add(new ButtonNode(segment.Children, action.Value, action.Tooltip, action.Enabled, action.Generation));
+                    originalNodes.Add(new ButtonNode(
+                        segment.Children,
+                        action.Value,
+                        action.Tooltip,
+                        action.Enabled,
+                        action.Generation,
+                        segment.PositionX));
                 else
                     originalNodes.AddRange(segment.Children);
             }

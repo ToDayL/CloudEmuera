@@ -351,7 +351,14 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
         whiteSpace: "pre",
         ...(hasEscapedVisual ? { overflow: "visible" } : {}),
       };
-      if (!node.action) return <span className="positioned-inline-segment" style={style}>{children}</span>;
+      // The translator represents a positioned <nonbutton> with the same
+      // empty, disabled action sentinel used by a top-level ButtonNode. It
+      // must remain a span here too: wrapping it in a disabled button applies
+      // the global button:disabled opacity and changes the appearance of
+      // every later portrait layer in a composite.
+      if (!node.action || (!node.action.enabled && node.action.value.length === 0)) {
+        return <span className={node.action ? "console-nonbutton positioned-inline-segment" : "positioned-inline-segment"} style={style} title={node.action?.tooltip ?? undefined}>{children}</span>;
+      }
       return <button className="console-choice positioned-inline-action" style={style} type="button" disabled={!node.action.enabled} title={node.action.tooltip ?? undefined} onClick={() => onInput({ value: node.action!.value, source: "BUTTON" })}>{children}</button>;
     }
     case "image": {

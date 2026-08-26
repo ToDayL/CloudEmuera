@@ -271,6 +271,23 @@ requirements/ADR references, and verification commands.
 - Verification: RuntimeCompatibility timed-input regression and Web console
   rendering/typecheck/build checks pass in dev Docker.
 
+## 2026-08-26 — Preserve explicit overlay origins during physical layout
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now treats a locked `button pos`
+  coordinate as an absolute overlay origin even when an earlier layer has
+  already advanced the flow cursor. This keeps repeated `pos='0'` portrait
+  layers at one x coordinate instead of placing them side by side.
+- Incremental reflow also carries the positioned action's x coordinate back
+  into the reconstructed logical line. Unpositioned buttons retain ordinary
+  measured flow placement.
+- The Web projection keeps the disabled empty-value action used for
+  `<nonbutton>` portrait layers as a pointer-transparent span, not a disabled
+  HTML button, so the global disabled-button opacity cannot alter the
+  composite; source order remains the paint order and later layers stay on
+  top.
+- Verification: `HtmlPrintKeepsExplicitPositionsForLayeredPortraits` in the
+  RuntimeCompatibility suite; no protocol or upstream source version change.
+
 ## 2026-08-20 — Preserve upstream optional Sprite CSV fallbacks
 
 - Headless glue: `Headless/EmueraRuntimeHost.cs` now matches upstream
