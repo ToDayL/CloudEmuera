@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
@@ -24,26 +25,8 @@ interface ConsoleLineViewProps extends Omit<NodeRendererProps, "node"> {
 
 const DEFAULT_RUNTIME_LINE_HEIGHT = 16;
 const VIRTUAL_OVERSCAN_SCREENS = 1;
-
-interface ScrollbackViewport {
-  scrollTop: number;
-  height: number;
-}
-
-interface ScrollbackLineMeasurement {
-  flowTop: number;
-  flowHeight: number;
-  visualTop: number;
-  visualBottom: number;
-}
-
-interface ScrollbackLayout {
-  lines: ScrollbackLineMeasurement[];
-  prefixHeights: number[];
-  flowHeight: number;
-  leadingOverflow: number;
-  trailingOverflow: number;
-}
+const DEFAULT_VIRTUAL_VIEWPORT_HEIGHT = 640;
+const BOTTOM_DISTANCE_EPSILON_PX = 1;
 
 export interface ScrollbackRendererProps {
   lines: RealtimeLine[];
@@ -60,122 +43,146 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
   const scrollbackShellRef = useRef<HTMLDivElement>(null);
-  const viewportFrameRef = useRef<number | null>(null);
-  const [viewport, setViewport] = useState<ScrollbackViewport>({ scrollTop: 0, height: 0 });
+  const virtualContentRef = useRef<HTMLDivElement>(null);
   const displayLines = useMemo(() => trimTrailingEmptyLines(lines), [lines]);
   const lineHeight = normalizeLineHeight(defaultLineHeight);
-  const layout = useMemo(() => buildScrollbackLayout(displayLines, lineHeight), [displayLines, lineHeight]);
-  const virtualRange = useMemo(() => getVirtualLineRange(layout, viewport), [layout, viewport]);
-  const visibleLines = displayLines.slice(virtualRange.startIndex, virtualRange.endIndex);
-  const topSpacerHeight = layout.leadingOverflow + layout.prefixHeights[virtualRange.startIndex];
-  const bottomSpacerHeight = layout.flowHeight - layout.prefixHeights[virtualRange.endIndex] + layout.trailingOverflow;
-  const readViewport = useCallback(() => {
-    const container = scrollContainerRef?.current;
-    if (!container) return;
-    const next = {
-      scrollTop: Math.max(0, container.scrollTop),
-      height: Math.max(0, container.clientHeight),
-    };
-    setViewport(previous => previous.scrollTop === next.scrollTop && previous.height === next.height ? previous : next);
-  }, [scrollContainerRef]);
+  const leadingOverflow = useMemo(() => leadingVisualOverflow(displayLines, lineHeight), [displayLines, lineHeight]);
+  const trailingOverflow = useMemo(() => trailingVisualOverflow(displayLines, lineHeight), [displayLines, lineHeight]);
+  const getLineFlowHeight = useCallback((index: number) => {
+    const line = displayLines[index];
+    return line ? effectiveLineFlowHeight(line, lineHeight) : lineHeight;
+  }, [displayLines, lineHeight]);
+  const getItemKey = useCallback((index: number) => displayLines[index]?.lineId ?? index, [displayLines]);
+  const measureElement = useCallback((element: HTMLDivElement) => {
+    const index = Number(element.dataset.index);
+    return getLineFlowHeight(Number.isInteger(index) && index >= 0 ? index : -1);
+  }, [getLineFlowHeight]);
+  const virtualizer = useVirtualizer<HTMLElement, HTMLDivElement>({
+    count: displayLines.length,
+    getScrollElement: () => scrollContainerRef?.current ?? null,
+    estimateSize: getLineFlowHeight,
+    getItemKey,
+    measureElement,
+    // TanStack Virtual's overscan is expressed in items.  The runtime uses
+    // mostly fixed physical line heights, so one nominal 640px viewport is a
+    // stable approximation without making the window depend on DOM layout.
+    overscan: Math.max(1, Math.ceil((DEFAULT_VIRTUAL_VIEWPORT_HEIGHT * VIRTUAL_OVERSCAN_SCREENS) / lineHeight)),
+    paddingStart: leadingOverflow,
+    paddingEnd: trailingOverflow,
+    initialRect: { width: 0, height: DEFAULT_VIRTUAL_VIEWPORT_HEIGHT },
+    // Keep scroll-only positions out of React's render path.  The row boxes
+    // are fixed flow-height boxes; portraits paint outside them and therefore
+    // must never participate in virtual size measurement.
+    directDomUpdates: true,
+    directDomUpdatesMode: "position",
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const setVirtualContentRef = useCallback((node: HTMLDivElement | null) => {
+    virtualContentRef.current = node;
+    virtualizer.containerRef(node);
+  }, [virtualizer]);
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     const container = scrollContainerRef?.current;
     if (!container) return;
     atLatestRef.current = true;
     setAtLatest(true);
     scrollContainerToBottom(container, behavior);
-    readViewport();
-  }, [readViewport, scrollContainerRef]);
+  }, [scrollContainerRef]);
+  const settleScrollToBottom = useCallback((force: boolean) => {
+    scrollToBottom("auto");
+    if (typeof requestAnimationFrame !== "function") return;
+
+    let frame: number | null = null;
+    let remainingFrames = 2;
+    const settle = () => {
+      frame = null;
+      if (!force && !atLatestRef.current) return;
+
+      scrollToBottom("auto");
+      remainingFrames -= 1;
+      if (remainingFrames > 0) {
+        frame = requestAnimationFrame(settle);
+      }
+    };
+
+    frame = requestAnimationFrame(settle);
+    return () => {
+      if (frame !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(frame);
+      }
+    };
+  }, [scrollToBottom]);
   useEffect(() => {
     const container = scrollContainerRef?.current;
     if (!container) return;
     const updatePosition = () => {
-      const next = container.scrollHeight - container.clientHeight - container.scrollTop <= 24;
+      const next = isScrollAtBottom(container);
       atLatestRef.current = next;
       setAtLatest(previous => previous === next ? previous : next);
-      if (viewportFrameRef.current !== null || typeof requestAnimationFrame !== "function") {
-        if (typeof requestAnimationFrame !== "function") readViewport();
-        return;
-      }
-      viewportFrameRef.current = requestAnimationFrame(() => {
-        viewportFrameRef.current = null;
-        readViewport();
-      });
     };
     updatePosition();
     container.addEventListener("scroll", updatePosition, { passive: true });
     return () => {
       container.removeEventListener("scroll", updatePosition);
-      if (viewportFrameRef.current !== null && typeof cancelAnimationFrame === "function") {
-        cancelAnimationFrame(viewportFrameRef.current);
-        viewportFrameRef.current = null;
-      }
     };
-  }, [readViewport, scrollContainerRef]);
-  useLayoutEffect(() => {
-    readViewport();
-  }, [readViewport]);
+  }, [scrollContainerRef]);
   useLayoutEffect(() => {
     if (forceScrollVersion === undefined) return;
     // Input is an explicit navigation action. It must win even when the
     // reader was looking at older output, and it must update the ref used by
     // the following display frame so newly appended output stays visible.
-    scrollToBottom("auto");
-    if (typeof requestAnimationFrame !== "function") return;
-    const frame = requestAnimationFrame(() => scrollToBottom("auto"));
-    return () => cancelAnimationFrame(frame);
-  }, [forceScrollVersion, scrollToBottom]);
+    return settleScrollToBottom(true);
+  }, [forceScrollVersion, settleScrollToBottom]);
   useLayoutEffect(() => {
     // A display frame follows the reader only when the reader was already at
     // the latest position. Do not pull a user back while reading old output.
     if (!atLatestRef.current) return;
-    scrollToBottom("auto");
-    // The connection snapshot can complete one more layout after React's
-    // layout effects (for example when a late image measurement changes the
-    // scroll height). Re-apply the initial position on the next frame.
-    if (typeof requestAnimationFrame !== "function") return;
-    const frame = requestAnimationFrame(() => scrollToBottom("auto"));
-    return () => cancelAnimationFrame(frame);
-  }, [lines, scrollToBottom, scrollVersion]);
+    return settleScrollToBottom(false);
+  }, [lines, scrollVersion, settleScrollToBottom]);
   useEffect(() => {
     const shell = scrollbackShellRef.current;
-    if (!shell || typeof ResizeObserver === "undefined") return;
+    const virtualContent = virtualContentRef.current;
+    if ((!shell && !virtualContent) || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (atLatestRef.current) scrollToBottom("auto");
+      // A virtualized row can change the scroll extent after both React's
+      // commit and the settling animation frames. Re-apply the bottom only
+      // while the reader is following the latest output.
+      if (atLatestRef.current) settleScrollToBottom(false);
     });
-    observer.observe(shell);
+    if (shell) observer.observe(shell);
+    if (virtualContent && virtualContent !== shell) observer.observe(virtualContent);
     return () => observer.disconnect();
-  }, [scrollToBottom]);
+  }, [settleScrollToBottom]);
   const scrollToLatest = useCallback(() => {
     const container = scrollContainerRef?.current;
     if (!container) return;
 
-    // The button is a sticky flow item. Hide it only after the first jump and
-    // settle again after React removes it, because that removal can change
-    // scrollHeight. An immediate jump also avoids a long smooth-scroll paint
-    // competing with a large bounded history.
-    const settle = () => {
-      scrollContainerToBottom(container, "auto");
-      readViewport();
-    };
-    settle();
+    // An immediate jump avoids a long smooth-scroll paint competing with a
+    // large bounded history. The control remains mounted while hidden, so
+    // toggling it cannot change the scroll extent.
+    scrollContainerToBottom(container, "auto");
     atLatestRef.current = true;
     setAtLatest(true);
-    if (typeof requestAnimationFrame !== "function") return;
-    requestAnimationFrame(() => {
-      settle();
-      requestAnimationFrame(settle);
-    });
-  }, [readViewport, scrollContainerRef]);
+  }, [scrollContainerRef]);
   return <div ref={scrollbackShellRef} className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
-      {layout.leadingOverflow > 0 && <div className="console-overflow-leading" style={{ height: layout.leadingOverflow }} aria-hidden="true" />}
-      {topSpacerHeight - layout.leadingOverflow > 0 && <div className="console-virtual-spacer" style={{ height: topSpacerHeight - layout.leadingOverflow }} aria-hidden="true" />}
-      {visibleLines.map(line => <ConsoleLineView key={line.lineId} line={line} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
-      {bottomSpacerHeight - layout.trailingOverflow > 0 && <div className="console-virtual-spacer" style={{ height: bottomSpacerHeight - layout.trailingOverflow }} aria-hidden="true" />}
-      {layout.trailingOverflow > 0 && <div className="console-overflow-reserve" style={{ height: layout.trailingOverflow }} aria-hidden="true" />}
+      <div ref={setVirtualContentRef} className="console-virtual-content">
+        {virtualItems.map(virtualItem => {
+          const line = displayLines[virtualItem.index];
+          if (!line) return null;
+          return <div
+            key={virtualItem.key}
+            ref={virtualizer.measureElement}
+            data-index={virtualItem.index}
+            className="console-virtual-row"
+            style={{ width: "max-content", minWidth: "100%", height: virtualItem.size }}
+          >
+            <ConsoleLineView line={line} assets={assets} onInput={onInput} onRenderError={onRenderError} />
+          </div>;
+        })}
+      </div>
     </div>
-    {!atLatest && <button className="scrollback-latest" type="button" onClick={scrollToLatest}>↓ 回到最新</button>}
+    <button className={`scrollback-latest ${atLatest ? "is-hidden" : ""}`} type="button" aria-hidden={atLatest} tabIndex={atLatest ? -1 : 0} onClick={scrollToLatest}>↓ 回到最新</button>
   </div>;
 }
 
@@ -188,62 +195,15 @@ function scrollContainerToBottom(container: HTMLElement, behavior: ScrollBehavio
   else container.scrollTop = top;
 }
 
+export function isScrollAtBottom(
+  container: Pick<HTMLElement, "scrollHeight" | "clientHeight" | "scrollTop">,
+): boolean {
+  const distance = container.scrollHeight - container.clientHeight - container.scrollTop;
+  return distance <= BOTTOM_DISTANCE_EPSILON_PX;
+}
+
 function normalizeLineHeight(value: number | undefined): number {
   return value && Number.isFinite(value) && value > 0 ? value : DEFAULT_RUNTIME_LINE_HEIGHT;
-}
-
-function buildScrollbackLayout(lines: readonly RealtimeLine[], defaultLineHeight: number): ScrollbackLayout {
-  const measurements: ScrollbackLineMeasurement[] = [];
-  const prefixHeights = [0];
-  let flowHeight = 0;
-  let minimumVisualTop = 0;
-  let maximumVisualBottom = 0;
-
-  for (const line of lines) {
-    const flowHeightForLine = effectiveLineFlowHeight(line, defaultLineHeight);
-    const visualTop = Math.min(0, nodeVisualTop(line.nodes));
-    const visualBottom = Math.max(flowHeightForLine, nodeVisualBottom(line.nodes));
-    measurements.push({ flowTop: flowHeight, flowHeight: flowHeightForLine, visualTop, visualBottom });
-    minimumVisualTop = Math.min(minimumVisualTop, flowHeight + visualTop);
-    maximumVisualBottom = Math.max(maximumVisualBottom, flowHeight + visualBottom);
-    flowHeight += flowHeightForLine;
-    prefixHeights.push(flowHeight);
-  }
-
-  return {
-    lines: measurements,
-    prefixHeights,
-    flowHeight,
-    leadingOverflow: Math.max(0, Math.ceil(-minimumVisualTop)),
-    trailingOverflow: Math.max(0, Math.ceil(maximumVisualBottom - flowHeight)),
-  };
-}
-
-function getVirtualLineRange(layout: ScrollbackLayout, viewport: ScrollbackViewport): { startIndex: number; endIndex: number } {
-  if (layout.lines.length === 0 || viewport.height <= 0)
-    return { startIndex: 0, endIndex: layout.lines.length };
-
-  // Keep one complete viewport mounted above and below the reader. The range
-  // also includes a line whose absolute visual overflow intersects the range,
-  // which is required for multi-row portraits positioned outside its line box.
-  const overscan = viewport.height * VIRTUAL_OVERSCAN_SCREENS;
-  const visibleStart = Math.max(0, viewport.scrollTop - overscan);
-  const visibleEnd = viewport.scrollTop + viewport.height + overscan;
-  let startIndex = layout.lines.length;
-  let endIndex = 0;
-  for (let index = 0; index < layout.lines.length; index++) {
-    const measurement = layout.lines[index];
-    const lineTop = layout.leadingOverflow + measurement.flowTop;
-    const visualTop = lineTop + measurement.visualTop;
-    const visualBottom = lineTop + measurement.visualBottom;
-    if (visualBottom < visibleStart || visualTop > visibleEnd) continue;
-    startIndex = Math.min(startIndex, index);
-    endIndex = Math.max(endIndex, index + 1);
-  }
-
-  if (startIndex === layout.lines.length)
-    return { startIndex: 0, endIndex: Math.min(1, layout.lines.length) };
-  return { startIndex, endIndex };
 }
 
 export function trimTrailingEmptyLines(lines: readonly RealtimeLine[]): readonly RealtimeLine[] {
@@ -257,11 +217,11 @@ export function trimTrailingEmptyLines(lines: readonly RealtimeLine[]): readonly
  * that leading portion inside the scrollback's flow so the first title image
  * is not clipped by the scrollback's overflow boundary.
  */
-export function leadingVisualOverflow(lines: readonly RealtimeLine[]): number {
+export function leadingVisualOverflow(lines: readonly RealtimeLine[], defaultLineHeight = DEFAULT_RUNTIME_LINE_HEIGHT): number {
   let flowHeight = 0;
   let visualTop = 0;
   for (const line of lines) {
-    const lineHeight = effectiveLineFlowHeight(line, DEFAULT_RUNTIME_LINE_HEIGHT);
+    const lineHeight = effectiveLineFlowHeight(line, defaultLineHeight);
     visualTop = Math.min(visualTop, flowHeight + nodeVisualTop(line.nodes));
     flowHeight += lineHeight;
   }
@@ -405,11 +365,11 @@ function physicalLineStyle(line: RealtimeLine): CSSProperties {
  * ordinary flow height after the last line, otherwise overflow:hidden on the
  * scrollback clips the lower part of a portrait (or the whole portrait).
  */
-export function trailingVisualOverflow(lines: readonly RealtimeLine[]): number {
+export function trailingVisualOverflow(lines: readonly RealtimeLine[], defaultLineHeight = DEFAULT_RUNTIME_LINE_HEIGHT): number {
   let flowHeight = 0;
   let visualBottom = 0;
   for (const line of lines) {
-    const lineHeight = effectiveLineFlowHeight(line, DEFAULT_RUNTIME_LINE_HEIGHT);
+    const lineHeight = effectiveLineFlowHeight(line, defaultLineHeight);
     visualBottom = Math.max(visualBottom, flowHeight + nodeVisualBottom(line.nodes));
     flowHeight += lineHeight;
   }
