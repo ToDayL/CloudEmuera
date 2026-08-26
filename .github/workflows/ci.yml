@@ -1,0 +1,69 @@
+name: CI
+
+# A PR rerun is provided by GitHub's "Re-run jobs" action for the workflow
+# run. It intentionally has no separate manual trigger: reruns keep the
+# original PR commit and ref.
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudemuera-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Docker quality gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      COMPOSE_PROJECT_NAME: cloudemuera-ci-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out PR merge ref
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure container user identity
+        run: |
+          uid="$(id -u)"
+          gid="$(id -g)"
+          echo "CLOUDEMUERA_UID=$uid" >> "$GITHUB_ENV"
+          echo "CLOUDEMUERA_GID=$gid" >> "$GITHUB_ENV"
+          echo "CI container identity: $uid:$gid"
+
+      - name: Verify Docker toolchain
+        run: |
+          docker version
+          docker compose version
+
+      - name: Verify repository provenance
+        run: |
+          git diff --check
+          ./scripts/verify-third-party.sh
+
+      - name: Start development environment
+        run: ./scripts/dev-up.sh
+
+      - name: Run repository quality gate
+        run: ./scripts/check.sh
+
+      - name: Verify development user mapping
+        run: ./scripts/verify-dev-user.sh
+
+      - name: Show Compose logs on failure
+        if: failure()
+        run: |
+          source scripts/lib/dev-env.sh
+          docker compose --profile e2e -f docker/compose.dev.yml logs --no-color --tail=300
+
+      - name: Stop development environment
+        if: always()
+        run: ./scripts/dev-down.sh
