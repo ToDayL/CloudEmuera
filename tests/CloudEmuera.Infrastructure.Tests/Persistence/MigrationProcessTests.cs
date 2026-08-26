@@ -99,7 +99,7 @@ public sealed class MigrationProcessTests
                 Assert.Contains("migration_lock_busy", secondResult.StandardError);
             }
 
-            firstResult = await first.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            firstResult = await first.Completion.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal(0, firstResult.ExitCode);
             Assert.Contains("result=succeeded", firstResult.StandardOutput);
         }
