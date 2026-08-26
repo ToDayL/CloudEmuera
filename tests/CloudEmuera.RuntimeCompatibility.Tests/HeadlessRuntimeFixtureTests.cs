@@ -271,7 +271,7 @@ public sealed class HeadlessRuntimeFixtureTests
         {
             string sourceImage = Path.Combine(
                 RuntimeCompatibilityCli.FindRepositoryRoot(),
-                "data", "sessions", "sess_01a00f1017c0715798ed61a24837cfc7", "root", "resources", "1.png");
+                "tests", "fixtures", "runtime", "v18-core", "resources", "cloudemuera-v18.png");
             File.Copy(sourceImage, Path.Combine(root, "resources", "1.png"));
             File.WriteAllBytes(
                 Path.Combine(root, "resources", "webp.webp"),
