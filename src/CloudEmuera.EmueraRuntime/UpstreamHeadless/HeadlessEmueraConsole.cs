@@ -6,6 +6,8 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using CloudEmuera.RuntimeAdapter;
@@ -336,6 +338,122 @@ internal sealed class EmueraConsole
             .ThenBy(line => line.LineId, StringComparer.Ordinal)
             .ToArray();
 
+    // CloudEmuera: AppContents is the pinned upstream registry for sprites
+    // created during execution. Static resources arrive through imageResolver,
+    // while a SpriteG created from a saved or in-memory GraphicsImage must
+    // resolve to a SessionRoot PNG so HTML_PRINT can publish a browser asset.
+    private RuntimeSpriteDefinition ResolveSpriteDefinition(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return null;
+
+        RuntimeSpriteDefinition dynamic = TryResolveDynamicSprite(AppContents.GetSprite(name));
+        return dynamic ?? imageResolver?.Invoke(name);
+    }
+
+    private RuntimeSpriteDefinition TryResolveDynamicSprite(ASprite sprite)
+    {
+        if (sprite is not SpriteG spriteG ||
+            spriteG.BaseImage is not GraphicsImage graphics ||
+            !spriteG.IsCreated)
+            return null;
+
+        Rectangle source = spriteG.SrcRectangle;
+        if (source.Width <= 0 || source.Height <= 0 ||
+            spriteG.DestBaseSize.Width <= 0 || spriteG.DestBaseSize.Height <= 0)
+            return null;
+
+        try
+        {
+            string assetPath = graphics.HeadlessAssetPath;
+            if (string.IsNullOrWhiteSpace(assetPath) ||
+                HeadlessPathResolver.ResolveExisting(Path.Combine(
+                    MinorShift.Emuera.Program.ExeDir,
+                    assetPath.Replace('/', Path.DirectorySeparatorChar))) is null)
+            {
+                assetPath = MaterializeDynamicGraphics(graphics);
+            }
+
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return null;
+
+            return new RuntimeSpriteDefinition(
+                ConsoleAssetIdCodec.EncodePath(assetPath),
+                source.X,
+                source.Y,
+                source.Width,
+                source.Height,
+                spriteG.DestBasePosition.X,
+                spriteG.DestBasePosition.Y,
+                spriteG.DestBaseSize.Width,
+                spriteG.DestBaseSize.Height);
+        }
+        catch (ArgumentException)
+        {
+            // The save bridge only stores controlled paths. If an invalid
+            // value somehow reaches this seam, retain the normal image
+            // fallback instead of failing the interpreter.
+            return null;
+        }
+    }
+
+    private static string MaterializeDynamicGraphics(GraphicsImage graphics)
+    {
+        try
+        {
+            // GCREATE/OVERLAY_GCREATE surfaces are mutable in-memory state and
+            // have no native sav file until the game explicitly calls GSAVE.
+            // Materialize the current pixels under SessionRoot on first use so
+            // the browser can fetch the same surface through the asset gate.
+            byte[] pngData = EncodePng(graphics.Bitmap);
+            string digest = Convert.ToHexString(SHA256.HashData(pngData)).ToLowerInvariant();
+            string fullPath = Path.Combine(
+                MinorShift.Emuera.Program.ExeDir,
+                "tmp",
+                "cloudemuera-runtime-assets",
+                $"{digest}.png");
+            string createPath = HeadlessPathResolver.ForCreate(fullPath);
+            string parent = Path.GetDirectoryName(createPath);
+            if (string.IsNullOrWhiteSpace(parent))
+                return null;
+
+            Directory.CreateDirectory(parent);
+            if (!File.Exists(createPath))
+                File.WriteAllBytes(createPath, pngData);
+
+            string resolved = HeadlessPathResolver.ResolveExisting(fullPath);
+            string logicalPath = ToHeadlessLogicalPath(resolved);
+            if (logicalPath is null)
+                return null;
+
+            graphics.HeadlessAssetPath = logicalPath;
+            return logicalPath;
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or InvalidOperationException or ExternalException)
+        {
+            // A transient raster/file failure must retain the normal bounded
+            // literal fallback. It must not make the interpreter fail merely
+            // because a browser asset could not be published.
+            return null;
+        }
+    }
+
+    private static string ToHeadlessLogicalPath(string resolved)
+    {
+        if (string.IsNullOrWhiteSpace(resolved))
+            return null;
+
+        string relative = Path.GetRelativePath(MinorShift.Emuera.Program.ExeDir, resolved);
+        if (relative == "." || relative == ".." ||
+            relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+            Path.IsPathRooted(relative))
+            return null;
+
+        return relative
+            .Replace(Path.DirectorySeparatorChar, '/')
+            .Replace(Path.AltDirectorySeparatorChar, '/');
+    }
+
     private UpstreamHtmlTranslationResult TranslateHtmlFragment(
         string fragment,
         UpstreamHtmlParseMode mode)
@@ -362,7 +480,7 @@ internal sealed class EmueraConsole
                 ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.ForeColor),
                 ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.FocusColor),
                 generation,
-                imageResolver,
+                ResolveSpriteDefinition,
                 mode,
                 convertBackslashToYen));
         }
@@ -408,11 +526,11 @@ internal sealed class EmueraConsole
 
     public void PrintImg(string name, string nameb, string namem, MixedNum height, MixedNum width, MixedNum ypos)
     {
-        RuntimeSpriteDefinition resolved = imageResolver?.Invoke(name);
+        RuntimeSpriteDefinition resolved = ResolveSpriteDefinition(name);
         if (resolved is null)
             throw new NotSupportedException($"Sprite '{name}' is unavailable in the headless runtime.");
-        RuntimeSpriteDefinition hover = string.IsNullOrEmpty(nameb) ? null : imageResolver?.Invoke(nameb);
-        RuntimeSpriteDefinition mapping = string.IsNullOrEmpty(namem) ? null : imageResolver?.Invoke(namem);
+        RuntimeSpriteDefinition hover = string.IsNullOrEmpty(nameb) ? null : ResolveSpriteDefinition(nameb);
+        RuntimeSpriteDefinition mapping = string.IsNullOrEmpty(namem) ? null : ResolveSpriteDefinition(namem);
         int fontSize = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize);
         int targetHeight = height is null || height.num == 0
             ? fontSize
@@ -691,12 +809,243 @@ internal sealed class EmueraConsole
     public bool MoveMouse(Point point) => false;
 
     public ConsoleDisplayLine[] GetDisplayLines(long lineNo) => DisplayLineList.ToArray();
+
+    /// <summary>
+    /// Implements the upstream PRINT-buffer pop used by
+    /// HTML_POPPRINTINGSTR(). The structured renderer keeps its pending
+    /// nodes outside PrintStringBuffer, so returning DisplayLineList here
+    /// would pop already committed browser output and would lose the rich
+    /// text/image parts that the HTML helper needs.
+    /// </summary>
     public ConsoleDisplayLine[] PopDisplayingLines()
     {
-        ConsoleDisplayLine[] result = DisplayLineList.ToArray();
-        DisplayLineList.Clear();
-        return result;
+        if (!outputEnabled || (pendingLine.Count == 0 && pendingBufferedLines.Count == 0))
+            return null;
+
+        var result = new List<ConsoleDisplayLine>(pendingBufferedLines.Count + 1);
+        foreach (PendingBufferedLine line in pendingBufferedLines)
+            AppendPoppedPrintingLine(result, line);
+        if (pendingLine.Count > 0)
+        {
+            AppendPoppedPrintingLine(result, new PendingBufferedLine(
+                pendingLine.ToArray(),
+                pendingLineAlignment,
+                pendingLineNoWrap,
+                Truncate: false,
+                pendingLineEnd));
+        }
+
+        pendingBufferedLines.Clear();
+        pendingLine.Clear();
+        pendingLineAlignment = null;
+        pendingLineNoWrap = false;
+        pendingLineEnd = true;
+        return result.Count == 0 ? null : result.ToArray();
     }
+
+    private void AppendPoppedPrintingLine(
+        List<ConsoleDisplayLine> destination,
+        PendingBufferedLine line)
+    {
+        ConsoleButtonString[] buttons = CreateUpstreamPrintingButtons(line.Nodes);
+        if (buttons.Length == 0)
+            return;
+
+        destination.Add(new ConsoleDisplayLine(
+            buttons,
+            isLogical: true,
+            temporary: false,
+            lineEnd: line.LineEnd));
+    }
+
+    private ConsoleButtonString[] CreateUpstreamPrintingButtons(IReadOnlyList<ConsoleNode> nodes)
+    {
+        var buttons = new List<ConsoleButtonString>();
+        var plainParts = new List<AConsoleDisplayNode>();
+
+        void FlushPlainParts()
+        {
+            if (plainParts.Count == 0)
+                return;
+            buttons.Add(new ConsoleButtonString(this, plainParts.ToArray()));
+            plainParts.Clear();
+        }
+
+        foreach (ConsoleNode node in nodes)
+        {
+            switch (node)
+            {
+                case ButtonNode button:
+                {
+                    AConsoleDisplayNode[] parts = ToUpstreamPrintingParts(button.Children);
+                    if (parts.Length == 0)
+                        break;
+
+                    FlushPlainParts();
+                    ConsoleButtonString legacy = CreateUpstreamPrintingButton(button, parts);
+                    if (legacy is not null)
+                        buttons.Add(legacy);
+                    break;
+                }
+                case PositionedInlineSegmentNode segment when segment.Action is not null:
+                {
+                    AConsoleDisplayNode[] parts = ToUpstreamPrintingParts(segment.Children);
+                    if (parts.Length == 0)
+                        break;
+
+                    FlushPlainParts();
+                    buttons.Add(new ConsoleButtonString(this, parts, segment.Action.Value));
+                    break;
+                }
+                case LineBreakNode:
+                    FlushPlainParts();
+                    break;
+                default:
+                {
+                    AConsoleDisplayNode? part = ToUpstreamPrintingPart(node);
+                    if (part is not null)
+                        plainParts.Add(part);
+                    break;
+                }
+            }
+        }
+
+        FlushPlainParts();
+        return buttons.ToArray();
+    }
+
+    private ConsoleButtonString CreateUpstreamPrintingButton(
+        ButtonNode button,
+        AConsoleDisplayNode[] parts)
+    {
+        ConsoleButtonString legacy;
+        if (!button.Enabled)
+        {
+            if (button.Tooltip is null && button.PositionX is null)
+            {
+                var plain = new ConsoleButtonString(this, parts);
+                return plain;
+            }
+            legacy = new ConsoleButtonString(this, parts);
+        }
+        else if (integerButtonNodes.Contains(button) &&
+            long.TryParse(button.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long input))
+        {
+            legacy = new ConsoleButtonString(this, parts, input);
+        }
+        else
+        {
+            legacy = new ConsoleButtonString(this, parts, button.Value);
+        }
+
+        if (button.Tooltip is not null)
+            legacy.Title = button.Tooltip;
+        if (button.PositionX is int positionX)
+            legacy.LockPointX(positionX);
+        return legacy;
+    }
+
+    private AConsoleDisplayNode[] ToUpstreamPrintingParts(IReadOnlyList<ConsoleNode> nodes)
+    {
+        var parts = new List<AConsoleDisplayNode>(nodes.Count);
+        foreach (ConsoleNode node in nodes)
+        {
+            if (node is PositionedInlineSegmentNode segment)
+            {
+                parts.AddRange(ToUpstreamPrintingParts(segment.Children));
+                continue;
+            }
+
+            AConsoleDisplayNode? part = ToUpstreamPrintingPart(node);
+            if (part is not null)
+                parts.Add(part);
+        }
+        return parts.ToArray();
+    }
+
+    private AConsoleDisplayNode? ToUpstreamPrintingPart(ConsoleNode node) => node switch
+    {
+        TextNode text => new ConsoleStyledString(text.Text, ToUpstreamStringStyle(text.Style)),
+        SpriteNode sprite => ToUpstreamPrintingImage(sprite),
+        ShapeNode shape => ToUpstreamPrintingShape(shape),
+        ImageNode image => new ConsoleStyledString(image.AltText ?? string.Empty, stringStyle),
+        _ => null,
+    };
+
+    private AConsoleDisplayNode ToUpstreamPrintingImage(SpriteNode sprite)
+    {
+        string source = string.IsNullOrEmpty(sprite.AltText) ? sprite.AssetId.Value : sprite.AltText;
+        ConsoleRect destination = sprite.Destination;
+        return new ConsoleImagePart(
+            source,
+            null,
+            null,
+            PixelLength(destination.Height),
+            PixelLength(destination.Width),
+            PixelLength(destination.Y));
+    }
+
+    private AConsoleDisplayNode? ToUpstreamPrintingShape(ShapeNode shape)
+    {
+        string shapeName;
+        MixedNum[] parameters;
+        switch (shape.Shape)
+        {
+            case ConsoleShapeKind.Space:
+                shapeName = "space";
+                parameters = [PixelLength(shape.Bounds.Width)];
+                break;
+            case ConsoleShapeKind.Rectangle:
+                shapeName = "rect";
+                parameters =
+                [
+                    PixelLength(shape.Bounds.X),
+                    PixelLength(shape.Bounds.Y),
+                    PixelLength(shape.Bounds.Width),
+                    PixelLength(shape.Bounds.Height)
+                ];
+                break;
+            default:
+                return null;
+        }
+
+        return ConsoleShapePart.CreateShape(
+            shapeName,
+            parameters,
+            ToDrawingColor(shape.Fill, Config.ForeColor),
+            ToDrawingColor(shape.ButtonColor, Config.FocusColor),
+            shape.Fill is not null);
+    }
+
+    private static MixedNum PixelLength(int value) => new() { num = value, isPx = true };
+
+    private static StringStyle ToUpstreamStringStyle(ConsoleTextStyle style)
+    {
+        Color foreground = ToDrawingColor(style.Foreground, Config.ForeColor);
+        Color buttonColor = ToDrawingColor(style.ButtonColor, Config.FocusColor);
+        FontStyle fontStyle = FontStyle.Regular;
+        if ((style.Decorations & ConsoleFontStyle.Bold) != 0)
+            fontStyle |= FontStyle.Bold;
+        if ((style.Decorations & ConsoleFontStyle.Italic) != 0)
+            fontStyle |= FontStyle.Italic;
+        if ((style.Decorations & ConsoleFontStyle.Underline) != 0)
+            fontStyle |= FontStyle.Underline;
+        if ((style.Decorations & ConsoleFontStyle.Strike) != 0)
+            fontStyle |= FontStyle.Strikeout;
+
+        return new StringStyle(
+            foreground,
+            style.Foreground is not null && foreground != Config.ForeColor,
+            buttonColor,
+            fontStyle,
+            Config.FontName);
+    }
+
+    private static Color ToDrawingColor(
+        CloudEmuera.RuntimeAdapter.ConsoleColor? color,
+        Color fallback) => color is { } value
+            ? Color.FromArgb(value.Alpha, value.Red, value.Green, value.Blue)
+            : fallback;
     public int GetLinePointY(int lineNo) => checked(lineNo * 16);
     public string getDefStBar() => barString;
     public string getStBar(string value)
@@ -800,7 +1149,7 @@ internal sealed class EmueraConsole
     {
         if (args.Length < 1 || args[0] is not string name)
             throw new NotSupportedException("A background requires a manifest sprite name.");
-        RuntimeSpriteDefinition resolved = imageResolver?.Invoke(name);
+        RuntimeSpriteDefinition resolved = ResolveSpriteDefinition(name);
         if (resolved is null)
             throw new NotSupportedException($"Background '{name}' is unavailable in the headless runtime.");
         long depth = args.Length > 1 ? Convert.ToInt64(args[1], CultureInfo.InvariantCulture) : 0;
@@ -844,7 +1193,7 @@ internal sealed class EmueraConsole
     {
         if (image is null || !image.IsCreated || zdepth == 0)
             return false;
-        RuntimeSpriteDefinition resolved = imageResolver?.Invoke(image.Name);
+        RuntimeSpriteDefinition resolved = ResolveSpriteDefinition(image.Name);
         string id = NextCanvasId("image");
         if (resolved is not null)
         {

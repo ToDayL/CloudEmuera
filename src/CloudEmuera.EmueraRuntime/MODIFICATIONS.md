@@ -24,6 +24,38 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-27 — Layered HTML budget and saved dynamic sprites
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now checks the pinned upstream
+  `AppContents` registry for runtime-created `SpriteG` values before consulting
+  the static resource resolver. `Upstream/Emuera/UI/Game/Image/GraphicsImage.cs`
+  records the logical SessionRoot asset after a successful `GSAVE` or `GLOAD`,
+  invalidates it after pixel mutation, and materializes a content-addressed
+  PNG for an unsaved `GCREATE`/`OVERLAY_GCREATE` composite on first use.
+  `Upstream/Emuera/Runtime/Script/Statements/Function/Creator.Method.cs`
+  bridges saved paths into the structured `path-*` asset id.
+- `RuntimeAdapter/Console/ConsoleContractLimits.cs` raises the finite HTML
+  input/tag/segment/part/text budgets and the batch/physical-line node budgets
+  so a normal multi-character portrait fragment is not rejected at the old
+  32 KiB/256-tag/512-node defaults. `StructuredIpcProtocol` accepts the same
+  larger physical-line segment budget; output node and asset validation remain
+  active.
+- `HTML_POPPRINTINGSTR()` now consumes the structured pending print line, not
+  the already committed scrollback list. Its upstream `ConsoleDisplayLine`
+  bridge preserves text, styles, images, shapes and button metadata, so the
+  `PRINTSTR`/`HTML_PRINT` daily interaction panel is not discarded after the
+  preceding dialogue line is emitted.
+- Scope: the `eraAM2` development Session (Session name, not a Game name),
+  COMP-007/SAVE-011, PLAY-002 and ADR-0019/ADR-0024. This keeps generated
+  `sav/imgNNNN.png` files and unsaved runtime composites browser-addressable
+  without embedding raw HTML or an inline duplicate raster.
+- Verification: `HtmlPrintAllowsLargeLayeredPortraitFragmentWithinParserBudget`,
+  `HtmlPopPrintingStringConsumesPendingStructuredOutputOnly`,
+  `HtmlPopPrintingStringKeepsTheInteractivePanelInTheSameHtmlPrint`,
+  `SavedDynamicSpriteResolvesThroughHtmlPrintInSavLayout`,
+  `UnsavedDynamicSpriteMaterializesCurrentGraphicsSurface`, and the existing
+  Graphics/HTML RuntimeBridge tests in the development Docker environment.
+
 ## 2026-08-26 — Browser right-click message skip (issue #2)
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` preserves the desktop

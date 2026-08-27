@@ -106,6 +106,9 @@ public static class StructuredIpcLimits
 {
     public const int MaxEnvelopeBytes = 12 * 1024 * 1024;
     public const int MaxIdentifierLength = 128;
+    // Browser-addressable SessionRoot paths are encoded as path-* asset ids;
+    // they need a larger finite budget than short protocol identifiers.
+    public const int MaxAssetIdLength = 2_048;
     public const int MaxStringLength = 32 * 1024;
     public const int MaxInputLength = 16_384;
     public const int MaxTransactions = 512;
@@ -118,7 +121,7 @@ public static class StructuredIpcLimits
     public const int MaxHtmlChildren = 256;
     public const int MaxGeometryPoints = 256;
     public const int MaxPhysicalLinesPerLogicalLine = 4_096;
-    public const int MaxSegmentsPerPhysicalLine = 512;
+    public const int MaxSegmentsPerPhysicalLine = 8_192;
     public const int MaxProtocolErrorMessageLength = 512;
     public const int MaxInlineRasterBytes = 8 * 1024 * 1024;
 }
@@ -686,7 +689,9 @@ public static class StructuredIpcValidator
 
     private static bool IsText(string? value) => value is not null && value.Length <= StructuredIpcLimits.MaxStringLength && !value.Any(char.IsControl);
 
-    private static bool IsAsset(string value) => IsIdentifier(value) && !value.Contains("..", StringComparison.Ordinal);
+    private static bool IsAsset(string value) => value is { Length: > 0 and <= StructuredIpcLimits.MaxAssetIdLength } &&
+        value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.' or '~') &&
+        !value.Contains("..", StringComparison.Ordinal);
 
     private static bool IsTag(string value) => value is "span" or "div" or "p" or "b" or "strong" or "i" or "em" or "u" or "s" or "strike" or "img";
 
