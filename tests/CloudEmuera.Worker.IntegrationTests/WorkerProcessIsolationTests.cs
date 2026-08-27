@@ -3,7 +3,7 @@ using System.Text;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V6;
+using CloudEmuera.Ipc.V7;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;

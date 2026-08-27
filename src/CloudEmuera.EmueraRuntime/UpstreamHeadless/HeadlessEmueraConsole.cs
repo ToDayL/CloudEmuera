@@ -87,6 +87,10 @@ internal sealed class EmueraConsole
     // an unrelated browser input.
     private bool inputMessageSkipActive;
     private bool outputEnabled;
+    private readonly Dictionary<int, long> dirtyTooltipGraphics = [];
+    private readonly HashSet<string> tooltipProjectionWarnings = new(StringComparer.Ordinal);
+    private bool tooltipProjectionActive;
+    private bool tooltipProjectionImageMode;
 
     private sealed record PendingBufferedLine(
         IReadOnlyList<ConsoleNode> Nodes,
@@ -265,6 +269,7 @@ internal sealed class EmueraConsole
             pendingBufferedLines.Any(line => line.Nodes.Any(node => node is ButtonNode)))
             FlushPendingLine();
         FlushDeferredReplacementDelete();
+        ProjectTooltipResources();
     }
     public void ClearText()
     {
@@ -581,6 +586,7 @@ internal sealed class EmueraConsole
         isTimeOut = false;
         FlushPendingLine();
         FlushDeferredReplacementDelete();
+        ProjectTooltipResources();
         ConsoleInputType type = MapInputType(request.InputType);
         if (ShouldSkipMessageWait(type, request.StopMesskip))
         {
@@ -690,6 +696,8 @@ internal sealed class EmueraConsole
     {
         isTimeOut = false;
         FlushPendingLine();
+        FlushDeferredReplacementDelete();
+        ProjectTooltipResources();
         ConsoleInputType inputType = anykey ? ConsoleInputType.AnyKey : ConsoleInputType.EnterKey;
         // Match upstream EmueraConsole.ReadAnyKey: a wait emitted by
         // EVENTCOMEND suppresses Process' fallback post-command wait.
@@ -740,7 +748,11 @@ internal sealed class EmueraConsole
             GlobalStatic.Process.NeedWaitToEventComEnd = false;
     }
 
-    public void Quit() => isRunning = false;
+    public void Quit()
+    {
+        ProjectTooltipResources();
+        isRunning = false;
+    }
     public void ForceQuit() => Quit();
     public void ThrowError(bool playSound)
     {
@@ -1249,14 +1261,30 @@ internal sealed class EmueraConsole
     public void SetRedraw(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
     public void setRedrawTimer(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
     public void ReloadErbFinished() { }
-    public void CustomToolTip(params object[] args) => throw HostTooltipBlocked();
-    public void SetToolTipColor(params object[] args) => throw HostTooltipBlocked();
-    public void SetToolTipDelay(params object[] args) => throw HostTooltipBlocked();
-    public void SetToolTipDuration(params object[] args) => throw HostTooltipBlocked();
-    public void SetToolTipFontName(params object[] args) => throw HostTooltipBlocked();
-    public void SetToolTipFontSize(params object[] args) => throw HostTooltipBlocked();
-    public void SetToolTipFormat(params object[] args) => throw HostTooltipBlocked();
-    public void SetToolTipImg(params object[] args) => throw HostTooltipBlocked();
+    // CloudEmuera ADR-0036: TOOLTIP_* is browser presentation state, not a
+    // desktop-host shim. Keep this vendored seam thin and strongly typed.
+    public void CustomToolTip(bool enabled) => TooltipSink.SetTooltipCustom(enabled);
+    public void SetToolTipColor(Color foreground, Color background) => TooltipSink.SetTooltipColor(
+        new CloudEmuera.RuntimeAdapter.ConsoleColor(foreground.R, foreground.G, foreground.B),
+        new CloudEmuera.RuntimeAdapter.ConsoleColor(background.R, background.G, background.B));
+    public void SetToolTipDelay(int delay) => TooltipSink.SetTooltipDelay(delay);
+    public void SetToolTipDuration(int duration) => TooltipSink.SetTooltipDuration(duration);
+    public void SetToolTipFontName(string name)
+    {
+        if (!string.Equals(name, Config.FontName, StringComparison.Ordinal) && ignoredGameFonts.Add(name ?? string.Empty))
+            RecordWarning($"Tooltip font '{name}' is mapped to the Session font.");
+        TooltipSink.SetTooltipFont(name ?? string.Empty);
+    }
+    public void SetToolTipFontSize(long size) => TooltipSink.SetTooltipFontSize(size);
+    public void SetToolTipFormat(long flags) => TooltipSink.SetTooltipFormat(flags);
+    public void SetToolTipImg(bool enabled)
+    {
+        TooltipSink.SetTooltipImageMode(enabled);
+        ProjectTooltipResources();
+    }
+
+    private ITooltipStateSink TooltipSink => adapter as ITooltipStateSink
+        ?? throw new InvalidOperationException("The structured runtime adapter does not provide tooltip state.");
 
     private void AppendText(string value)
     {
@@ -2094,6 +2122,7 @@ internal sealed class EmueraConsole
         {
             SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction([operation]));
             RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+            ProjectTooltipResources();
         }
         else
             adapter.Emit(operation);
@@ -2108,6 +2137,7 @@ internal sealed class EmueraConsole
         {
             SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction(copy));
             RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+            ProjectTooltipResources();
         }
         else
         {
@@ -2156,6 +2186,143 @@ internal sealed class EmueraConsole
         using var stream = new MemoryStream();
         bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
         return stream.ToArray();
+    }
+
+    // GraphicsImage calls this for pixel mutations. Projection remains lazy:
+    // only an id referenced by a visible tooltip is encoded at a display seam.
+    internal void NotifyGraphicsMutation(int graphicsId, long revision)
+    {
+        if (adapter is StructuredGameConsole structured &&
+            structured.StateStore.ContainsTooltipGraphicsReference(graphicsId))
+            dirtyTooltipGraphics[graphicsId] = revision;
+    }
+
+    private void ProjectTooltipResources()
+    {
+        if (tooltipProjectionActive || adapter is not StructuredGameConsole structured)
+            return;
+
+        tooltipProjectionActive = true;
+        try
+        {
+            ConsoleSnapshot snapshot = structured.Snapshot;
+            IReadOnlyDictionary<int, int> references = structured.StateStore.TooltipGraphicsReferences;
+            var projected = snapshot.TooltipResources.ToDictionary(resource => resource.GraphicsId);
+            var operations = new List<ConsoleOperation>();
+            IReadOnlyList<int> changedReferences = structured.StateStore.TakeTooltipProjectionCandidates();
+
+            if (!snapshot.TooltipPresentation.ImageMode)
+            {
+                if (projected.Count > 0)
+                    operations.Add(ConsoleOperation.ClearTooltipResources());
+                dirtyTooltipGraphics.Clear();
+                ApplyTooltipProjectionOperations(structured, operations);
+                tooltipProjectionImageMode = false;
+                return;
+            }
+
+            IEnumerable<int> candidates = tooltipProjectionImageMode
+                ? changedReferences.Concat(dirtyTooltipGraphics.Keys)
+                : references.Keys.Concat(projected.Keys);
+
+            long projectedBytes = projected.Values.Sum(resource => (long)resource.PngData.Count);
+            foreach (int graphicsId in candidates.Distinct().OrderBy(id => id))
+            {
+                projected.TryGetValue(graphicsId, out ConsoleTooltipResource? previous);
+                if (!references.ContainsKey(graphicsId))
+                {
+                    if (previous is not null)
+                    {
+                        operations.Add(ConsoleOperation.RemoveTooltipResource(graphicsId));
+                        projected.Remove(graphicsId);
+                        projectedBytes -= previous.PngData.Count;
+                    }
+                    dirtyTooltipGraphics.Remove(graphicsId);
+                    continue;
+                }
+                if (!AppContents.TryGetGraphics(graphicsId, out GraphicsImage? graphics) || !graphics.IsCreated)
+                {
+                    RemoveUnavailableTooltipResource(graphicsId, previous, projected, operations, ref projectedBytes, 0, "missing");
+                    continue;
+                }
+
+                long revision = graphics.HeadlessRevision;
+                if (previous?.Revision == revision && !dirtyTooltipGraphics.ContainsKey(graphicsId))
+                    continue;
+
+                try
+                {
+                    int width = graphics.Width;
+                    int height = graphics.Height;
+                    if (width is < 1 or > ConsoleContractLimits.MaxTooltipImageDimension ||
+                        height is < 1 or > ConsoleContractLimits.MaxTooltipImageDimension)
+                        throw new InvalidOperationException("dimensions");
+                    byte[] png = EncodePng(graphics.Bitmap);
+                    var resource = new ConsoleTooltipResource(graphicsId, png, width, height, revision);
+                    long previousBytes = previous?.PngData.Count ?? 0;
+                    long nextBytes = checked(projectedBytes - previousBytes + resource.PngData.Count);
+                    if (nextBytes > structured.StateStore.Options.ContractLimits.MaxTooltipResourcesBytes ||
+                        previous is null && projected.Count >= structured.StateStore.Options.ContractLimits.MaxTooltipResources)
+                        throw new InvalidOperationException("budget");
+                    operations.Add(ConsoleOperation.UpsertTooltipResource(resource));
+                    projected[graphicsId] = resource;
+                    projectedBytes = nextBytes;
+                    dirtyTooltipGraphics.Remove(graphicsId);
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or ExternalException or IOException)
+                {
+                    RemoveUnavailableTooltipResource(
+                        graphicsId,
+                        previous,
+                        projected,
+                        operations,
+                        ref projectedBytes,
+                        revision,
+                        exception.Message);
+                }
+            }
+
+            ApplyTooltipProjectionOperations(structured, operations);
+            tooltipProjectionImageMode = true;
+        }
+        finally
+        {
+            tooltipProjectionActive = false;
+        }
+    }
+
+    private void RemoveUnavailableTooltipResource(
+        int graphicsId,
+        ConsoleTooltipResource? previous,
+        Dictionary<int, ConsoleTooltipResource> projected,
+        List<ConsoleOperation> operations,
+        ref long projectedBytes,
+        long revision,
+        string reason)
+    {
+        if (previous is not null)
+        {
+            operations.Add(ConsoleOperation.RemoveTooltipResource(graphicsId));
+            projected.Remove(graphicsId);
+            projectedBytes -= previous.PngData.Count;
+        }
+        dirtyTooltipGraphics.Remove(graphicsId);
+        string diagnostic = $"tooltip_graphics_unavailable:{graphicsId}:{revision}:{reason}";
+        if (tooltipProjectionWarnings.Count < 256 && tooltipProjectionWarnings.Add(diagnostic))
+            RecordWarning(diagnostic);
+    }
+
+    private static void ApplyTooltipProjectionOperations(
+        StructuredGameConsole structured,
+        IReadOnlyList<ConsoleOperation> operations)
+    {
+        int maximum = structured.StateStore.Options.ContractLimits.MaxTransactionOperations;
+        for (int offset = 0; offset < operations.Count; offset += maximum)
+        {
+            ConsoleOperation[] batch = operations.Skip(offset).Take(maximum).ToArray();
+            SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction(batch));
+            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+        }
     }
 
     private void EmitTimeoutCountdown(TimeSpan timeout) =>
@@ -2308,6 +2475,4 @@ internal sealed class EmueraConsole
             ? $"{value} ({located.Filename}:{located.LineNo})"
             : value;
 
-    private static NotSupportedException HostTooltipBlocked() =>
-        new("HOST_SHIM: desktop custom tooltip capabilities are blocked in the headless runtime.");
 }

@@ -54,6 +54,8 @@ public sealed class ConsoleSnapshot
         CanvasScene = new CanvasScene();
         MediaState = new MediaState();
         WindowMetadata = new WindowMetadata();
+        TooltipPresentation = new ConsoleTooltipPresentation();
+        TooltipResources = Array.Empty<ConsoleTooltipResource>();
         CurrentPrompt = currentPrompt;
         WasTruncated = wasTruncated;
         DroppedNodeCount = droppedNodeCount;
@@ -72,7 +74,9 @@ public sealed class ConsoleSnapshot
         MediaState? mediaState = null,
         ConsolePrompt? currentPrompt = null,
         WindowMetadata? windowMetadata = null,
-        ConsoleTruncationMetadata? truncation = null)
+        ConsoleTruncationMetadata? truncation = null,
+        ConsoleTooltipPresentation? tooltipPresentation = null,
+        IEnumerable<ConsoleTooltipResource>? tooltipResources = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(snapshotSequence);
         ArgumentNullException.ThrowIfNull(scrollback);
@@ -85,6 +89,11 @@ public sealed class ConsoleSnapshot
         if (currentPrompt is not null)
             currentPrompt.Validate(ConsoleContractLimits.Default);
         ConsoleTruncationMetadata metadata = truncation ?? new ConsoleTruncationMetadata(false, 0);
+        ConsoleTooltipResource[] resources = (tooltipResources ?? Array.Empty<ConsoleTooltipResource>()).ToArray();
+        if (resources.Length > ConsoleContractLimits.Default.MaxTooltipResources ||
+            resources.Sum(resource => (long)resource.PngData.Count) > ConsoleContractLimits.Default.MaxTooltipResourcesBytes ||
+            resources.Select(resource => resource.GraphicsId).Distinct().Count() != resources.Length)
+            throw new ConsoleContractException(ConsoleContractViolationReason.TooltipResourceLimitExceeded, "The tooltip resources exceed their bounded collection contract.");
         if (metadata.DroppedNodeCount < 0 || metadata.DroppedLineCount < 0 || metadata.DroppedTextLength < 0)
             throw new ArgumentOutOfRangeException(nameof(truncation));
 
@@ -95,6 +104,8 @@ public sealed class ConsoleSnapshot
         CanvasScene = canvasScene ?? new CanvasScene();
         MediaState = mediaState ?? new MediaState();
         WindowMetadata = windowMetadata ?? new WindowMetadata();
+        TooltipPresentation = tooltipPresentation ?? new ConsoleTooltipPresentation();
+        TooltipResources = Array.AsReadOnly(resources.OrderBy(resource => resource.GraphicsId).ToArray());
         CurrentPrompt = currentPrompt;
         WasTruncated = metadata.WasTruncated;
         DroppedNodeCount = metadata.DroppedNodeCount;
@@ -128,6 +139,10 @@ public sealed class ConsoleSnapshot
     public MediaState MediaState { get; }
 
     public WindowMetadata WindowMetadata { get; }
+
+    public ConsoleTooltipPresentation TooltipPresentation { get; }
+
+    public IReadOnlyList<ConsoleTooltipResource> TooltipResources { get; }
 
     public ConsolePrompt? CurrentPrompt { get; }
 

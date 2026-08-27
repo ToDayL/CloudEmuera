@@ -25,6 +25,10 @@ public sealed class ConsoleStateStore
     private Dictionary<string, HitRegion> hitRegions = new(StringComparer.Ordinal);
     private Dictionary<string, MediaChannelState> mediaChannels = new(StringComparer.Ordinal);
     private WindowMetadata windowMetadata = new();
+    private ConsoleTooltipPresentation tooltipPresentation = new();
+    private Dictionary<int, ConsoleTooltipResource> tooltipResources = [];
+    private Dictionary<int, int> tooltipGraphicsReferences = [];
+    private readonly HashSet<int> pendingTooltipProjectionIds = [];
     private readonly List<SequencedConsoleTransaction> transactionHistory = [];
     private readonly List<SequencedConsoleTransaction> pendingCommitTransactions = [];
     private long droppedLineCount;
@@ -76,6 +80,11 @@ public sealed class ConsoleStateStore
         hitRegions = baseline.CanvasScene.HitRegions.ToDictionary(item => item.RegionId, StringComparer.Ordinal);
         mediaChannels = baseline.MediaState.Channels.ToDictionary(item => item.Channel, StringComparer.Ordinal);
         windowMetadata = baseline.WindowMetadata;
+        tooltipPresentation = baseline.TooltipPresentation;
+        tooltipResources = baseline.TooltipResources.ToDictionary(item => item.GraphicsId);
+        tooltipGraphicsReferences = BuildTooltipGraphicsReferences(baseline.Scrollback, baseline.CanvasScene.HitRegions);
+        pendingTooltipProjectionIds.UnionWith(tooltipGraphicsReferences.Keys);
+        pendingTooltipProjectionIds.UnionWith(tooltipResources.Keys);
         currentPrompt = baseline.CurrentPrompt;
         wasTruncated = baseline.Truncation.WasTruncated;
         droppedNodeCount = baseline.Truncation.DroppedNodeCount;
@@ -206,6 +215,47 @@ public sealed class ConsoleStateStore
         }
     }
 
+    /// <summary>
+    /// Numeric Graphics ids referenced by currently visible tooltip targets.
+    /// The index is updated from changed lines/regions and scrollback eviction;
+    /// only snapshot restoration performs a full rebuild.
+    /// </summary>
+    public IReadOnlyDictionary<int, int> TooltipGraphicsReferences
+    {
+        get
+        {
+            lock (sync)
+            {
+                return new System.Collections.ObjectModel.ReadOnlyDictionary<int, int>(
+                    new Dictionary<int, int>(tooltipGraphicsReferences));
+            }
+        }
+    }
+
+    public bool ContainsTooltipGraphicsReference(int graphicsId)
+    {
+        lock (sync)
+        {
+            return tooltipGraphicsReferences.ContainsKey(graphicsId);
+        }
+    }
+
+    /// <summary>
+    /// Drains the bounded set of Graphics ids whose visible tooltip reference
+    /// count changed since the previous projection pass. Image-mode enablement
+    /// deliberately uses <see cref="TooltipGraphicsReferences"/> to seed a
+    /// one-time rebuild; normal display operations stay incremental.
+    /// </summary>
+    public IReadOnlyList<int> TakeTooltipProjectionCandidates()
+    {
+        lock (sync)
+        {
+            int[] result = pendingTooltipProjectionIds.OrderBy(id => id).ToArray();
+            pendingTooltipProjectionIds.Clear();
+            return result;
+        }
+    }
+
     public ConsoleSnapshot GetSnapshot() => Snapshot;
 
     public ConsoleSnapshot BaselineSnapshot
@@ -324,6 +374,9 @@ public sealed class ConsoleStateStore
             new Dictionary<string, HitRegion>(hitRegions, StringComparer.Ordinal),
             new Dictionary<string, MediaChannelState>(mediaChannels, StringComparer.Ordinal),
             windowMetadata,
+            tooltipPresentation,
+            new Dictionary<int, ConsoleTooltipResource>(tooltipResources),
+            new Dictionary<int, int>(tooltipGraphicsReferences),
             currentPrompt,
             droppedLineCount,
             droppedNodeCount,
@@ -342,6 +395,8 @@ public sealed class ConsoleStateStore
             candidate.HitRegions,
             candidate.MediaChannels,
             candidate.WindowMetadata,
+            candidate.TooltipPresentation,
+            candidate.TooltipResources,
             candidate.CurrentPrompt,
             candidate.WasTruncated,
             candidate.DroppedNodeCount,
@@ -355,6 +410,10 @@ public sealed class ConsoleStateStore
         hitRegions = candidate.HitRegions;
         mediaChannels = candidate.MediaChannels;
         windowMetadata = candidate.WindowMetadata;
+        tooltipPresentation = candidate.TooltipPresentation;
+        tooltipResources = candidate.TooltipResources;
+        tooltipGraphicsReferences = candidate.TooltipGraphicsReferences;
+        pendingTooltipProjectionIds.UnionWith(candidate.ChangedTooltipGraphicsIds);
         currentPrompt = candidate.CurrentPrompt;
         visibleNodes.Clear();
         visibleNodes.AddRange(FlattenStructuredLines(structuredScrollback));
@@ -459,6 +518,9 @@ public sealed class ConsoleStateStore
         hitRegions = new Dictionary<string, HitRegion>(StringComparer.Ordinal);
         mediaChannels = new Dictionary<string, MediaChannelState>(StringComparer.Ordinal);
         windowMetadata = new WindowMetadata();
+        tooltipPresentation = new ConsoleTooltipPresentation();
+        tooltipResources = [];
+        tooltipGraphicsReferences = [];
         baselineSnapshot = CreateStructuredSnapshot(currentSequence);
         transactionHistory.Clear();
         pendingCommitTransactions.Clear();
@@ -563,9 +625,12 @@ public sealed class ConsoleStateStore
             case AppendNodesOperation append:
                 ConsoleNodeValidation.ValidateBatch(append.Nodes, limits);
                 AppendNodes(candidate.Scrollback, append.Nodes);
+                AddTooltipReferences(candidate, append.Nodes);
                 break;
             case ClearConsoleOperation:
             case ClearScrollbackOperation:
+                foreach (ConsoleLine line in candidate.Scrollback)
+                    RemoveTooltipReferences(candidate, line.Nodes);
                 candidate.Scrollback.Clear();
                 break;
             case OpenPromptOperation open:
@@ -586,6 +651,7 @@ public sealed class ConsoleStateStore
                 if (candidate.Scrollback.Any(line => line.LineId == appendLine.Line.LineId))
                     throw new ConsoleContractException(ConsoleContractViolationReason.DuplicateIdentifier, "The line id is already present.");
                 candidate.Scrollback.Add(appendLine.Line);
+                AddTooltipReferences(candidate, appendLine.Line.Nodes);
                 break;
             case AppendInlineOperation inline:
                 ConsoleNodeValidation.ValidateBatch(inline.Nodes, limits);
@@ -593,13 +659,16 @@ public sealed class ConsoleStateStore
                 if (inline.Nodes.Any(node => node is LineBreakNode))
                     throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Inline output cannot contain a line break.");
                 candidate.Scrollback[candidate.Scrollback.IndexOf(inlineLine)] = inlineLine.WithNodes(inlineLine.Nodes.Concat(inline.Nodes));
+                AddTooltipReferences(candidate, inline.Nodes);
                 break;
             case ReplaceLineOperation replace:
                 ValidateLineLimits(replace.Line);
                 int replaceIndex = candidate.Scrollback.FindIndex(line => line.LineId == replace.Line.LineId);
                 if (replaceIndex < 0)
                     throw new ConsoleContractException(ConsoleContractViolationReason.InvalidIdentifier, "The line id does not exist.");
+                RemoveTooltipReferences(candidate, candidate.Scrollback[replaceIndex].Nodes);
                 candidate.Scrollback[replaceIndex] = replace.Line;
+                AddTooltipReferences(candidate, replace.Line.Nodes);
                 break;
             case DeleteLinesOperation delete:
                 foreach (string lineId in delete.LineIds)
@@ -607,6 +676,7 @@ public sealed class ConsoleStateStore
                     int index = candidate.Scrollback.FindIndex(line => line.LineId == lineId);
                     if (index < 0)
                         throw new ConsoleContractException(ConsoleContractViolationReason.InvalidIdentifier, "The line id does not exist.");
+                    RemoveTooltipReferences(candidate, candidate.Scrollback[index].Nodes);
                     candidate.Scrollback.RemoveAt(index);
                 }
                 break;
@@ -637,15 +707,24 @@ public sealed class ConsoleStateStore
                 break;
             case ClearSceneOperation:
                 candidate.Drawables.Clear();
+                foreach (HitRegion region in candidate.HitRegions.Values)
+                    RemoveTooltipReference(candidate, region.Tooltip);
                 candidate.HitRegions.Clear();
                 break;
             case UpsertHitRegionOperation hit:
+                if (candidate.HitRegions.TryGetValue(hit.Region.RegionId, out HitRegion? replacedRegion))
+                    RemoveTooltipReference(candidate, replacedRegion.Tooltip);
                 candidate.HitRegions[hit.Region.RegionId] = hit.Region;
+                AddTooltipReference(candidate, hit.Region.Tooltip);
                 break;
             case RemoveHitRegionOperation removeHit:
+                if (candidate.HitRegions.TryGetValue(removeHit.RegionId, out HitRegion? removedRegion))
+                    RemoveTooltipReference(candidate, removedRegion.Tooltip);
                 candidate.HitRegions.Remove(removeHit.RegionId);
                 break;
             case ClearHitRegionsOperation:
+                foreach (HitRegion region in candidate.HitRegions.Values)
+                    RemoveTooltipReference(candidate, region.Tooltip);
                 candidate.HitRegions.Clear();
                 break;
             case SetMediaChannelOperation media:
@@ -675,6 +754,23 @@ public sealed class ConsoleStateStore
                         checked(mediaChannel.Revision + 1),
                         mediaChannel.StartPolicy);
                 break;
+            case SetTooltipPresentationOperation tooltip:
+                if (tooltip.Presentation.Revision < candidate.TooltipPresentation.Revision)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidCursor, "The tooltip presentation revision cannot move backwards.");
+                candidate.TooltipPresentation = tooltip.Presentation;
+                break;
+            case UpsertTooltipResourceOperation tooltipResource:
+                if (candidate.TooltipResources.TryGetValue(tooltipResource.Resource.GraphicsId, out ConsoleTooltipResource? currentResource) &&
+                    tooltipResource.Resource.Revision < currentResource.Revision)
+                    throw new ConsoleContractException(ConsoleContractViolationReason.InvalidCursor, "The tooltip resource revision cannot move backwards.");
+                candidate.TooltipResources[tooltipResource.Resource.GraphicsId] = tooltipResource.Resource;
+                break;
+            case RemoveTooltipResourceOperation removeTooltip:
+                candidate.TooltipResources.Remove(removeTooltip.GraphicsId);
+                break;
+            case ClearTooltipResourcesOperation:
+                candidate.TooltipResources.Clear();
+                break;
             default:
                 throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "The console operation is not part of the structured contract.");
         }
@@ -682,7 +778,9 @@ public sealed class ConsoleStateStore
         if (candidate.BackgroundLayers.Count > limits.MaxBackgroundLayers ||
             candidate.Drawables.Count > limits.MaxDrawables ||
             candidate.HitRegions.Count > limits.MaxHitRegions ||
-            candidate.MediaChannels.Count > limits.MaxMediaChannels)
+            candidate.MediaChannels.Count > limits.MaxMediaChannels ||
+            candidate.TooltipResources.Count > limits.MaxTooltipResources ||
+            candidate.TooltipResources.Values.Sum(resource => (long)resource.PngData.Count) > limits.MaxTooltipResourcesBytes)
             throw new ConsoleContractException(ConsoleContractViolationReason.SceneTooLarge, "The structured scene or media state exceeds its limit.");
     }
 
@@ -742,6 +840,7 @@ public sealed class ConsoleStateStore
                  removedMetrics.TextLength > Math.Min(limits.MaxScrollbackTextLength, options.MaxVisibleTextLength)))
                 throw new ConsoleContractException(ConsoleContractViolationReason.NodeExceedsHistoryBudget, "A single structured line exceeds its budget.");
             candidate.Scrollback.RemoveAt(0);
+            RemoveTooltipReferences(candidate, removed.Nodes);
             metrics -= removedMetrics;
             candidate.DroppedLineCount = checked(candidate.DroppedLineCount + 1);
             candidate.DroppedNodeCount = checked(candidate.DroppedNodeCount + removedMetrics.NodeCount);
@@ -885,7 +984,7 @@ public sealed class ConsoleStateStore
     }
 
     /// <summary>
-    /// Reads the lossless structured transaction stream used by the v6 Worker
+    /// Reads the lossless structured transaction stream used by the v7 Worker
     /// protocol. Legacy <see cref="ReadSince"/> intentionally remains a
     /// compatibility API for the historical v2 tests and cannot represent
     /// scenes, media or window metadata without flattening them.
@@ -1073,6 +1172,8 @@ public sealed class ConsoleStateStore
             hitRegions,
             mediaChannels,
             windowMetadata,
+            tooltipPresentation,
+            tooltipResources,
             currentPrompt,
             wasTruncated,
             droppedNodeCount,
@@ -1088,6 +1189,8 @@ public sealed class ConsoleStateStore
         IReadOnlyDictionary<string, HitRegion> structuredHitRegions,
         IReadOnlyDictionary<string, MediaChannelState> channels,
         WindowMetadata metadata,
+        ConsoleTooltipPresentation presentation,
+        IReadOnlyDictionary<int, ConsoleTooltipResource> resources,
         ConsolePrompt? prompt,
         bool truncated,
         long droppedNodes,
@@ -1104,7 +1207,9 @@ public sealed class ConsoleStateStore
             new MediaState(channels.Values.OrderBy(channel => channel.Channel, StringComparer.Ordinal)),
             prompt,
             metadata,
-            new ConsoleTruncationMetadata(truncated, droppedNodes, droppedLines, droppedText));
+            new ConsoleTruncationMetadata(truncated, droppedNodes, droppedLines, droppedText),
+            presentation,
+            resources.Values.OrderBy(resource => resource.GraphicsId));
     }
 
     private List<ConsoleLine> BuildStructuredLines(IEnumerable<ConsoleNode> nodes)
@@ -1142,6 +1247,103 @@ public sealed class ConsoleStateStore
         return nodes.ToArray();
     }
 
+    private static Dictionary<int, int> BuildTooltipGraphicsReferences(
+        IEnumerable<ConsoleLine> lines,
+        IEnumerable<HitRegion> regions)
+    {
+        var references = new Dictionary<int, int>();
+        foreach (ConsoleLine line in lines)
+            AddTooltipReferences(references, line.Nodes);
+        foreach (HitRegion region in regions)
+            AddTooltipReference(references, region.Tooltip);
+        return references;
+    }
+
+    private static void AddTooltipReferences(StructuredCandidate candidate, IEnumerable<ConsoleNode> nodes)
+    {
+        foreach (string tooltip in EnumerateTooltips(nodes))
+            AddTooltipReference(candidate, tooltip);
+    }
+
+    private static void RemoveTooltipReferences(StructuredCandidate candidate, IEnumerable<ConsoleNode> nodes)
+    {
+        foreach (string tooltip in EnumerateTooltips(nodes))
+            RemoveTooltipReference(candidate, tooltip);
+    }
+
+    private static void AddTooltipReferences(Dictionary<int, int> references, IEnumerable<ConsoleNode> nodes)
+    {
+        foreach (string tooltip in EnumerateTooltips(nodes))
+            AddTooltipReference(references, tooltip);
+    }
+
+    private static IEnumerable<string> EnumerateTooltips(IEnumerable<ConsoleNode> nodes)
+    {
+        foreach (ConsoleNode node in nodes)
+        {
+            switch (node)
+            {
+                case ButtonNode button:
+                    if (button.Tooltip is not null)
+                        yield return button.Tooltip;
+                    foreach (string nested in EnumerateTooltips(button.Children))
+                        yield return nested;
+                    break;
+                case PositionedInlineSegmentNode segment:
+                    if (segment.Action?.Tooltip is not null)
+                        yield return segment.Action.Tooltip;
+                    foreach (string nested in EnumerateTooltips(segment.Children))
+                        yield return nested;
+                    break;
+                case DivNode div:
+                    foreach (string nested in EnumerateTooltips(div.Children))
+                        yield return nested;
+                    break;
+                case HtmlIslandNode island when island.StructuredNodes is not null:
+                    foreach (string nested in EnumerateTooltips(island.StructuredNodes))
+                        yield return nested;
+                    break;
+            }
+        }
+    }
+
+    private static bool TryParseTooltipGraphicsId(string? tooltip, out int graphicsId) =>
+        int.TryParse(tooltip, System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out graphicsId) && graphicsId >= 0;
+
+    private static void AddTooltipReference(StructuredCandidate candidate, string? tooltip) =>
+        AddTooltipReference(candidate.TooltipGraphicsReferences, candidate.ChangedTooltipGraphicsIds, tooltip);
+
+    private static void AddTooltipReference(Dictionary<int, int> references, string? tooltip)
+    {
+        if (!TryParseTooltipGraphicsId(tooltip, out int graphicsId))
+            return;
+        references[graphicsId] = checked(references.GetValueOrDefault(graphicsId) + 1);
+    }
+
+    private static void AddTooltipReference(
+        Dictionary<int, int> references,
+        HashSet<int> changedGraphicsIds,
+        string? tooltip)
+    {
+        if (!TryParseTooltipGraphicsId(tooltip, out int graphicsId))
+            return;
+        references[graphicsId] = checked(references.GetValueOrDefault(graphicsId) + 1);
+        changedGraphicsIds.Add(graphicsId);
+    }
+
+    private static void RemoveTooltipReference(StructuredCandidate candidate, string? tooltip)
+    {
+        if (!TryParseTooltipGraphicsId(tooltip, out int graphicsId) ||
+            !candidate.TooltipGraphicsReferences.TryGetValue(graphicsId, out int count))
+            return;
+        candidate.ChangedTooltipGraphicsIds.Add(graphicsId);
+        if (count > 1)
+            candidate.TooltipGraphicsReferences[graphicsId] = count - 1;
+        else
+            candidate.TooltipGraphicsReferences.Remove(graphicsId);
+    }
+
     private sealed class StructuredCandidate(
         List<ConsoleLine> scrollback,
         Dictionary<string, BackgroundLayer> backgroundLayers,
@@ -1149,6 +1351,9 @@ public sealed class ConsoleStateStore
         Dictionary<string, HitRegion> hitRegions,
         Dictionary<string, MediaChannelState> mediaChannels,
         WindowMetadata windowMetadata,
+        ConsoleTooltipPresentation tooltipPresentation,
+        Dictionary<int, ConsoleTooltipResource> tooltipResources,
+        Dictionary<int, int> tooltipGraphicsReferences,
         ConsolePrompt? currentPrompt,
         long droppedLineCount,
         long droppedNodeCount,
@@ -1165,6 +1370,14 @@ public sealed class ConsoleStateStore
         public Dictionary<string, MediaChannelState> MediaChannels { get; } = mediaChannels;
 
         public WindowMetadata WindowMetadata { get; set; } = windowMetadata;
+
+        public ConsoleTooltipPresentation TooltipPresentation { get; set; } = tooltipPresentation;
+
+        public Dictionary<int, ConsoleTooltipResource> TooltipResources { get; } = tooltipResources;
+
+        public Dictionary<int, int> TooltipGraphicsReferences { get; } = tooltipGraphicsReferences;
+
+        public HashSet<int> ChangedTooltipGraphicsIds { get; } = [];
 
         public ConsolePrompt? CurrentPrompt { get; set; } = currentPrompt;
 

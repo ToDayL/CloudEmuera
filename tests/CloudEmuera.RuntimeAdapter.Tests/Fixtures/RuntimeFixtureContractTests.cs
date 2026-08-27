@@ -49,7 +49,7 @@ public sealed class RuntimeFixtureContractTests
         string[] required =
         [
             "startup", "print", "variable", "function", "branch", "input",
-            "html", "image", "sprite", "save-root", "save-directory"
+            "html", "image", "sprite", "tooltip", "save-root", "save-directory"
         ];
         Assert.All(required, label => Assert.Contains(label, coverage));
     }

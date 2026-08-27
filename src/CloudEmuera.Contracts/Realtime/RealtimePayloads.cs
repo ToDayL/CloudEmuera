@@ -34,6 +34,8 @@ public sealed record RealtimeConsoleState(
     IReadOnlyList<RealtimeBackgroundLayer> BackgroundLayers,
     RealtimeCanvasScene CanvasScene,
     RealtimeMediaState MediaState,
+    RealtimeTooltipPresentation TooltipPresentation,
+    IReadOnlyList<RealtimeTooltipResource> TooltipResources,
     RealtimePrompt? CurrentPrompt,
     RealtimeWindowMetadata WindowMetadata,
     RealtimeTruncation Truncation);
@@ -178,6 +180,33 @@ public sealed record RealtimeHitRegion(
 
 public sealed record RealtimeMediaState(IReadOnlyList<RealtimeMediaChannel> Channels);
 
+public sealed record RealtimeTooltipPresentation(
+    bool CustomEnabled,
+    RealtimeColor Foreground,
+    RealtimeColor Background,
+    int DelayMilliseconds,
+    int DurationMilliseconds,
+    string FontFamily,
+    int FontSize,
+    RealtimeTooltipTextFormat TextFormat,
+    bool ImageMode,
+    long Revision);
+
+public sealed record RealtimeTooltipTextFormat(
+    string Horizontal,
+    string Vertical,
+    bool Wrap,
+    string Trimming,
+    bool ExpandTabs,
+    bool RightToLeft);
+
+public sealed record RealtimeTooltipResource(
+    int GraphicsId,
+    byte[] PngData,
+    int Width,
+    int Height,
+    long Revision);
+
 public sealed record RealtimeMediaChannel(
     string Channel,
     string? AssetId,
@@ -253,4 +282,7 @@ public sealed record RealtimeOperation(
     RealtimeHitRegion? HitRegion = null,
     string? RegionId = null,
     RealtimeMediaChannel? MediaChannel = null,
-    string? Channel = null);
+    string? Channel = null,
+    RealtimeTooltipPresentation? TooltipPresentation = null,
+    RealtimeTooltipResource? TooltipResource = null,
+    int? GraphicsId = null);

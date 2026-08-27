@@ -24,7 +24,11 @@ public enum ConsoleOperationKind
     ClearHitRegions,
     SetMediaChannel,
     StopMediaChannel,
-    StopAllMedia
+    StopAllMedia,
+    SetTooltipPresentation,
+    UpsertTooltipResource,
+    RemoveTooltipResource,
+    ClearTooltipResources
 }
 
 public abstract class ConsoleOperation
@@ -87,6 +91,14 @@ public abstract class ConsoleOperation
     public static StopMediaChannelOperation StopMediaChannel(string channel) => new(channel);
 
     public static StopAllMediaOperation StopAllMedia() => new();
+
+    public static SetTooltipPresentationOperation SetTooltipPresentation(ConsoleTooltipPresentation presentation) => new(presentation);
+
+    public static UpsertTooltipResourceOperation UpsertTooltipResource(ConsoleTooltipResource resource) => new(resource);
+
+    public static RemoveTooltipResourceOperation RemoveTooltipResource(int graphicsId) => new(graphicsId);
+
+    public static ClearTooltipResourcesOperation ClearTooltipResources() => new();
 }
 
 public sealed class AppendNodesOperation : ConsoleOperation
@@ -365,6 +377,44 @@ public sealed class StopMediaChannelOperation : ConsoleOperation
 public sealed class StopAllMediaOperation : ConsoleOperation
 {
     public override ConsoleOperationKind Kind => ConsoleOperationKind.StopAllMedia;
+}
+
+public sealed class SetTooltipPresentationOperation : ConsoleOperation
+{
+    public SetTooltipPresentationOperation(ConsoleTooltipPresentation presentation) =>
+        Presentation = presentation ?? throw new ArgumentNullException(nameof(presentation));
+
+    public override ConsoleOperationKind Kind => ConsoleOperationKind.SetTooltipPresentation;
+
+    public ConsoleTooltipPresentation Presentation { get; }
+}
+
+public sealed class UpsertTooltipResourceOperation : ConsoleOperation
+{
+    public UpsertTooltipResourceOperation(ConsoleTooltipResource resource) =>
+        Resource = resource ?? throw new ArgumentNullException(nameof(resource));
+
+    public override ConsoleOperationKind Kind => ConsoleOperationKind.UpsertTooltipResource;
+
+    public ConsoleTooltipResource Resource { get; }
+}
+
+public sealed class RemoveTooltipResourceOperation : ConsoleOperation
+{
+    public RemoveTooltipResourceOperation(int graphicsId)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(graphicsId);
+        GraphicsId = graphicsId;
+    }
+
+    public override ConsoleOperationKind Kind => ConsoleOperationKind.RemoveTooltipResource;
+
+    public int GraphicsId { get; }
+}
+
+public sealed class ClearTooltipResourcesOperation : ConsoleOperation
+{
+    public override ConsoleOperationKind Kind => ConsoleOperationKind.ClearTooltipResources;
 }
 
 public sealed class ConsoleTransaction

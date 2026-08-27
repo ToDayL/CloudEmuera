@@ -51,6 +51,6 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 "${compose[@]}" exec -T web node -e 'Promise.all([fetch("http://localhost:5173/login"), fetch("http://api:28647/health/ready")]).then(responses => process.exit(responses.every(response => response.ok) ? 0 : 1)).catch(() => process.exit(1))'
-"${compose[@]}" run --rm -e CLOUDEMUERA_E2E_URL=http://web:5173 -e CLOUDEMUERA_E2E_PROJECTS="${CLOUDEMUERA_E2E_PROJECTS:-}" e2e \
-  sh -c 'pnpm install --frozen-lockfile && projects="${CLOUDEMUERA_E2E_PROJECTS:-chromium mobile-chrome mobile-safari}" && project_args="" && for project in $projects; do project_args="$project_args --project=$project"; done && pnpm --dir e2e exec playwright test e2e/tests/session-ui.spec.ts $project_args --workers=1'
+"${compose[@]}" run --rm -e CLOUDEMUERA_E2E_URL=http://web:5173 -e CLOUDEMUERA_E2E_PROJECTS="${CLOUDEMUERA_E2E_PROJECTS:-}" -e CLOUDEMUERA_E2E_GREP="${CLOUDEMUERA_E2E_GREP:-}" e2e \
+  sh -c 'pnpm install --frozen-lockfile && projects="${CLOUDEMUERA_E2E_PROJECTS:-chromium mobile-chrome mobile-safari}" && project_args="" && for project in $projects; do project_args="$project_args --project=$project"; done && if [ -n "${CLOUDEMUERA_E2E_GREP:-}" ]; then pnpm --dir e2e exec playwright test e2e/tests/session-ui.spec.ts $project_args --workers=1 --grep "$CLOUDEMUERA_E2E_GREP"; else pnpm --dir e2e exec playwright test e2e/tests/session-ui.spec.ts $project_args --workers=1; fi'
 echo "P1-11 Session/Console/Save, timed prompt, rich renderer, concurrency, authorization, and mobile network E2E passed"

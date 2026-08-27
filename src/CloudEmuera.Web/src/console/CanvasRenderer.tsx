@@ -5,6 +5,7 @@ import { SafeHtmlRenderer } from "./SafeHtmlRenderer";
 import type { BackgroundLayer, CanvasScene, HitRegion, RealtimeDrawable, WindowMetadata } from "../realtime/protocol";
 import { NodeRenderer, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { SpriteCanvas } from "./SpriteRenderer";
+import { useConsoleTooltipTarget } from "./TooltipLayer";
 
 const pngSignature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -50,15 +51,20 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
       return <DrawableCanvas key={drawable.drawableId} drawable={drawable} layer={layer} windowMetadata={windowMetadata} hoveredRasterId={hoveredRasterId} onRenderError={onRenderError} />;
     })}
     <div className="canvas-hit-layer" aria-label="游戏交互区域" style={{ zIndex: 10_000 }}>
-      {interactive && orderHitRegions(scene.hitRegions).map(region => <button key={region.regionId} className="canvas-hit" type="button" title={region.tooltip ?? undefined} style={hitStyle(region.bounds, windowMetadata)} onClick={event => {
-        const root = event.currentTarget.parentElement?.parentElement?.getBoundingClientRect();
-        if (!root || root.width <= 0 || root.height <= 0) return;
-        const x = clamp((event.clientX - root.left) * windowMetadata.viewportWidth / root.width, 0, windowMetadata.viewportWidth);
-        const y = clamp((event.clientY - root.top) * windowMetadata.viewportHeight / root.height, 0, windowMetadata.viewportHeight);
-        onInput({ value: region.inputValue, source: "POINTER", pointer: { x, y, button: 0, pressed: true } });
-      }}>{region.tooltip ?? "交互区域"}</button>)}
+      {interactive && orderHitRegions(scene.hitRegions).map(region => <CanvasHitTarget key={region.regionId} region={region} windowMetadata={windowMetadata} onInput={onInput} />)}
     </div>
   </div>;
+}
+
+function CanvasHitTarget({ region, windowMetadata, onInput }: { region: HitRegion; windowMetadata: WindowMetadata; onInput: (event: ConsoleInputEvent) => void }) {
+  const target = useConsoleTooltipTarget(region.tooltip, 0);
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="canvas-hit console-tooltip-target" type="button" style={hitStyle(region.bounds, windowMetadata)} onClick={event => {
+    const root = event.currentTarget.parentElement?.parentElement?.getBoundingClientRect();
+    if (!root || root.width <= 0 || root.height <= 0) return;
+    const x = clamp((event.clientX - root.left) * windowMetadata.viewportWidth / root.width, 0, windowMetadata.viewportWidth);
+    const y = clamp((event.clientY - root.top) * windowMetadata.viewportHeight / root.height, 0, windowMetadata.viewportHeight);
+    onInput({ value: region.inputValue, source: "POINTER", pointer: { x, y, button: 0, pressed: true } });
+  }}><span className="sr-only">{region.tooltip ?? "交互区域"}</span>{target.badge}</button>;
 }
 
 export function hasCanvasContent(scene: CanvasScene, backgroundLayers: readonly BackgroundLayer[]): boolean {

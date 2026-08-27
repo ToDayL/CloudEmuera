@@ -41,6 +41,11 @@ static class AppContents
 		return g;
 	}
 
+#if CLOUDEMUERA_HEADLESS
+	static internal bool TryGetGraphics(int i, out GraphicsImage graphics) =>
+		gList.TryGetValue(i, out graphics);
+#endif
+
 	static public ASprite GetSprite(string name)
 	{
 		if (name == null)

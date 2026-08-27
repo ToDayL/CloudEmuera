@@ -2,7 +2,7 @@ using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using System.Text;
 using CloudEmuera.Ipc;
-using W = CloudEmuera.Ipc.V6;
+using W = CloudEmuera.Ipc.V7;
 using Xunit;
 
 namespace CloudEmuera.Ipc.ContractTests;
@@ -388,7 +388,21 @@ public sealed class StructuredIpcContractTests
             {
                 DefaultFont = new W.TextStyle { FontFamily = "default", FontSize = 16 }
             },
-            Truncation = new W.TruncationMetadata()
+            Truncation = new W.TruncationMetadata(),
+            TooltipPresentation = new W.TooltipPresentation
+            {
+                Foreground = new W.ConsoleColor { Alpha = 255 },
+                Background = new W.ConsoleColor { Red = 255, Green = 255, Blue = 225, Alpha = 255 },
+                DelayMilliseconds = 500,
+                FontFamily = "session-default",
+                FontSize = 16,
+                TextFormat = new W.TooltipTextFormat
+                {
+                    Horizontal = W.TooltipHorizontalAlignment.Left,
+                    Vertical = W.TooltipVerticalAlignment.Top,
+                    Trimming = W.TooltipTrimming.None
+                }
+            }
         };
         snapshot.Scrollback.Add(new W.ConsoleLine
         {

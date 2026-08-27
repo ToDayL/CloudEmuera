@@ -92,6 +92,10 @@ internal static class ConsoleSizeEstimator
             SetMediaChannelOperation media => checked(64L + media.Channel.Channel.Length * 2L + (media.Channel.AssetId?.Value.Length ?? 0) * 2L),
             StopMediaChannelOperation stop => checked(32L + stop.Channel.Length * 2L),
             StopAllMediaOperation => 24L,
+            SetTooltipPresentationOperation presentation => checked(128L + presentation.Presentation.FontFamily.Length * 2L),
+            UpsertTooltipResourceOperation resource => checked(64L + resource.Resource.PngData.Count),
+            RemoveTooltipResourceOperation => 32L,
+            ClearTooltipResourcesOperation => 24L,
             _ => throw new ConsoleContractException(ConsoleContractViolationReason.InvalidNodeType, "Unknown console operation type.")
         };
 
@@ -108,6 +112,8 @@ internal static class ConsoleSizeEstimator
         value = checked(value + snapshot.CanvasScene.HitRegions.Sum(region => 64L + region.RegionId.Length * 2L + region.InputValue.Length * 2L));
         value = checked(value + snapshot.MediaState.Channels.Sum(channel => 64L + channel.Channel.Length * 2L + (channel.AssetId?.Value.Length ?? 0) * 2L));
         value = checked(value + 64L + snapshot.WindowMetadata.Title.Length * 2L + snapshot.WindowMetadata.DefaultFont.Family.Length * 2L);
+        value = checked(value + 128L + snapshot.TooltipPresentation.FontFamily.Length * 2L +
+            snapshot.TooltipResources.Sum(resource => 64L + resource.PngData.Count));
         return value;
     }
 

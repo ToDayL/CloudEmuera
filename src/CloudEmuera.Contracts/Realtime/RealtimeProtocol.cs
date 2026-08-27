@@ -7,13 +7,13 @@ namespace CloudEmuera.Contracts.Realtime;
 /// <summary>
 /// Constants and closed client message contracts for the browser realtime
 /// protocol. Display payloads use the atomic committed-frame contract from
-/// P1-S04; this file freezes the v4 envelope and browser commands around it.
+/// P1-S09; this file freezes the v5 envelope and browser commands around it.
 /// </summary>
 public static class RealtimeProtocol
 {
-    public const int Version = 4;
-    public const string Subprotocol = "cloudemuera.realtime.v4";
-    public const string PayloadSchemaVersion = "p1-s04-authoritative-layout";
+    public const int Version = 5;
+    public const string Subprotocol = "cloudemuera.realtime.v5";
+    public const string PayloadSchemaVersion = "p1-s09-tooltip";
     public const int DefaultClientJsonMaxDepth = 32;
     public const int DefaultClientMessageMaxBytes = 64 * 1024;
     public const int MaxIdentifierLength = 128;

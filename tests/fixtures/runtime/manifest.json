@@ -25,6 +25,7 @@
         "html",
         "image",
         "sprite",
+        "tooltip",
         "save-root"
       ],
       "files": [
@@ -38,7 +39,7 @@
         },
         {
           "path": "v18-core/ERB/START.ERB",
-          "sha256": "1d3a1b24043cf7988905f1352b36810a2037c84441981016c41d077db4617ab6",
+          "sha256": "fd4edc29c9ee1eab369a47c9d7c0d355a10eccb62d690abb4abe167f1cb19da6",
           "mediaType": "text/x-emuera-erb",
           "encoding": "shift_jis",
           "source": "authored-for-cloudemuera",
@@ -77,7 +78,7 @@
         },
         {
           "path": "v18-core/scenario.json",
-          "sha256": "d1717fe2ec72f2213db195a40c82f9d555e846fbb3f3d42f5c47c6a97a1ebf20",
+          "sha256": "9ae5c452920bccbfd994c401840688254a25c5c8c33614f140e9c36bc37b45bb",
           "mediaType": "application/json",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
@@ -85,7 +86,7 @@
         },
         {
           "path": "v18-core/expected-transcript.txt",
-          "sha256": "47272fef116a942b7b589927b8a1f8322b71c1c7d3b72710117d07f5e3294901",
+          "sha256": "fc9b2531bf207a020e5d67f243243981601108a68a337652fee35405bdafa871",
           "mediaType": "text/plain",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
@@ -120,6 +121,7 @@
         "html",
         "image",
         "sprite",
+        "tooltip",
         "save-directory"
       ],
       "files": [
@@ -133,7 +135,7 @@
         },
         {
           "path": "em-ee-core/ERB/START.ERB",
-          "sha256": "41e83d439c2f5242606dfcc82481a97f58c0b9adacc8f9d5db9f2509d9b57e68",
+          "sha256": "49d2e59804576979107317c5267257d94eac0b2e793d91eadc094579b306c243",
           "mediaType": "text/x-emuera-erb",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
@@ -172,7 +174,7 @@
         },
         {
           "path": "em-ee-core/scenario.json",
-          "sha256": "0c0d722cb8fe68e0b4d3a2b18a4635718f619dacfab69d6d8277baabe1473786",
+          "sha256": "b3bd82e6ec34d820d093e9a5209618d959d95f0e0efa141600e1a57dc90d139f",
           "mediaType": "application/json",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
@@ -180,7 +182,7 @@
         },
         {
           "path": "em-ee-core/expected-transcript.txt",
-          "sha256": "938541cd8f285aafe1500208d71a7125dea410ada9333869ca91da96382a62a9",
+          "sha256": "7e08286253a31afccc37817da17b2af9668dec8ab4a45f4723b87152f43b7ac4",
           "mediaType": "text/plain",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",

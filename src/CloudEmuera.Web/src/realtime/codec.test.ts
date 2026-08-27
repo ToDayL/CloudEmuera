@@ -3,11 +3,13 @@ import { decodeRealtimeMessage, RealtimeDecodeError } from "./codec";
 import { CAPABILITY_DIGEST } from "./capabilities";
 
 function envelope(type: string, payload: unknown, extra: Record<string, unknown> = {}) {
-  return JSON.stringify({ protocolVersion: 4, type, messageId: "msg-1", ...extra, payload });
+  return JSON.stringify({ protocolVersion: 5, type, messageId: "msg-1", ...extra, payload });
 }
 
 const emptyState = {
   scrollback: [], backgroundLayers: [], canvasScene: { drawables: [], hitRegions: [] }, mediaState: { channels: [] }, currentPrompt: null,
+  tooltipPresentation: { customEnabled: false, foreground: { red: 0, green: 0, blue: 0, alpha: 255 }, background: { red: 255, green: 255, blue: 225, alpha: 255 }, delayMilliseconds: 500, durationMilliseconds: 0, fontFamily: "session-default", fontSize: 16, textFormat: { horizontal: "left", vertical: "top", wrap: false, trimming: "none", expandTabs: false, rightToLeft: false }, imageMode: false, revision: 0 },
+  tooltipResources: [],
   windowMetadata: { title: "Game", viewportWidth: 640, viewportHeight: 480, defaultForeground: null, defaultBackground: null, defaultFont: { family: "game-default", size: 16, lineHeight: 20 } },
   truncation: { wasTruncated: false, droppedNodeCount: 0, droppedLineCount: 0, droppedTextLength: 0 },
 };
@@ -15,7 +17,7 @@ const emptyState = {
 describe("realtime codec", () => {
   it("decodes a closed server hello and complete snapshot envelope", () => {
     const helloJson = envelope("server.hello", {
-      protocolVersion: 4, payloadSchemaVersion: "p1-s04-authoritative-layout", connectionId: "conn-1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000,
+      protocolVersion: 5, payloadSchemaVersion: "p1-s09-tooltip", connectionId: "conn-1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000,
       heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST,
     });
     const hello = decodeRealtimeMessage(helloJson);
@@ -81,8 +83,8 @@ describe("realtime codec", () => {
   });
 
   it("rejects duplicate keys, unknown fields, unsupported HTML and invalid PNG raster", () => {
-    expect(() => decodeRealtimeMessage('{"protocolVersion":4,"type":"server.hello","messageId":"m","messageId":"n","payload":{}}')).toThrowError(RealtimeDecodeError);
-    expect(() => decodeRealtimeMessage(envelope("server.hello", { protocolVersion: 4, payloadSchemaVersion: "p1-s04-authoritative-layout", connectionId: "c", serverNowUnixMilliseconds: 1, heartbeatIntervalMilliseconds: 1, heartbeatTimeoutMilliseconds: 1, maxSubscriptionsPerConnection: 1, maxPendingInputsPerConnection: 1, serverMessageMaxBytes: 1, capabilityDigest: CAPABILITY_DIGEST, extra: true }))).toThrowError("不受支持的字段");
+    expect(() => decodeRealtimeMessage('{"protocolVersion":5,"type":"server.hello","messageId":"m","messageId":"n","payload":{}}')).toThrowError(RealtimeDecodeError);
+    expect(() => decodeRealtimeMessage(envelope("server.hello", { protocolVersion: 5, payloadSchemaVersion: "p1-s09-tooltip", connectionId: "c", serverNowUnixMilliseconds: 1, heartbeatIntervalMilliseconds: 1, heartbeatTimeoutMilliseconds: 1, maxSubscriptionsPerConnection: 1, maxPendingInputsPerConnection: 1, serverMessageMaxBytes: 1, capabilityDigest: CAPABILITY_DIGEST, extra: true }))).toThrowError("不受支持的字段");
     const html = { ...emptyState, scrollback: [{ lineId: "line-1", nodes: [{ type: "htmlIsland", root: { type: "element", tag: "script", children: [] } }], alignment: "left", temporary: false }] };
     expect(() => decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: html }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }))).toThrowError(RealtimeDecodeError);
     const raster = { type: "raster", drawableId: "r", bounds: { x: 0, y: 0, width: 1, height: 1 }, zIndex: 0, opacity: 1, pngData: "aGVsbG8=" };
@@ -96,7 +98,7 @@ describe("realtime codec", () => {
 
   it("rejects a payload schema version that the client did not compile", () => {
     expect(() => decodeRealtimeMessage(envelope("server.hello", {
-      protocolVersion: 4, payloadSchemaVersion: "p1-09", connectionId: "c", serverNowUnixMilliseconds: 1,
+      protocolVersion: 5, payloadSchemaVersion: "p1-09", connectionId: "c", serverNowUnixMilliseconds: 1,
       heartbeatIntervalMilliseconds: 1, heartbeatTimeoutMilliseconds: 1, maxSubscriptionsPerConnection: 1,
       maxPendingInputsPerConnection: 1, serverMessageMaxBytes: 1, capabilityDigest: CAPABILITY_DIGEST,
     }))).toThrowError("实时消息内容版本不兼容");

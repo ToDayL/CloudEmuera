@@ -9,7 +9,7 @@ using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Api.Security;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V6;
+using CloudEmuera.Ipc.V7;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Grpc.AspNetCore.Server;

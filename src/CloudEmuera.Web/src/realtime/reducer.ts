@@ -19,12 +19,27 @@ export const EMPTY_WINDOW = {
   defaultFont: { family: "default", size: 16, lineHeight: 0 },
 };
 
+export const EMPTY_TOOLTIP_PRESENTATION = {
+  customEnabled: false,
+  foreground: { red: 0, green: 0, blue: 0, alpha: 255 },
+  background: { red: 255, green: 255, blue: 225, alpha: 255 },
+  delayMilliseconds: 500,
+  durationMilliseconds: 0,
+  fontFamily: "session-default",
+  fontSize: 16,
+  textFormat: { horizontal: "left", vertical: "top", wrap: false, trimming: "none", expandTabs: false, rightToLeft: false },
+  imageMode: false,
+  revision: 0,
+} as const;
+
 export function createEmptyConsoleState(): ConsoleState {
   return {
     scrollback: [],
     backgroundLayers: [],
     canvasScene: { drawables: [], hitRegions: [] },
     mediaState: { channels: [] },
+    tooltipPresentation: { ...EMPTY_TOOLTIP_PRESENTATION, foreground: { ...EMPTY_TOOLTIP_PRESENTATION.foreground }, background: { ...EMPTY_TOOLTIP_PRESENTATION.background }, textFormat: { ...EMPTY_TOOLTIP_PRESENTATION.textFormat } },
+    tooltipResources: [],
     currentPrompt: null,
     windowMetadata: { ...EMPTY_WINDOW, defaultFont: { ...EMPTY_WINDOW.defaultFont } },
     truncation: { wasTruncated: false, droppedNodeCount: 0, droppedLineCount: 0, droppedTextLength: 0 },
@@ -48,6 +63,7 @@ export function cloneConsoleState(state: ConsoleState): ConsoleState {
       ...state.mediaState,
       channels: [...state.mediaState.channels],
     },
+    tooltipResources: [...state.tooltipResources],
   };
 }
 
@@ -130,6 +146,18 @@ function applyOperation(state: ConsoleState, operation: RealtimeOperation): void
       return;
     }
     case "stopAllMedia": state.mediaState.channels = state.mediaState.channels.map(channel => ({ ...channel, playbackState: "stopped", revision: channel.revision + 1 })); return;
+    case "setTooltipPresentation":
+      if (operation.tooltipPresentation.revision < state.tooltipPresentation.revision) throw new ConsoleReductionError("tooltip_revision_regressed", "Tooltip 状态版本倒退。");
+      state.tooltipPresentation = operation.tooltipPresentation;
+      return;
+    case "upsertTooltipResource": {
+      const current = state.tooltipResources.find(resource => resource.graphicsId === operation.tooltipResource.graphicsId);
+      if (current && operation.tooltipResource.revision < current.revision) throw new ConsoleReductionError("tooltip_resource_revision_regressed", "Tooltip 图片版本倒退。");
+      upsertById(state.tooltipResources, operation.tooltipResource, "graphicsId");
+      return;
+    }
+    case "removeTooltipResource": state.tooltipResources = state.tooltipResources.filter(resource => resource.graphicsId !== operation.graphicsId); return;
+    case "clearTooltipResources": state.tooltipResources = []; return;
     default: return assertNever(operation);
   }
 }

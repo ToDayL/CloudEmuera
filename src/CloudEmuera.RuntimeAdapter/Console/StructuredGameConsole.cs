@@ -5,7 +5,7 @@ namespace CloudEmuera.RuntimeAdapter;
 /// waiting for a browser, while another thread submits input and wakes a
 /// blocked Read call.
 /// </summary>
-public sealed class StructuredGameConsole : IGameConsole
+public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
 {
     private readonly object sync = new();
     private readonly IRuntimeClock clock;
@@ -56,6 +56,8 @@ public sealed class StructuredGameConsole : IGameConsole
 
     public DisplayCommit? CurrentDisplayCommit => StateStore.CurrentDisplayCommit;
 
+    public ConsoleTooltipPresentation TooltipPresentation => StateStore.Snapshot.TooltipPresentation;
+
     public DisplayCommit CommitDisplayFrame(DisplayCommitReason reason) => StateStore.CommitDisplayFrame(reason);
 
     public ConsolePrompt? CurrentPrompt => StateStore.CurrentPrompt;
@@ -66,6 +68,69 @@ public sealed class StructuredGameConsole : IGameConsole
         lock (sync)
         {
             return StateStore.ApplyTransaction(transaction);
+        }
+    }
+
+    public void SetTooltipCustom(bool enabled) => UpdateTooltip(current =>
+        current.CustomEnabled == enabled ? current : current.Next(customEnabled: enabled));
+
+    public void SetTooltipColor(ConsoleColor foreground, ConsoleColor background) => UpdateTooltip(current =>
+        current.Foreground == foreground && current.Background == background
+            ? current
+            : current.Next(foreground: foreground, background: background));
+
+    public void SetTooltipDelay(int milliseconds)
+    {
+        if (milliseconds is < 0 or > ConsoleContractLimits.MaxTooltipDelayMilliseconds)
+            throw new ArgumentOutOfRangeException(nameof(milliseconds));
+        UpdateTooltip(current => current.DelayMilliseconds == milliseconds
+            ? current
+            : current.Next(delayMilliseconds: milliseconds));
+    }
+
+    public void SetTooltipDuration(int milliseconds)
+    {
+        if (milliseconds is < 0 or > ConsoleContractLimits.MaxTooltipDurationMilliseconds)
+            throw new ArgumentOutOfRangeException(nameof(milliseconds));
+        UpdateTooltip(current => current.DurationMilliseconds == milliseconds
+            ? current
+            : current.Next(durationMilliseconds: milliseconds));
+    }
+
+    public void SetTooltipFont(string requestedName)
+    {
+        ArgumentNullException.ThrowIfNull(requestedName);
+        // ADR-0029: every game font request maps to the immutable Session face.
+        // The requested name is intentionally not protocol state.
+    }
+
+    public void SetTooltipFontSize(long size)
+    {
+        if (size is < 1 or > ConsoleContractLimits.MaxTooltipFontSize)
+            throw new ArgumentOutOfRangeException(nameof(size));
+        UpdateTooltip(current => current.FontSize == size
+            ? current
+            : current.Next(fontSize: checked((int)size)));
+    }
+
+    public void SetTooltipFormat(long textFormatFlags)
+    {
+        ConsoleTooltipTextFormat format = ConsoleTooltipTextFormat.FromTextFormatFlags(textFormatFlags);
+        UpdateTooltip(current => current.TextFormat == format ? current : current.Next(textFormat: format));
+    }
+
+    public void SetTooltipImageMode(bool enabled) => UpdateTooltip(current =>
+        current.ImageMode == enabled ? current : current.Next(imageMode: enabled));
+
+    private void UpdateTooltip(Func<ConsoleTooltipPresentation, ConsoleTooltipPresentation> update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        lock (sync)
+        {
+            ConsoleTooltipPresentation current = StateStore.Snapshot.TooltipPresentation;
+            ConsoleTooltipPresentation next = update(current);
+            if (!ReferenceEquals(current, next))
+                ApplyRuntimeOperation(ConsoleOperation.SetTooltipPresentation(next));
         }
     }
 

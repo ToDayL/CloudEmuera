@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-option csharp_namespace = "CloudEmuera.Ipc.V6";
+option csharp_namespace = "CloudEmuera.Ipc.V7";
 
-package cloudemuera.ipc.v6;
+package cloudemuera.ipc.v7;
 
 service WorkerControl {
   rpc Connect(stream WorkerEnvelope) returns (stream WorkerCommandEnvelope);
@@ -185,6 +185,8 @@ message ConsoleSnapshot {
   bool has_current_prompt = 7;
   WindowMetadata window_metadata = 8;
   TruncationMetadata truncation = 9;
+  TooltipPresentation tooltip_presentation = 10;
+  repeated TooltipResource tooltip_resources = 11;
 }
 
 message ConsoleOperation {
@@ -211,6 +213,10 @@ message ConsoleOperation {
     SetMediaChannel set_media_channel = 20;
     StopMediaChannel stop_media_channel = 21;
     StopAllMedia stop_all_media = 22;
+    SetTooltipPresentation set_tooltip_presentation = 23;
+    UpsertTooltipResource upsert_tooltip_resource = 24;
+    RemoveTooltipResource remove_tooltip_resource = 25;
+    ClearTooltipResources clear_tooltip_resources = 26;
   }
 }
 
@@ -236,6 +242,38 @@ message ClearHitRegions {}
 message SetMediaChannel { MediaChannelState channel = 1; }
 message StopMediaChannel { string channel = 1; }
 message StopAllMedia {}
+message SetTooltipPresentation { TooltipPresentation presentation = 1; }
+message UpsertTooltipResource { TooltipResource resource = 1; }
+message RemoveTooltipResource { int32 graphics_id = 1; }
+message ClearTooltipResources {}
+
+message TooltipPresentation {
+  bool custom_enabled = 1;
+  ConsoleColor foreground = 2;
+  ConsoleColor background = 3;
+  int32 delay_milliseconds = 4;
+  int32 duration_milliseconds = 5;
+  string font_family = 6;
+  int32 font_size = 7;
+  TooltipTextFormat text_format = 8;
+  bool image_mode = 9;
+  int64 revision = 10;
+}
+message TooltipTextFormat {
+  TooltipHorizontalAlignment horizontal = 1;
+  TooltipVerticalAlignment vertical = 2;
+  bool wrap = 3;
+  TooltipTrimming trimming = 4;
+  bool expand_tabs = 5;
+  bool right_to_left = 6;
+}
+message TooltipResource {
+  int32 graphics_id = 1;
+  bytes png_data = 2;
+  int32 width = 3;
+  int32 height = 4;
+  int64 revision = 5;
+}
 
 message ConsoleLine {
   string line_id = 1;
@@ -474,4 +512,7 @@ enum BackgroundMode { BACKGROUND_MODE_UNSPECIFIED = 0; BACKGROUND_MODE_STRETCH =
 enum ShapeKind { SHAPE_KIND_UNSPECIFIED = 0; SHAPE_KIND_RECTANGLE = 1; SHAPE_KIND_ELLIPSE = 2; SHAPE_KIND_LINE = 3; SHAPE_KIND_POLYGON = 4; SHAPE_KIND_SPACE = 5; }
 enum MediaPlaybackState { MEDIA_PLAYBACK_STATE_UNSPECIFIED = 0; MEDIA_PLAYBACK_STATE_STOPPED = 1; MEDIA_PLAYBACK_STATE_REQUESTED = 2; }
 enum MediaStartPolicy { MEDIA_START_POLICY_UNSPECIFIED = 0; MEDIA_START_POLICY_IMMEDIATE = 1; MEDIA_START_POLICY_ON_USER_GESTURE = 2; }
+enum TooltipHorizontalAlignment { TOOLTIP_HORIZONTAL_ALIGNMENT_UNSPECIFIED = 0; TOOLTIP_HORIZONTAL_ALIGNMENT_LEFT = 1; TOOLTIP_HORIZONTAL_ALIGNMENT_CENTER = 2; TOOLTIP_HORIZONTAL_ALIGNMENT_RIGHT = 3; }
+enum TooltipVerticalAlignment { TOOLTIP_VERTICAL_ALIGNMENT_UNSPECIFIED = 0; TOOLTIP_VERTICAL_ALIGNMENT_TOP = 1; TOOLTIP_VERTICAL_ALIGNMENT_CENTER = 2; TOOLTIP_VERTICAL_ALIGNMENT_BOTTOM = 3; }
+enum TooltipTrimming { TOOLTIP_TRIMMING_UNSPECIFIED = 0; TOOLTIP_TRIMMING_NONE = 1; TOOLTIP_TRIMMING_CHARACTER_ELLIPSIS = 2; TOOLTIP_TRIMMING_WORD_ELLIPSIS = 3; TOOLTIP_TRIMMING_PATH_ELLIPSIS = 4; }
 enum DisplayCommitReason { DISPLAY_COMMIT_REASON_UNSPECIFIED = 0; DISPLAY_COMMIT_REASON_WAITING_FOR_INPUT = 1; DISPLAY_COMMIT_REASON_RUNTIME_COMPLETED = 2; DISPLAY_COMMIT_REASON_RUNTIME_FAILED = 3; DISPLAY_COMMIT_REASON_EXPLICIT_REFRESH = 4; }

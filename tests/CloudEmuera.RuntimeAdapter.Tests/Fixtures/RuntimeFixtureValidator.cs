@@ -30,6 +30,7 @@ public sealed class RuntimeFixtureValidator
         "html",
         "image",
         "sprite",
+        "tooltip",
         "save-root",
         "save-directory"
     ];

@@ -1,6 +1,6 @@
 using System.Text.Json;
 using CloudEmuera.Contracts.Realtime;
-using CloudEmuera.Ipc.V6;
+using CloudEmuera.Ipc.V7;
 using R = CloudEmuera.RuntimeAdapter;
 using RuntimeMapper = CloudEmuera.Realtime.StructuredConsoleWireMapper;
 
@@ -81,6 +81,8 @@ public static class RealtimePayloadMapper
             snapshot.CanvasScene.Drawables.Select(ToDrawable).ToArray(),
             snapshot.CanvasScene.HitRegions.Select(ToHitRegion).ToArray()),
         new RealtimeMediaState(snapshot.MediaState.Channels.Select(ToMedia).ToArray()),
+        ToTooltipPresentation(snapshot.TooltipPresentation),
+        snapshot.TooltipResources.Select(ToTooltipResource).ToArray(),
         snapshot.CurrentPrompt is null ? null : ToPrompt(snapshot.CurrentPrompt),
         ToWindow(snapshot.WindowMetadata),
         new RealtimeTruncation(
@@ -289,6 +291,31 @@ public static class RealtimePayloadMapper
         channel.Revision,
         ToStartPolicy(channel.StartPolicy));
 
+    private static RealtimeTooltipPresentation ToTooltipPresentation(R.ConsoleTooltipPresentation presentation) => new(
+        presentation.CustomEnabled,
+        ToColor(presentation.Foreground)!,
+        ToColor(presentation.Background)!,
+        presentation.DelayMilliseconds,
+        presentation.DurationMilliseconds,
+        presentation.FontFamily,
+        presentation.FontSize,
+        new RealtimeTooltipTextFormat(
+            ToTooltipHorizontal(presentation.TextFormat.Horizontal),
+            ToTooltipVertical(presentation.TextFormat.Vertical),
+            presentation.TextFormat.Wrap,
+            ToTooltipTrimming(presentation.TextFormat.Trimming),
+            presentation.TextFormat.ExpandTabs,
+            presentation.TextFormat.RightToLeft),
+        presentation.ImageMode,
+        presentation.Revision);
+
+    private static RealtimeTooltipResource ToTooltipResource(R.ConsoleTooltipResource resource) => new(
+        resource.GraphicsId,
+        resource.PngData.ToArray(),
+        resource.Width,
+        resource.Height,
+        resource.Revision);
+
     private static RealtimePrompt ToPrompt(R.ConsolePrompt prompt) => new(
         prompt.PromptId,
         ToInputType(prompt.InputType),
@@ -364,7 +391,36 @@ public static class RealtimePayloadMapper
         R.SetMediaChannelOperation media => new("setMediaChannel", MediaChannel: ToMedia(media.Channel)),
         R.StopMediaChannelOperation stop => new("stopMediaChannel", Channel: stop.Channel),
         R.StopAllMediaOperation => new("stopAllMedia"),
+        R.SetTooltipPresentationOperation tooltip => new("setTooltipPresentation", TooltipPresentation: ToTooltipPresentation(tooltip.Presentation)),
+        R.UpsertTooltipResourceOperation tooltipResource => new("upsertTooltipResource", TooltipResource: ToTooltipResource(tooltipResource.Resource)),
+        R.RemoveTooltipResourceOperation removeTooltip => new("removeTooltipResource", GraphicsId: removeTooltip.GraphicsId),
+        R.ClearTooltipResourcesOperation => new("clearTooltipResources"),
         _ => throw new InvalidDataException("The console operation is outside the realtime contract.")
+    };
+
+    private static string ToTooltipHorizontal(R.ConsoleTooltipHorizontalAlignment alignment) => alignment switch
+    {
+        R.ConsoleTooltipHorizontalAlignment.Left => "left",
+        R.ConsoleTooltipHorizontalAlignment.Center => "center",
+        R.ConsoleTooltipHorizontalAlignment.Right => "right",
+        _ => throw new InvalidDataException("The tooltip horizontal alignment is outside the realtime contract.")
+    };
+
+    private static string ToTooltipVertical(R.ConsoleTooltipVerticalAlignment alignment) => alignment switch
+    {
+        R.ConsoleTooltipVerticalAlignment.Top => "top",
+        R.ConsoleTooltipVerticalAlignment.Center => "center",
+        R.ConsoleTooltipVerticalAlignment.Bottom => "bottom",
+        _ => throw new InvalidDataException("The tooltip vertical alignment is outside the realtime contract.")
+    };
+
+    private static string ToTooltipTrimming(R.ConsoleTooltipTrimming trimming) => trimming switch
+    {
+        R.ConsoleTooltipTrimming.None => "none",
+        R.ConsoleTooltipTrimming.CharacterEllipsis => "characterEllipsis",
+        R.ConsoleTooltipTrimming.WordEllipsis => "wordEllipsis",
+        R.ConsoleTooltipTrimming.PathEllipsis => "pathEllipsis",
+        _ => throw new InvalidDataException("The tooltip trimming mode is outside the realtime contract.")
     };
 
     private static string ToAlignment(R.ConsoleLineAlignment alignment) => alignment switch
