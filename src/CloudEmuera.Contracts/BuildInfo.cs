@@ -7,7 +7,7 @@ public sealed record BuildInfo(
     int HttpProtocolVersion,
     int RealtimeProtocolVersion,
     int IpcProtocolVersion,
-    string RealtimePayloadSchemaVersion = "p1-s04-authoritative-layout");
+    string RealtimePayloadSchemaVersion = "p1-s09-tooltip");
 
 public sealed record VersionResponse(
     string Product,

@@ -27,7 +27,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 {
     private readonly string _dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid().ToString("N")[..16]}");
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly int[] SupportedRealtimeProtocolVersions = [4];
+    private static readonly int[] SupportedRealtimeProtocolVersions = [5];
     private IdentityFactory? _factory;
 
     [Fact]
@@ -623,7 +623,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
                 await socket.ConnectAsync(wsUri, connectTimeout.Token);
                 await SendRealtimeAsync(socket, new
                 {
-                    protocolVersion = 4,
+                    protocolVersion = 5,
                     type = "client.hello",
                     messageId = $"msg_realtime_{connectionLabel}_hello",
                     payload = new
@@ -655,7 +655,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
             {
                 await SendRealtimeAsync(socket, new
                 {
-                    protocolVersion = 4,
+                    protocolVersion = 5,
                     type = "session.resume",
                     messageId = $"msg_realtime_{connectionLabel}_resume_{attempt}",
                     sessionId,
@@ -714,7 +714,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 
         await SendRealtimeAsync(socket, new
         {
-            protocolVersion = 4,
+            protocolVersion = 5,
             type = "session.input",
             messageId = "msg_realtime_reconnect_input",
             sessionId,
@@ -779,7 +779,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
         await socket.ConnectAsync(wsUri, connectTimeout.Token);
         await SendRealtimeAsync(socket, new
         {
-            protocolVersion = 4,
+            protocolVersion = 5,
             type = "client.hello",
             messageId = "msg_realtime_draining_hello",
             payload = new

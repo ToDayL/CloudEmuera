@@ -663,3 +663,27 @@ requirements/ADR references, and verification commands.
   selected bundled face and its controlled aliases.
 - Verification:
   `HeadlessRuntimeFixtureTests.CheckfontTreatsUnavailablePrivateFontsAsNotInstalled`.
+## 2026-08-27 — P1-S09 structured browser tooltip presentation
+
+- Headless glue change: `UpstreamHeadless/HeadlessEmueraConsole.cs` routes the
+  eight fixed-baseline `TOOLTIP_*` setters through the strongly typed
+  `ITooltipStateSink` instead of throwing the desktop `HOST_SHIM` failure.
+  Requested game fonts are mapped to the Session face and diagnosed once.
+- Protocol change: structured IPC v7 and Realtime v5 carry the complete
+  bounded tooltip presentation plus validated optional PNG resources.
+- Browser change: game tooltips use one delegated portal layer for
+  mouse/hover-pen, keyboard focus, touch corner inspection, long press and
+  explicit inspect mode. Native `title` attributes were removed from game
+  button, nonbutton and CBG hit targets.
+- Graphics projection: `GraphicsImage` now publishes a monotonic headless
+  revision for surface mutations. The headless Console incrementally tracks
+  visible numeric tooltip references, encodes only dirty referenced surfaces
+  as bounded PNG resources, reclaims stale resources, and flushes mutations at
+  INPUT/WAIT/quit stable boundaries. Projection failures retain raw text and
+  emit bounded diagnostics without rolling back primary display output.
+- Verification: `TooltipSettersRunThroughPinnedInterpreterAndPublishPresentationState`,
+  `TooltipGraphicsRewriteFlushesLatestPngAtInputBoundary`,
+  `DestroyedTooltipGraphicsRemovesOldProjectionAndKeepsRawText`, the
+  `v18-core`/`em-ee-core` fixture scenarios, five-project Playwright tooltip
+  matrix, IPC v7 contracts, Realtime v5 contracts and the static capability
+  verifier.

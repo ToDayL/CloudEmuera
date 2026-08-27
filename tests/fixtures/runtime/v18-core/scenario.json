@@ -7,6 +7,7 @@
   ],
   "steps": [
     { "type": "expectOutput", "text": "V18-START" },
+    { "type": "expectOutput", "text": "V18-TOOLTIP" },
     { "type": "expectOutput", "text": "V18-READY" },
     { "type": "expectOutput", "text": "V18-INPUT" },
     { "type": "submitInput", "inputKind": "integer", "value": "7" },

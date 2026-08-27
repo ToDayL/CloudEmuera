@@ -1,7 +1,7 @@
 using System.IO;
-using CloudEmuera.Ipc.V6;
+using CloudEmuera.Ipc.V7;
 using R = CloudEmuera.RuntimeAdapter;
-using W = CloudEmuera.Ipc.V6;
+using W = CloudEmuera.Ipc.V7;
 
 namespace CloudEmuera.Realtime;
 
@@ -112,6 +112,18 @@ public static class StructuredConsoleWireMapper
             case R.StopAllMediaOperation:
                 result.StopAllMedia = new W.StopAllMedia();
                 break;
+            case R.SetTooltipPresentationOperation tooltip:
+                result.SetTooltipPresentation = new W.SetTooltipPresentation { Presentation = ToProto(tooltip.Presentation) };
+                break;
+            case R.UpsertTooltipResourceOperation tooltipResource:
+                result.UpsertTooltipResource = new W.UpsertTooltipResource { Resource = ToProto(tooltipResource.Resource) };
+                break;
+            case R.RemoveTooltipResourceOperation removeTooltip:
+                result.RemoveTooltipResource = new W.RemoveTooltipResource { GraphicsId = removeTooltip.GraphicsId };
+                break;
+            case R.ClearTooltipResourcesOperation:
+                result.ClearTooltipResources = new W.ClearTooltipResources();
+                break;
             default:
                 throw new InvalidDataException("The runtime operation is outside the structured protocol.");
         }
@@ -163,6 +175,13 @@ public static class StructuredConsoleWireMapper
             W.ConsoleOperation.PayloadOneofCase.StopMediaChannel =>
                 new R.StopMediaChannelOperation(operation.StopMediaChannel.Channel),
             W.ConsoleOperation.PayloadOneofCase.StopAllMedia => new R.StopAllMediaOperation(),
+            W.ConsoleOperation.PayloadOneofCase.SetTooltipPresentation =>
+                new R.SetTooltipPresentationOperation(FromProto(operation.SetTooltipPresentation.Presentation)),
+            W.ConsoleOperation.PayloadOneofCase.UpsertTooltipResource =>
+                new R.UpsertTooltipResourceOperation(FromProto(operation.UpsertTooltipResource.Resource)),
+            W.ConsoleOperation.PayloadOneofCase.RemoveTooltipResource =>
+                new R.RemoveTooltipResourceOperation(operation.RemoveTooltipResource.GraphicsId),
+            W.ConsoleOperation.PayloadOneofCase.ClearTooltipResources => new R.ClearTooltipResourcesOperation(),
             _ => throw new InvalidDataException("The structured operation has no known payload.")
         };
     }
@@ -176,11 +195,13 @@ public static class StructuredConsoleWireMapper
             CanvasScene = ToProto(snapshot.CanvasScene),
             MediaState = ToProto(snapshot.MediaState),
             WindowMetadata = ToProto(snapshot.WindowMetadata),
+            TooltipPresentation = ToProto(snapshot.TooltipPresentation),
             Truncation = ToProto(snapshot.Truncation),
             HasCurrentPrompt = snapshot.CurrentPrompt is not null
         };
         result.Scrollback.AddRange(snapshot.Scrollback.Select(ToProto));
         result.BackgroundLayers.AddRange(snapshot.BackgroundLayers.Select(ToProto));
+        result.TooltipResources.AddRange(snapshot.TooltipResources.Select(ToProto));
         if (snapshot.CurrentPrompt is not null)
             result.CurrentPrompt = ToProto(snapshot.CurrentPrompt);
         return result;
@@ -200,7 +221,9 @@ public static class StructuredConsoleWireMapper
             snapshot.MediaState is null ? new R.MediaState() : FromProto(snapshot.MediaState),
             prompt,
             snapshot.WindowMetadata is null ? new R.WindowMetadata() : FromProto(snapshot.WindowMetadata),
-            snapshot.Truncation is null ? new R.ConsoleTruncationMetadata(false, 0) : FromProto(snapshot.Truncation));
+            snapshot.Truncation is null ? new R.ConsoleTruncationMetadata(false, 0) : FromProto(snapshot.Truncation),
+            snapshot.TooltipPresentation is null ? new R.ConsoleTooltipPresentation() : FromProto(snapshot.TooltipPresentation),
+            snapshot.TooltipResources.Select(FromProto));
     }
 
     public static W.ConsoleLine ToProto(R.ConsoleLine line)
@@ -1021,6 +1044,104 @@ public static class StructuredConsoleWireMapper
     };
 
     private static R.ConsoleInsets FromProto(W.Insets insets) => new(insets.Top, insets.Right, insets.Bottom, insets.Left);
+
+    private static W.TooltipPresentation ToProto(R.ConsoleTooltipPresentation presentation) => new()
+    {
+        CustomEnabled = presentation.CustomEnabled,
+        Foreground = ToProto(presentation.Foreground),
+        Background = ToProto(presentation.Background),
+        DelayMilliseconds = presentation.DelayMilliseconds,
+        DurationMilliseconds = presentation.DurationMilliseconds,
+        FontFamily = presentation.FontFamily,
+        FontSize = presentation.FontSize,
+        TextFormat = ToProto(presentation.TextFormat),
+        ImageMode = presentation.ImageMode,
+        Revision = presentation.Revision
+    };
+
+    private static R.ConsoleTooltipPresentation FromProto(W.TooltipPresentation presentation) => new(
+        presentation.CustomEnabled,
+        FromProto(presentation.Foreground),
+        FromProto(presentation.Background),
+        presentation.DelayMilliseconds,
+        presentation.DurationMilliseconds,
+        presentation.FontFamily,
+        presentation.FontSize,
+        FromProto(presentation.TextFormat),
+        presentation.ImageMode,
+        presentation.Revision);
+
+    private static W.TooltipTextFormat ToProto(R.ConsoleTooltipTextFormat format) => new()
+    {
+        Horizontal = format.Horizontal switch
+        {
+            R.ConsoleTooltipHorizontalAlignment.Left => W.TooltipHorizontalAlignment.Left,
+            R.ConsoleTooltipHorizontalAlignment.Center => W.TooltipHorizontalAlignment.Center,
+            R.ConsoleTooltipHorizontalAlignment.Right => W.TooltipHorizontalAlignment.Right,
+            _ => throw new InvalidDataException("The tooltip horizontal alignment is unknown.")
+        },
+        Vertical = format.Vertical switch
+        {
+            R.ConsoleTooltipVerticalAlignment.Top => W.TooltipVerticalAlignment.Top,
+            R.ConsoleTooltipVerticalAlignment.Center => W.TooltipVerticalAlignment.Center,
+            R.ConsoleTooltipVerticalAlignment.Bottom => W.TooltipVerticalAlignment.Bottom,
+            _ => throw new InvalidDataException("The tooltip vertical alignment is unknown.")
+        },
+        Wrap = format.Wrap,
+        Trimming = format.Trimming switch
+        {
+            R.ConsoleTooltipTrimming.None => W.TooltipTrimming.None,
+            R.ConsoleTooltipTrimming.CharacterEllipsis => W.TooltipTrimming.CharacterEllipsis,
+            R.ConsoleTooltipTrimming.WordEllipsis => W.TooltipTrimming.WordEllipsis,
+            R.ConsoleTooltipTrimming.PathEllipsis => W.TooltipTrimming.PathEllipsis,
+            _ => throw new InvalidDataException("The tooltip trimming mode is unknown.")
+        },
+        ExpandTabs = format.ExpandTabs,
+        RightToLeft = format.RightToLeft
+    };
+
+    private static R.ConsoleTooltipTextFormat FromProto(W.TooltipTextFormat format) => new(
+        format.Horizontal switch
+        {
+            W.TooltipHorizontalAlignment.Left => R.ConsoleTooltipHorizontalAlignment.Left,
+            W.TooltipHorizontalAlignment.Center => R.ConsoleTooltipHorizontalAlignment.Center,
+            W.TooltipHorizontalAlignment.Right => R.ConsoleTooltipHorizontalAlignment.Right,
+            _ => throw new InvalidDataException("The tooltip horizontal alignment is unknown.")
+        },
+        format.Vertical switch
+        {
+            W.TooltipVerticalAlignment.Top => R.ConsoleTooltipVerticalAlignment.Top,
+            W.TooltipVerticalAlignment.Center => R.ConsoleTooltipVerticalAlignment.Center,
+            W.TooltipVerticalAlignment.Bottom => R.ConsoleTooltipVerticalAlignment.Bottom,
+            _ => throw new InvalidDataException("The tooltip vertical alignment is unknown.")
+        },
+        format.Wrap,
+        format.Trimming switch
+        {
+            W.TooltipTrimming.None => R.ConsoleTooltipTrimming.None,
+            W.TooltipTrimming.CharacterEllipsis => R.ConsoleTooltipTrimming.CharacterEllipsis,
+            W.TooltipTrimming.WordEllipsis => R.ConsoleTooltipTrimming.WordEllipsis,
+            W.TooltipTrimming.PathEllipsis => R.ConsoleTooltipTrimming.PathEllipsis,
+            _ => throw new InvalidDataException("The tooltip trimming mode is unknown.")
+        },
+        format.ExpandTabs,
+        format.RightToLeft);
+
+    private static W.TooltipResource ToProto(R.ConsoleTooltipResource resource) => new()
+    {
+        GraphicsId = resource.GraphicsId,
+        PngData = Google.Protobuf.ByteString.CopyFrom(resource.PngData.ToArray()),
+        Width = resource.Width,
+        Height = resource.Height,
+        Revision = resource.Revision
+    };
+
+    private static R.ConsoleTooltipResource FromProto(W.TooltipResource resource) => new(
+        resource.GraphicsId,
+        resource.PngData.ToByteArray(),
+        resource.Width,
+        resource.Height,
+        resource.Revision);
 
     private static W.InputType ToProto(R.ConsoleInputType inputType) => inputType switch
     {

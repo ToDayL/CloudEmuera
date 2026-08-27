@@ -19,6 +19,10 @@ internal static class ConsoleSnapshotValidation
             snapshot.CanvasScene.HitRegions.Count > limits.MaxHitRegions ||
             snapshot.MediaState.Channels.Count > limits.MaxMediaChannels)
             throw new ConsoleContractException(ConsoleContractViolationReason.SceneTooLarge, "The snapshot scene or media state exceeds its limit.");
+        if (snapshot.TooltipResources.Count > limits.MaxTooltipResources ||
+            snapshot.TooltipResources.Sum(resource => (long)resource.PngData.Count) > limits.MaxTooltipResourcesBytes ||
+            snapshot.TooltipResources.Select(resource => resource.GraphicsId).Distinct().Count() != snapshot.TooltipResources.Count)
+            throw new ConsoleContractException(ConsoleContractViolationReason.TooltipResourceLimitExceeded, "The snapshot tooltip resources exceed their limits.");
 
         int nodeCount = 0;
         long textLength = 0;

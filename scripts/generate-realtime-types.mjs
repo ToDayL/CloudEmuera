@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const schemaPath = path.join(root, "src/CloudEmuera.Contracts/Realtime/realtime-v4.schema.json");
+const schemaPath = path.join(root, "src/CloudEmuera.Contracts/Realtime/realtime-v5.schema.json");
 const outputPath = path.join(root, "src/CloudEmuera.Web/src/realtime/generated.ts");
 
 const refTypes = {
@@ -42,6 +42,9 @@ const refTypes = {
   scene: "CanvasScene",
   media: "MediaChannel",
   mediaState: "MediaState",
+  tooltipTextFormat: "TooltipTextFormat",
+  tooltipPresentation: "TooltipPresentation",
+  tooltipResource: "TooltipResource",
   constraints: "InputConstraints",
   prompt: "Prompt",
   window: "WindowMetadata",
@@ -82,6 +85,9 @@ const objectDefinitions = [
   ["scene", "CanvasScene"],
   ["media", "MediaChannel"],
   ["mediaState", "MediaState"],
+  ["tooltipTextFormat", "TooltipTextFormat"],
+  ["tooltipPresentation", "TooltipPresentation"],
+  ["tooltipResource", "TooltipResource"],
   ["constraints", "InputConstraints"],
   ["prompt", "Prompt"],
   ["window", "WindowMetadata"],
@@ -134,6 +140,9 @@ const variantDefinitions = [
     ["removeHitRegion", "RemoveHitRegionOperation"],
     ["setMediaChannel", "SetMediaChannelOperation"],
     ["stopMediaChannel", "StopMediaChannelOperation"],
+    ["setTooltipPresentation", "SetTooltipPresentationOperation"],
+    ["upsertTooltipResource", "UpsertTooltipResourceOperation"],
+    ["removeTooltipResource", "RemoveTooltipResourceOperation"],
   ]],
 ];
 
@@ -149,7 +158,7 @@ export function generateRealtimeTypes(schema) {
   }
 
   const lines = [
-    "/* GENERATED CONTRACT SNAPSHOT — source: realtime-v4.schema.json. */",
+    "/* GENERATED CONTRACT SNAPSHOT — source: realtime-v5.schema.json. */",
     `export const REALTIME_SCHEMA_ID = ${JSON.stringify(schema.$id)} as const;`,
     `export const REALTIME_PROTOCOL_VERSION = ${JSON.stringify(protocolVersion)} as const;`,
     `export const REALTIME_PAYLOAD_SCHEMA_VERSION = ${JSON.stringify(payloadSchemaVersion)} as const;`,

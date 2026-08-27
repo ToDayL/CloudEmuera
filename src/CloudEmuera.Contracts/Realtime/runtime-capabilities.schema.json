@@ -15,13 +15,13 @@
   ],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
-    "matrixVersion": { "type": "string", "const": "p1-s04" },
+    "matrixVersion": { "type": "string", "const": "p1-s09" },
     "upstreamCommit": {
       "type": "string",
       "pattern": "^[0-9a-f]{40}$"
     },
     "runtimeIntegrationVersion": { "type": "string", "minLength": 1 },
-    "protocolVersion": { "type": "integer", "const": 6 },
+    "protocolVersion": { "type": "integer", "const": 7 },
     "capabilitySetDigest": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"

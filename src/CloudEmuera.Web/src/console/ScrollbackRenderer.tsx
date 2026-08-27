@@ -4,6 +4,7 @@ import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
 import type { RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode, RealtimeRect } from "../realtime/protocol";
+import { useConsoleTooltipTarget } from "./TooltipLayer";
 
 export interface ConsoleInputEvent {
   value: string;
@@ -285,16 +286,14 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
     case "lineBreak": return <br />;
     case "button": {
       if (!node.enabled && node.value.length === 0) {
-        return <span className="console-nonbutton" style={positionStyle(node.positionX)} title={node.tooltip ?? undefined}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</span>;
+        return <TooltipNonButton node={node} style={positionStyle(node.positionX)} assets={assets} onInput={onInput} onRenderError={onRenderError} />;
       }
       const parts = splitButtonLabel(node.children);
       const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
       const buttonStyle: CSSProperties = interactivePositionStyle(node.positionX);
       return <Fragment>
         {renderChildren(parts.leading, "leading")}
-        <button className="console-choice" style={buttonStyle} type="button" disabled={!node.enabled} title={node.tooltip ?? undefined} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>
-          <span className="console-choice-label">{renderChildren(parts.label, "label")}</span>
-        </button>
+        <TooltipButton node={node} style={buttonStyle} onInput={onInput}><span className="console-choice-label">{renderChildren(parts.label, "label")}</span></TooltipButton>
         {renderChildren(parts.trailing, "trailing")}
       </Fragment>;
     }
@@ -317,9 +316,9 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
       // the global button:disabled opacity and changes the appearance of
       // every later portrait layer in a composite.
       if (!node.action || (!node.action.enabled && node.action.value.length === 0)) {
-        return <span className={node.action ? "console-nonbutton positioned-inline-segment" : "positioned-inline-segment"} style={style} title={node.action?.tooltip ?? undefined}>{children}</span>;
+        return node.action ? <TooltipPositionedNonButton action={node.action} style={style}>{children}</TooltipPositionedNonButton> : <span className="positioned-inline-segment" style={style}>{children}</span>;
       }
-      return <button className="console-choice positioned-inline-action" style={style} type="button" disabled={!node.action.enabled} title={node.action.tooltip ?? undefined} onClick={() => onInput({ value: node.action!.value, source: "BUTTON" })}>{children}</button>;
+      return <TooltipPositionedButton action={node.action} style={style} onInput={onInput}>{children}</TooltipPositionedButton>;
     }
     case "image": {
       const destination = node.destination ?? node.sourceRect;
@@ -334,6 +333,26 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
       : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
 });
+
+function TooltipButton({ node, style, onInput, children }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; children: ReactNode }) {
+  const target = useConsoleTooltipTarget(node.tooltip, node.generation);
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="console-choice console-tooltip-target" style={style} type="button" disabled={!node.enabled} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>{children}{target.badge}</button>;
+}
+
+function TooltipNonButton({ node, style, assets, onInput, onRenderError }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }) {
+  const target = useConsoleTooltipTarget(node.tooltip, node.generation, true);
+  return <span ref={target.ref as React.RefCallback<HTMLSpanElement>} className="console-nonbutton console-tooltip-target" style={style}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}{target.badge}</span>;
+}
+
+function TooltipPositionedButton({ action, style, onInput, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; children: ReactNode }) {
+  const target = useConsoleTooltipTarget(action.tooltip, action.generation);
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="console-choice positioned-inline-action console-tooltip-target" style={style} type="button" disabled={!action.enabled} onClick={() => onInput({ value: action.value, source: "BUTTON" })}>{children}{target.badge}</button>;
+}
+
+function TooltipPositionedNonButton({ action, style, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; children: ReactNode }) {
+  const target = useConsoleTooltipTarget(action.tooltip, action.generation, true);
+  return <span ref={target.ref as React.RefCallback<HTMLSpanElement>} className="console-nonbutton positioned-inline-segment console-tooltip-target" style={style}>{children}{target.badge}</span>;
+}
 
 const eraWideCell = /[―∥\u2500-\u257F■□○●★☆]/u;
 const eraWideShape = /[■□○●★☆]/u;

@@ -19,6 +19,8 @@ import {
   RealtimeTextStyle,
   SpriteAnimationFrame,
   Truncation,
+  TooltipPresentation,
+  TooltipResource,
   WindowMetadata,
 } from "./protocol";
 
@@ -51,7 +53,7 @@ export function decodeRealtimeMessage(input: string | ArrayBuffer): RealtimeServ
   catch { throw new RealtimeDecodeError("invalid_json", "实时消息不是有效 JSON。"); }
   const envelope = object(value, "invalid_envelope");
   ensureKeys(envelope, ["protocolVersion", "type", "messageId", "correlationId", "sessionId", "workerEpoch", "sequence", "payload"], "envelope");
-  if (integer(envelope.protocolVersion, "protocolVersion") !== 4)
+  if (integer(envelope.protocolVersion, "protocolVersion") !== 5)
     throw new RealtimeDecodeError("unsupported_protocol_version", "实时协议版本不兼容。");
   const type = string(envelope.type, "type");
   const messageId = string(envelope.messageId, "messageId");
@@ -61,7 +63,7 @@ export function decodeRealtimeMessage(input: string | ArrayBuffer): RealtimeServ
   if (envelope.workerEpoch !== undefined && positiveInteger(envelope.workerEpoch, "workerEpoch") === 0) throw new RealtimeDecodeError("invalid_envelope", "workerEpoch 无效。");
   if (envelope.sequence !== undefined && integer(envelope.sequence, "sequence") < 0) throw new RealtimeDecodeError("invalid_envelope", "sequence 无效。");
   const payload = object(envelope.payload, "missing_payload");
-  const base = { protocolVersion: 4 as const, type, messageId, ...(envelope.correlationId === undefined ? {} : { correlationId: string(envelope.correlationId, "correlationId") }), ...(envelope.sessionId === undefined ? {} : { sessionId: string(envelope.sessionId, "sessionId") }), ...(envelope.workerEpoch === undefined ? {} : { workerEpoch: positiveInteger(envelope.workerEpoch, "workerEpoch") }), ...(envelope.sequence === undefined ? {} : { sequence: integer(envelope.sequence, "sequence") }) };
+  const base = { protocolVersion: 5 as const, type, messageId, ...(envelope.correlationId === undefined ? {} : { correlationId: string(envelope.correlationId, "correlationId") }), ...(envelope.sessionId === undefined ? {} : { sessionId: string(envelope.sessionId, "sessionId") }), ...(envelope.workerEpoch === undefined ? {} : { workerEpoch: positiveInteger(envelope.workerEpoch, "workerEpoch") }), ...(envelope.sequence === undefined ? {} : { sequence: integer(envelope.sequence, "sequence") }) };
 
   switch (type) {
     case "server.hello": return { ...base, type, payload: decodeServerHello(payload) } as RealtimeServerMessage;
@@ -85,12 +87,12 @@ function requireSession<T extends { sessionId?: string }>(value: T): T & { sessi
 function decodeServerHello(value: JsonObject) {
   ensureKeys(value, ["protocolVersion", "payloadSchemaVersion", "connectionId", "serverNowUnixMilliseconds", "heartbeatIntervalMilliseconds", "heartbeatTimeoutMilliseconds", "maxSubscriptionsPerConnection", "maxPendingInputsPerConnection", "serverMessageMaxBytes", "capabilityDigest"], "server.hello");
   const protocolVersion = positiveInteger(value.protocolVersion, "protocolVersion");
-  if (protocolVersion !== 4) throw new RealtimeDecodeError("unsupported_protocol_version", "服务端协议版本不兼容。");
+  if (protocolVersion !== 5) throw new RealtimeDecodeError("unsupported_protocol_version", "服务端协议版本不兼容。");
   const payloadSchemaVersion = string(value.payloadSchemaVersion, "payloadSchemaVersion");
   if (payloadSchemaVersion !== REALTIME_PAYLOAD_SCHEMA_VERSION)
     throw new RealtimeDecodeError("unsupported_payload_schema_version", "实时消息内容版本不兼容。");
   return {
-    protocolVersion: 4 as const,
+    protocolVersion: 5 as const,
     payloadSchemaVersion,
     connectionId: checkedIdentifier(value.connectionId, "connectionId"),
     serverNowUnixMilliseconds: finiteNumber(value.serverNowUnixMilliseconds, "serverNowUnixMilliseconds"),
@@ -171,7 +173,7 @@ function decodeInputResult(value: JsonObject) {
 
 function decodeConsoleState(value: JsonValue): ConsoleState {
   const state = object(value, "console_state");
-  ensureKeys(state, ["scrollback", "backgroundLayers", "canvasScene", "mediaState", "currentPrompt", "windowMetadata", "truncation"], "consoleState");
+  ensureKeys(state, ["scrollback", "backgroundLayers", "canvasScene", "mediaState", "tooltipPresentation", "tooltipResources", "currentPrompt", "windowMetadata", "truncation"], "consoleState");
   const mediaState = object(state.mediaState, "mediaState");
   ensureKeys(mediaState, ["channels"], "mediaState");
   return {
@@ -179,6 +181,8 @@ function decodeConsoleState(value: JsonValue): ConsoleState {
     backgroundLayers: array(state.backgroundLayers, "backgroundLayers").map(item => decodeBackground(object(item, "backgroundLayer"))),
     canvasScene: decodeScene(object(state.canvasScene, "canvasScene")),
     mediaState: { channels: array(mediaState.channels, "channels").map(item => decodeMedia(object(item, "mediaChannel"))) },
+    tooltipPresentation: decodeTooltipPresentation(object(state.tooltipPresentation, "tooltipPresentation")),
+    tooltipResources: array(state.tooltipResources, "tooltipResources").map(item => decodeTooltipResource(object(item, "tooltipResource"))),
     currentPrompt: state.currentPrompt === null || state.currentPrompt === undefined ? state.currentPrompt : decodePrompt(object(state.currentPrompt, "prompt")),
     windowMetadata: decodeWindow(object(state.windowMetadata, "windowMetadata")),
     truncation: decodeTruncation(object(state.truncation, "truncation")),
@@ -263,6 +267,8 @@ function decodeDrawable(value: JsonObject): RealtimeDrawable { const type = stri
 function decodeAnimationFrame(value: JsonObject): SpriteAnimationFrame { ensureKeys(value, ["assetId", "sourceRect", "offset", "durationMilliseconds"], "animationFrame"); return { assetId: checkedAssetIdentifier(value.assetId, "assetId"), sourceRect: decodeRect(object(value.sourceRect, "sourceRect")), offset: decodePoint(object(value.offset, "offset")), durationMilliseconds: positiveInteger(value.durationMilliseconds, "durationMilliseconds") }; }
 function decodeHitRegion(value: JsonObject) { ensureKeys(value, ["regionId", "bounds", "inputValue", "enabled", "tooltip"], "hitRegion"); return { regionId: checkedIdentifier(value.regionId, "regionId"), bounds: decodeRect(object(value.bounds, "bounds")), inputValue: string(value.inputValue, "inputValue"), enabled: bool(value.enabled, "enabled"), tooltip: nullableString(value.tooltip, "tooltip") }; }
 function decodeMedia(value: JsonObject): MediaChannel { ensureKeys(value, ["channel", "assetId", "playbackState", "loop", "volume", "revision", "startPolicy"], "media"); const playbackState = string(value.playbackState, "playbackState"); if (!["requested", "playing", "stopped"].includes(playbackState)) throw new RealtimeDecodeError("invalid_payload", "媒体状态无效。"); const startPolicy = string(value.startPolicy, "startPolicy"); if (!["immediate", "onUserGesture"].includes(startPolicy)) throw new RealtimeDecodeError("invalid_payload", "媒体启动策略无效。"); return { channel: checkedIdentifier(value.channel, "channel"), assetId: nullableAssetIdentifier(value.assetId, "assetId"), playbackState: playbackState as MediaChannel["playbackState"], loop: bool(value.loop, "loop"), volume: boundedNumber(value.volume, "volume", 0, 1), revision: nonNegativeInteger(value.revision, "revision"), startPolicy: startPolicy as MediaChannel["startPolicy"] }; }
+function decodeTooltipPresentation(value: JsonObject): TooltipPresentation { ensureKeys(value, ["customEnabled", "foreground", "background", "delayMilliseconds", "durationMilliseconds", "fontFamily", "fontSize", "textFormat", "imageMode", "revision"], "tooltipPresentation"); const format = object(value.textFormat, "tooltipPresentation.textFormat"); ensureKeys(format, ["horizontal", "vertical", "wrap", "trimming", "expandTabs", "rightToLeft"], "tooltipPresentation.textFormat"); const horizontal = string(format.horizontal, "horizontal"); const vertical = string(format.vertical, "vertical"); const trimming = string(format.trimming, "trimming"); if (!["left", "center", "right"].includes(horizontal) || !["top", "center", "bottom"].includes(vertical) || !["none", "characterEllipsis", "wordEllipsis", "pathEllipsis"].includes(trimming)) throw new RealtimeDecodeError("invalid_payload", "Tooltip format 无效。"); return { customEnabled: bool(value.customEnabled, "customEnabled"), foreground: decodeColor(object(value.foreground, "foreground")), background: decodeColor(object(value.background, "background")), delayMilliseconds: boundedInteger(value.delayMilliseconds, "delayMilliseconds", 0, 32767), durationMilliseconds: boundedInteger(value.durationMilliseconds, "durationMilliseconds", 0, 32767), fontFamily: string(value.fontFamily, "fontFamily"), fontSize: boundedInteger(value.fontSize, "fontSize", 1, 256), textFormat: { horizontal: horizontal as TooltipPresentation["textFormat"]["horizontal"], vertical: vertical as TooltipPresentation["textFormat"]["vertical"], wrap: bool(format.wrap, "wrap"), trimming: trimming as TooltipPresentation["textFormat"]["trimming"], expandTabs: bool(format.expandTabs, "expandTabs"), rightToLeft: bool(format.rightToLeft, "rightToLeft") }, imageMode: bool(value.imageMode, "imageMode"), revision: nonNegativeInteger(value.revision, "revision") }; }
+function decodeTooltipResource(value: JsonObject): TooltipResource { ensureKeys(value, ["graphicsId", "pngData", "width", "height", "revision"], "tooltipResource"); const pngData = string(value.pngData, "pngData"); validatePngBase64(pngData); return { graphicsId: nonNegativeInteger(value.graphicsId, "graphicsId"), pngData, width: boundedInteger(value.width, "width", 1, 4096), height: boundedInteger(value.height, "height", 1, 4096), revision: nonNegativeInteger(value.revision, "revision") }; }
 function decodePrompt(value: JsonObject): Prompt { ensureKeys(value, ["promptId", "inputType", "promptText", "defaultValue", "constraints", "timeoutBehavior", "timeoutAction", "allowedSources", "oneInput", "systemInput", "stopMessageSkip", "displayTime", "timeoutMessage", "openedAtUnixMilliseconds", "deadlineUnixMilliseconds", "timeoutMilliseconds"], "prompt"); const inputType = string(value.inputType, "inputType"); if (!["enterKey", "anyKey", "integer", "text", "anyValue", "integerButton", "textButton", "primitivePointerKey", "waitOnly"].includes(inputType)) throw new RealtimeDecodeError("invalid_payload", "输入类型无效。"); const sources = array(value.allowedSources, "allowedSources").map(item => string(item, "allowedSource")); if (sources.some(item => !["keyboard", "button", "pointer", "system"].includes(item))) throw new RealtimeDecodeError("invalid_payload", "输入来源无效。"); return { promptId: checkedIdentifier(value.promptId, "promptId"), inputType: inputType as Prompt["inputType"], promptText: nullableString(value.promptText, "promptText"), defaultValue: nullableString(value.defaultValue, "defaultValue"), constraints: decodeConstraints(object(value.constraints, "constraints")), timeoutBehavior: string(value.timeoutBehavior, "timeoutBehavior"), timeoutAction: string(value.timeoutAction, "timeoutAction"), allowedSources: sources as Prompt["allowedSources"], oneInput: bool(value.oneInput, "oneInput"), systemInput: bool(value.systemInput, "systemInput"), stopMessageSkip: bool(value.stopMessageSkip, "stopMessageSkip"), displayTime: bool(value.displayTime, "displayTime"), timeoutMessage: nullableString(value.timeoutMessage, "timeoutMessage"), openedAtUnixMilliseconds: finiteNumber(value.openedAtUnixMilliseconds, "openedAtUnixMilliseconds"), deadlineUnixMilliseconds: finiteNumber(value.deadlineUnixMilliseconds, "deadlineUnixMilliseconds"), timeoutMilliseconds: value.timeoutMilliseconds === null || value.timeoutMilliseconds === undefined ? value.timeoutMilliseconds : finiteNumber(value.timeoutMilliseconds, "timeoutMilliseconds") }; }
 function decodeConstraints(value: JsonObject): InputConstraints { ensureKeys(value, ["type", "maxLength", "minimum", "maximum", "allowSign", "allowControlCharacters"], "constraints"); const type = string(value.type, "constraints.type"); if (!["text", "integer", "anyValue"].includes(type)) throw new RealtimeDecodeError("invalid_payload", "输入约束类型无效。"); return { type: type as InputConstraints["type"], maxLength: optionalInteger(value.maxLength, "maxLength"), minimum: optionalInteger(value.minimum, "minimum"), maximum: optionalInteger(value.maximum, "maximum"), allowSign: optionalBool(value.allowSign, "allowSign"), allowControlCharacters: optionalBool(value.allowControlCharacters, "allowControlCharacters") }; }
 function decodeWindow(value: JsonObject): WindowMetadata { ensureKeys(value, ["title", "viewportWidth", "viewportHeight", "defaultForeground", "defaultBackground", "defaultFont", "fontFaceId", "webFontAssetDigest"], "window"); const defaultFont = object(value.defaultFont, "defaultFont"); ensureKeys(defaultFont, ["family", "size", "lineHeight"], "defaultFont"); return { title: string(value.title, "title"), viewportWidth: positiveInteger(value.viewportWidth, "viewportWidth"), viewportHeight: positiveInteger(value.viewportHeight, "viewportHeight"), defaultForeground: optionalColor(value.defaultForeground, "defaultForeground"), defaultBackground: optionalColor(value.defaultBackground, "defaultBackground"), defaultFont: { family: string(defaultFont.family, "family"), size: positiveInteger(defaultFont.size, "size"), lineHeight: nonNegativeInteger(defaultFont.lineHeight, "lineHeight") }, fontFaceId: value.fontFaceId === undefined ? undefined : checkedIdentifier(value.fontFaceId, "fontFaceId"), webFontAssetDigest: value.webFontAssetDigest === undefined ? undefined : value.webFontAssetDigest === "" ? "" : checkedDigest(value.webFontAssetDigest) }; }
@@ -277,11 +283,12 @@ function decodeOperation(value: JsonObject): RealtimeOperation {
     upsertBackground: ["type", "backgroundLayer"], removeBackground: ["type", "layerId"], clearBackgrounds: ["type"], upsertDrawable: ["type", "drawable"], removeDrawable: ["type", "drawableId"],
     clearSceneRange: ["type", "minimumZIndex", "maximumZIndex"], clearScene: ["type"], upsertHitRegion: ["type", "hitRegion"], removeHitRegion: ["type", "regionId"], clearHitRegions: ["type"],
     setMediaChannel: ["type", "mediaChannel"], stopMediaChannel: ["type", "channel"], stopAllMedia: ["type"],
+    setTooltipPresentation: ["type", "tooltipPresentation"], upsertTooltipResource: ["type", "tooltipResource"], removeTooltipResource: ["type", "graphicsId"], clearTooltipResources: ["type"],
   } as Record<string, string[]>;
   if (allowed[type]) ensureKeys(value, allowed[type], `operation.${type}`);
   switch (type) {
     case "appendNodes": return { type, nodes: array(value.nodes, "nodes").map(decodeNode) };
-    case "clearConsole": case "clearScrollback": case "clearBackgrounds": case "clearScene": case "clearHitRegions": case "stopAllMedia": return { type };
+    case "clearConsole": case "clearScrollback": case "clearBackgrounds": case "clearScene": case "clearHitRegions": case "stopAllMedia": case "clearTooltipResources": return { type };
     case "openPrompt": return { type, prompt: decodePrompt(object(value.prompt, "prompt")) };
     case "closePrompt": return { type, promptId: checkedIdentifier(value.promptId, "promptId"), reason: string(value.reason, "reason") };
     case "appendLine": return { type, line: decodeLine(object(value.line, "line")) };
@@ -298,6 +305,9 @@ function decodeOperation(value: JsonObject): RealtimeOperation {
     case "removeHitRegion": return { type, regionId: checkedIdentifier(value.regionId, "regionId") };
     case "setMediaChannel": return { type, mediaChannel: decodeMedia(object(value.mediaChannel, "mediaChannel")) };
     case "stopMediaChannel": return { type, channel: checkedIdentifier(value.channel, "channel") };
+    case "setTooltipPresentation": return { type, tooltipPresentation: decodeTooltipPresentation(object(value.tooltipPresentation, "tooltipPresentation")) };
+    case "upsertTooltipResource": return { type, tooltipResource: decodeTooltipResource(object(value.tooltipResource, "tooltipResource")) };
+    case "removeTooltipResource": return { type, graphicsId: nonNegativeInteger(value.graphicsId, "graphicsId") };
     default: throw new RealtimeDecodeError("unknown_operation", "实时操作类型不受支持。");
   }
 }

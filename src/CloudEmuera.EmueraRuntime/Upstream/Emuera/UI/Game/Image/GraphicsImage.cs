@@ -17,6 +17,10 @@ internal sealed class GraphicsImage : AbstractImage
 	private const long MaxHeadlessGraphicsBytes = 256L * 1024 * 1024;
 	private static long headlessGraphicsBytes;
 	private long reservedBytes;
+#if CLOUDEMUERA_HEADLESS
+	private long headlessRevision;
+	internal long HeadlessRevision => Interlocked.Read(ref headlessRevision);
+#endif
 	//public Bitmap Bitmap;
 	//public IntPtr GDIhDC { get; protected set; }
 	//protected Graphics g;
@@ -61,6 +65,8 @@ internal sealed class GraphicsImage : AbstractImage
 		// after any pixel mutation. The headless resolver will publish a fresh
 		// content-addressed PNG the next time this surface is referenced.
 		HeadlessAssetPath = null;
+		long revision = Interlocked.Increment(ref headlessRevision);
+		GlobalStatic.Console?.NotifyGraphicsMutation(ID, revision);
 #endif
 	}
 
@@ -111,9 +117,10 @@ internal sealed class GraphicsImage : AbstractImage
 			RealBitmap = new Bitmap(x, y, PixelFormat.Format32bppArgb);
 			size = new Size(x, y);
 			g = Graphics.FromImage(RealBitmap);
-			drawImgList = [];
-			lock (AppContents.tempLoadedGraphicsImages)
-				AppContents.tempLoadedGraphicsImages.Add(this);
+				drawImgList = [];
+				lock (AppContents.tempLoadedGraphicsImages)
+					AppContents.tempLoadedGraphicsImages.Add(this);
+			InvalidateHeadlessAssetPath();
 		}
 		catch
 		{
@@ -135,8 +142,9 @@ internal sealed class GraphicsImage : AbstractImage
 		{
 			RealBitmap = new Bitmap(bmp.Width, bmp.Height, PixelFormat.Format32bppArgb);
 			size = new Size(bmp.Width, bmp.Height);
-			g = Graphics.FromImage(RealBitmap);
-			g.DrawImage(bmp, 0, 0, bmp.Width, bmp.Height);
+				g = Graphics.FromImage(RealBitmap);
+				g.DrawImage(bmp, 0, 0, bmp.Width, bmp.Height);
+			InvalidateHeadlessAssetPath();
 		}
 		catch
 		{
@@ -628,11 +636,11 @@ internal sealed class GraphicsImage : AbstractImage
 	/// </summary>
 	public void GDispose()
 	{
+		bool hadSurface = RealBitmap != null || g != null || useImgList;
 		size = new Size(0, 0);
 		drawImgList = null;
-#if CLOUDEMUERA_HEADLESS
-		HeadlessAssetPath = null;
-#endif
+		if (hadSurface)
+			InvalidateHeadlessAssetPath();
 		if (RealBitmap == null)
 		{
 			ReleaseHeadlessBytes();
@@ -780,6 +788,7 @@ internal sealed class GraphicsImage : AbstractImage
 		if (xstart + w > array.GetLength(0) || ystart + h > array.GetLength(1))
 			return false;
 
+		InvalidateHeadlessAssetPath();
 		byte[] rgbValues = new byte[w * h * 4];
 		int i = 0;
 		for (int y = 0; y < h; y++)

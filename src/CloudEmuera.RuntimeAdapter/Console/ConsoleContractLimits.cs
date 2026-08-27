@@ -6,6 +6,12 @@ namespace CloudEmuera.RuntimeAdapter;
 /// </summary>
 public sealed record ConsoleContractLimits
 {
+    public const int MaxTooltipDelayMilliseconds = short.MaxValue;
+    public const int MaxTooltipDurationMilliseconds = short.MaxValue;
+    public const int MaxTooltipFontSize = 256;
+    public const int MaxTooltipImageDimension = 4_096;
+    public const int MaxTooltipResourceBytes = 8 * 1_024 * 1_024;
+
     public static ConsoleContractLimits Default => new();
 
     public int MaxTextLength { get; init; } = 16_384;
@@ -113,6 +119,10 @@ public sealed record ConsoleContractLimits
 
     public int MaxInlineRasterBytes { get; init; } = 8 * 1_024 * 1_024;
 
+    public int MaxTooltipResources { get; init; } = 128;
+
+    public int MaxTooltipResourcesBytes { get; init; } = 12 * 1_024 * 1_024;
+
     public void Validate()
     {
         ValidatePositive(MaxTextLength, nameof(MaxTextLength));
@@ -160,6 +170,8 @@ public sealed record ConsoleContractLimits
         ValidatePositive(MaxHtmlChildren, nameof(MaxHtmlChildren));
         ValidatePositive(MaxSpriteFrames, nameof(MaxSpriteFrames));
         ValidatePositive(MaxInlineRasterBytes, nameof(MaxInlineRasterBytes));
+        ValidatePositive(MaxTooltipResources, nameof(MaxTooltipResources));
+        ValidatePositive(MaxTooltipResourcesBytes, nameof(MaxTooltipResourcesBytes));
     }
 
     private static void ValidatePositive(int value, string parameterName)
@@ -229,7 +241,10 @@ public enum ConsoleContractViolationReason
     MediaTooLarge,
     WindowMetadataTooLong,
     InvalidViewport,
-    HtmlNodeLimitExceeded
+    HtmlNodeLimitExceeded,
+    InvalidTooltipTiming,
+    InvalidTooltipFormat,
+    TooltipResourceLimitExceeded
 }
 
 /// <summary>

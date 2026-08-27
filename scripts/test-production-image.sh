@@ -296,13 +296,13 @@ class WebSocket:
             f"GET /api/v1/realtime HTTP/1.1\r\nHost: {parts.hostname}:{port}\r\n"
             "Upgrade: websocket\r\nConnection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
-            "Sec-WebSocket-Protocol: cloudemuera.realtime.v4\r\n"
+            "Sec-WebSocket-Protocol: cloudemuera.realtime.v5\r\n"
             "Origin: http://localhost:5173\r\n"
             f"Cookie: {cookie_header(cookie_path)}\r\n\r\n"
         ).encode()
         self.sock.sendall(request)
         header = self.read_until(b"\r\n\r\n").decode("latin1")
-        if " 101 " not in header or "Sec-WebSocket-Protocol: cloudemuera.realtime.v4" not in header:
+        if " 101 " not in header or "Sec-WebSocket-Protocol: cloudemuera.realtime.v5" not in header:
             raise RuntimeError(f"websocket handshake failed: {header}")
 
     def read_until(self, marker):
@@ -378,18 +378,18 @@ class WebSocket:
         finally:
             self.sock.close()
 
-digest = hashlib.sha256(b"cloudemuera:p1-s04:2175f8a629257efb08214e093704b3a3d3d06d05:structured-console-v6-authoritative-layout").hexdigest()
+digest = hashlib.sha256(b"cloudemuera:p1-s09:2175f8a629257efb08214e093704b3a3d3d06d05:structured-console-v7-authoritative-layout").hexdigest()
 socket_client = WebSocket()
 try:
-    socket_client.send({"protocolVersion": 4, "type": "client.hello", "messageId": "production-hello", "payload": {
-        "supportedProtocolVersions": [4], "capabilityDigest": digest, "supportedCapabilities": []}})
+    socket_client.send({"protocolVersion": 5, "type": "client.hello", "messageId": "production-hello", "payload": {
+        "supportedProtocolVersions": [5], "capabilityDigest": digest, "supportedCapabilities": []}})
     hello = socket_client.recv()
     if hello.get("type") != "server.hello":
         raise RuntimeError(f"unexpected server hello: {hello}")
     prompt = None
     accepted = False
     for attempt in range(40):
-        socket_client.send({"protocolVersion": 4, "type": "session.resume", "messageId": f"production-resume-{attempt}",
+        socket_client.send({"protocolVersion": 5, "type": "session.resume", "messageId": f"production-resume-{attempt}",
             "sessionId": session_id, "payload": {"capabilityDigest": digest}})
         for _ in range(12):
             message = socket_client.recv()
@@ -404,7 +404,7 @@ try:
         time.sleep(0.1)
     if not accepted or not prompt:
         raise RuntimeError("realtime resume did not expose a current prompt")
-    socket_client.send({"protocolVersion": 4, "type": "session.input", "messageId": "production-input-envelope",
+    socket_client.send({"protocolVersion": 5, "type": "session.input", "messageId": "production-input-envelope",
         "sessionId": session_id, "workerEpoch": int(worker_epoch), "payload": {
             "clientMessageId": "production-input", "source": "KEYBOARD", "value": "7",
             "key": {"keyCode": 55, "control": False, "alt": False, "shift": False}}})

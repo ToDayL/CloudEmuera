@@ -1,24 +1,24 @@
 using System.Security.Cryptography;
 using System.Text;
-using CloudEmuera.Ipc.V6;
-using ProtoConsoleColor = CloudEmuera.Ipc.V6.ConsoleColor;
+using CloudEmuera.Ipc.V7;
+using ProtoConsoleColor = CloudEmuera.Ipc.V7.ConsoleColor;
 
 namespace CloudEmuera.Ipc;
 
 /// <summary>Versioned constants for the lossless structured Worker protocol.</summary>
 public static class StructuredIpcProtocol
 {
-    public const uint CurrentVersion = 6;
-    public const string CapabilityMatrixVersion = "p1-s04";
+    public const uint CurrentVersion = 7;
+    public const string CapabilityMatrixVersion = "p1-s09";
     public const string UpstreamCommit = "2175f8a629257efb08214e093704b3a3d3d06d05";
 
     public static string CapabilitySetDigest { get; } = Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v6-authoritative-layout")))
+        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v7-authoritative-layout")))
         .ToLowerInvariant();
 }
 
 /// <summary>
-/// Builds and checks the v6 bootstrap handshake. Registration carries the
+/// Builds and checks the v7 bootstrap handshake. Registration carries the
 /// same capability digest in the envelope and payload so a peer cannot
 /// silently downgrade by dropping the new contract metadata.
 /// </summary>
@@ -124,6 +124,9 @@ public static class StructuredIpcLimits
     public const int MaxSegmentsPerPhysicalLine = 8_192;
     public const int MaxProtocolErrorMessageLength = 512;
     public const int MaxInlineRasterBytes = 8 * 1024 * 1024;
+    public const int MaxTooltipResources = 128;
+    public const int MaxTooltipResourceBytes = 8 * 1024 * 1024;
+    public const int MaxTooltipResourcesBytes = 12 * 1024 * 1024;
 }
 
 public static class StructuredIpcValidator
@@ -339,7 +342,9 @@ public static class StructuredIpcValidator
             value.CanvasScene.HitRegions.Count > StructuredIpcLimits.MaxSceneItems ||
             value.MediaState is null || value.MediaState.Channels.Count > 32 ||
             value.WindowMetadata is null || value.Truncation is null ||
-            !ValidateWindow(value.WindowMetadata) || !ValidateTruncation(value.Truncation))
+            value.TooltipPresentation is null || value.TooltipResources.Count > StructuredIpcLimits.MaxTooltipResources ||
+            !ValidateWindow(value.WindowMetadata) || !ValidateTruncation(value.Truncation) ||
+            !ValidateTooltipPresentation(value.TooltipPresentation))
             return false;
 
         int nodes = 0;
@@ -359,6 +364,10 @@ public static class StructuredIpcValidator
             if (!ValidateHitRegion(region)) return false;
         foreach (MediaChannelState channel in value.MediaState.Channels)
             if (!ValidateMedia(channel)) return false;
+        if (value.TooltipResources.Select(resource => resource.GraphicsId).Distinct().Count() != value.TooltipResources.Count ||
+            value.TooltipResources.Sum(resource => (long)resource.PngData.Length) > StructuredIpcLimits.MaxTooltipResourcesBytes ||
+            value.TooltipResources.Any(resource => !ValidateTooltipResource(resource)))
+            return false;
         return !value.HasCurrentPrompt || ValidatePrompt(value.CurrentPrompt);
     }
 
@@ -411,6 +420,16 @@ public static class StructuredIpcValidator
             case ConsoleOperation.PayloadOneofCase.StopMediaChannel:
                 return IsIdentifier(operation.StopMediaChannel.Channel);
             case ConsoleOperation.PayloadOneofCase.StopAllMedia:
+                return true;
+            case ConsoleOperation.PayloadOneofCase.SetTooltipPresentation:
+                return operation.SetTooltipPresentation.Presentation is not null &&
+                    ValidateTooltipPresentation(operation.SetTooltipPresentation.Presentation);
+            case ConsoleOperation.PayloadOneofCase.UpsertTooltipResource:
+                return operation.UpsertTooltipResource.Resource is not null &&
+                    ValidateTooltipResource(operation.UpsertTooltipResource.Resource);
+            case ConsoleOperation.PayloadOneofCase.RemoveTooltipResource:
+                return operation.RemoveTooltipResource.GraphicsId >= 0;
+            case ConsoleOperation.PayloadOneofCase.ClearTooltipResources:
                 return true;
             default:
                 return false;
@@ -619,6 +638,22 @@ public static class StructuredIpcValidator
         metadata.DefaultFont is not null && ValidateStyle(metadata.DefaultFont) &&
         (string.IsNullOrEmpty(metadata.FontFaceId) || IsIdentifier(metadata.FontFaceId)) &&
         (string.IsNullOrEmpty(metadata.WebFontAssetDigest) || IsDigest(metadata.WebFontAssetDigest));
+
+    private static bool ValidateTooltipPresentation(TooltipPresentation presentation) =>
+        ValidateColor(presentation.Foreground) && ValidateColor(presentation.Background) &&
+        presentation.DelayMilliseconds is >= 0 and <= short.MaxValue &&
+        presentation.DurationMilliseconds is >= 0 and <= short.MaxValue &&
+        IsText(presentation.FontFamily) && presentation.FontSize is >= 1 and <= 256 &&
+        presentation.TextFormat is not null &&
+        presentation.TextFormat.Horizontal is TooltipHorizontalAlignment.Left or TooltipHorizontalAlignment.Center or TooltipHorizontalAlignment.Right &&
+        presentation.TextFormat.Vertical is TooltipVerticalAlignment.Top or TooltipVerticalAlignment.Center or TooltipVerticalAlignment.Bottom &&
+        presentation.TextFormat.Trimming is TooltipTrimming.None or TooltipTrimming.CharacterEllipsis or TooltipTrimming.WordEllipsis or TooltipTrimming.PathEllipsis &&
+        presentation.Revision >= 0;
+
+    private static bool ValidateTooltipResource(TooltipResource resource) =>
+        resource.GraphicsId >= 0 && resource.Revision >= 0 &&
+        resource.Width is >= 1 and <= 4_096 && resource.Height is >= 1 and <= 4_096 &&
+        resource.PngData.Length <= StructuredIpcLimits.MaxTooltipResourceBytes && IsPng(resource.PngData);
 
     private static bool ValidateInlineAction(ConsoleInlineAction? action) => action is not null &&
         IsText(action.Value) && IsText(action.Tooltip) && action.Generation >= 0;

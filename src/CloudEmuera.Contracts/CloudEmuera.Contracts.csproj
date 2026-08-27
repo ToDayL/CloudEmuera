@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <None Update="Realtime/realtime-v3.schema.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Update="Realtime/realtime-v4.schema.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Realtime/realtime-v5.schema.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

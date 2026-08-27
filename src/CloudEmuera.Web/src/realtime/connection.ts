@@ -113,7 +113,7 @@ export class RealtimeConnectionManager {
     socket.addEventListener("open", () => {
       if (this.socket !== socket) return;
       this.setPhase("hello_pending");
-      this.send("client.hello", { supportedProtocolVersions: [4], capabilityDigest: CAPABILITY_DIGEST, supportedCapabilities: [...SUPPORTED_CAPABILITIES] });
+      this.send("client.hello", { supportedProtocolVersions: [5], capabilityDigest: CAPABILITY_DIGEST, supportedCapabilities: [...SUPPORTED_CAPABILITIES] });
     });
     socket.addEventListener("message", event => { if (this.socket === socket) this.handleMessage(event.data); });
     socket.addEventListener("error", () => { /* close is the reconnect boundary */ });
@@ -227,7 +227,7 @@ export class RealtimeConnectionManager {
 
   private send(type: string, payload: object, sessionId?: string, workerEpoch?: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
-    const message = { protocolVersion: 4, type, messageId: newMessageId(), ...(sessionId ? { sessionId } : {}), ...(workerEpoch ? { workerEpoch } : {}), payload };
+    const message = { protocolVersion: 5, type, messageId: newMessageId(), ...(sessionId ? { sessionId } : {}), ...(workerEpoch ? { workerEpoch } : {}), payload };
     this.socket.send(JSON.stringify(message));
   }
 

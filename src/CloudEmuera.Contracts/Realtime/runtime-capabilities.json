@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "matrixVersion": "p1-s04",
+  "matrixVersion": "p1-s09",
   "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
   "runtimeIntegrationVersion": "headless-p0.5.1",
-  "protocolVersion": 6,
-  "capabilitySetDigest": "9a5d4b9b8eef946adc5566bc9ae2aa88881bbfd9f1ec27628c52564956de6ef8",
+  "protocolVersion": 7,
+  "capabilitySetDigest": "8aaac87d04ee4b49ef343c7bd5b5d4a0858f047c67c2da31129dfc6e12a7f002",
   "capabilities": [
     {
       "capabilityId": "console.text-lines",
@@ -205,9 +205,35 @@
       "securityNotes": ["Absolute paths, traversal, links, case collisions and manifest-external resources are rejected before they become protocol values."]
     },
     {
+      "capabilityId": "display.tooltip-presentation",
+      "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
+      "upstreamEntrypoints": ["HeadlessEmueraConsole.CustomToolTip", "HeadlessEmueraConsole.SetToolTipColor", "HeadlessEmueraConsole.SetToolTipDelay", "HeadlessEmueraConsole.SetToolTipDuration", "HeadlessEmueraConsole.SetToolTipFontName", "HeadlessEmueraConsole.SetToolTipFontSize", "HeadlessEmueraConsole.SetToolTipFormat", "TOOLTIP_SETCOLOR", "TOOLTIP_SETDELAY", "TOOLTIP_SETDURATION", "TOOLTIP_SETFONT", "TOOLTIP_SETFONTSIZE", "TOOLTIP_CUSTOM", "TOOLTIP_FORMAT"],
+      "category": "console",
+      "classification": "Supported",
+      "reasonCode": "STRUCTURED_TOOLTIP_PRESENTATION",
+      "adapterTypes": ["ConsoleTooltipPresentation", "ConsoleTooltipTextFormat", "SetTooltipPresentationOperation", "ITooltipStateSink"],
+      "ipcTypes": ["TooltipPresentation", "TooltipTextFormat", "SetTooltipPresentation"],
+      "fixtureScenarios": ["v18-core/input-roundtrip", "tooltip-setters"],
+      "testNames": ["HeadlessRuntimeFixtureTests.FixtureRunsThroughInputToQuit", "HeadlessRuntimeFixtureTests.TooltipSettersRunThroughPinnedInterpreterAndPublishPresentationState"],
+      "securityNotes": ["Tooltip text remains bounded plain text; game font names and raw TextFormatFlags never cross the protocol.", "Browser hover, focus and touch state is per-client and never consumes a prompt input."]
+    },
+    {
+      "capabilityId": "display.tooltip-image",
+      "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
+      "upstreamEntrypoints": ["HeadlessEmueraConsole.SetToolTipImg", "TOOLTIP_IMG"],
+      "category": "image",
+      "classification": "Supported",
+      "reasonCode": "BOUNDED_TOOLTIP_GRAPHICS_PROJECTION",
+      "adapterTypes": ["ConsoleTooltipPresentation", "ConsoleTooltipResource", "ConsoleStateStore.TooltipGraphicsReferences"],
+      "ipcTypes": ["TooltipResource", "UpsertTooltipResource", "RemoveTooltipResource"],
+      "fixtureScenarios": ["em-ee-core/input-roundtrip", "tooltip-graphics-stable-boundary", "tooltip-image-text-fallback"],
+      "testNames": ["HeadlessRuntimeFixtureTests.FixtureRunsThroughInputToQuit", "HeadlessRuntimeFixtureTests.TooltipGraphicsRewriteFlushesLatestPngAtInputBoundary", "HeadlessRuntimeFixtureTests.DestroyedTooltipGraphicsRemovesOldProjectionAndKeepsRawText", "ConsoleTooltipReferenceIndexTests.ChangedLinesAndHitRegionsMaintainIncrementalReferenceCounts"],
+      "securityNotes": ["Only visible numeric Graphics references are encoded as bounded PNG resources; missing, destroyed, oversized or unencodable surfaces remove stale resources while preserving raw text."]
+    },
+    {
       "capabilityId": "host.desktop-shims",
       "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
-      "upstreamEntrypoints": ["HeadlessEmueraConsole:host-shim-surface", "HeadlessPlatformStubs:compile-time-shims", "HeadlessEmueraConsole.Window", "HeadlessEmueraConsole.PrintBuffer", "HeadlessEmueraConsole.StrMeasure", "HeadlessEmueraConsole.SelectingButton", "HeadlessEmueraConsole.PointingSring", "HeadlessEmueraConsole.ButtonIsSelected", "HeadlessEmueraConsole.ButtonIsPointing", "HeadlessEmueraConsole.GetMousePosition", "HeadlessEmueraConsole.MoveMouse", "HeadlessEmueraConsole.setStBar", "HeadlessEmueraConsole.ReloadErbFinished", "HeadlessEmueraConsole.CustomToolTip", "HeadlessEmueraConsole.SetToolTipColor", "HeadlessEmueraConsole.SetToolTipDelay", "HeadlessEmueraConsole.SetToolTipDuration", "HeadlessEmueraConsole.SetToolTipFontName", "HeadlessEmueraConsole.SetToolTipFontSize", "HeadlessEmueraConsole.SetToolTipFormat", "HeadlessEmueraConsole.SetToolTipImg", "HeadlessEmueraConsole.OutputLog", "HeadlessEmueraConsole.OutputSystemLog", "GETKEY", "GETKEYTRIGGERED", "MOUSEX", "MOUSEY", "MOUSEB"],
+      "upstreamEntrypoints": ["HeadlessEmueraConsole:host-shim-surface", "HeadlessPlatformStubs:compile-time-shims", "HeadlessEmueraConsole.Window", "HeadlessEmueraConsole.PrintBuffer", "HeadlessEmueraConsole.StrMeasure", "HeadlessEmueraConsole.SelectingButton", "HeadlessEmueraConsole.PointingSring", "HeadlessEmueraConsole.ButtonIsSelected", "HeadlessEmueraConsole.ButtonIsPointing", "HeadlessEmueraConsole.GetMousePosition", "HeadlessEmueraConsole.MoveMouse", "HeadlessEmueraConsole.setStBar", "HeadlessEmueraConsole.ReloadErbFinished", "HeadlessEmueraConsole.OutputLog", "HeadlessEmueraConsole.OutputSystemLog", "GETKEY", "GETKEYTRIGGERED", "MOUSEX", "MOUSEY", "MOUSEB"],
       "category": "host",
       "classification": "Blocked",
       "reasonCode": "HOST_SHIM",

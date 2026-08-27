@@ -132,13 +132,13 @@ async function jsonRequest(page: import("@playwright/test").Page, path: string, 
   }, { path, method, body, headers });
 }
 
-async function uploadPackage(page: import("@playwright/test").Page, bytes: Uint8Array, token: string, suffix: string) {
-  return page.evaluate(async ({ bytes, token, suffix }) => {
-    const response = await fetch("/api/v1/game-package-ingestions", {
-      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/zip", "X-CSRF-TOKEN": token, "Idempotency-Key": `session-ui-ingest-${suffix}` }, body: new Uint8Array(bytes),
+async function uploadPackage(page: import("@playwright/test").Page, name: string, bytes: Uint8Array, token: string, suffix: string) {
+  return page.evaluate(async ({ name, bytes, token, suffix }) => {
+    const response = await fetch(`/api/v1/games?name=${encodeURIComponent(name)}&visibility=PRIVATE`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/zip", "X-CSRF-TOKEN": token, "Idempotency-Key": `session-ui-upload-${suffix}` }, body: new Uint8Array(bytes),
     });
-    return { status: response.status, body: await response.json() as { ingestionId: string; manifest: { contentDigest: string } } };
-  }, { bytes: Array.from(bytes), token, suffix });
+    return { status: response.status, body: await response.json().catch(() => null) as { id?: string; stateVersion?: number; status?: string; hasCurrentContent?: boolean } | null };
+  }, { name, bytes: Array.from(bytes), token, suffix });
 }
 
 const fixturePng = new Uint8Array(readFileSync(fileURLToPath(new URL("../../tests/fixtures/runtime/em-ee-core/resources/cloudemuera-em-ee.png", import.meta.url))));
@@ -161,21 +161,14 @@ function encodeCp932Fixture(text: string): Uint8Array {
 }
 
 async function prepareGame(page: import("@playwright/test").Page, suffix: string, kind: FixtureKind = "basic"): Promise<PreparedGame> {
-  const gameName = `P1-11 Session Fixture ${suffix}`;
+  const gameName = `E2E ${suffix}`;
   const existing = await findPreparedGame(page, gameName);
   if (existing?.status === "ACTIVE" && existing.hasCurrentContent) return existing;
-  let token = await csrf(page);
-  const created = existing
-    ? null
-    : await jsonRequest(page, "/games", "POST", { name: gameName, visibility: "PRIVATE" }, { "X-CSRF-TOKEN": token, "Idempotency-Key": `session-ui-game-${suffix}` });
-  if (created) expect(created.status).toBe(201);
-  const game = existing ?? (created?.body as { id: string; stateVersion: number } | undefined);
-  if (!game?.id || game.stateVersion === undefined) throw new Error(`Fixture game ${gameName} did not return a usable state version.`);
   const script = kind === "timed"
     ? "@SYSTEM_TITLE\nPRINTL TIMED-READY\nTINPUT 20000, 7, 1, \"TIME-UP\"\nPRINTFORML TIMED-RESULT={RESULT}\nPRINTL TIMED-AFTER\nQUIT\n"
     : kind === "rich"
       ? "@SYSTEM_TITLE\nPRINTL RICH-READY\nHTML_PRINT \"<b>RICH-HTML</b><i>RICH-ITALIC</i>\"\nHTML_PRINT_ISLAND \"<strong>RICH-ISLAND</strong>\"\nPRINT_IMG \"RICH\"\nPRINT_RECT 10,10,40,40\nSETBGIMAGE RICH,0,128\nPRINTL RICH-INPUT\nINPUT\nIF RESULT == 13\nPRINT_RECT 10px,10px,40px,40px\nENDIF\nPRINTL RICH-AFTER\nQUIT\n"
-      : "@SYSTEM_TITLE\nPRINTL SESSION-READY\nPRINTBUTTON \"LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語\", 7\nINPUT\nPRINTL SESSION-INPUT\nQUIT\n";
+      : "@SYSTEM_TITLE\nTOOLTIP_SETDELAY 80\nTOOLTIP_SETDURATION 0\nTOOLTIP_CUSTOM 1\nTOOLTIP_SETCOLOR 16777215, 2236962\nPRINTL SESSION-READY\nHTML_PRINT \"<button value='7' title='P1-S09 line1<br>line2'>TOOLTIP-TARGET</button>\"\nPRINTBUTTON \"LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語LONG-BUTTON-ABC中文日本語\", 7\nINPUT\nPRINTL SESSION-INPUT\nQUIT\n";
   const entries: ZipEntry[] = [
     ["CSV/GAMEBASE.CSV", "title,session-ui\n"],
     ["ERB/START.ERB", encodeCp932Fixture(script)],
@@ -183,20 +176,13 @@ async function prepareGame(page: import("@playwright/test").Page, suffix: string
   ];
   if (kind === "rich") entries.push(["resources/sprites.csv", "RICH,rich.png,0,0,2,2\n"], ["resources/rich.png", fixturePng]);
   const archive = zipStored(entries);
-  token = await csrf(page);
-  const ingested = await uploadPackage(page, archive, token, suffix);
-  expect(ingested.status).toBe(201);
-  token = await csrf(page);
-  const bound = await jsonRequest(page, `/games/${game.id}/package`, "PUT", { ingestionId: ingested.body.ingestionId, contentDigest: ingested.body.manifest.contentDigest }, { "X-CSRF-TOKEN": token, "If-Match": `"${game.stateVersion}"`, "Idempotency-Key": `session-ui-bind-${suffix}` });
-  expect(bound.status).toBe(200);
-  token = await csrf(page);
-  const validation = await jsonRequest(page, `/games/${game.id}:validate`, "POST", {}, { "X-CSRF-TOKEN": token, "If-Match": `"${(bound.body as { stateVersion: number }).stateVersion}"`, "Idempotency-Key": `session-ui-validate-${suffix}` });
-  expect(validation.status).toBe(200);
-  expect((validation.body as { canActivate: boolean }).canActivate).toBe(true);
-  token = await csrf(page);
-  const activated = await jsonRequest(page, `/games/${game.id}:activate`, "POST", {}, { "X-CSRF-TOKEN": token, "If-Match": `"${(validation.body as { stateVersion: number }).stateVersion}"`, "Idempotency-Key": `session-ui-activate-${suffix}` });
-  expect(activated.status).toBe(200);
-  return { id: game.id, name: gameName };
+  if (existing) throw new Error(`Fixture game ${gameName} exists without active current content.`);
+  const token = await csrf(page);
+  const uploaded = await uploadPackage(page, gameName, archive, token, suffix);
+  expect(uploaded.status, JSON.stringify(uploaded.body)).toBe(201);
+  if (!uploaded.body?.id) throw new Error(`Fixture game ${gameName} did not return an id.`);
+  expect(uploaded.body.hasCurrentContent).toBe(true);
+  return { id: uploaded.body.id, name: gameName };
 }
 
 async function findPreparedGame(page: import("@playwright/test").Page, namePrefix: string): Promise<PreparedGame | null> {
@@ -212,7 +198,9 @@ async function findPreparedGame(page: import("@playwright/test").Page, namePrefi
 async function createSession(page: import("@playwright/test").Page, game: PreparedGame, suffix: string): Promise<string> {
   await page.goto(`/sessions/new?game=${encodeURIComponent(game.id)}`);
   await expect(page.getByRole("heading", { name: "创建 Session" })).toBeVisible();
-  await page.getByLabel("游戏").selectOption({ label: game.name });
+  const gameSelect = page.getByRole("combobox", { name: "游戏", exact: true });
+  await expect(gameSelect.locator(`option[value="${game.id}"]`)).toHaveText(game.name);
+  await gameSelect.selectOption(game.id);
   await page.getByLabel("Session 名称").fill(`P1-11 Browser Journey ${suffix}`);
   await page.getByRole("button", { name: "创建并开始" }).click();
   await expect(page).toHaveURL(/\/sessions\/(?!new(?:[/?]|$))[^/?]+$/, { timeout: 60_000 });
@@ -237,18 +225,34 @@ async function leaveSessionPage(page: import("@playwright/test").Page): Promise<
   if (!/\/sessions$/.test(page.url())) await page.goto("/sessions");
 }
 
+type BrowserCookies = Awaited<ReturnType<import("@playwright/test").BrowserContext["cookies"]>>;
+let authenticatedCookies: BrowserCookies | null = null;
+
 async function login(page: import("@playwright/test").Page): Promise<void> {
+  if (authenticatedCookies) {
+    await page.context().addCookies(authenticatedCookies);
+    await page.goto("/games");
+    await expect(page.getByRole("heading", { name: "游戏库" })).toBeVisible({ timeout: 15_000 });
+    return;
+  }
   for (const password of [administratorPassword, temporaryPassword]) {
     await page.goto("/login");
     await page.getByLabel("登录邮箱").fill(adminEmail);
     await page.getByLabel("密码").fill(password);
     await page.getByRole("button", { name: "登录" }).click();
-    try {
-      await expect(page.getByRole("heading", { name: "游戏库" })).toBeVisible({ timeout: 2_000 });
-      return;
-    } catch {
-      if (password !== temporaryPassword) continue;
-      await expect(page.getByRole("heading", { name: "修改密码" })).toBeVisible();
+    const outcome = await expect.poll(async () => {
+      if (await page.getByRole("heading", { name: "游戏库" }).isVisible()) return "games";
+      if (await page.getByRole("heading", { name: "修改密码" }).isVisible()) return "change-password";
+      if (await page.getByRole("alert").isVisible()) return "error";
+      return "pending";
+    }, { timeout: 15_000 }).not.toBe("pending").then(async () => {
+      if (await page.getByRole("heading", { name: "游戏库" }).isVisible()) return "games";
+      if (await page.getByRole("heading", { name: "修改密码" }).isVisible()) return "change-password";
+      return "error";
+    });
+    if (outcome === "games") return;
+    if (outcome === "change-password") {
+      if (password !== temporaryPassword) throw new Error("The administrator password unexpectedly requires replacement.");
       await page.getByLabel("当前密码").fill(temporaryPassword);
       await page.getByLabel("新密码", { exact: true }).fill(administratorPassword);
       await page.getByLabel("确认新密码").fill(administratorPassword);
@@ -256,6 +260,7 @@ async function login(page: import("@playwright/test").Page): Promise<void> {
       await expect(page.getByRole("heading", { name: "游戏库" })).toBeVisible({ timeout: 10_000 });
       return;
     }
+    if (password === temporaryPassword) throw new Error(`The session UI E2E account could not authenticate: ${await page.getByRole("alert").textContent()}`);
   }
   throw new Error("The session UI E2E account could not authenticate.");
 }
@@ -267,8 +272,9 @@ test.beforeAll(async ({ browser }, testInfo) => {
   const page = await browser.newPage();
   try {
     await login(page);
+    authenticatedCookies = await page.context().cookies();
     const project = testInfo.project.name;
-    const basic = preparedGames.get(`${project}:basic`) ?? await prepareGame(page, `shared-basic-${project}`);
+    const basic = preparedGames.get(`${project}:basic`) ?? await prepareGame(page, `sbt-${project}`);
     preparedGames.set(`${project}:basic`, basic);
     if (project === "chromium") {
       preparedGames.set(`${project}:timed`, await prepareGame(page, `shared-timed-${project}`, "timed"));
@@ -317,6 +323,87 @@ test("P1-11 real Session create, console input, close, save, and reopen", async 
   await sessionRow.getByRole("button", { name: "继续游戏" }).click();
   await expect(page).toHaveURL(new RegExp(`/sessions/${sessionId}$`));
   await expect(page.getByRole("main", { name: "游戏控制台" })).toBeVisible({ timeout: 30_000 });
+  await leaveSessionPage(page);
+});
+
+test("@tooltip P1-S09 hover, focus, Escape, and badge preserve target geometry", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(testInfo.project.name.startsWith("mobile-"), "Desktop hover/focus runs in Chromium, Firefox, and WebKit.");
+  await login(page);
+  const game = preparedGame(testInfo.project.name);
+  await createSession(page, game, `tooltip-desktop-${testInfo.project.name}`);
+  const target = page.locator(".console-tooltip-target").filter({ hasText: "TOOLTIP-TARGET" }).first();
+  await expect(target).toBeVisible({ timeout: 30_000 });
+
+  const geometry = await target.evaluate(element => {
+    const badge = element.querySelector<HTMLElement>(".console-tooltip-badge");
+    if (!badge) throw new Error("Tooltip badge is missing.");
+    const visible = element.getBoundingClientRect();
+    const visibleScrollWidth = element.scrollWidth;
+    badge.style.display = "none";
+    const hidden = element.getBoundingClientRect();
+    const hiddenScrollWidth = element.scrollWidth;
+    badge.style.removeProperty("display");
+    return {
+      visible: { x: visible.x, y: visible.y, width: visible.width, height: visible.height },
+      hidden: { x: hidden.x, y: hidden.y, width: hidden.width, height: hidden.height },
+      visibleScrollWidth,
+      hiddenScrollWidth,
+      title: element.getAttribute("title"),
+      badgePointerEvents: getComputedStyle(badge).pointerEvents,
+    };
+  });
+  expect(geometry.visible).toEqual(geometry.hidden);
+  expect(geometry.visibleScrollWidth).toBe(geometry.hiddenScrollWidth);
+  expect(geometry.title).toBeNull();
+  expect(geometry.badgePointerEvents).toBe("none");
+
+  await target.hover();
+  await expect(page.getByRole("tooltip")).toContainText("P1-S09 line1\nline2", { timeout: 2_000 });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toBeHidden();
+  const box = await target.boundingBox();
+  if (!box) throw new Error("Tooltip target lost its geometry.");
+  await page.mouse.move(box.x + Math.min(8, box.width / 2), box.y + box.height / 2);
+  await page.waitForTimeout(150);
+  await expect(page.getByRole("tooltip")).toBeHidden();
+
+  await page.mouse.move(1, 1);
+  await target.focus();
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await leaveSessionPage(page);
+});
+
+test("@tooltip P1-S09 touch hold and inspect mode do not submit game input", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(!testInfo.project.name.startsWith("mobile-"), "Touch arbitration runs in mobile Chromium and WebKit.");
+  await login(page);
+  const game = preparedGame(testInfo.project.name);
+  await createSession(page, game, `tooltip-touch-${testInfo.project.name}`);
+  const target = page.locator(".console-tooltip-target").filter({ hasText: "TOOLTIP-TARGET" }).first();
+  await expect(target).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("spinbutton", { name: "游戏输入" })).toBeVisible({ timeout: 15_000 });
+  const box = await target.boundingBox();
+  if (!box) throw new Error("Tooltip target lost its touch geometry.");
+  const point = { x: box.x + Math.min(8, box.width / 2), y: box.y + box.height / 2 };
+
+  await target.dispatchEvent("pointerdown", { pointerType: "touch", pointerId: 41, clientX: point.x, clientY: point.y, isPrimary: true });
+  await page.waitForTimeout(550);
+  await target.dispatchEvent("pointerup", { pointerType: "touch", pointerId: 41, clientX: point.x, clientY: point.y, isPrimary: true });
+  await target.dispatchEvent("click", { detail: 1, clientX: point.x, clientY: point.y });
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await expect(page.getByRole("button", { name: "关闭提示" })).toBeVisible();
+  await expect(page.getByRole("spinbutton", { name: "游戏输入" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭提示" }).click();
+
+  const inspect = page.getByRole("button", { name: "查看提示" });
+  await expect(inspect).toBeVisible();
+  await inspect.click();
+  await expect(inspect).toHaveAttribute("aria-pressed", "true");
+  await page.touchscreen.tap(point.x, point.y);
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await expect(page.getByRole("spinbutton", { name: "游戏输入" })).toBeVisible();
   await leaveSessionPage(page);
 });
 

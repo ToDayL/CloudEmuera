@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V6;
+using CloudEmuera.Ipc.V7;
 using CloudEmuera.Realtime;
 using CloudEmuera.RuntimeAdapter;
 using R = CloudEmuera.RuntimeAdapter;
@@ -724,12 +724,12 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         DisplayFrame = frame
     };
 
-    private static CloudEmuera.Ipc.V6.DisplayCommitReason ToProto(R.DisplayCommitReason reason) => reason switch
+    private static CloudEmuera.Ipc.V7.DisplayCommitReason ToProto(R.DisplayCommitReason reason) => reason switch
     {
-        R.DisplayCommitReason.WaitingForInput => CloudEmuera.Ipc.V6.DisplayCommitReason.WaitingForInput,
-        R.DisplayCommitReason.RuntimeCompleted => CloudEmuera.Ipc.V6.DisplayCommitReason.RuntimeCompleted,
-        R.DisplayCommitReason.RuntimeFailed => CloudEmuera.Ipc.V6.DisplayCommitReason.RuntimeFailed,
-        R.DisplayCommitReason.ExplicitRefresh => CloudEmuera.Ipc.V6.DisplayCommitReason.ExplicitRefresh,
+        R.DisplayCommitReason.WaitingForInput => CloudEmuera.Ipc.V7.DisplayCommitReason.WaitingForInput,
+        R.DisplayCommitReason.RuntimeCompleted => CloudEmuera.Ipc.V7.DisplayCommitReason.RuntimeCompleted,
+        R.DisplayCommitReason.RuntimeFailed => CloudEmuera.Ipc.V7.DisplayCommitReason.RuntimeFailed,
+        R.DisplayCommitReason.ExplicitRefresh => CloudEmuera.Ipc.V7.DisplayCommitReason.ExplicitRefresh,
         _ => throw new InvalidDataException("The runtime display commit reason is unknown.")
     };
 

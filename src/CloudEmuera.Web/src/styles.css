@@ -746,6 +746,73 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .realtime-console .console-choice.is-stale,
 .realtime-console .console-choice:disabled { color: inherit; background: transparent; opacity: .55; }
+.console-tooltip-root { position: relative; min-width: 100%; }
+.console-tooltip-target { position: relative; }
+.console-tooltip-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  z-index: 2;
+  color: #fff;
+  background: #a7342d;
+  width: clamp(5px, .375em, 6px);
+  height: clamp(5px, .375em, 6px);
+  overflow: hidden;
+  border-radius: 50%;
+  font: 700 clamp(5px, .375em, 6px)/1 monospace;
+  pointer-events: none;
+  user-select: none;
+}
+.tooltip-inspect-toggle {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 12000;
+  min-width: 76px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid #536158;
+  border-radius: 3px;
+  color: #d9e4da;
+  background: #151b16;
+  font-size: 12px;
+}
+@media (any-pointer: coarse) {
+  .tooltip-inspect-toggle { display: block; }
+}
+.tooltip-inspect-toggle[aria-pressed="true"] { border-color: #87b690; color: #fff; background: #23402b; }
+.console-tooltip {
+  position: fixed;
+  display: grid;
+  z-index: 30000;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  padding: 8px 28px 8px 10px;
+  border: 1px solid #809086;
+  border-radius: 4px;
+  color: #151815;
+  background: #ffffe1;
+  box-shadow: 0 5px 18px rgb(0 0 0 / 35%);
+  font-family: var(--runtime-font-family, monospace);
+  line-height: 1.35;
+  pointer-events: none;
+}
+.console-tooltip-path-ellipsis {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.console-tooltip.is-pinned { pointer-events: auto; }
+.console-tooltip img { display: block; max-width: min(100%, 304px); height: auto; object-fit: contain; }
+.console-tooltip-close { position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; padding: 0; border: 0; color: inherit; background: transparent; font-size: 18px; line-height: 24px; }
 .realtime-console .scrollback-latest {
   min-height: 28px;
   margin: -38px auto 10px;

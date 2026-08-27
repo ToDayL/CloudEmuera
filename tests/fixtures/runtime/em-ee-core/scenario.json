@@ -7,6 +7,7 @@
   ],
   "steps": [
     { "type": "expectOutput", "text": "EMEE-START" },
+    { "type": "expectOutput", "text": "EMEE-TOOLTIP-IMAGE" },
     { "type": "expectOutput", "text": "EMEE-INPUT" },
     { "type": "submitInput", "inputKind": "integer", "value": "4" },
     { "type": "expectOutput", "text": "EMEE-EXISTFUNCTION" },

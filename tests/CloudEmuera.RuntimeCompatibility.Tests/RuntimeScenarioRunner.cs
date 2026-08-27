@@ -102,8 +102,8 @@ internal static class RuntimeScenarioRunner
             {
                 Check(prompt.InputType == ConsoleInputType.Integer, "Prompt type was not integer.", errors, ref assertions);
                 string expectedPrefix = fixtureId == "v18-core"
-                    ? "V18-START\nV18-READY\nV18-INPUT"
-                    : "EMEE-START\nEMEE-INPUT";
+                    ? "V18-START\nV18-TOOLTIP\nV18-READY\nV18-INPUT"
+                    : "EMEE-START\nEMEE-TOOLTIP-IMAGE\nEMEE-INPUT";
                 Check(
                     string.Equals(RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes), expectedPrefix, StringComparison.Ordinal),
                     "Visible output before INPUT did not match the fixture prefix.",
@@ -120,6 +120,25 @@ internal static class RuntimeScenarioRunner
             Check(console.CurrentPrompt is null, "A prompt remained open after QUIT.", errors, ref assertions);
 
             ConsoleSnapshot snapshot = console.Snapshot;
+            if (fixtureId == "v18-core")
+            {
+                bool tooltipPresentationPassed = snapshot.TooltipPresentation.CustomEnabled &&
+                    snapshot.TooltipPresentation.DelayMilliseconds == 80 &&
+                    snapshot.TooltipPresentation.FontFamily == "session-default";
+                Check(tooltipPresentationPassed, "The v18 fixture did not publish custom tooltip presentation.", errors, ref assertions);
+                assertionEvidence.Add(new RuntimeScenarioAssertionEvidence(
+                    "tooltip-presentation", tooltipPresentationPassed, VerifiedByVisibleOutput: false));
+            }
+            else
+            {
+                ConsoleTooltipResource? tooltipResource = snapshot.TooltipResources.SingleOrDefault(resource => resource.GraphicsId == 0);
+                bool tooltipImagePassed = snapshot.TooltipPresentation.ImageMode &&
+                    tooltipResource is { Width: 8, Height: 6 } &&
+                    tooltipResource.PngData.Take(8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+                Check(tooltipImagePassed, "The EM+EE fixture did not publish its Graphics tooltip PNG.", errors, ref assertions);
+                assertionEvidence.Add(new RuntimeScenarioAssertionEvidence(
+                    "tooltip-image", tooltipImagePassed, VerifiedByVisibleOutput: false));
+            }
             string actual = RuntimeTranscriptProjector.Project(snapshot.VisibleNodes);
             string expected = NormalizeExpected(File.ReadAllText(Path.Combine(fixtureRoot, "expected-transcript.txt")));
             Check(string.Equals(actual, expected, StringComparison.Ordinal), TranscriptDifference(expected, actual), errors, ref assertions);
@@ -312,8 +331,8 @@ internal static class RuntimeScenarioRunner
                 AddDiagnostics(result, "Load host", errors);
                 string transcript = RuntimeTranscriptProjector.Project(consoleB.Snapshot.VisibleNodes);
                 string startupPrefix = fixtureId == "v18-core"
-                    ? "V18-START\nV18-READY\nV18-INPUT"
-                    : "EMEE-START\nEMEE-INPUT";
+                    ? "V18-START\nV18-TOOLTIP\nV18-READY\nV18-INPUT"
+                    : "EMEE-START\nEMEE-TOOLTIP-IMAGE\nEMEE-INPUT";
                 string expected = $"{startupPrefix}\n{string.Join('\n', scenario.LoadOutputs)}";
                 bool loaded = string.Equals(transcript, expected, StringComparison.Ordinal);
                 Check(loaded, $"Loaded values were not visible as expected. Actual: {transcript}", errors, ref assertions);

@@ -1,7 +1,7 @@
-/* GENERATED CONTRACT SNAPSHOT — source: realtime-v4.schema.json. */
-export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v4.schema.json" as const;
-export const REALTIME_PROTOCOL_VERSION = 4 as const;
-export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-s04-authoritative-layout" as const;
+/* GENERATED CONTRACT SNAPSHOT — source: realtime-v5.schema.json. */
+export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v5.schema.json" as const;
+export const REALTIME_PROTOCOL_VERSION = 5 as const;
+export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-s09-tooltip" as const;
 export const REALTIME_MESSAGE_TYPES = ["client.hello","server.hello","connection.ping","connection.pong","session.resume","session.resume.result","session.unsubscribe","session.snapshot","display.frame","resync.required","session.stream.ended","session.input","session.input.result","protocol.error"] as const;
 
 export type EmptyPayload = Record<never, never>;
@@ -13,8 +13,8 @@ export interface ClientHelloPayload {
 }
 
 export interface ServerHelloPayload {
-  protocolVersion: 4;
-  payloadSchemaVersion: "p1-s04-authoritative-layout";
+  protocolVersion: 5;
+  payloadSchemaVersion: "p1-s09-tooltip";
   connectionId: string;
   serverNowUnixMilliseconds: number;
   heartbeatIntervalMilliseconds: number;
@@ -193,6 +193,36 @@ export interface MediaState {
   channels: MediaChannel[];
 }
 
+export interface TooltipTextFormat {
+  horizontal: "left" | "center" | "right";
+  vertical: "top" | "center" | "bottom";
+  wrap: boolean;
+  trimming: "none" | "characterEllipsis" | "wordEllipsis" | "pathEllipsis";
+  expandTabs: boolean;
+  rightToLeft: boolean;
+}
+
+export interface TooltipPresentation {
+  customEnabled: boolean;
+  foreground: RealtimeColor;
+  background: RealtimeColor;
+  delayMilliseconds: number;
+  durationMilliseconds: number;
+  fontFamily: string;
+  fontSize: number;
+  textFormat: TooltipTextFormat;
+  imageMode: boolean;
+  revision: number;
+}
+
+export interface TooltipResource {
+  graphicsId: number;
+  pngData: string;
+  width: number;
+  height: number;
+  revision: number;
+}
+
 export interface InputConstraints {
   type: "text" | "integer" | "anyValue";
   maxLength?: number | null;
@@ -276,6 +306,8 @@ export interface ConsoleState {
   backgroundLayers: BackgroundLayer[];
   canvasScene: CanvasScene;
   mediaState: MediaState;
+  tooltipPresentation: TooltipPresentation;
+  tooltipResources: TooltipResource[];
   currentPrompt?: Prompt | null;
   windowMetadata: WindowMetadata;
   truncation: Truncation;
@@ -435,7 +467,7 @@ export interface AppendNodesOperation {
 }
 
 export interface ClearOperation {
-  type: "clearConsole" | "clearScrollback" | "clearBackgrounds" | "clearScene" | "clearHitRegions" | "stopAllMedia";
+  type: "clearConsole" | "clearScrollback" | "clearBackgrounds" | "clearScene" | "clearHitRegions" | "stopAllMedia" | "clearTooltipResources";
 }
 
 export interface OpenPromptOperation {
@@ -516,7 +548,22 @@ export interface StopMediaChannelOperation {
   channel: string;
 }
 
-export type RealtimeOperation = AppendNodesOperation | ClearOperation | OpenPromptOperation | ClosePromptOperation | LineOperation | AppendInlineOperation | DeleteLinesOperation | SetWindowMetadataOperation | UpsertBackgroundOperation | RemoveBackgroundOperation | UpsertDrawableOperation | RemoveDrawableOperation | ClearSceneRangeOperation | UpsertHitRegionOperation | RemoveHitRegionOperation | SetMediaChannelOperation | StopMediaChannelOperation;
+export interface SetTooltipPresentationOperation {
+  type: "setTooltipPresentation";
+  tooltipPresentation: TooltipPresentation;
+}
+
+export interface UpsertTooltipResourceOperation {
+  type: "upsertTooltipResource";
+  tooltipResource: TooltipResource;
+}
+
+export interface RemoveTooltipResourceOperation {
+  type: "removeTooltipResource";
+  graphicsId: number;
+}
+
+export type RealtimeOperation = AppendNodesOperation | ClearOperation | OpenPromptOperation | ClosePromptOperation | LineOperation | AppendInlineOperation | DeleteLinesOperation | SetWindowMetadataOperation | UpsertBackgroundOperation | RemoveBackgroundOperation | UpsertDrawableOperation | RemoveDrawableOperation | ClearSceneRangeOperation | UpsertHitRegionOperation | RemoveHitRegionOperation | SetMediaChannelOperation | StopMediaChannelOperation | SetTooltipPresentationOperation | UpsertTooltipResourceOperation | RemoveTooltipResourceOperation;
 
 export type InputSource = "KEYBOARD" | "BUTTON" | "POINTER";
 export type ResumeStatus = "ACCEPTED" | "CAPABILITY_MISMATCH" | "SESSION_NOT_FOUND" | "SESSION_NOT_RUNNING" | "SNAPSHOT_NOT_READY" | "SUBSCRIPTION_LIMIT_EXCEEDED";
@@ -525,7 +572,7 @@ export type ShapeKind = "rectangle" | "ellipse" | "line" | "polygon" | "space";
 export type InputType = "enterKey" | "anyKey" | "integer" | "text" | "anyValue" | "integerButton" | "textButton" | "primitivePointerKey" | "waitOnly";
 
 export interface RealtimeEnvelope<TType extends string, TPayload> {
-  protocolVersion: 4;
+  protocolVersion: 5;
   type: TType;
   messageId: string;
   correlationId?: string;

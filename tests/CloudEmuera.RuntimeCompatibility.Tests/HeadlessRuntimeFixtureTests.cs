@@ -163,6 +163,149 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Fact]
+    [Trait("Category", "Tooltip")]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task TooltipSettersRunThroughPinnedInterpreterAndPublishPresentationState()
+    {
+        // PLAY-017: all eight EE tooltip setters are browser presentation
+        // state and must no longer terminate the runtime as HOST_SHIM calls.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "TOOLTIP_SETCOLOR 1122867, 4478310\n" +
+            "TOOLTIP_SETDELAY 250\n" +
+            "TOOLTIP_SETDURATION 4000\n" +
+            "TOOLTIP_SETFONT \"untrusted-game-font\"\n" +
+            "TOOLTIP_SETFONTSIZE 19\n" +
+            "TOOLTIP_CUSTOM 1\n" +
+            "TOOLTIP_FORMAT 32785\n" +
+            "TOOLTIP_IMG 1\n" +
+            "HTML_PRINT \"<button value='7' title='line1<br>line2'>choice</button>\"\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.True(initialized.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", initialized.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        ConsoleTooltipPresentation tooltip = fixture.Console.Snapshot.TooltipPresentation;
+        Assert.True(tooltip.CustomEnabled);
+        Assert.Equal(new RuntimeConsoleColor(0x11, 0x22, 0x33), tooltip.Foreground);
+        Assert.Equal(new RuntimeConsoleColor(0x44, 0x55, 0x66), tooltip.Background);
+        Assert.Equal(250, tooltip.DelayMilliseconds);
+        Assert.Equal(4000, tooltip.DurationMilliseconds);
+        Assert.Equal("session-default", tooltip.FontFamily);
+        Assert.Equal(19, tooltip.FontSize);
+        Assert.Equal(ConsoleTooltipHorizontalAlignment.Center, tooltip.TextFormat.Horizontal);
+        Assert.True(tooltip.TextFormat.Wrap);
+        Assert.Equal(ConsoleTooltipTrimming.CharacterEllipsis, tooltip.TextFormat.Trimming);
+        Assert.True(tooltip.ImageMode);
+        Assert.Equal(7, tooltip.Revision);
+        ButtonNode button = Assert.IsType<ButtonNode>(fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes).Single(node => node is ButtonNode));
+        Assert.Equal("line1<br>line2", button.Tooltip);
+        Assert.Contains(fixture.Console.StateStore.TransactionHistory.SelectMany(transaction => transaction.Transaction.Operations), operation => operation is SetTooltipPresentationOperation);
+    }
+
+    [Fact]
+    [Trait("Category", "Tooltip")]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task TooltipGraphicsRewriteFlushesLatestPngAtInputBoundary()
+    {
+        // PLAY-017: a referenced Graphics mutation immediately before INPUT
+        // must replace the prior projection even when no later PRINT occurs.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML CREATED={GCREATE(0, 8, 6)}\n" +
+            "PRINTFORML RED={GCLEAR(0, 4294901760)}\n" +
+            "TOOLTIP_IMG 1\n" +
+            "HTML_PRINT \"<button value='7' title='0'>choice</button>\"\n" +
+            "LOCAL = GCLEAR(0, 4278255360)\n" +
+            "INPUT\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+
+        ConsoleTooltipResource resource = Assert.Single(fixture.Console.CommittedSnapshot!.TooltipResources);
+        Assert.Equal(0, resource.GraphicsId);
+        Assert.Equal(8, resource.Width);
+        Assert.Equal(6, resource.Height);
+        Assert.Contains(
+            fixture.Console.StateStore.TransactionHistory.SelectMany(item => item.Transaction.Operations),
+            operation => operation is UpsertTooltipResourceOperation projected &&
+                projected.Resource.GraphicsId == 0 && projected.Resource.Revision < resource.Revision);
+
+        ConsolePrompt prompt = fixture.Console.CurrentPrompt!;
+        Assert.Equal(ConsoleInputResultKind.Accepted, fixture.Console.SubmitCurrentInput(
+            new ConsoleInputAttempt("tooltip-graphics", "1", ConsoleInputSource.Keyboard)).Kind);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
+    }
+
+    [Fact]
+    [Trait("Category", "Tooltip")]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task TooltipImageModeDisablePublishesExplicitResourceClearDelta()
+    {
+        // PLAY-017 / ADR-0036: resource reclamation must be represented in
+        // the committed operation stream. Clearing only the Worker's private
+        // Snapshot would leave API/Web delta mirrors holding a stale image.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "LOCAL = GCREATE(0, 8, 6)\n" +
+            "LOCAL = GCLEAR(0, 4294901760)\n" +
+            "TOOLTIP_IMG 1\n" +
+            "HTML_PRINT \"<button value='7' title='0'>choice</button>\"\n" +
+            "TOOLTIP_IMG 0\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        ConsoleOperation[] operations = fixture.Console.StateStore.TransactionHistory
+            .SelectMany(transaction => transaction.Transaction.Operations)
+            .ToArray();
+        Assert.Contains(operations, operation => operation is UpsertTooltipResourceOperation);
+        Assert.Contains(operations, operation => operation is ClearTooltipResourcesOperation);
+        Assert.False(fixture.Console.Snapshot.TooltipPresentation.ImageMode);
+        Assert.Empty(fixture.Console.Snapshot.TooltipResources);
+    }
+
+    [Fact]
+    [Trait("Category", "Tooltip")]
+    [Trait("Category", "RuntimeBridge")]
+    public void DestroyedTooltipGraphicsRemovesOldProjectionAndKeepsRawText()
+    {
+        var adapter = new StructuredGameConsole();
+        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        using var graphics = AppContents.GetGraphics(11);
+        graphics.GCreate(4, 4, useGDI: false);
+        graphics.GClear(Color.Red);
+        headless.SetToolTipImg(true);
+        headless.PrintButton("choice", "1");
+        headless.NewLine();
+
+        // Replace the ordinary button with a visible numeric-tooltip target.
+        headless.PrintHtml("<button value='1' title='11'>choice</button>", toPrintBuffer: false);
+        headless.PrintFlush(force: true);
+        Assert.Contains(adapter.Snapshot.TooltipResources, item => item.GraphicsId == 11);
+
+        graphics.GDispose();
+        headless.Quit();
+
+        Assert.DoesNotContain(adapter.Snapshot.TooltipResources, item => item.GraphicsId == 11);
+        Assert.Contains(adapter.Snapshot.Scrollback.SelectMany(line => line.Nodes).OfType<ButtonNode>(),
+            button => button.Tooltip == "11");
+        Assert.Contains(headless.RuntimeWarnings, warning => warning.StartsWith(
+            "tooltip_graphics_unavailable:11:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     [Trait("Category", "EmueraFeatureMatrix")]
     public async Task AnimatedSpriteCsvPublishesAllFramesWithTiming()
     {
