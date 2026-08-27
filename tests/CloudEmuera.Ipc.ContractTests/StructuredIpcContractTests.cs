@@ -1,5 +1,6 @@
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
+using System.Text;
 using CloudEmuera.Ipc;
 using W = CloudEmuera.Ipc.V6;
 using Xunit;
@@ -253,6 +254,77 @@ public sealed class StructuredIpcContractTests
 
         button.Label.Add(button.Label[0]);
         Assert.Equal(IpcReasonCodes.InvalidEnvelope, StructuredIpcValidator.ValidateWorkerEnvelope(envelope, true, Binding).ReasonCode);
+    }
+
+    [Fact]
+    public void PathAssetIdsUseTheAssetBudgetInsteadOfTheIdentifierBudget()
+    {
+        string logicalPath = $"tmp/cloudemuera-runtime-assets/{new string('a', 64)}.png";
+        string assetId = "path-" + Convert.ToBase64String(Encoding.UTF8.GetBytes(logicalPath))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+        Assert.True(assetId.Length > StructuredIpcLimits.MaxIdentifierLength);
+        Assert.True(assetId.Length <= StructuredIpcLimits.MaxAssetIdLength);
+
+        var envelope = new W.WorkerEnvelope
+        {
+            ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+            MessageId = "path-asset-budget",
+            SessionId = Binding.SessionId,
+            WorkerId = Binding.WorkerId,
+            WorkerEpoch = Binding.WorkerEpoch,
+            CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+            DisplayFrame = new W.DisplayFrame
+            {
+                FrameId = 1,
+                CommitSequence = 1,
+                Reason = W.DisplayCommitReason.ExplicitRefresh,
+                Transactions =
+                {
+                    new W.ConsoleTransaction
+                    {
+                        Sequence = 1,
+                        Operations =
+                        {
+                            new W.ConsoleOperation
+                            {
+                                AppendLine = new W.AppendLine
+                                {
+                                    Line = new W.ConsoleLine
+                                    {
+                                        LineId = "line-path-asset",
+                                        Alignment = W.LineAlignment.Left,
+                                        Nodes =
+                                        {
+                                            new W.ConsoleNode
+                                            {
+                                                Sprite = new W.SpriteNode
+                                                {
+                                                    AssetId = assetId,
+                                                    SourceRect = new W.Rect { Width = 300, Height = 300 },
+                                                    Destination = new W.Rect { Width = 208, Height = 208 },
+                                                    AltText = "portrait",
+                                                    Opacity = 1f
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Assert.True(StructuredIpcValidator.ValidateWorkerEnvelope(envelope, true, Binding).IsValid);
+
+        envelope.DisplayFrame.Transactions[0].Operations[0].AppendLine.Line.Nodes[0].Sprite.AssetId =
+            new string('a', StructuredIpcLimits.MaxAssetIdLength + 1);
+        Assert.Equal(
+            IpcReasonCodes.InvalidEnvelope,
+            StructuredIpcValidator.ValidateWorkerEnvelope(envelope, true, Binding).ReasonCode);
     }
 
     [Fact]

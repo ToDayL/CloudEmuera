@@ -47,6 +47,23 @@ internal sealed class GraphicsImage : AbstractImage
 	public bool useImgList { get { return drawImgList != null; } }
 	public List<Tuple<ASprite, Rectangle>> drawImgList;
 
+#if CLOUDEMUERA_HEADLESS
+	// CloudEmuera: GSAVE/GLOAD can expose this mutable surface through a
+	// path-based SpriteNode. The path is set only after a successful operation
+	// and is cleared when the graphics surface is disposed/replaced.
+	internal string HeadlessAssetPath { get; set; }
+#endif
+
+	private void InvalidateHeadlessAssetPath()
+	{
+#if CLOUDEMUERA_HEADLESS
+		// A previously saved/materialized PNG no longer represents the surface
+		// after any pixel mutation. The headless resolver will publish a fresh
+		// content-addressed PNG the next time this surface is referenced.
+		HeadlessAssetPath = null;
+#endif
+	}
+
 
 	////bool created;
 	////bool locked;
@@ -138,6 +155,7 @@ internal sealed class GraphicsImage : AbstractImage
 	/// </summary>
 	public void GClear(Color c)
 	{
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 		g.Clear(c);
@@ -147,6 +165,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GClear(Color c, int x, int y, int w, int h)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 		g.SetClip(new Rectangle(x, y, w, h), CombineMode.Replace);
@@ -164,6 +183,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GDrawString(string text, int x, int y)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -200,6 +220,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GDrawString(string text, int x, int y, int width, int height)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -226,6 +247,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GDrawRectangle(Rectangle rect)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -249,6 +271,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GFillRectangle(Rectangle rect)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -272,6 +295,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GDrawCImg(ASprite img, Rectangle destRect)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 		if (useImgList)
@@ -330,6 +354,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GDrawCImg(ASprite img, Rectangle destRect, float[][] cm)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -349,6 +374,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GDrawG(GraphicsImage srcGra, Rectangle destRect, Rectangle srcRect)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -366,6 +392,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GDrawG(GraphicsImage srcGra, Rectangle destRect, Rectangle srcRect, float[][] cm)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -388,6 +415,7 @@ internal sealed class GraphicsImage : AbstractImage
 	public void GDrawGWithMask(GraphicsImage srcGra, GraphicsImage maskGra, Point destPoint)
 	{
 		Load();
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -454,6 +482,7 @@ internal sealed class GraphicsImage : AbstractImage
 	/// </summary>
 	public void GRotate(long a, int x, int y)
 	{
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 		float angle = a;
@@ -469,6 +498,7 @@ internal sealed class GraphicsImage : AbstractImage
 	/// </summary>
 	public void GDrawGWithRotate(GraphicsImage srcGra, long a, int x, int y)
 	{
+		InvalidateHeadlessAssetPath();
 		if (g == null || srcGra == null)
 			throw new NullReferenceException();
 		float angle = a;
@@ -482,6 +512,7 @@ internal sealed class GraphicsImage : AbstractImage
 	#region EE_GDRAWLINE
 	public void GDrawLine(int fromX, int fromY, int forX, int forY)
 	{
+		InvalidateHeadlessAssetPath();
 		if (g == null)
 			throw new NullReferenceException();
 
@@ -561,6 +592,7 @@ internal sealed class GraphicsImage : AbstractImage
 	{
 		if (Bitmap == null)
 			throw new NullReferenceException();
+		InvalidateHeadlessAssetPath();
 		//UnlockGraphics();
 		Bitmap.SetPixel(x, y, c);
 	}
@@ -598,6 +630,9 @@ internal sealed class GraphicsImage : AbstractImage
 	{
 		size = new Size(0, 0);
 		drawImgList = null;
+#if CLOUDEMUERA_HEADLESS
+		HeadlessAssetPath = null;
+#endif
 		if (RealBitmap == null)
 		{
 			ReleaseHeadlessBytes();

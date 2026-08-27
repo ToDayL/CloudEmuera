@@ -20,11 +20,14 @@ public sealed record ConsoleContractLimits
     // separate budget from the short ids used by the rest of the console.
     public int MaxAssetIdLength { get; init; } = 2_048;
 
-    public int MaxBatchNodeCount { get; init; } = 512;
+    // eraAM2 can emit thousands of positioned portrait layers in one
+    // HTML_PRINT batch. Keep the cap finite, but leave enough room for a full
+    // scene and for the structured IPC aggregate limit.
+    public int MaxBatchNodeCount { get; init; } = 8_192;
 
-    // A button label is a flat presentation list. Keep it aligned with the
-    // per-line and per-batch node budgets so style transitions in a valid
-    // Emuera button cannot fail before the aggregate limits apply.
+    // A button label is a separate flat presentation list. Keep its limit
+    // finite and aligned with the IPC label contract; the larger batch/line
+    // limits above apply to the many sibling portrait layers in eraAM2.
     public int MaxButtonLabelNodeCount { get; init; } = 512;
 
     public int MaxNodeDepth { get; init; } = 16;
@@ -33,20 +36,24 @@ public sealed record ConsoleContractLimits
 
     public int MaxImageHeight { get; init; } = 8_192;
 
-    public int MaxHtmlInputLength { get; init; } = 32_768;
+    // eraAM-style portrait composition emits one pseudo-HTML fragment for all
+    // visible layers. Keep the parser budget finite, but do not reject a
+    // normal multi-character scene merely because it is larger than the old
+    // 32 KiB desktop-oriented default.
+    public int MaxHtmlInputLength { get; init; } = 256 * 1_024;
 
-    public int MaxHtmlTagCount { get; init; } = 256;
+    public int MaxHtmlTagCount { get; init; } = 8_192;
 
     public int MaxHtmlNestingDepth { get; init; } = 16;
 
     /// <summary>Maximum semantic segments produced by one Emuera HTML fragment.</summary>
-    public int MaxHtmlSegmentCount { get; init; } = 512;
+    public int MaxHtmlSegmentCount { get; init; } = 8_192;
 
     /// <summary>Maximum semantic parts produced by one Emuera HTML fragment.</summary>
-    public int MaxHtmlPartCount { get; init; } = 2_048;
+    public int MaxHtmlPartCount { get; init; } = 8_192;
 
     /// <summary>Maximum aggregate UTF-16 text emitted by one Emuera HTML fragment.</summary>
-    public int MaxHtmlTextLength { get; init; } = 524_288;
+    public int MaxHtmlTextLength { get; init; } = 1_024 * 1_024;
 
     public int MaxPromptIdLength { get; init; } = 128;
 
@@ -72,13 +79,13 @@ public sealed record ConsoleContractLimits
 
     public int MaxFontFamilyLength { get; init; } = 128;
 
-    public int MaxNodesPerLine { get; init; } = 512;
+    public int MaxNodesPerLine { get; init; } = 8_192;
 
     public int MaxPhysicalLinesPerLogicalLine { get; init; } = 4_096;
 
     public int MaxPhysicalLineIndex { get; init; } = 4_095;
 
-    public int MaxSegmentsPerPhysicalLine { get; init; } = 512;
+    public int MaxSegmentsPerPhysicalLine { get; init; } = 8_192;
 
     public int MaxScrollbackLines { get; init; } = 4_096;
 

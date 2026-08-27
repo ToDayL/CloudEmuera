@@ -780,6 +780,77 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void HtmlPopPrintingStringConsumesPendingStructuredOutputOnly()
+    {
+        // PLAY-002/COMP-007: HTML_POPPRINTINGSTR must pop the headless
+        // pending PRINT line, not the already committed browser scrollback.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.Print("COMMITTED");
+        headless.NewLine();
+        headless.Print("POPPED", lineEnd: false);
+
+        ConsoleDisplayLine[] popped = headless.PopDisplayingLines();
+
+        Assert.Equal("POPPED", HtmlManager.DisplayLine2Html(popped, needPandN: false));
+        Assert.Single(console.Snapshot.Scrollback);
+        Assert.Equal("COMMITTED", RuntimeTranscriptProjector.Project(console.Snapshot.Scrollback[0].Nodes));
+        Assert.Null(headless.PopDisplayingLines());
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task HtmlPopPrintingStringKeepsTheInteractivePanelInTheSameHtmlPrint()
+    {
+        // PLAY-002/COMP-007: eraAM2 builds the panel by embedding
+        // HTML_POPPRINTINGSTR() into a later HTML_PRINT fragment. The popped
+        // dialogue text, an image part and the following button must survive as
+        // one output. This matches PRINTSTR's mixed print buffer more closely
+        // than a text-only regression would.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "CALL BUILD_PANEL\n" +
+            "QUIT\n" +
+            "@BUILD_PANEL\n" +
+            "#DIMS PANELHTML\n" +
+            "PRINT \"POP-NAME\"\n" +
+            "PRINT_IMG \"POP-IMG\"\n" +
+            "PANELHTML = <nobr>%HTML_POPPRINTINGSTR()%\n" +
+            "PANELHTML += \"<button value='panel'>PANEL</button></nobr>\"\n" +
+            "HTML_PRINT PANELHTML\n" +
+            "RETURN\n",
+            configureGame: game =>
+            {
+                string sourceImage = Path.Combine(
+                    RuntimeCompatibilityCli.FindRepositoryRoot(),
+                    "tests", "fixtures", "runtime", "v18-core", "resources", "cloudemuera-v18.png");
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "pop.png"));
+                File.WriteAllText(Path.Combine(resources, "sprites.csv"), "POP-IMG,pop.png,0,0,2,2\n");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.True(
+            initialized.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", initialized.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        ConsoleLine line = Assert.Single(fixture.Console.Snapshot.Scrollback);
+        ButtonNode button = Assert.IsType<ButtonNode>(Assert.Single(line.Nodes, node => node is ButtonNode));
+        Assert.Equal("panel", button.Value);
+        Assert.Equal("PANEL", RuntimeTranscriptProjector.Project(button.Children));
+        Assert.Contains("POP-NAME", RuntimeTranscriptProjector.Project(line.Nodes), StringComparison.Ordinal);
+        Assert.Single(EnumerateSpriteNodes(line.Nodes));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HtmlPrintStartsImagesOnANewLineAfterPartialPrintOutput()
     {
         // PLAY-002/COMP-007: HTML_PRINT flushes a partial PRINT line but
@@ -1342,6 +1413,37 @@ public sealed class HeadlessRuntimeFixtureTests
 
         headless.PrintFlush(force: true);
         Assert.Equal("pending", RuntimeTranscriptProjector.Project(Assert.Single(console.Snapshot.Scrollback).Nodes));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintAllowsLargeLayeredPortraitFragmentWithinParserBudget()
+    {
+        // PLAY-002/COMP-007: the portrait converter emits a large fragment
+        // containing one image tag per visible layer. The default parser
+        // budget must allow a normal scene while remaining finite.
+        const int imageCount = 600;
+        string source = new string('P', 96);
+        string image = $"<img src='{source}' height='2px' width='2px' ypos='0px'>";
+        string fragment = string.Concat(Enumerable.Repeat(image, imageCount));
+        Assert.True(fragment.Length > 32_768);
+
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(
+            console,
+            console.Clock,
+            CancellationToken.None,
+            name => string.Equals(name, source, StringComparison.Ordinal)
+                ? new RuntimeSpriteDefinition("asset-portrait", 0, 0, 2, 2, 0, 0, 2, 2)
+                : null);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(fragment, toPrintBuffer: false);
+
+        SpriteNode[] sprites = EnumerateSpriteNodes(
+            console.Snapshot.Scrollback.SelectMany(line => line.Nodes)).ToArray();
+        Assert.Equal(imageCount, sprites.Length);
+        Assert.All(sprites, sprite => Assert.Equal("asset-portrait", sprite.AssetId.Value));
     }
 
     [Fact]
@@ -2878,6 +2980,71 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task SavedDynamicSpriteResolvesThroughHtmlPrintInSavLayout()
+    {
+        // COMP-007/SAVE-011: a SpriteG backed by GLOAD must point at the
+        // SessionRoot sav asset used by the browser, not disappear because the
+        // static resource resolver has no entry for the generated name.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML CREATED={GCREATE(0, 2, 2)}\n" +
+            "PRINTFORML CLEARED={GCLEAR(0, 4294901760)}\n" +
+            "PRINTFORML SAVED={GSAVE(0, 7)}\n" +
+            "PRINTFORML LOADED={GLOAD(1, 7)}\n" +
+            "PRINTFORML SPRITE={SPRITECREATE(\"DYNAMIC\", 1)}\n" +
+            "HTML_PRINT \"<img src='DYNAMIC' height='2px' width='2px'>\"\n" +
+            "QUIT\n",
+            saveLayout: RuntimeSaveLayout.SavDirectory,
+            configuration: "Use sav folder:YES\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(8));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        SpriteNode sprite = Assert.Single(
+            EnumerateSpriteNodes(fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes)));
+        Assert.True(ConsoleAssetIdCodec.TryDecodePath(sprite.AssetId.Value, out string logicalPath));
+        Assert.Equal("sav/img0007.png", logicalPath);
+        Assert.True(File.Exists(Path.Combine(fixture.Paths.SavDirectoryRoot, "img0007.png")));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task UnsavedDynamicSpriteMaterializesCurrentGraphicsSurface()
+    {
+        // COMP-007/SAVE-011: GCREATE/OVERLAY_GCREATE produces an in-memory
+        // composite. It must become a SessionRoot asset on first HTML use even
+        // when the game never calls GSAVE for that graphics id.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML CREATED={GCREATE(0, 2, 2)}\n" +
+            "PRINTFORML CLEARED={GCLEAR(0, 4294901760)}\n" +
+            "PRINTFORML SPRITE={SPRITECREATE(\"DYNAMIC\", 0)}\n" +
+            "HTML_PRINT \"<img src='DYNAMIC' height='2px' width='2px'>\"\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(8));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        SpriteNode sprite = Assert.Single(
+            EnumerateSpriteNodes(fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes)));
+        Assert.True(ConsoleAssetIdCodec.TryDecodePath(sprite.AssetId.Value, out string logicalPath));
+        Assert.StartsWith("tmp/cloudemuera-runtime-assets/", logicalPath, StringComparison.Ordinal);
+        Assert.EndsWith(".png", logicalPath, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(
+            fixture.Paths.SessionRoot,
+            logicalPath.Replace('/', Path.DirectorySeparatorChar))));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task UnsupportedIdentifierInPrintedTextIsNotMisclassified()
     {
         using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nPRINTL GCREATE\nQUIT\n");
@@ -2932,6 +3099,31 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.DoesNotContain("WMPLib", references);
         Assert.Contains("CloudEmuera.EmueraRuntime.UpstreamHeadless", runtimeAssembly.GetReferencedAssemblies().Select(name => name.Name));
         Assert.DoesNotContain(runtimeAssembly.GetTypes(), type => type.Name.StartsWith("VendoredErb", StringComparison.Ordinal));
+    }
+
+    private static IEnumerable<SpriteNode> EnumerateSpriteNodes(IEnumerable<ConsoleNode> nodes)
+    {
+        foreach (ConsoleNode node in nodes)
+        {
+            switch (node)
+            {
+                case SpriteNode sprite:
+                    yield return sprite;
+                    break;
+                case ButtonNode button:
+                    foreach (SpriteNode child in EnumerateSpriteNodes(button.Children))
+                        yield return child;
+                    break;
+                case PositionedInlineSegmentNode segment:
+                    foreach (SpriteNode child in EnumerateSpriteNodes(segment.Children))
+                        yield return child;
+                    break;
+                case DivNode div:
+                    foreach (SpriteNode child in EnumerateSpriteNodes(div.Children))
+                        yield return child;
+                    break;
+            }
+        }
     }
 
     private sealed class RuntimeHostFixture : IDisposable

@@ -7163,6 +7163,28 @@ internal static partial class FunctionMethodCreator
 	private static string GetSaveDataPathText(int index, string dir) { return string.Format("{0}txt{1:00}.txt", dir, index); }
 	private static string GetSaveDataPathGraphics(int index) { return string.Format("{0}img{1:0000}.png", Config.SavDir, index); }
 
+#if CLOUDEMUERA_HEADLESS
+	// CloudEmuera: dynamic sprites created from a GSAVE/GLOAD surface need a
+	// logical SessionRoot path so the browser can request the native PNG without
+	// embedding a second raster copy in the console transaction.
+	private static string GetHeadlessAssetPath(string filepath)
+	{
+		string resolved = HeadlessPathResolver.ResolveExisting(filepath);
+		if (resolved == null)
+			return null;
+
+		string relative = Path.GetRelativePath(Program.ExeDir, resolved);
+		if (relative == "." || relative == ".." ||
+			relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+			Path.IsPathRooted(relative))
+			return null;
+
+		return relative
+			.Replace(Path.DirectorySeparatorChar, '/')
+			.Replace(Path.AltDirectorySeparatorChar, '/');
+	}
+#endif
+
 	/// <summary>
 	/// int GSAVE int ID, int fileNo
 	/// </summary>
@@ -7197,6 +7219,11 @@ internal static partial class FunctionMethodCreator
 				filepath = HeadlessPathResolver.ForCreate(filepath);
 #endif
 				g.Bitmap.Save(filepath);
+#if CLOUDEMUERA_HEADLESS
+				// CloudEmuera: publish the successful native save as the backing
+				// asset for SpriteG/HTML_PRINT resolution.
+				g.HeadlessAssetPath = GetHeadlessAssetPath(filepath);
+#endif
 			}
 			catch
 			{
@@ -7256,6 +7283,11 @@ internal static partial class FunctionMethodCreator
 			}
 			if (!g.IsCreated)
 				return 0;
+#if CLOUDEMUERA_HEADLESS
+			// CloudEmuera: retain the actual save-directory spelling (including
+			// Sav/ versus sav/) in the logical path exposed to the browser.
+			g.HeadlessAssetPath = GetHeadlessAssetPath(filepath);
+#endif
 			return 1;
 		}
 	}
