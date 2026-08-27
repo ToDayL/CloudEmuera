@@ -422,6 +422,44 @@ describe("ScrollbackRenderer", () => {
     expect(screen.getByRole("button", { name: "Go" })).toHaveStyle({ position: "relative", left: "42px" });
   });
 
+  it("keeps buttons clickable inside pointer-transparent Emuera div layers", () => {
+    const onInput = vi.fn();
+    const stateLine: RealtimeLine = {
+      lineId: "nested-div-button",
+      nodes: [{
+        type: "positionedInlineSegment",
+        positionX: 0,
+        measuredWidth: 0,
+        action: null,
+        children: [{
+          type: "div",
+          children: [{
+            type: "button",
+            children: [{ type: "text", text: "Invite", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }],
+            value: "110",
+            tooltip: null,
+            enabled: true,
+            generation: 1,
+          }],
+          bounds: { x: 12, y: 8, width: 120, height: 30 },
+          zIndex: 1,
+          background: null,
+          isRelative: true,
+          box: null,
+        }],
+      }],
+      alignment: "left",
+      temporary: false,
+    };
+
+    render(<ScrollbackRenderer lines={[stateLine]} assets={assets} onInput={onInput} />);
+
+    const button = screen.getByRole("button", { name: "Invite" });
+    expect(button).toHaveStyle({ pointerEvents: "auto" });
+    fireEvent.click(button);
+    expect(onInput).toHaveBeenCalledWith({ value: "110", source: "BUTTON" });
+  });
+
   it("places multiple pos layers at one x coordinate so they can composite", () => {
     const layeredLine: RealtimeLine = {
       lineId: "layered",

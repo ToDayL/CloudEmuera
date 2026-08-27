@@ -71,6 +71,11 @@ internal sealed class EmueraConsole
     // receive the same typed button through DisplayLineList without exposing
     // upstream UI types in RuntimeAdapter.
     private readonly HashSet<ButtonNode> integerButtonNodes = [];
+    // BINPUT* is implemented by the pinned interpreter and reads the legacy
+    // display-line facade. Keep a source-node projection beside that facade so
+    // appends, CLEARLINE replacements, and deletions cannot leave stale button
+    // inventory behind when the structured browser output is updated.
+    private readonly List<IReadOnlyList<ConsoleNode>> legacyDisplayLineNodes = [];
     private ConsoleLineAlignment? pendingLineAlignment;
     private bool pendingLineNoWrap;
     private bool pendingLineEnd = true;
@@ -265,8 +270,8 @@ internal sealed class EmueraConsole
     // interpreter inspects DisplayLineList.
     public void RefreshStrings(bool forcePaint)
     {
-        if (pendingLine.Any(node => node is ButtonNode) ||
-            pendingBufferedLines.Any(line => line.Nodes.Any(node => node is ButtonNode)))
+        if (EnumerateLegacyButtons(pendingLine).Any() ||
+            pendingBufferedLines.Any(line => EnumerateLegacyButtons(line.Nodes).Any()))
             FlushPendingLine();
         FlushDeferredReplacementDelete();
         ProjectTooltipResources();
@@ -277,6 +282,7 @@ internal sealed class EmueraConsole
         FlushDeferredReplacementDelete();
         EmitStructured(ConsoleOperation.ClearConsole());
         DisplayLineList.Clear();
+        legacyDisplayLineNodes.Clear();
         integerButtonNodes.Clear();
         lastLineId = null;
         lastPhysicalLineId = null;
@@ -310,6 +316,7 @@ internal sealed class EmueraConsole
         if (count == 1 && groupsToDelete.Count == 1)
         {
             List<ConsoleLine> group = groupsToDelete[0];
+            RemoveLegacyDisplayLines(groupsToDelete.Count);
             deferredReplacementLogicalLineId = group[0].LogicalLineId;
             lastLineId = group[^1].LineId;
             lastPhysicalLineId = group[^1].LineId;
@@ -321,6 +328,7 @@ internal sealed class EmueraConsole
         {
             deferredReplacementLogicalLineId = null;
             EmitStructured(ConsoleOperation.DeleteLines(ids));
+            RemoveLegacyDisplayLines(groupsToDelete.Count);
             deletedLines = checked(deletedLines + groupsToDelete.Count);
             ConsoleLine? remaining = structured.Snapshot.Scrollback.LastOrDefault();
             lastLineId = remaining?.LineId;
@@ -461,7 +469,8 @@ internal sealed class EmueraConsole
 
     private UpstreamHtmlTranslationResult TranslateHtmlFragment(
         string fragment,
-        UpstreamHtmlParseMode mode)
+        UpstreamHtmlParseMode mode,
+        Action<ButtonNode> integerButtonMarker = null)
     {
         int fontSize = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize);
         ConsoleContractLimits limits = HtmlContractLimits;
@@ -487,7 +496,8 @@ internal sealed class EmueraConsole
                 generation,
                 ResolveSpriteDefinition,
                 mode,
-                convertBackslashToYen));
+                convertBackslashToYen,
+                integerButtonMarker));
         }
         catch (UpstreamHtmlBudgetExceededException exception)
         {
@@ -515,7 +525,16 @@ internal sealed class EmueraConsole
         UpstreamHtmlParseMode mode = toPrintBuffer
             ? UpstreamHtmlParseMode.PrintBufferParts
             : UpstreamHtmlParseMode.DisplayLines;
-        UpstreamHtmlTranslationResult translated = TranslateHtmlFragment(fragment, mode);
+        var integerButtons = new List<ButtonNode>();
+        UpstreamHtmlTranslationResult translated = TranslateHtmlFragment(
+            fragment,
+            mode,
+            integerButtonMarker: integerButtons.Add);
+        // Do not mutate the legacy inventory while parsing/translating: a
+        // failed HTML fragment must not leave behind button state that was
+        // never submitted to the structured console.
+        foreach (ButtonNode button in integerButtons)
+            integerButtonNodes.Add(button);
         if (!toPrintBuffer)
         {
             FlushPendingLine();
@@ -1580,7 +1599,11 @@ internal sealed class EmueraConsole
         ImageNode image => image.Destination?.Width ?? image.Width ?? (image.AltText is null ? 0 : Measure(image.AltText)),
         SpriteNode sprite => sprite.Destination.Width,
         ShapeNode shape => shape.Bounds.Width,
-        DivNode div => div.Bounds.Width,
+        // ConsoleDivPart keeps its rectangle width for painting but does not
+        // contribute that width to ConsoleButtonString's inline cursor. HTML
+        // divs therefore form positioned overlay layers; counting Bounds.Width
+        // here shifts every following sibling and breaks multi-panel layouts.
+        DivNode => 0,
         HtmlIslandNode island when island.StructuredNodes is { } structured => MeasureInlineNodes(structured),
         HtmlIslandNode island when island.Layout is { } layout => layout.Width,
         HtmlIslandNode => 0,
@@ -1802,6 +1825,7 @@ internal sealed class EmueraConsole
                     appendConsole.Snapshot.Scrollback.Any(existing => string.Equals(existing.LineId, lastPhysicalLineId, StringComparison.Ordinal)))
                 {
                     RelayoutLastLogicalLine(appendConsole, projectedNodes, line);
+                    CommitLegacyDisplayLine(projectedNodes, temporary, line.LineEnd, appendToPrevious: true);
                     lastLineCanAppend = !line.LineEnd;
                     continue;
                 }
@@ -1837,16 +1861,15 @@ internal sealed class EmueraConsole
                 lastPhysicalLineId = physicalLines[^1].LineId;
                 lastLineTemporary = temporary;
                 if (existingReplacementGroup.Count == 0)
-                {
                     logicalLineCount = checked(logicalLineCount + 1);
-                    DisplayLineList.Add(CreateUpstreamDisplayLine(projectedNodes, temporary, line.LineEnd));
-                }
+                CommitLegacyDisplayLine(projectedNodes, temporary, line.LineEnd, appendToPrevious: false);
                 lastLineCanAppend = !line.LineEnd;
                 continue;
             }
             if (lastLineCanAppend && lastLineId is not null && projectedNodes.Count > 0)
             {
                 EmitStructured(ConsoleOperation.AppendInline(lastLineId, projectedNodes));
+                CommitLegacyDisplayLine(projectedNodes, temporary, line.LineEnd, appendToPrevious: true);
             }
             else
             {
@@ -1878,7 +1901,7 @@ internal sealed class EmueraConsole
                 lastLineTemporary = temporary;
                 if (!replaced)
                     logicalLineCount = checked(logicalLineCount + 1);
-                DisplayLineList.Add(CreateUpstreamDisplayLine(projectedNodes, temporary, line.LineEnd));
+                CommitLegacyDisplayLine(projectedNodes, temporary, line.LineEnd, appendToPrevious: false);
             }
 
             lastLineCanAppend = !line.LineEnd;
@@ -2004,8 +2027,13 @@ internal sealed class EmueraConsole
         bool temporary,
         bool lineEnd)
     {
+        return new ConsoleDisplayLine(CreateUpstreamButtons(nodes), isLogical: true, temporary: temporary, lineEnd: lineEnd);
+    }
+
+    private ConsoleButtonString[] CreateUpstreamButtons(IReadOnlyList<ConsoleNode> nodes)
+    {
         var buttons = new List<ConsoleButtonString>();
-        foreach (ButtonNode button in nodes.OfType<ButtonNode>())
+        foreach (ButtonNode button in EnumerateLegacyButtons(nodes))
         {
             if (!button.Enabled)
                 continue;
@@ -2020,7 +2048,64 @@ internal sealed class EmueraConsole
             buttons.Add(new ConsoleButtonString(this, [], button.Value));
         }
 
-        return new ConsoleDisplayLine([.. buttons], isLogical: true, temporary: temporary, lineEnd: lineEnd);
+        return [.. buttons];
+    }
+
+    private void CommitLegacyDisplayLine(
+        IReadOnlyList<ConsoleNode> nodes,
+        bool temporary,
+        bool lineEnd,
+        bool appendToPrevious)
+    {
+        IReadOnlyList<ConsoleNode> snapshot = nodes.ToArray();
+        if (appendToPrevious && legacyDisplayLineNodes.Count > 0 && DisplayLineList.Count > 0)
+        {
+            IReadOnlyList<ConsoleNode> combined = legacyDisplayLineNodes[^1]
+                .Concat(snapshot)
+                .ToArray();
+            legacyDisplayLineNodes[^1] = combined;
+            ConsoleDisplayLine existing = DisplayLineList[^1];
+            ConsoleButtonString[] appendedButtons = CreateUpstreamButtons(snapshot);
+            existing.ChangeStr(existing.Buttons.Concat(appendedButtons).ToArray());
+            existing.IsLineEnd = lineEnd;
+            return;
+        }
+
+        legacyDisplayLineNodes.Add(snapshot);
+        DisplayLineList.Add(CreateUpstreamDisplayLine(snapshot, temporary, lineEnd));
+    }
+
+    private void RemoveLegacyDisplayLines(int count)
+    {
+        int removeCount = Math.Min(count, Math.Min(legacyDisplayLineNodes.Count, DisplayLineList.Count));
+        for (int index = 0; index < removeCount; index++)
+        {
+            foreach (ButtonNode button in EnumerateLegacyButtons(legacyDisplayLineNodes[^1]))
+                integerButtonNodes.Remove(button);
+            legacyDisplayLineNodes.RemoveAt(legacyDisplayLineNodes.Count - 1);
+            DisplayLineList.RemoveAt(DisplayLineList.Count - 1);
+        }
+    }
+
+    private static IEnumerable<ButtonNode> EnumerateLegacyButtons(IReadOnlyList<ConsoleNode> nodes)
+    {
+        foreach (ConsoleNode node in nodes)
+        {
+            switch (node)
+            {
+                case ButtonNode button:
+                    yield return button;
+                    break;
+                case DivNode div:
+                    foreach (ButtonNode nested in EnumerateLegacyButtons(div.Children))
+                        yield return nested;
+                    break;
+                case PositionedInlineSegmentNode segment:
+                    foreach (ButtonNode nested in EnumerateLegacyButtons(segment.Children))
+                        yield return nested;
+                    break;
+            }
+        }
     }
 
     private void CompleteInputButtonGeneration(InputType inputType)

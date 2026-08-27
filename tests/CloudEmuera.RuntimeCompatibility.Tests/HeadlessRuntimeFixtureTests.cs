@@ -894,6 +894,51 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "FontLayout")]
+    public async Task HtmlPrintDivsDoNotConsumeInlineFlowWidth()
+    {
+        // PLAY-002/COMP-007: upstream ConsoleDivPart paints its rect as an
+        // overlay and leaves the inline cursor unchanged. A screen composed
+        // from sibling rect divs must therefore keep every layer at the same
+        // physical-line origin instead of shifting later panels to the right.
+        const string panels =
+            "<div rect='81,31,1937,2812' border='31'></div>" +
+            "<div rect='2050,31,3875,2812' border='31'></div>" +
+            "<div rect='2130,430,3720,700' border='31'></div>";
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            $"HTML_PRINT \"{panels}\"\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:1600\n字体大小:16\n每行高度:16\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        ConsoleLine line = Assert.Single(
+            fixture.Console.Snapshot.Scrollback,
+            item => item.Nodes.Count == 3 && item.Nodes.All(node => node is PositionedInlineSegmentNode));
+        PositionedInlineSegmentNode[] layers = line.Nodes.Cast<PositionedInlineSegmentNode>().ToArray();
+        Assert.All(layers, layer =>
+        {
+            Assert.Equal(0, layer.PositionX);
+            Assert.Equal(0, layer.MeasuredWidth);
+            Assert.IsType<DivNode>(Assert.Single(layer.Children));
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HtmlPrintButtonsUseTheCurrentRuntimeGeneration()
     {
         var console = new StructuredGameConsole();
@@ -2884,6 +2929,268 @@ public sealed class HeadlessRuntimeFixtureTests
             result.Status == EmueraRuntimeStatus.Completed,
             result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
         Assert.Contains("RESULT=0", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task BinputSeesIntegerButtonFromHtmlPrint()
+    {
+        // PLAY-002/COMP-007: HTML_PRINT must preserve the upstream numeric
+        // button kind because BINPUT only accepts integer buttons.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nHTML_PRINT \"<button value='7'>[7] - CONTINUE</button>\"\nBINPUT\n" +
+            "PRINTFORML HTML_RESULT={RESULT}\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        if (!SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)))
+        {
+            EmueraRuntimeResult earlyResult = await run;
+            string diagnostics = string.Join(" | ", earlyResult.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message));
+            Assert.Fail("BINPUT did not open a prompt: " + earlyResult.Status + "; " + diagnostics);
+        }
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputType.IntegerButton, prompt.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("html-binput", "7", ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
+        Assert.Contains("HTML_RESULT=7", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task BinputSeesIntegerButtonNestedInHtmlPrintDivAfterLineBreaks()
+    {
+        // PLAY-002/COMP-007/issue #14: HTML_PRINT can place numeric buttons
+        // inside a div, and later PRINTL calls must not hide them from BINPUT.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nHTML_PRINT \"<div width='80px' height='20px'><button value='110'>[110] INVITE</button></div>\"\n" +
+            "FOR LOCAL, 0, 26\nPRINTL\nNEXT\nBINPUT\n" +
+            "PRINTFORML NESTED_HTML_RESULT={RESULT}\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        if (!SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)))
+        {
+            EmueraRuntimeResult earlyResult = await run;
+            string diagnostics = string.Join(" | ", earlyResult.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message));
+            Assert.Fail("Nested HTML BINPUT did not open a prompt: " + earlyResult.Status + "; " + diagnostics);
+        }
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputType.IntegerButton, prompt.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("nested-html-binput", "110", ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
+        Assert.Contains("NESTED_HTML_RESULT=110", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task BinputRefreshesNestedHtmlPrintBuffer()
+    {
+        // PLAY-002/COMP-007/issue #14: the same recursive projection must
+        // flush a buffered HTML_PRINT fragment when BINPUT calls RefreshStrings.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nHTML_PRINT \"<div width='80px' height='20px'><button value='110'>[110] INVITE</button></div>\", 1\n" +
+            "BINPUT\nPRINTFORML BUFFERED_HTML_RESULT={RESULT}\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        if (!SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)))
+        {
+            EmueraRuntimeResult earlyResult = await run;
+            string diagnostics = string.Join(" | ", earlyResult.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message));
+            Assert.Fail("Buffered nested HTML BINPUT did not open a prompt: " + earlyResult.Status + "; " + diagnostics);
+        }
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputType.IntegerButton, prompt.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("buffered-html-binput", "110", ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
+        Assert.Contains("BUFFERED_HTML_RESULT=110", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    [Trait("Category", "FontLayout")]
+    public async Task BinputUsesHtmlButtonAfterFontBoundClearlineReplacement()
+    {
+        // PLAY-002/COMP-007/issue #14: CLEARLINE replaces the structured
+        // logical line in place. The server-side legacy projection must
+        // replace its input inventory at the same boundary; browser rendering
+        // must not determine whether BINPUT can proceed.
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "HTML_PRINT \"<button value='7'>OLD</button>\"\n" +
+            "CLEARLINE 1\n" +
+            "HTML_PRINT \"<button value='8'>NEW</button>\"\n" +
+            "BINPUT\n" +
+            "PRINTFORML CLEARLINE_HTML_RESULT={RESULT}\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:400\n字体大小:18\n每行高度:20\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        if (!SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)))
+        {
+            EmueraRuntimeResult earlyResult = await run;
+            string diagnostics = string.Join(" | ", earlyResult.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message));
+            Assert.Fail("CLEARLINE replacement BINPUT did not open a prompt: " + earlyResult.Status + "; " + diagnostics);
+        }
+
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputType.IntegerButton, prompt.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("clearline-html-binput", "8", ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Contains("CLEARLINE_HTML_RESULT=8", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("BINPUT", "<button value='8'>NEW</button>", "8", "BUTTON_VARIANT_RESULT={RESULT}", ConsoleInputType.IntegerButton)]
+    [InlineData("BINPUTS", "<button value='new-value'>NEW</button>", "new-value", "BUTTON_VARIANT_RESULT=%RESULTS%", ConsoleInputType.TextButton)]
+    [InlineData("ONEBINPUT", "<button value='8'>NEW</button>", "8", "BUTTON_VARIANT_RESULT={RESULT}", ConsoleInputType.IntegerButton)]
+    [InlineData("ONEBINPUTS", "<button value='n'>NEW</button>", "n", "BUTTON_VARIANT_RESULT=%RESULTS%", ConsoleInputType.TextButton)]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    [Trait("Category", "FontLayout")]
+    public async Task AllButtonInputVariantsUseTheSameServerSideInventory(
+        string instruction,
+        string html,
+        string input,
+        string resultFormat,
+        ConsoleInputType expectedInputType)
+    {
+        // issue #14: all four BINPUT-family instructions share the same
+        // server-side display-line projection. Verify that a CLEARLINE
+        // replacement updates that projection for both integer and string
+        // button modes, including the ONE variants.
+        string oldHtml = instruction.EndsWith('S')
+            ? "<button value='old-value'>OLD</button>"
+            : "<button value='7'>OLD</button>";
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            $"HTML_PRINT \"{oldHtml}\"\n" +
+            "CLEARLINE 1\n" +
+            $"HTML_PRINT \"{html}\"\n" +
+            $"{instruction}\n" +
+            $"PRINTFORML {resultFormat}\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:400\n字体大小:18\n每行高度:20\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        if (!SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)))
+        {
+            EmueraRuntimeResult earlyResult = await run;
+            string diagnostics = string.Join(" | ", earlyResult.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message));
+            Assert.Fail($"{instruction} did not open a prompt: {earlyResult.Status}; {diagnostics}");
+        }
+
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(expectedInputType, prompt.InputType);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt($"{instruction}-clearline", input, ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Contains(
+            $"BUTTON_VARIANT_RESULT={input}",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task BinputDoesNotReuseButtonRemovedByClearline()
+    {
+        // issue #14: deleting a logical line must remove its server-side
+        // input inventory as well as its structured browser representation.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nHTML_PRINT \"<button value='7'>OLD</button>\"\n" +
+            "CLEARLINE 1\nBINPUT\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.ScriptFailed, result.Status);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "runtime_script_failed" &&
+                diagnostic.Message.Contains("BINPUT", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public void LegacyButtonProjectionPreservesGenerationWhenAppendingToPartialLine()
+    {
+        // issue #14: refreshing the server-side projection for a same-line
+        // append must not re-stamp an existing button as part of the new
+        // input generation.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        headless.Print("PREFIX", lineEnd: false);
+        headless.PrintButton("OLD", 1);
+        headless.PrintFlush(force: false);
+
+        headless.forceUpdateGeneration();
+        headless.PrintButton("NEW", 2);
+        headless.PrintFlush(force: false);
+
+        ConsoleDisplayLine line = Assert.Single(headless.DisplayLineList);
+        Assert.Equal([1, 2], line.Buttons.Select(button => button.Generation));
     }
 
     [Fact]
