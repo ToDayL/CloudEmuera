@@ -24,7 +24,8 @@ internal sealed class UpstreamHtmlTranslationContext
         long buttonGeneration,
         Func<string, RuntimeSpriteDefinition> imageResolver,
         UpstreamHtmlParseMode mode,
-        bool convertBackslashToYen = true)
+        bool convertBackslashToYen = true,
+        Action<ButtonNode> integerButtonMarker = null)
     {
         Limits = limits ?? throw new ArgumentNullException(nameof(limits));
         Limits.Validate();
@@ -42,6 +43,7 @@ internal sealed class UpstreamHtmlTranslationContext
         ImageResolver = imageResolver;
         Mode = mode;
         ConvertBackslashToYen = convertBackslashToYen;
+        IntegerButtonMarker = integerButtonMarker;
     }
 
     public ConsoleContractLimits Limits { get; }
@@ -53,6 +55,7 @@ internal sealed class UpstreamHtmlTranslationContext
     public Func<string, RuntimeSpriteDefinition> ImageResolver { get; }
     public UpstreamHtmlParseMode Mode { get; }
     public bool ConvertBackslashToYen { get; }
+    public Action<ButtonNode> IntegerButtonMarker { get; }
 
     public string DisplayText(string value) =>
         ConvertBackslashToYen && value.Contains('\\', StringComparison.Ordinal)
@@ -147,16 +150,16 @@ internal static class UpstreamHtmlTranslator
         {
             string value = segment.Value ?? string.Empty;
             counter.Node();
-            return
-            [
-                new ButtonNode(
-                    children,
-                    value,
-                    segment.Title is null ? null : context.DisplayText(segment.Title),
-                    enabled: true,
-                    generation: context.ButtonGeneration,
-                    positionX: segment.PositionX)
-            ];
+            ButtonNode button = new(
+                children,
+                value,
+                segment.Title is null ? null : context.DisplayText(segment.Title),
+                enabled: true,
+                generation: context.ButtonGeneration,
+                positionX: segment.PositionX);
+            if (segment.ValueKind == UpstreamHtmlButtonValueKind.Integer)
+                context.IntegerButtonMarker?.Invoke(button);
+            return [button];
         }
 
         // A nonbutton/clearbutton segment can still carry title/pos in the

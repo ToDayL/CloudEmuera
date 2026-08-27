@@ -24,6 +24,22 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-28 — Preserve HTML overlay layout and nested button hit targets
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now keeps `DivNode` width out of
+  the physical inline cursor, matching upstream `ConsoleDivPart` behavior.
+  Sibling `rect` divs consequently remain positioned overlay layers, so
+  multi-panel HTML layouts do not accumulate each preceding panel's width.
+- `Web/src/console/ScrollbackRenderer.tsx` explicitly restores pointer hit
+  testing on each semantic button. Pointer-transparent non-button wrappers
+  can still pass clicks through, while buttons nested inside an Emuera div
+  remain keyboard/focus/click targets. Input availability remains owned by
+  the server-side legacy display-line projection; the browser only renders
+  structured button elements and reports their clicks.
+- Scope: issue #14 / COMP-007, including the `eraBlue` management panel.
+  Verification: `HtmlPrintDivsDoNotConsumeInlineFlowWidth`, the nested-div
+  ScrollbackRenderer regression, and the existing BINPUT-family tests.
+
 ## 2026-08-27 — Layered HTML budget and saved dynamic sprites
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` now checks the pinned upstream
@@ -150,6 +166,34 @@ requirements/ADR references, and verification commands.
   BinputSeesHeadlessPrintButtonBeforeLineBreak,
   BinputDoesNotReuseConsumedButtonGeneration and all 114 tests in the
   RuntimeCompatibility suite pass in the development Docker environment.
+
+## 2026-08-27 — Preserve HTML_PRINT integer buttons for BINPUT (issue #14)
+
+- `UpstreamHeadless/UpstreamHtmlTranslator.cs` now carries the pinned
+  `HtmlManager` button value kind to the headless legacy button inventory;
+  numeric `<button value='...'>` elements are therefore represented as
+  integer buttons while string values remain string buttons.
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` collects the numeric HTML
+  buttons only after parsing and translation succeeds, then mirrors them into
+  `ConsoleDisplayLine.Buttons` before the `BINPUT` boundary. The legacy
+  projection recursively walks structured containers such as `DivNode`, and
+  `RefreshStrings` uses the same traversal for buffered HTML output. This
+  keeps the structured browser node and the upstream input validator in
+  agreement without changing the IPC or Realtime contracts. The projection
+  also keeps source-node snapshots for the full logical-line lifecycle, so
+  same-line appends, `CLEARLINE` replacements, and deletions update the
+  server-side button inventory atomically with the structured output; browser
+  rendering is never consulted to decide whether a button exists.
+- Scope: issue #14, the `eraBlue` Session's
+  `起床前メニュー関連処理/起床前メニュー.ERB:325` path and the analogous
+  `キャラクター招待改良版.ERB:162` path, PLAY-002, COMP-002/007 and
+  ADR-0024. Both ERB files emit numeric menu buttons; the failure was the
+  headless type/tree projection, not missing game content.
+- Verification: `BinputSeesIntegerButtonFromHtmlPrint`, the nested-div and
+  buffered-HTML BINPUT regressions, the font-bound `CLEARLINE` replacement
+  regression, all four `BINPUT`/`BINPUTS`/`ONEBINPUT`/`ONEBINPUTS` variants,
+  the existing PRINTBUTTON/BINPUT generation regressions, and the
+  RuntimeCompatibility suite in the development Docker environment.
 
 ## 2026-08-24 — Use the bundled face for GRAPHICS-mode layout measurement
 

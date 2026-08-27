@@ -336,7 +336,7 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
 
 function TooltipButton({ node, style, onInput, children }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; children: ReactNode }) {
   const target = useConsoleTooltipTarget(node.tooltip, node.generation);
-  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="console-choice console-tooltip-target" style={style} type="button" disabled={!node.enabled} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>{children}{target.badge}</button>;
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="console-choice console-tooltip-target" style={{ ...style, pointerEvents: "auto" }} type="button" disabled={!node.enabled} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>{children}{target.badge}</button>;
 }
 
 function TooltipNonButton({ node, style, assets, onInput, onRenderError }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }) {
@@ -346,7 +346,7 @@ function TooltipNonButton({ node, style, assets, onInput, onRenderError }: { nod
 
 function TooltipPositionedButton({ action, style, onInput, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; children: ReactNode }) {
   const target = useConsoleTooltipTarget(action.tooltip, action.generation);
-  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="console-choice positioned-inline-action console-tooltip-target" style={style} type="button" disabled={!action.enabled} onClick={() => onInput({ value: action.value, source: "BUTTON" })}>{children}{target.badge}</button>;
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="console-choice positioned-inline-action console-tooltip-target" style={{ ...style, pointerEvents: "auto" }} type="button" disabled={!action.enabled} onClick={() => onInput({ value: action.value, source: "BUTTON" })}>{children}{target.badge}</button>;
 }
 
 function TooltipPositionedNonButton({ action, style, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; children: ReactNode }) {
