@@ -2967,6 +2967,41 @@ public sealed class HeadlessRuntimeFixtureTests
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     [Trait("Category", "Input")]
+    public async Task BinputAcceptsNegativeIntegerButtonValue()
+    {
+        // issue #14: eraBlue uses negative HTML button values for navigation
+        // and actions. They are valid signed Emuera integer input values.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nHTML_PRINT \"<button value='-1'>[-1] BACK</button>\"\nBINPUT\n" +
+            "PRINTFORML NEGATIVE_HTML_RESULT={RESULT}\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        if (!SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)))
+        {
+            EmueraRuntimeResult earlyResult = await run;
+            string diagnostics = string.Join(" | ", earlyResult.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message));
+            Assert.Fail("Negative HTML BINPUT did not open a prompt: " + earlyResult.Status + "; " + diagnostics);
+        }
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputType.IntegerButton, prompt.InputType);
+        IntegerInputConstraints constraints = Assert.IsType<IntegerInputConstraints>(prompt.Constraints);
+        Assert.True(constraints.AllowSign);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("negative-html-binput", "-1", ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
+        Assert.Contains("NEGATIVE_HTML_RESULT=-1", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
     public async Task BinputSeesIntegerButtonNestedInHtmlPrintDivAfterLineBreaks()
     {
         // PLAY-002/COMP-007/issue #14: HTML_PRINT can place numeric buttons

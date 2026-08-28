@@ -460,6 +460,13 @@ describe("ScrollbackRenderer", () => {
     expect(onInput).toHaveBeenCalledWith({ value: "110", source: "BUTTON" });
   });
 
+  it("keeps virtual rows and line shells out of hit testing for overflowing panels", () => {
+    render(<ScrollbackRenderer lines={[line("overflowing-panel", "panel")]} assets={assets} onInput={() => undefined} />);
+
+    expect(document.querySelector(".console-virtual-row")).toHaveStyle({ pointerEvents: "none" });
+    expect(document.querySelector(".console-line")).toHaveStyle({ pointerEvents: "none" });
+  });
+
   it("places multiple pos layers at one x coordinate so they can composite", () => {
     const layeredLine: RealtimeLine = {
       lineId: "layered",
