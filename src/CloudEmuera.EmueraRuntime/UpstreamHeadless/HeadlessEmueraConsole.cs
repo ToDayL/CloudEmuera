@@ -1282,7 +1282,7 @@ internal sealed class EmueraConsole
             id,
             new ConsoleRect(x, y, normal.DestBaseSize.Width, normal.DestBaseSize.Height),
             buttonValue.ToString(CultureInfo.InvariantCulture),
-            tooltip: tooltip)));
+            tooltip: tooltip is null ? null : DisplayText(tooltip))));
         return true;
     }
     public void SetRedraw(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
@@ -2450,10 +2450,7 @@ internal sealed class EmueraConsole
         fontFaceId: fontFaceId,
         webFontAssetDigest: webFontAssetDigest);
 
-    private string DisplayText(string value) =>
-        convertBackslashToYen && value.Contains('\\', StringComparison.Ordinal)
-            ? value.Replace('\\', '\u00a5')
-            : value;
+    private string DisplayText(string value) => HeadlessDisplayText.Project(value, convertBackslashToYen);
 
     private ConsoleContractLimits HtmlContractLimits => adapter is StructuredGameConsole structured
         ? structured.StateStore.Options.ContractLimits

@@ -27,6 +27,7 @@
     <Compile Include="HeadlessPlatformStubs.cs" />
     <Compile Include="HeadlessWebpDecoder.cs" />
     <Compile Include="HeadlessFontMetrics.cs" />
+    <Compile Include="HeadlessDisplayText.cs" />
     <Compile Include="HeadlessFileSystem.cs" />
     <Compile Include="HeadlessStringConverter.cs" />
     <Compile Include="RuntimeDebugTrace.cs" />

@@ -46,6 +46,51 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void Issue18LiteralPrintTabsBecomeDisplaySpacesBeforeStructuredValidation()
+    {
+        // PLAY-001/PLAY-014/issue #18: the real SHOP.ERB output contains two
+        // literal tabs. They must use the pinned eight-space display width,
+        // while the browser-facing TextNode remains control-character-free.
+        var adapter = new StructuredGameConsole();
+        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.Print("[100] - 調教開始\t\t");
+        headless.NewLine();
+
+        string transcript = RuntimeTranscriptProjector.Project(adapter.Snapshot.VisibleNodes);
+        Assert.Equal("[100] - 調教開始                ", transcript);
+        Assert.DoesNotContain('\t', transcript);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task Issue18LiteralPrintTabsDoNotAbortPinnedInterpreter()
+    {
+        // The direct bridge regression above isolates the projection boundary;
+        // this fixture proves the same literal SHOP.ERB shape completes the
+        // pinned interpreter path instead of becoming runtime_script_failed.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL [100] - 調教開始\t\t\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.True(initialized.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", initialized.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("[100] - 調教開始", transcript, StringComparison.Ordinal);
+        Assert.DoesNotContain('\t', transcript);
+    }
+
+    [Fact]
     [Trait("Category", "EmueraFeatureMatrix")]
     public void DynamicGraphicsPublishesBoundedBrowserRasterDrawable()
     {

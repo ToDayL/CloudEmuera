@@ -30,6 +30,13 @@ internal static class HeadlessFontMetrics
             return false;
         }
 
+        string expandedText = null;
+        if (text.IndexOf('\t') >= 0)
+        {
+            expandedText = HeadlessDisplayText.ExpandTabs(text.ToString());
+            text = expandedText.AsSpan();
+        }
+
         double totalUnits = 0;
         for (int index = 0; index < text.Length;)
         {
