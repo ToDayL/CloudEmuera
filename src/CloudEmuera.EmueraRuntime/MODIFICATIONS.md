@@ -6,6 +6,9 @@
 - Added a Session-bound display projection that maps U+005C to U+00A5 before headless font measurement when enabled.
   The default-on mapping affects visible text only; runtime strings, button values, input and paths remain unchanged
   (SESS-015/PLAY-016, ADR-0031).
+- Added a headless display projection that expands upstream U+0009 tabs to eight U+0020 spaces before structured
+  text validation and authoritative measurement. The original game/script data and input values are not rewritten;
+  the projection keeps the RuntimeAdapter control-character boundary closed (PLAY-001/PLAY-014, issue #18).
 
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
@@ -23,6 +26,23 @@ inside modified upstream files and does not replace Git history or review.
 
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
+
+## 2026-08-28 — Expand literal PRINT tabs at the structured display boundary (issue #18)
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` and
+  `UpstreamHeadless/UpstreamHtmlTranslator.cs` now apply the same eight-space
+  tab display width already used by the pinned graphics measurement path before
+  creating browser-facing text, button labels and hit-region tooltips.
+- `UpstreamHeadless/HeadlessFontMetrics.cs` also expands tabs before reading
+  the authoritative TTF advances, so measurement cannot diverge if a legacy
+  upstream display path still supplies a raw tab.
+- Scope: the Docker-volume `eraInSchoolML` Session trace at
+  `SHOP/SHOP.ERB:270`, where `[100] - 調教開始\t\t` reached `TextNode` and
+  aborted the Worker with `text contains a control character`. Script data,
+  parser input and button submission values remain unchanged.
+- Verification: `Issue18LiteralPrintTabsBecomeDisplaySpacesBeforeStructuredValidation`,
+  `Issue18LiteralPrintTabsDoNotAbortPinnedInterpreter`, and the targeted
+  RuntimeCompatibility tests in the development Docker environment.
 
 ## 2026-08-28 — Preserve HTML overlay layout and nested button hit targets
 

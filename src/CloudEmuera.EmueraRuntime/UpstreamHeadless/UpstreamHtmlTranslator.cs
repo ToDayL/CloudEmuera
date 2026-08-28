@@ -57,10 +57,7 @@ internal sealed class UpstreamHtmlTranslationContext
     public bool ConvertBackslashToYen { get; }
     public Action<ButtonNode> IntegerButtonMarker { get; }
 
-    public string DisplayText(string value) =>
-        ConvertBackslashToYen && value.Contains('\\', StringComparison.Ordinal)
-            ? value.Replace('\\', '\u00a5')
-            : value;
+    public string DisplayText(string value) => HeadlessDisplayText.Project(value, ConvertBackslashToYen);
 }
 
 internal sealed class UpstreamHtmlTranslationResult
