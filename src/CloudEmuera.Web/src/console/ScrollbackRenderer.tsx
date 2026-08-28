@@ -176,7 +176,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
             ref={virtualizer.measureElement}
             data-index={virtualItem.index}
             className="console-virtual-row"
-            style={{ width: "max-content", minWidth: "100%", height: virtualItem.size }}
+            style={{ width: "max-content", minWidth: "100%", height: virtualItem.size, pointerEvents: "none" }}
           >
             <ConsoleLineView line={line} assets={assets} onInput={onInput} onRenderError={onRenderError} />
           </div>;
@@ -365,7 +365,7 @@ function renderRuntimeText(value: string): ReactNode {
 }
 
 function physicalLineStyle(line: RealtimeLine): CSSProperties {
-  const style: CSSProperties = {};
+  const style: CSSProperties = { pointerEvents: "none" };
   if (line.layoutWidth && line.layoutWidth > 0) style.width = line.layoutWidth;
   if (line.lineHeight && line.lineHeight > 0) {
     style.height = line.lineHeight;

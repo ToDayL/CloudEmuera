@@ -633,6 +633,14 @@ internal sealed class EmueraConsole
         var prompt = new ConsolePrompt(
             type,
             defaultValue: defaultValue,
+            // Emuera parses integer INPUT/INTBUTTON values with long.TryParse,
+            // so both typed values and button values may carry a sign. Keep
+            // the browser-side contract aligned with the upstream runtime;
+            // otherwise clicking a valid negative button is rejected before
+            // it can reach Emuera.
+            constraints: type is ConsoleInputType.Integer or ConsoleInputType.IntegerButton
+                ? new IntegerInputConstraints(allowSign: true)
+                : null,
             timeout: timeout,
             timeoutBehavior: timedInput && request.HasDefValue
                 ? ConsolePromptTimeoutBehavior.ContinueWithoutValue
