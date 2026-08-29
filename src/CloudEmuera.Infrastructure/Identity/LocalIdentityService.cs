@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using CloudEmuera.Application.Auditing;
 using CloudEmuera.Application.Fonts;
 using CloudEmuera.Application.Identity;
@@ -36,6 +37,7 @@ public sealed class LocalIdentityService(
     private static readonly JsonSerializerOptions PreferencesJsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = false,
+        Converters = { new JsonStringEnumConverter() },
     };
     private readonly string _dummyHash = passwordHasher.HashPassword(new CloudEmueraUser(), "not-a-user-password");
 

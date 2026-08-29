@@ -8,6 +8,7 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
 {
     internal const string ExcludeRuntimeFontFaceSchemaAnnotation = "CloudEmuera:ExcludeRuntimeFontFaceSchema";
     internal const string ExcludeRuntimeWidthSchemaAnnotation = "CloudEmuera:ExcludeRuntimeWidthSchema";
+    internal const string LegacyRuntimeWidthSchemaAnnotation = "CloudEmuera:LegacyRuntimeWidthSchema";
     internal const string ExcludeBackslashToYenSchemaAnnotation = "CloudEmuera:ExcludeBackslashToYenSchema";
     internal const string ExcludePathRevisionIdentitySchemaAnnotation = "CloudEmuera:ExcludePathRevisionIdentitySchema";
 
@@ -18,6 +19,9 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             true);
         bool includeRuntimeWidthSchema = !Equals(
             builder.Metadata.Model.FindAnnotation(ExcludeRuntimeWidthSchemaAnnotation)?.Value,
+            true);
+        bool useLegacyRuntimeWidthSchema = Equals(
+            builder.Metadata.Model.FindAnnotation(LegacyRuntimeWidthSchemaAnnotation)?.Value,
             true);
         bool includeBackslashToYenSchema = !Equals(
             builder.Metadata.Model.FindAnnotation(ExcludeBackslashToYenSchemaAnnotation)?.Value,
@@ -54,7 +58,11 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             if (includeRuntimeFontFaceSchema)
                 table.HasCheckConstraint("ck_sessions_font_face_id", "length(font_face_id) BETWEEN 1 AND 128 AND instr(font_face_id, char(0)) = 0");
             if (includeRuntimeWidthSchema)
-                table.HasCheckConstraint("ck_sessions_width_configuration", "width_mode IN ('ORIGIN', 'MAX', 'CUSTOM') AND ((width_mode = 'CUSTOM' AND custom_width BETWEEN 240 AND 16384) OR (width_mode <> 'CUSTOM' AND custom_width IS NULL))");
+                table.HasCheckConstraint(
+                    "ck_sessions_width_configuration",
+                    useLegacyRuntimeWidthSchema
+                        ? "width_mode IN ('ORIGIN', 'MAX', 'CUSTOM') AND ((width_mode = 'CUSTOM' AND custom_width BETWEEN 240 AND 16384) OR (width_mode <> 'CUSTOM' AND custom_width IS NULL))"
+                        : "width_mode IN ('ORIGINAL', 'MAX', 'ADAPTIVE', 'CUSTOM') AND ((width_mode = 'CUSTOM' AND custom_width BETWEEN 240 AND 16384) OR (width_mode <> 'CUSTOM' AND custom_width IS NULL))");
             if (includeBackslashToYenSchema)
                 table.HasCheckConstraint("ck_sessions_convert_backslash_to_yen", "convert_backslash_to_yen IN (0, 1)");
             table.HasCheckConstraint("ck_sessions_counters", "state_version >= 0 AND worker_epoch >= 0 AND last_output_sequence >= 0");
@@ -97,7 +105,7 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
         builder.Property(row => row.FontFaceId).HasColumnName("font_face_id").HasColumnType("TEXT").HasMaxLength(128).HasDefaultValue("sarasa-fixed-sc-1.0.40-regular").IsRequired();
         if (includeRuntimeWidthSchema)
         {
-            builder.Property(row => row.WidthMode).HasColumnName("width_mode").HasColumnType("TEXT").HasConversion(SqliteValueConverters.CreateEnumConverter<SessionWidthMode>(), SqliteValueConverters.CreateEnumComparer<SessionWidthMode>()).HasDefaultValue(SessionWidthMode.Origin).IsRequired();
+            builder.Property(row => row.WidthMode).HasColumnName("width_mode").HasColumnType("TEXT").HasConversion(SqliteValueConverters.CreateEnumConverter<SessionWidthMode>(), SqliteValueConverters.CreateEnumComparer<SessionWidthMode>()).HasDefaultValue(useLegacyRuntimeWidthSchema ? SessionWidthMode.Origin : SessionWidthMode.Adaptive).IsRequired();
             builder.Property(row => row.CustomWidth).HasColumnName("custom_width").HasColumnType("INTEGER");
         }
         else

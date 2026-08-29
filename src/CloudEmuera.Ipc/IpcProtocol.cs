@@ -147,7 +147,7 @@ public sealed record WorkerBootstrapDocument
     public int LineHeight { get; init; } = 19;
     public string FontFaceId { get; init; } = DefaultRuntimeFontFaceId;
     public string FontCatalogDigest { get; init; } = string.Empty;
-    public string WidthMode { get; init; } = "ORIGIN";
+    public string WidthMode { get; init; } = "ADAPTIVE";
     public int? CustomWidth { get; init; }
     public bool ConvertBackslashToYen { get; init; } = true;
 
@@ -183,7 +183,7 @@ public sealed record WorkerBootstrapDocument
         IpcValidator.ValidateIdentifier(ControlPlaneInstanceId, nameof(ControlPlaneInstanceId));
         bool validWidth = WidthMode switch
         {
-            "ORIGIN" or "MAX" => CustomWidth is null,
+            "ORIGINAL" or "MAX" or "ADAPTIVE" or "ORIGIN" => CustomWidth is null,
             "CUSTOM" => CustomWidth is >= 240 and <= 16_384,
             _ => false,
         };

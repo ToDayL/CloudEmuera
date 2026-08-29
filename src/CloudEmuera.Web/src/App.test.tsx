@@ -150,7 +150,7 @@ describe("App", () => {
     const savedDefaults = { fontFaceId: runtimeFontFaceId, fontSize: 24, lineHeight: 28, widthMode: "CUSTOM", customWidth: 1280, convertBackslashToYen: false };
     const fetchMock = mockFetch((url, init) => {
       if (url === "/api/v1/preferences/session-startup-defaults" && init?.method === "PUT") return jsonResponse(savedDefaults);
-      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse({ fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19, widthMode: "ORIGIN", customWidth: null, convertBackslashToYen: true });
+      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse({ fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19, widthMode: "ADAPTIVE", customWidth: null, convertBackslashToYen: true });
       if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
       if (url === `/api/v1/runtime-fonts/assets/${runtimeFontDigest}.woff2`) return new Response(new TextEncoder().encode("font-test"), { headers: { "Content-Type": "font/woff2", "Content-Length": "9" } });
       if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
@@ -169,7 +169,11 @@ describe("App", () => {
       await waitFor(() => expect(screen.getByRole("button", { name: "保存默认值" })).toBeEnabled());
       expect(screen.getByLabelText("字号（px）")).toHaveValue(18);
       expect(screen.getByLabelText("行高（px）")).toHaveValue(19);
-      expect(screen.getByLabelText("运行宽度")).toHaveValue("ORIGIN");
+      expect(screen.getByLabelText("运行宽度")).toHaveValue("ADAPTIVE");
+      expect(screen.getByRole("option", { name: "游戏原始宽度 · 完全按照 config" })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: "最大可用 · 尽量铺满，最高 2000px" })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: "自适应 · 不超过游戏配置与浏览器宽度" })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: "自定义 · 使用配置宽度" })).toBeInTheDocument();
       expect(screen.getByRole("checkbox")).toBeChecked();
       expect(screen.queryByText("Sarasa Fixed SC Regular 已通过 WOFF2 校验")).not.toBeInTheDocument();
 

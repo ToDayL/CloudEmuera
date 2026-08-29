@@ -25,7 +25,7 @@ public sealed record EmueraRuntimeOptions
         TimeSpan runDeadline,
         Action<EmueraRuntimeDiagnostic>? diagnosticSink = null,
         int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
-        RuntimeWidthMode widthMode = RuntimeWidthMode.Origin, int? customWidth = null,
+        RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
         string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "",
         bool convertBackslashToYen = true)

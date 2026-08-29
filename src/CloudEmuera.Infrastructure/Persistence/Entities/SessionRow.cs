@@ -34,7 +34,7 @@ public sealed class SessionRow
 
     public string FontFaceId { get; set; } = "sarasa-fixed-sc-1.0.40-regular";
 
-    public SessionWidthMode WidthMode { get; set; } = SessionWidthMode.Origin;
+    public SessionWidthMode WidthMode { get; set; } = SessionWidthMode.Adaptive;
 
     public int? CustomWidth { get; set; }
 

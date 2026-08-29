@@ -1942,7 +1942,7 @@ public sealed partial class SqliteSessionApplicationService(
     private static void ValidateWidthConfiguration(SessionWidthMode widthMode, int? customWidth)
     {
         if (!SessionWidthConfiguration.IsValid(widthMode, customWidth))
-            throw new SessionApplicationException(SessionErrorCodes.ValidationFailed, "Origin/Max 模式不能设置自定义宽度；Custom 模式宽度必须为 240～16384px。", 400);
+            throw new SessionApplicationException(SessionErrorCodes.ValidationFailed, "Original/Max/Adaptive 模式不能设置自定义宽度；Custom 模式宽度必须为 240～16384px。", 400);
     }
 
     private string RequireRuntimeFontFace(string faceId)

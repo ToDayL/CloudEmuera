@@ -15,7 +15,7 @@ public sealed record SessionStartupDefaults(
         RuntimeFontDefaults.DefaultFaceId,
         FontSize: 18,
         LineHeight: 19,
-        WidthMode: SessionWidthMode.Origin,
+        WidthMode: SessionWidthMode.Adaptive,
         CustomWidth: null,
         ConvertBackslashToYen: true);
 }
@@ -24,6 +24,6 @@ public sealed record SessionStartupDefaultsCommand(
     string FontFaceId,
     int FontSize,
     int LineHeight,
-    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
     bool ConvertBackslashToYen = true);

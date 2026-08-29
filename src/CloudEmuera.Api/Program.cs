@@ -1080,9 +1080,32 @@ internal static class ApiIdentity
         return context.Response.WriteAsJsonAsync(new ApiError(code, message, RequestCorrelation.Current ?? context.TraceIdentifier));
     }
     public static CurrentUserResponse ToResponse(CurrentUser value) => new(value.Id, value.Username, value.Email, value.Role, value.Status, value.MustChangePassword, value.StateVersion);
-    public static SessionStartupDefaultsResponse ToResponse(SessionStartupDefaults value) => new(value.FontFaceId, value.FontSize, value.LineHeight, value.WidthMode.ToString().ToUpperInvariant(), value.CustomWidth, value.ConvertBackslashToYen);
-    public static bool TryWidthConfiguration(string value, int? customWidth, out SessionWidthMode mode) =>
-        Enum.TryParse(value, ignoreCase: true, out mode) && SessionWidthConfiguration.IsValid(mode, customWidth);
+    public static SessionStartupDefaultsResponse ToResponse(SessionStartupDefaults value) => new(value.FontFaceId, value.FontSize, value.LineHeight, WidthModeName(value.WidthMode), value.CustomWidth, value.ConvertBackslashToYen);
+    public static bool TryWidthConfiguration(string? value, int? customWidth, out SessionWidthMode mode)
+    {
+        mode = default;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        string normalized = value.Trim().ToUpperInvariant();
+        mode = normalized switch
+        {
+            "ORIGINAL" => SessionWidthMode.Original,
+            "MAX" => SessionWidthMode.Max,
+            "ADAPTIVE" or "ORIGIN" => SessionWidthMode.Adaptive,
+            "CUSTOM" => SessionWidthMode.Custom,
+            _ => default,
+        };
+        return (normalized is "ORIGINAL" or "MAX" or "ADAPTIVE" or "ORIGIN" or "CUSTOM") &&
+            SessionWidthConfiguration.IsValid(mode, customWidth);
+    }
+
+    public static string WidthModeName(SessionWidthMode mode) => mode switch
+    {
+        SessionWidthMode.Original => "ORIGINAL",
+        SessionWidthMode.Max => "MAX",
+        SessionWidthMode.Adaptive => "ADAPTIVE",
+        SessionWidthMode.Custom => "CUSTOM",
+        _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+    };
     public static CurrentActor? Actor(HttpContext context)
     {
         string? id = context.User.FindFirstValue(ClaimTypes.NameIdentifier); string? role = context.User.FindFirstValue(ClaimTypes.Role); string? session = context.User.FindFirstValue("auth_session_id");
@@ -1106,7 +1129,7 @@ internal static class ApiIdentity
         value.FontFaceId,
         value.FontSize,
         value.LineHeight,
-        value.WidthMode.ToString().ToUpperInvariant(),
+        WidthModeName(value.WidthMode),
         value.CustomWidth,
         value.ConvertBackslashToYen,
         value.State.ToString().ToUpperInvariant(),

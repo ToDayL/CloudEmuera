@@ -54,7 +54,7 @@ public sealed record CreateSessionCommand(
     int FontSize = 18,
     int LineHeight = 19,
     string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
-    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
     bool ConvertBackslashToYen = true);
 
@@ -67,7 +67,7 @@ public sealed record SessionConfigurationCommand(
     int LineHeight,
     string IdempotencyKey,
     string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
-    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
     bool ConvertBackslashToYen = true);
 
@@ -103,7 +103,7 @@ public sealed record SessionView(
 {
     /// <summary>Exact catalog face selected for this persistent Session.</summary>
     public string FontFaceId { get; init; } = RuntimeFontDefaults.DefaultFaceId;
-    public SessionWidthMode WidthMode { get; init; } = SessionWidthMode.Origin;
+    public SessionWidthMode WidthMode { get; init; } = SessionWidthMode.Adaptive;
     public int? CustomWidth { get; init; }
     public bool ConvertBackslashToYen { get; init; } = true;
 }
@@ -387,7 +387,9 @@ public static class SessionIdempotency
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = false,
-        Converters = { new JsonStringEnumConverter() },
+        // Keep the request digest stable for the legacy ORIGIN spelling while
+        // the public HTTP projection uses the corrected ADAPTIVE name.
+        Converters = { new LegacyWidthModeDigestConverter(), new JsonStringEnumConverter() },
     };
 
     public static string Digest(string actorUserId, string scope, string routeResourceId, object body)
@@ -405,5 +407,38 @@ public static class SessionIdempotency
         };
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(normalized, JsonOptions);
         return $"sha256:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant()}";
+    }
+
+    private sealed class LegacyWidthModeDigestConverter : JsonConverter<SessionWidthMode>
+    {
+        public override SessionWidthMode Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                return reader.GetString()?.ToUpperInvariant() switch
+                {
+                    "ORIGIN" or "ADAPTIVE" => SessionWidthMode.Adaptive,
+                    "ORIGINAL" => SessionWidthMode.Original,
+                    "MAX" => SessionWidthMode.Max,
+                    "CUSTOM" => SessionWidthMode.Custom,
+                    _ => throw new JsonException("The Session width mode is invalid."),
+                };
+            }
+
+            if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int numericValue) && Enum.IsDefined((SessionWidthMode)numericValue))
+                return (SessionWidthMode)numericValue;
+
+            throw new JsonException("The Session width mode is invalid.");
+        }
+
+        public override void Write(Utf8JsonWriter writer, SessionWidthMode value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value switch
+            {
+                SessionWidthMode.Adaptive => "Origin",
+                SessionWidthMode.Original => "Original",
+                SessionWidthMode.Max => "Max",
+                SessionWidthMode.Custom => "Custom",
+                _ => throw new JsonException("The Session width mode is invalid."),
+            });
     }
 }
