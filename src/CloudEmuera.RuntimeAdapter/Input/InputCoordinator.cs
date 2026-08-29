@@ -172,7 +172,14 @@ public sealed class InputCoordinator
                 return result;
             }
 
-            string value = currentPrompt.OneInput && attempt.Value.Length > 1
+            // Upstream permits a multi-character value from a clicked game
+            // button when AllowLongInputByMouse is enabled. Keep keyboard
+            // ONEINPUT behavior unchanged while preserving structured button
+            // values such as EraFL's 4000-series menu IDs.
+            bool preserveLongButtonValue = currentPrompt.OneInput &&
+                currentPrompt.AllowLongInputByButton &&
+                attempt.Source == ConsoleInputSource.Button;
+            string value = currentPrompt.OneInput && !preserveLongButtonValue && attempt.Value.Length > 1
                 ? attempt.Value[..1]
                 : attempt.Value;
             if (!currentPrompt.Constraints.TryValidate(value, limits, out ConsoleInputFailureReason valueFailure))

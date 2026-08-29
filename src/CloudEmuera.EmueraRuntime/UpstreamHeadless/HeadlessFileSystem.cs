@@ -73,7 +73,13 @@ internal static class HeadlessPathResolver
             if (sessionRoot is null)
                 return false;
             root = sessionRoot;
-            fullPath = Path.GetFullPath(path);
+            // The pinned upstream Utils.GetValidPath converts logical '/'
+            // separators to '\\' before the aliased File/Directory APIs see
+            // them. On Linux, '\\' is otherwise a valid filename character,
+            // so normalize the runtime's Windows spelling before containment
+            // and component lookup. This remains scoped to the validated
+            // SessionRoot and does not change paths handled outside it.
+            fullPath = Path.GetFullPath(path.Replace('\\', Path.DirectorySeparatorChar));
             return fullPath.Equals(sessionRoot, StringComparison.Ordinal) ||
                    fullPath.StartsWith(sessionRootPrefix, StringComparison.Ordinal);
         }

@@ -5,6 +5,7 @@ namespace CloudEmuera.Api.Realtime;
 public enum RealtimeQueueReadKind
 {
     Payload,
+    InitialSnapshot,
     ResyncRequired,
     Completed
 }
@@ -16,6 +17,9 @@ public readonly record struct RealtimeQueueRead(
 {
     public static RealtimeQueueRead FromPayload(RealtimeEncodedPayload payload) =>
         new(RealtimeQueueReadKind.Payload, payload, null);
+
+    public static RealtimeQueueRead InitialSnapshot() =>
+        new(RealtimeQueueReadKind.InitialSnapshot, null, null);
 
     public static RealtimeQueueRead Resync(string reason) =>
         new(RealtimeQueueReadKind.ResyncRequired, null, reason);
@@ -48,6 +52,7 @@ public sealed class BoundedRealtimeQueue
     private readonly long hardBytes;
     private TaskCompletionSource<RealtimeQueueRead>? waiter;
     private long queuedBytes;
+    private bool needsInitialSnapshot;
     private bool needsResync;
     private string resyncReason = "queue-overflow";
     private bool completed;
@@ -107,9 +112,13 @@ public sealed class BoundedRealtimeQueue
             bool hardOverflow = payload.ByteLength > hardBytes ||
                 payloads.Count >= hardMessages ||
                 ExceedsByteLimit(hardBytes, payload.ByteLength);
+            // Soft limits bound accumulated backlog. A single atomic display
+            // frame may legitimately be larger than the soft target; when
+            // the queue is empty and the frame fits the hard limit, dropping
+            // it would turn a valid large table into an unnecessary resync.
             bool softOverflow = hardOverflow ||
                 payloads.Count >= softMessages ||
-                ExceedsByteLimit(softBytes, payload.ByteLength);
+                (payloads.Count != 0 && ExceedsByteLimit(softBytes, payload.ByteLength));
             if (softOverflow)
             {
                 if (hardOverflow)
@@ -139,10 +148,41 @@ public sealed class BoundedRealtimeQueue
             if (completed)
                 return;
             ClearPayloadsLocked();
+            needsInitialSnapshot = false;
             needsResync = true;
             resyncReason = reason;
             SignalLocked();
         }
+    }
+
+    /// <summary>
+    /// Wakes a subscription whose first authoritative snapshot has just
+    /// become available. This is deliberately separate from resync: a new
+    /// subscription has not lost any output and must not advertise a recovery
+    /// event to the browser.
+    /// </summary>
+    public void RequestInitialSnapshot()
+    {
+        lock (sync)
+        {
+            if (completed)
+                return;
+            ClearPayloadsLocked();
+            needsResync = false;
+            needsInitialSnapshot = true;
+            SignalLocked();
+        }
+    }
+
+    /// <summary>
+    /// Clears a queued initial-snapshot wake-up after the subscription has
+    /// observed its pending snapshot directly. The marker may already have
+    /// been consumed by a waiting reader, so this operation is idempotent.
+    /// </summary>
+    internal void ConsumeInitialSnapshotSignal()
+    {
+        lock (sync)
+            needsInitialSnapshot = false;
     }
 
     public async ValueTask<RealtimeQueueRead> ReadAsync(CancellationToken cancellationToken = default)
@@ -180,6 +220,7 @@ public sealed class BoundedRealtimeQueue
             {
                 if (discardPending)
                     ClearPayloadsLocked();
+                needsInitialSnapshot = false;
                 needsResync = false;
                 SignalLocked();
                 return;
@@ -190,6 +231,7 @@ public sealed class BoundedRealtimeQueue
             // Terminal completion supersedes any pending resync marker: a
             // completed queue must drain its payloads and then report
             // Completed, never a resync that can no longer be satisfied.
+            needsInitialSnapshot = false;
             needsResync = false;
             SignalLocked();
         }
@@ -197,6 +239,13 @@ public sealed class BoundedRealtimeQueue
 
     private bool TryReadLocked(out RealtimeQueueRead result)
     {
+        if (needsInitialSnapshot)
+        {
+            needsInitialSnapshot = false;
+            result = RealtimeQueueRead.InitialSnapshot();
+            return true;
+        }
+
         if (needsResync)
         {
             needsResync = false;

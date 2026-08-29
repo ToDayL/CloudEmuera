@@ -32,7 +32,7 @@
       "adapterTypes": ["ButtonNode", "ConsoleInputCoordinator"],
       "ipcTypes": ["ButtonNode", "InputSource", "SubmitInput"],
       "fixtureScenarios": ["v18-core/input-roundtrip"],
-      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance"],
+      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredTimedInputContractTests.OneInputButtonValueHonorsConfiguredLongInputException", "HeadlessRuntimeFixtureTests.OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput"],
       "securityNotes": ["Button values are bounded opaque input values and do not become URLs or executable markup."]
     },
     {
@@ -149,7 +149,7 @@
       "adapterTypes": ["ConsolePrompt", "ConsoleInputAttempt", "InputCoordinator", "ConsolePointerPayload", "ConsoleKeyPayload"],
       "ipcTypes": ["ConsolePrompt", "SubmitInput", "PointerPayload", "KeyPayload", "InputResult"],
       "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip", "timed-input"],
-      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredIpcContractTests.RichDisplayTransactionRoundTripsWithoutFlattening"],
+      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredTimedInputContractTests.OneInputButtonValueHonorsConfiguredLongInputException", "HeadlessRuntimeFixtureTests.OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput", "StructuredIpcContractTests.RichDisplayTransactionRoundTripsWithoutFlattening"],
       "securityNotes": ["Input attempts use clientMessageId receipts, source allowlists and bounded values; the Worker resolves the current prompt under its input lock and duplicate messages are idempotent."]
     },
     {

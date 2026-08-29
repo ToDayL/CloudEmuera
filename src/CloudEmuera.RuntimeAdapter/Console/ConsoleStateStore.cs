@@ -827,27 +827,85 @@ public sealed class ConsoleStateStore
     {
         ConsoleNode[] flattened = FlattenStructuredLines(candidate.Scrollback);
         ConsoleNodeMetrics metrics = ConsoleSizeEstimator.MeasureNodes(flattened);
+        long estimatedBytes = MeasureStructuredCandidate(candidate, metrics);
         while (candidate.Scrollback.Count > limits.MaxScrollbackLines ||
                metrics.NodeCount > Math.Min(limits.MaxScrollbackNodes, options.MaxVisibleNodes) ||
-               metrics.TextLength > Math.Min(limits.MaxScrollbackTextLength, options.MaxVisibleTextLength))
+               metrics.TextLength > Math.Min(limits.MaxScrollbackTextLength, options.MaxVisibleTextLength) ||
+               estimatedBytes > options.MaxEstimatedBytes)
         {
             if (candidate.Scrollback.Count == 0)
                 break;
-            ConsoleLine removed = candidate.Scrollback[0];
-            ConsoleNodeMetrics removedMetrics = ConsoleSizeEstimator.MeasureNodes(removed.Nodes);
-            if (candidate.Scrollback.Count == 1 &&
-                (removedMetrics.NodeCount > Math.Min(limits.MaxScrollbackNodes, options.MaxVisibleNodes) ||
-                 removedMetrics.TextLength > Math.Min(limits.MaxScrollbackTextLength, options.MaxVisibleTextLength)))
-                throw new ConsoleContractException(ConsoleContractViolationReason.NodeExceedsHistoryBudget, "A single structured line exceeds its budget.");
-            candidate.Scrollback.RemoveAt(0);
-            RemoveTooltipReferences(candidate, removed.Nodes);
+            int groupCount = GetOldestLogicalGroupLength(candidate.Scrollback);
+            var removedGroup = candidate.Scrollback.GetRange(0, groupCount);
+            ConsoleNodeMetrics removedMetrics = ConsoleSizeEstimator.MeasureNodes(
+                removedGroup.SelectMany(line => line.Nodes));
+            long removedStructuredBytes = 0;
+            foreach (ConsoleLine line in removedGroup)
+            {
+                ConsoleNodeMetrics lineMetrics = ConsoleSizeEstimator.MeasureNodes(line.Nodes);
+                removedStructuredBytes = checked(
+                    removedStructuredBytes + ConsoleSizeEstimator.MeasureStructuredLine(line, lineMetrics));
+            }
+
+            if (candidate.Scrollback.Count == groupCount &&
+                (groupCount > limits.MaxScrollbackLines ||
+                 removedMetrics.NodeCount > Math.Min(limits.MaxScrollbackNodes, options.MaxVisibleNodes) ||
+                 removedMetrics.TextLength > Math.Min(limits.MaxScrollbackTextLength, options.MaxVisibleTextLength) ||
+                 estimatedBytes > options.MaxEstimatedBytes))
+                throw new ConsoleContractException(ConsoleContractViolationReason.NodeExceedsHistoryBudget, "A single structured logical line exceeds its budget.");
+
+            foreach (ConsoleLine line in removedGroup)
+                RemoveTooltipReferences(candidate, line.Nodes);
+            candidate.Scrollback.RemoveRange(0, groupCount);
             metrics -= removedMetrics;
-            candidate.DroppedLineCount = checked(candidate.DroppedLineCount + 1);
+            estimatedBytes -= removedStructuredBytes;
+            int removedLineBreakCount = candidate.Scrollback.Count > 0
+                ? groupCount
+                : Math.Max(0, groupCount - 1);
+            if (removedLineBreakCount > 0)
+            {
+                ConsoleNodeMetrics lineBreakMetrics = ConsoleSizeEstimator.MeasureNode(LineBreakNode.Instance);
+                metrics -= new ConsoleNodeMetrics(
+                    checked(lineBreakMetrics.NodeCount * removedLineBreakCount),
+                    0,
+                    checked(lineBreakMetrics.EstimatedBytes * removedLineBreakCount));
+                estimatedBytes -= checked(lineBreakMetrics.EstimatedBytes * removedLineBreakCount);
+            }
+            candidate.DroppedLineCount = checked(candidate.DroppedLineCount + groupCount);
             candidate.DroppedNodeCount = checked(candidate.DroppedNodeCount + removedMetrics.NodeCount);
             candidate.DroppedTextLength = checked(candidate.DroppedTextLength + removedMetrics.TextLength);
             candidate.WasTruncated = true;
         }
+
+        if (metrics.NodeCount > Math.Min(limits.MaxScrollbackNodes, options.MaxVisibleNodes) ||
+            metrics.TextLength > Math.Min(limits.MaxScrollbackTextLength, options.MaxVisibleTextLength) ||
+            estimatedBytes > options.MaxEstimatedBytes)
+            throw new ConsoleContractException(
+                ConsoleContractViolationReason.NodeExceedsHistoryBudget,
+                "The structured console state cannot fit within its configured limits.");
     }
+
+    private static int GetOldestLogicalGroupLength(List<ConsoleLine> lines)
+    {
+        string logicalLineId = lines[0].LogicalLineId;
+        int count = 1;
+        while (count < lines.Count && string.Equals(lines[count].LogicalLineId, logicalLineId, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
+    private static long MeasureStructuredCandidate(StructuredCandidate candidate, ConsoleNodeMetrics visibleMetrics) =>
+        ConsoleSizeEstimator.MeasureStructuredSnapshot(
+            visibleMetrics,
+            candidate.CurrentPrompt,
+            candidate.Scrollback,
+            candidate.BackgroundLayers.Values,
+            candidate.Drawables.Values,
+            candidate.HitRegions.Values,
+            candidate.MediaChannels.Values,
+            candidate.WindowMetadata,
+            candidate.TooltipPresentation,
+            candidate.TooltipResources.Values);
 
     private static ConsoleLine FindLine(IReadOnlyList<ConsoleLine> lines, string lineId) =>
         lines.FirstOrDefault(line => string.Equals(line.LineId, lineId, StringComparison.Ordinal))
