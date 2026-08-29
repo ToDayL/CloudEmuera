@@ -113,11 +113,16 @@ public sealed class SessionOutputHub : IAsyncDisposable
     private long snapshotEncodingCount;
     private int disposed;
 
-    private sealed class SnapshotEncodingOperation(R.ConsoleSnapshot snapshot, R.DisplayCommit? commit)
+    private sealed class SnapshotEncodingOperation(
+        R.ConsoleSnapshot snapshot,
+        R.DisplayCommit? commit,
+        bool cacheIfCurrent)
     {
         public R.ConsoleSnapshot Snapshot { get; } = snapshot;
 
         public R.DisplayCommit? Commit { get; } = commit;
+
+        public bool CacheIfCurrent { get; } = cacheIfCurrent;
 
         public TaskCompletionSource<RealtimeEncodedPayload> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -236,7 +241,10 @@ public sealed class SessionOutputHub : IAsyncDisposable
             }
             else if (snapshot is not null)
             {
-                subscription.RequestResync("snapshot-encoding-pending");
+                R.DisplayCommit? snapshotCommit = committedFrame is { } commit && ReferenceEquals(commit.Snapshot, snapshot)
+                    ? commit
+                    : null;
+                subscription.SetInitialSnapshot(snapshot, snapshotCommit);
             }
 
             // This second read is intentionally kept even though the lock
@@ -366,7 +374,10 @@ public sealed class SessionOutputHub : IAsyncDisposable
                 foreach (RealtimeSubscription subscription in subscriptions.Values.ToArray())
                 {
                     if (incomingSnapshot is not null)
-                        subscription.RequestResyncLocked("snapshot-replaced");
+                    {
+                        if (!subscription.TrySetInitialSnapshot(candidate, snapshotCommit: null))
+                            subscription.SetAuthoritativeSnapshot(candidate, snapshotCommit: null);
+                    }
                 }
                 EnqueueTransactionPayloadsLocked(transactionPayloads);
                 return new RealtimePublishResult(disposition, state, candidate.SnapshotSequence);
@@ -507,28 +518,15 @@ public sealed class SessionOutputHub : IAsyncDisposable
                 }
             }
 
+            // BatchTargetBytes is a transport optimization target for the
+            // legacy batcher. A committed DisplayFrame is already an atomic
+            // browser-visible unit; changing its representation here because
+            // its JSON is larger than that target turns a valid large table
+            // into a resync. Keep the committed frame representation intact.
             bool requiresSnapshotDelivery = commit.RequiresSnapshot;
             RealtimeEncodedPayload? displayPayload = null;
             if (!requiresSnapshotDelivery)
-            {
-                try
-                {
-                    RealtimeEncodedPayload candidatePayload = serializer.SerializeDisplayFrame(WorkerEpoch, commit);
-                    if (candidatePayload.ByteLength <= options.BatchTargetBytes)
-                        displayPayload = candidatePayload;
-                    else
-                        requiresSnapshotDelivery = true;
-                }
-                catch (RealtimePayloadSizeException)
-                {
-                    // The delta optimization has its own hard encoding
-                    // limit. A large committed frame still has one valid
-                    // representation: the committed snapshot requested
-                    // below. Snapshot encoding remains responsible for the
-                    // final 12 MiB fail-closed check.
-                    requiresSnapshotDelivery = true;
-                }
-            }
+                displayPayload = serializer.SerializeDisplayFrame(WorkerEpoch, commit);
 
             lock (sync)
             {
@@ -537,7 +535,10 @@ public sealed class SessionOutputHub : IAsyncDisposable
                 foreach (RealtimeSubscription subscription in subscriptions.Values.ToArray())
                 {
                     if (requiresSnapshotDelivery)
-                        subscription.RequestResyncLocked("display-snapshot-committed");
+                    {
+                        if (!subscription.TrySetInitialSnapshot(candidate, commit))
+                            subscription.SetAuthoritativeSnapshot(candidate, commit);
+                    }
                     else
                         subscription.EnqueueLocked(displayPayload!);
                 }
@@ -926,34 +927,69 @@ public sealed class SessionOutputHub : IAsyncDisposable
     /// returned when the supplied snapshot is already stale; callers must
     /// re-check the hub sequence after obtaining the payload.
     /// </summary>
-    internal async ValueTask<RealtimeEncodedPayload?> GetOrCreateSnapshotPayloadAsync(R.ConsoleSnapshot snapshot)
+    internal ValueTask<RealtimeEncodedPayload?> GetOrCreateSnapshotPayloadAsync(R.ConsoleSnapshot snapshot) =>
+        GetOrCreateSnapshotPayloadAsync(snapshot, snapshotCommit: null, requireExact: false);
+
+    /// <summary>
+    /// Encodes a snapshot for a subscription. Resync readers may use the
+    /// current mirror even when the requested reference is stale, while an
+    /// initial snapshot must remain exact so queued deltas after it retain a
+    /// continuous sequence.
+    /// </summary>
+    internal async ValueTask<RealtimeEncodedPayload?> GetOrCreateSnapshotPayloadAsync(
+        R.ConsoleSnapshot snapshot,
+        R.DisplayCommit? snapshotCommit,
+        bool requireExact)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         SnapshotEncodingOperation operation;
         bool ownsEncoding;
+        bool encodeExactStaleSnapshot;
         lock (sync)
         {
-            if (latestSnapshotPayload is { } cached)
+            if (!requireExact && latestSnapshotPayload is { } cached)
                 return cached;
             if (latestSnapshot is null)
                 return null;
 
-            R.ConsoleSnapshot currentSnapshot = latestSnapshot;
-            if (snapshotEncoding is { } existing && ReferenceEquals(existing.Snapshot, currentSnapshot))
+            if (requireExact && !ReferenceEquals(snapshot, latestSnapshot))
             {
-                operation = existing;
-                ownsEncoding = false;
+                operation = new SnapshotEncodingOperation(snapshot, snapshotCommit, cacheIfCurrent: false);
+                ownsEncoding = true;
+                encodeExactStaleSnapshot = true;
             }
             else
             {
-                operation = new SnapshotEncodingOperation(
-                    currentSnapshot,
-                    committedFrame is { } currentCommit && ReferenceEquals(currentCommit.Snapshot, currentSnapshot)
-                        ? currentCommit
-                        : null);
-                snapshotEncoding = operation;
-                ownsEncoding = true;
+                R.ConsoleSnapshot currentSnapshot = requireExact ? snapshot : latestSnapshot;
+                if (requireExact && latestSnapshotPayload is { } exactCached && ReferenceEquals(currentSnapshot, latestSnapshot))
+                    return exactCached;
+                R.DisplayCommit? currentCommit = requireExact
+                    ? snapshotCommit
+                    : committedFrame is { } commit && ReferenceEquals(commit.Snapshot, currentSnapshot)
+                        ? commit
+                        : null;
+                if (snapshotEncoding is { } existing && ReferenceEquals(existing.Snapshot, currentSnapshot))
+                {
+                    operation = existing;
+                    ownsEncoding = false;
+                }
+                else
+                {
+                    operation = new SnapshotEncodingOperation(currentSnapshot, currentCommit, cacheIfCurrent: true);
+                    snapshotEncoding = operation;
+                    ownsEncoding = true;
+                }
+                encodeExactStaleSnapshot = false;
             }
+        }
+
+        if (encodeExactStaleSnapshot)
+        {
+            RealtimeEncodedPayload payload = operation.Commit is { } commit
+                ? serializer.SerializeSnapshot(WorkerEpoch, commit)
+                : serializer.SerializeSnapshot(WorkerEpoch, operation.Snapshot);
+            Interlocked.Increment(ref snapshotEncodingCount);
+            return payload;
         }
 
         if (ownsEncoding)
@@ -966,7 +1002,7 @@ public sealed class SessionOutputHub : IAsyncDisposable
                 Interlocked.Increment(ref snapshotEncodingCount);
                 lock (sync)
                 {
-                    if (ReferenceEquals(latestSnapshot, operation.Snapshot))
+                    if (operation.CacheIfCurrent && ReferenceEquals(latestSnapshot, operation.Snapshot))
                         latestSnapshotPayload = payload;
                     if (ReferenceEquals(snapshotEncoding, operation))
                         snapshotEncoding = null;
@@ -996,12 +1032,19 @@ public sealed class SessionOutputHub : IAsyncDisposable
 
 public sealed class RealtimeSubscription : IAsyncDisposable
 {
+    private sealed record InitialSnapshotSource(
+        R.ConsoleSnapshot Snapshot,
+        R.DisplayCommit? Commit,
+        string Reason);
+
     private readonly SessionOutputHub hub;
     private readonly BoundedRealtimeQueue queue;
     private readonly RealtimeResyncFailureTracker resyncFailures;
     private readonly object sync = new();
-    private RealtimeEncodedPayload? initialSnapshot;
+    private RealtimeEncodedPayload? initialSnapshotPayload;
+    private InitialSnapshotSource? initialSnapshot;
     private long expectedSequence;
+    private bool hasSnapshotBaseline;
     private bool closed;
     private string? closeReason;
 
@@ -1042,12 +1085,61 @@ public sealed class RealtimeSubscription : IAsyncDisposable
     {
         lock (sync)
         {
-            initialSnapshot = payload;
+            initialSnapshotPayload = payload;
+            initialSnapshot = null;
             expectedSequence = payload.LastSequence;
         }
     }
 
-    internal void RequestResyncLocked(string reason) => queue.RequestResync(reason);
+    internal void SetInitialSnapshot(R.ConsoleSnapshot snapshot, R.DisplayCommit? snapshotCommit)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        lock (sync)
+        {
+            initialSnapshotPayload = null;
+            initialSnapshot = new InitialSnapshotSource(snapshot, snapshotCommit, "initial-snapshot");
+            expectedSequence = snapshot.SnapshotSequence;
+        }
+    }
+
+    /// <summary>
+    /// Promotes a snapshot to the initial baseline for a subscription that
+    /// has not delivered its first frame yet. A waiting reader is woken with
+    /// an initial-snapshot signal, never a resync signal.
+    /// </summary>
+    internal bool TrySetInitialSnapshot(R.ConsoleSnapshot snapshot, R.DisplayCommit? snapshotCommit)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        lock (sync)
+        {
+            if (closed || hasSnapshotBaseline)
+                return false;
+            initialSnapshotPayload = null;
+            initialSnapshot = new InitialSnapshotSource(snapshot, snapshotCommit, "initial-snapshot");
+            expectedSequence = snapshot.SnapshotSequence;
+        }
+        queue.RequestInitialSnapshot();
+        return true;
+    }
+
+    /// <summary>
+    /// Publishes a complete committed frame as a state replacement for an
+    /// already-live subscription. This is an authoritative display update,
+    /// not recovery from lost output, so it must not enqueue a resync marker.
+    /// </summary>
+    internal bool SetAuthoritativeSnapshot(R.ConsoleSnapshot snapshot, R.DisplayCommit? snapshotCommit)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        lock (sync)
+        {
+            if (closed)
+                return false;
+            initialSnapshotPayload = null;
+            initialSnapshot = new InitialSnapshotSource(snapshot, snapshotCommit, "committed-snapshot");
+        }
+        queue.RequestInitialSnapshot();
+        return true;
+    }
 
     internal void RequestResync(string reason) => queue.RequestResync(reason);
 
@@ -1060,7 +1152,10 @@ public sealed class RealtimeSubscription : IAsyncDisposable
             closed = true;
             closeReason = reason;
             if (!preservePending)
+            {
+                initialSnapshotPayload = null;
                 initialSnapshot = null;
+            }
         }
         queue.Complete(discardPending: !preservePending);
     }
@@ -1069,17 +1164,12 @@ public sealed class RealtimeSubscription : IAsyncDisposable
     {
         while (true)
         {
-            RealtimeEncodedPayload? initial;
+            RealtimeFrame? initial = await ReadInitialSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            if (initial is not null)
+                return initial;
+
             lock (sync)
             {
-                if (initialSnapshot is not null)
-                {
-                    initial = initialSnapshot;
-                    initialSnapshot = null;
-                    expectedSequence = initial.LastSequence;
-                    return RealtimeFrame.Snapshot(initial, replacesState: true, "initial-snapshot");
-                }
-                initial = null;
                 RealtimeQueueStatistics statistics = queue.Statistics;
                 if (closed && statistics.IsCompleted && statistics.QueuedMessages == 0 && !statistics.NeedsResync)
                     return RealtimeFrame.Completed(hub.WorkerEpoch, closeReason ?? "closed");
@@ -1096,6 +1186,8 @@ public sealed class RealtimeSubscription : IAsyncDisposable
                         closeReason ??= hubState == SessionOutputHubState.Faulted ? "hub-faulted" : "completed";
                         return RealtimeFrame.Completed(hub.WorkerEpoch, closeReason);
                     }
+                case RealtimeQueueReadKind.InitialSnapshot:
+                    continue;
                 case RealtimeQueueReadKind.ResyncRequired:
                     RealtimeFrame? snapshot = await ReadResyncSnapshotAsync(read.Reason ?? "resync-required", cancellationToken).ConfigureAwait(false);
                     if (snapshot is not null)
@@ -1122,6 +1214,68 @@ public sealed class RealtimeSubscription : IAsyncDisposable
                     throw new InvalidDataException("The realtime queue returned an unknown item.");
             }
         }
+    }
+
+    private async ValueTask<RealtimeFrame?> ReadInitialSnapshotAsync(CancellationToken cancellationToken)
+    {
+        RealtimeEncodedPayload? payload;
+        InitialSnapshotSource? source;
+        string reason;
+        lock (sync)
+        {
+            if (initialSnapshotPayload is { } pendingPayload)
+            {
+                initialSnapshotPayload = null;
+                hasSnapshotBaseline = true;
+                expectedSequence = pendingPayload.LastSequence;
+                payload = pendingPayload;
+                source = null;
+                reason = "initial-snapshot";
+            }
+            else if (initialSnapshot is { } pendingSource)
+            {
+                initialSnapshot = null;
+                // Mark the baseline as claimed before encoding. If a new
+                // committed snapshot arrives during encoding, it must take
+                // the ordinary resync path instead of being mistaken for a
+                // second initial frame.
+                hasSnapshotBaseline = true;
+                payload = null;
+                source = pendingSource;
+                reason = pendingSource.Reason;
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        queue.ConsumeInitialSnapshotSignal();
+        if (payload is not null)
+            return RealtimeFrame.Snapshot(payload, replacesState: true, reason);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        RealtimeEncodedPayload? encoded;
+        try
+        {
+            encoded = await hub.GetOrCreateSnapshotPayloadAsync(source!.Snapshot, source.Commit, requireExact: true).ConfigureAwait(false);
+        }
+        catch (RealtimePayloadSizeException)
+        {
+            hub.ReportReaderFault("snapshot-encoding-too-large");
+            return null;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidDataException or OverflowException)
+        {
+            hub.ReportReaderFault("snapshot-encoding-failed");
+            return null;
+        }
+
+        if (encoded is null)
+            return null;
+        lock (sync)
+            expectedSequence = encoded.LastSequence;
+        return RealtimeFrame.Snapshot(encoded, replacesState: true, reason);
     }
 
     private async ValueTask<RealtimeFrame?> ReadResyncSnapshotAsync(string reason, CancellationToken cancellationToken)
@@ -1167,6 +1321,7 @@ public sealed class RealtimeSubscription : IAsyncDisposable
         lock (sync)
         {
             expectedSequence = payload.LastSequence;
+            hasSnapshotBaseline = true;
         }
         hub.RecordResync();
         RealtimeFrame result = RealtimeFrame.Snapshot(payload, replacesState: true, reason);
@@ -1181,13 +1336,26 @@ public sealed class RealtimeSubscription : IAsyncDisposable
             // needs a newer baseline. Re-requesting a resync is bounded and
             // converges once the mirror settles; it must not disconnect a
             // fast client on a busy hub.
-            queue.RequestResync("snapshot-raced");
+            RequestResyncIfNoPendingSnapshot("snapshot-raced");
         }
         else
         {
             resyncFailures.Reset();
         }
         return result;
+    }
+
+    private void RequestResyncIfNoPendingSnapshot(string reason)
+    {
+        lock (sync)
+        {
+            // A committed snapshot replacement is already queued as an
+            // authoritative state update. Do not let the completion of an
+            // older resync encoding overwrite it with a recovery marker.
+            if (closed || initialSnapshotPayload is not null || initialSnapshot is not null)
+                return;
+            queue.RequestResync(reason);
+        }
     }
 
     private bool RegisterResyncFailure()
@@ -1210,6 +1378,7 @@ public sealed class RealtimeSubscription : IAsyncDisposable
         {
             closed = true;
             closeReason ??= "subscription-disposed";
+            initialSnapshotPayload = null;
             initialSnapshot = null;
         }
         queue.Complete(discardPending: true);

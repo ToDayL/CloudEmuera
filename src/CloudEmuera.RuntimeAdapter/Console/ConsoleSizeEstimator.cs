@@ -105,17 +105,57 @@ internal static class ConsoleSizeEstimator
     public static long MeasureStructuredSnapshot(ConsoleSnapshot snapshot, ConsoleNodeMetrics visible)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        long value = checked(SnapshotOverhead + visible.EstimatedBytes + MeasurePrompt(snapshot.CurrentPrompt));
-        value = checked(value + snapshot.Scrollback.Sum(line => 32L + line.LineId.Length * 2L + MeasureNodes(line.Nodes).EstimatedBytes));
-        value = checked(value + snapshot.BackgroundLayers.Sum(layer => 64L + layer.LayerId.Length * 2L + layer.AssetId.Value.Length * 2L));
-        value = checked(value + snapshot.CanvasScene.Drawables.Sum(MeasureDrawable));
-        value = checked(value + snapshot.CanvasScene.HitRegions.Sum(region => 64L + region.RegionId.Length * 2L + region.InputValue.Length * 2L));
-        value = checked(value + snapshot.MediaState.Channels.Sum(channel => 64L + channel.Channel.Length * 2L + (channel.AssetId?.Value.Length ?? 0) * 2L));
-        value = checked(value + 64L + snapshot.WindowMetadata.Title.Length * 2L + snapshot.WindowMetadata.DefaultFont.Family.Length * 2L);
-        value = checked(value + 128L + snapshot.TooltipPresentation.FontFamily.Length * 2L +
-            snapshot.TooltipResources.Sum(resource => 64L + resource.PngData.Count));
+        return MeasureStructuredSnapshot(
+            visible,
+            snapshot.CurrentPrompt,
+            snapshot.Scrollback,
+            snapshot.BackgroundLayers,
+            snapshot.CanvasScene.Drawables,
+            snapshot.CanvasScene.HitRegions,
+            snapshot.MediaState.Channels,
+            snapshot.WindowMetadata,
+            snapshot.TooltipPresentation,
+            snapshot.TooltipResources);
+    }
+
+    public static long MeasureStructuredSnapshot(
+        ConsoleNodeMetrics visible,
+        ConsolePrompt? currentPrompt,
+        IEnumerable<ConsoleLine> scrollback,
+        IEnumerable<BackgroundLayer> backgroundLayers,
+        IEnumerable<CanvasDrawable> drawables,
+        IEnumerable<HitRegion> hitRegions,
+        IEnumerable<MediaChannelState> mediaChannels,
+        WindowMetadata windowMetadata,
+        ConsoleTooltipPresentation tooltipPresentation,
+        IEnumerable<ConsoleTooltipResource> tooltipResources)
+    {
+        ArgumentNullException.ThrowIfNull(scrollback);
+        ArgumentNullException.ThrowIfNull(backgroundLayers);
+        ArgumentNullException.ThrowIfNull(drawables);
+        ArgumentNullException.ThrowIfNull(hitRegions);
+        ArgumentNullException.ThrowIfNull(mediaChannels);
+        ArgumentNullException.ThrowIfNull(windowMetadata);
+        ArgumentNullException.ThrowIfNull(tooltipPresentation);
+        ArgumentNullException.ThrowIfNull(tooltipResources);
+
+        long value = checked(SnapshotOverhead + visible.EstimatedBytes + MeasurePrompt(currentPrompt));
+        value = checked(value + scrollback.Sum(MeasureStructuredLine));
+        value = checked(value + backgroundLayers.Sum(layer => 64L + layer.LayerId.Length * 2L + layer.AssetId.Value.Length * 2L));
+        value = checked(value + drawables.Sum(MeasureDrawable));
+        value = checked(value + hitRegions.Sum(region => 64L + region.RegionId.Length * 2L + region.InputValue.Length * 2L));
+        value = checked(value + mediaChannels.Sum(channel => 64L + channel.Channel.Length * 2L + (channel.AssetId?.Value.Length ?? 0) * 2L));
+        value = checked(value + 64L + windowMetadata.Title.Length * 2L + windowMetadata.DefaultFont.Family.Length * 2L);
+        value = checked(value + 128L + tooltipPresentation.FontFamily.Length * 2L +
+            tooltipResources.Sum(resource => 64L + resource.PngData.Count));
         return value;
     }
+
+    public static long MeasureStructuredLine(ConsoleLine line) =>
+        MeasureStructuredLine(line, MeasureNodes(line.Nodes));
+
+    public static long MeasureStructuredLine(ConsoleLine line, ConsoleNodeMetrics metrics) =>
+        checked(32L + line.LineId.Length * 2L + metrics.EstimatedBytes);
 
     private static ConsoleNodeMetrics MeasureButton(ButtonNode button)
     {
@@ -133,7 +173,11 @@ internal static class ConsoleSizeEstimator
 
     private static ConsoleNodeMetrics MeasurePositionedSegment(PositionedInlineSegmentNode segment)
     {
-        ConsoleNodeMetrics result = new(1, 0, checked(80L + segment.PositionX + segment.MeasuredWidth +
+        // Geometry values are fixed-width integer fields. Their pixel values
+        // must not be treated as allocation sizes; doing so makes a wide
+        // table consume more budget merely because its columns are farther
+        // from the origin.
+        ConsoleNodeMetrics result = new(1, 0, checked(80L + 8L +
             (segment.Action is null ? 0 : 48L + segment.Action.Value.Length * 2L + (segment.Action.Tooltip?.Length ?? 0) * 2L)));
         foreach (ConsoleNode child in segment.Children)
             result += MeasureNode(child);

@@ -695,13 +695,10 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         }
 
         WorkerEnvelope envelope = CreateDisplayEnvelope(displayFrame);
-        if (envelope.CalculateSize() > StructuredIpcLimits.MaxEnvelopeBytes && !displayFrame.RequiresSnapshot)
-        {
-            displayFrame.RequiresSnapshot = true;
-            displayFrame.Transactions.Clear();
-            displayFrame.Snapshot = StructuredConsoleWireMapper.ToProto(commit.Snapshot);
-            envelope = CreateDisplayEnvelope(displayFrame);
-        }
+        // A committed delta is already the atomic display representation. Do
+        // not silently replace a large table with a Snapshot merely because
+        // its protobuf envelope is large; if it cannot fit the hard IPC
+        // bound, fail closed instead of changing the display semantics.
         if (envelope.CalculateSize() > StructuredIpcLimits.MaxEnvelopeBytes)
             throw new InvalidDataException("The committed display frame exceeds the IPC size limit.");
 

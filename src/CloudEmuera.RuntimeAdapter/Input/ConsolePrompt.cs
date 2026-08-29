@@ -65,7 +65,8 @@ public sealed class ConsolePrompt
         ConsolePromptTimeoutAction? timeoutAction = null,
         ConsoleInputSource allowedSources = ConsoleInputSource.All,
         long openedAtUnixMilliseconds = 0,
-        long deadlineUnixMilliseconds = 0)
+        long deadlineUnixMilliseconds = 0,
+        bool allowLongInputByButton = false)
     {
         ValidateInputType(inputType);
         ValidateTimeout(timeout);
@@ -90,6 +91,7 @@ public sealed class ConsolePrompt
         AllowedSources = allowedSources;
         OpenedAtUnixMilliseconds = openedAtUnixMilliseconds;
         DeadlineUnixMilliseconds = deadlineUnixMilliseconds;
+        AllowLongInputByButton = allowLongInputByButton;
     }
 
     public ConsolePrompt(
@@ -107,9 +109,11 @@ public sealed class ConsolePrompt
         ConsolePromptTimeoutAction? timeoutAction = null,
         ConsoleInputSource allowedSources = ConsoleInputSource.All,
         long openedAtUnixMilliseconds = 0,
-        long deadlineUnixMilliseconds = 0)
+        long deadlineUnixMilliseconds = 0,
+        bool allowLongInputByButton = false)
         : this(string.Empty, inputType, promptText, defaultValue, constraints, timeout, timeoutBehavior, oneInput, systemInput,
-            stopMessageSkip, displayTime, timeoutMessage, timeoutAction, allowedSources, openedAtUnixMilliseconds, deadlineUnixMilliseconds)
+            stopMessageSkip, displayTime, timeoutMessage, timeoutAction, allowedSources, openedAtUnixMilliseconds, deadlineUnixMilliseconds,
+            allowLongInputByButton)
     {
     }
 
@@ -133,6 +137,13 @@ public sealed class ConsolePrompt
 
     public bool OneInput { get; }
 
+    /// <summary>
+    /// Preserves the pinned upstream AllowLongInputByMouse exception for a
+    /// semantic game button. Keyboard input remains subject to OneInput's
+    /// single-character normalization.
+    /// </summary>
+    public bool AllowLongInputByButton { get; }
+
     public bool SystemInput { get; }
 
     public bool StopMessageSkip { get; }
@@ -155,14 +166,16 @@ public sealed class ConsolePrompt
 
     public ConsolePrompt WithPromptId(string promptId) =>
         new(promptId, InputType, PromptText, DefaultValue, Constraints, Timeout, TimeoutBehavior, OneInput, SystemInput,
-            StopMessageSkip, DisplayTime, TimeoutMessage, TimeoutAction, AllowedSources, OpenedAtUnixMilliseconds, DeadlineUnixMilliseconds);
+            StopMessageSkip, DisplayTime, TimeoutMessage, TimeoutAction, AllowedSources, OpenedAtUnixMilliseconds, DeadlineUnixMilliseconds,
+            AllowLongInputByButton);
 
     public ConsolePrompt WithTiming(DateTimeOffset openedAt, long? deadlineUnixMilliseconds)
     {
         long opened = openedAt.ToUnixTimeMilliseconds();
         long deadline = deadlineUnixMilliseconds ?? 0;
         return new ConsolePrompt(PromptId, InputType, PromptText, DefaultValue, Constraints, Timeout, TimeoutBehavior, OneInput,
-            SystemInput, StopMessageSkip, DisplayTime, TimeoutMessage, TimeoutAction, AllowedSources, opened, deadline);
+            SystemInput, StopMessageSkip, DisplayTime, TimeoutMessage, TimeoutAction, AllowedSources, opened, deadline,
+            AllowLongInputByButton);
     }
 
     internal void Validate(ConsoleContractLimits limits)

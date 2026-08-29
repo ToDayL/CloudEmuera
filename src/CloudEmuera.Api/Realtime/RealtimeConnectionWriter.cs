@@ -243,7 +243,10 @@ public sealed class RealtimeConnectionWriter : IAsyncDisposable
     private EncodedRealtimeMessage[] EncodeSnapshot(string sessionId, RealtimeFrame frame)
     {
         var messages = new List<EncodedRealtimeMessage>(2);
-        if (!string.Equals(frame.Reason, "initial-snapshot", StringComparison.Ordinal))
+        // Both the first snapshot and a complete committed-frame replacement
+        // are authoritative display updates. Only snapshots requested after
+        // a transport gap/overflow announce a browser resync.
+        if (frame.Reason is not ("initial-snapshot" or "committed-snapshot"))
         {
             messages.Add(codec.Encode(
                 "resync.required",

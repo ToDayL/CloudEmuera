@@ -236,6 +236,99 @@ public sealed class StructuredConsoleContractTests
     }
 
     [Fact]
+    public void StructuredScrollbackTrimsOldLinesToEstimatedByteBudget()
+    {
+        var options = new ConsoleHistoryOptions
+        {
+            MaxVisibleNodes = 256,
+            MaxVisibleTextLength = 16_384,
+            MaxEstimatedBytes = 2_048
+        };
+        var store = new ConsoleStateStore(options);
+
+        for (int index = 0; index < 32; index++)
+        {
+            store.ApplyTransaction(new ConsoleTransaction([
+                ConsoleOperation.AppendLine(new ConsoleLine(
+                    $"line-{index}",
+                    [new TextNode(new string('x', 64))]))
+            ]));
+        }
+
+        ConsoleSnapshot snapshot = store.Snapshot;
+        Assert.True(snapshot.EstimatedBytes <= options.MaxEstimatedBytes);
+        Assert.True(snapshot.Truncation.WasTruncated);
+        Assert.DoesNotContain(snapshot.Scrollback, line => line.LineId == "line-0");
+        Assert.Equal("line-31", snapshot.Scrollback[^1].LineId);
+    }
+
+    [Fact]
+    public void PositionedSegmentCoordinatesUseFixedWidthBudgetFields()
+    {
+        var options = new ConsoleHistoryOptions
+        {
+            MaxVisibleNodes = 32,
+            MaxVisibleTextLength = 128,
+            MaxEstimatedBytes = 1_024
+        };
+        var store = new ConsoleStateStore(options);
+
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.AppendLine(new ConsoleLine(
+                "wide-column",
+                [new PositionedInlineSegmentNode(
+                    positionX: 900,
+                    measuredWidth: 100,
+                    children: [new TextNode("cell")],
+                    action: new ConsoleInlineAction("7"))]))
+        ]));
+
+        ConsoleSnapshot snapshot = store.Snapshot;
+        Assert.False(snapshot.Truncation.WasTruncated);
+        Assert.Equal("wide-column", snapshot.Scrollback[0].LineId);
+        Assert.True(snapshot.EstimatedBytes <= options.MaxEstimatedBytes);
+    }
+
+    [Fact]
+    public void StructuredByteTrimRemovesCompleteWrappedLogicalLineGroups()
+    {
+        var store = new ConsoleStateStore(new ConsoleHistoryOptions
+        {
+            MaxEstimatedBytes = 3_000,
+            MaxVisibleNodes = 128,
+            MaxVisibleTextLength = 16_384
+        });
+        const string oldLogicalId = "old-logical";
+        var oldLines = new ConsoleLine[]
+        {
+            new(
+                "old-logical",
+                [new TextNode(new string('a', 256))],
+                logicalLineId: oldLogicalId),
+            new(
+                "old-logical-p1",
+                [new TextNode(new string('b', 256))],
+                logicalLineId: oldLogicalId,
+                physicalIndex: 1,
+                isLogicalStart: false)
+        };
+
+        store.ApplyTransaction(new ConsoleTransaction([
+            ConsoleOperation.AppendLine(oldLines[0]),
+            ConsoleOperation.AppendLine(oldLines[1]),
+            ConsoleOperation.AppendLine(new ConsoleLine(
+                "new-logical",
+                [new TextNode(new string('c', 256))]))
+        ]));
+
+        ConsoleSnapshot snapshot = store.Snapshot;
+        Assert.Equal(["new-logical"], snapshot.Scrollback.Select(line => line.LineId));
+        Assert.DoesNotContain(snapshot.Scrollback, line => line.LogicalLineId == oldLogicalId);
+        Assert.Equal(2, snapshot.Truncation.DroppedLineCount);
+        Assert.True(snapshot.EstimatedBytes <= store.Options.MaxEstimatedBytes);
+    }
+
+    [Fact]
     public void HtmlIslandIsAnExecutableFreeAllowlistedTree()
     {
         var root = new ConsoleHtmlElementNode("div", [
@@ -305,6 +398,32 @@ public sealed class StructuredTimedInputContractTests
         Assert.Equal(ConsoleInputResultKind.Accepted, accepted.Kind);
         GameConsoleInput input = await runtime;
         Assert.Equal("a", input.Value);
+        Assert.False(console.IsTimeOut);
+    }
+
+    [Theory]
+    [InlineData(false, "4")]
+    [InlineData(true, "4000")]
+    public async Task OneInputButtonValueHonorsConfiguredLongInputException(bool allowLongInputByButton, string expectedValue)
+    {
+        var clock = new ManualRuntimeClock();
+        var console = new StructuredGameConsole(clock, new FixedPromptIdGenerator("prompt-button-one"));
+        Task<GameConsoleInput> runtime = Task.Run(() => console.Read(new ConsolePrompt(
+            ConsoleInputType.Text,
+            constraints: new TextInputConstraints(4),
+            oneInput: true,
+            allowedSources: ConsoleInputSource.Button,
+            allowLongInputByButton: allowLongInputByButton)));
+
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
+        ConsoleInputResult accepted = console.SubmitCurrentInput(new ConsoleInputAttempt(
+            "client-button-one",
+            "4000",
+            ConsoleInputSource.Button));
+
+        Assert.Equal(ConsoleInputResultKind.Accepted, accepted.Kind);
+        GameConsoleInput input = await runtime;
+        Assert.Equal(expectedValue, input.Value);
         Assert.False(console.IsTimeOut);
     }
 

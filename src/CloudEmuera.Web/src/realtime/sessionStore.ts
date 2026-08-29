@@ -135,7 +135,8 @@ export function applyDisplayFrame(state: SessionStoreState, envelope: { sessionI
 }
 
 export function beginResume(state: SessionStoreState): SessionStoreState { return { ...state, phase: "resuming", fatalRenderError: null }; }
-export function markResync(state: SessionStoreState, reason?: string): SessionStoreState { return { ...state, phase: "resyncing", fatalRenderError: reason ?? null }; }
+/** A resync is a recoverable transport state; invariant/protocol failures use the fatal field. */
+export function markResync(state: SessionStoreState): SessionStoreState { return { ...state, phase: "resyncing", fatalRenderError: null }; }
 export function markEnded(state: SessionStoreState): SessionStoreState {
   return { ...state, phase: "ended", pendingInput: state.pendingInput?.status === "pending" ? { ...state.pendingInput, status: "unknown" } : state.pendingInput };
 }
@@ -168,7 +169,7 @@ export function handleServerMessage(state: SessionStoreState, message: RealtimeS
     case "session.snapshot": return replaceSnapshot(state, message, message.payload);
     case "display.frame": return applyDisplayFrame(state, message, message.payload);
     case "session.input.result": return applyInputReceipt(state, message, message.payload);
-    case "resync.required": return markResync(state, message.payload.reason);
+    case "resync.required": return markResync(state);
     case "session.stream.ended": return markEnded(state);
     case "protocol.error": return message.payload.code === "AUTHENTICATION_EXPIRED" ? markForbidden(state) : { ...state, phase: "error", fatalRenderError: message.payload.message };
     default: return state;

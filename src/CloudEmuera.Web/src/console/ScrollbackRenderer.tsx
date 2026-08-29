@@ -496,13 +496,19 @@ export function ShapeSvg({ shape, bounds, points, fill, stroke, buttonColor }: {
 }
 
 function divStyle(bounds: { x: number; y: number; width: number; height: number }, zIndex: number, background: RealtimeColor | null | undefined, isRelative: boolean, box: RealtimeBoxModel | null | undefined): CSSProperties {
+  // ConsoleDivPart draws an outer rectangle that is two pixels wider than
+  // its declared width, then removes the four margins from that rectangle
+  // before drawing the border and clipping its children. CSS margins do not
+  // shrink a border box, so calculate the same painted dimensions explicitly
+  // while retaining the margin offsets below.
+  const margin = box?.margin ?? { top: 0, right: 0, bottom: 0, left: 0 };
   const style: CSSProperties = {
     position: isRelative ? "relative" : "absolute",
     left: bounds.x,
     top: isRelative ? bounds.y : undefined,
     bottom: isRelative ? undefined : bounds.y,
-    width: bounds.width,
-    height: bounds.height,
+    width: Math.max(0, bounds.width + 2 - margin.left - margin.right),
+    height: Math.max(0, bounds.height - margin.top - margin.bottom),
     zIndex,
     backgroundColor: colorToCss(background),
     boxSizing: "border-box",

@@ -47,8 +47,10 @@ public sealed class RealtimeOutputTests
 
         RealtimeFrame snapshot = await subscription.ReadAsync();
         Assert.Equal(RealtimeFrameKind.Snapshot, snapshot.Kind);
+        Assert.Equal("initial-snapshot", snapshot.Reason);
         Assert.Equal(1, snapshot.LastSequence);
         Assert.Contains("first", Encoding.UTF8.GetString(snapshot.Payload.Span));
+        Assert.Equal(0, hub.Statistics.ResyncCount);
 
         RealtimePublishResult delta = hub.PublishDisplayBatch(DeltaBatch(Transaction(2, "second")));
         Assert.Equal(RealtimePublishDisposition.Applied, delta.Disposition);
@@ -66,7 +68,10 @@ public sealed class RealtimeOutputTests
         await using RealtimeSubscription subscription = hub.Subscribe();
 
         Assert.Equal(RealtimePublishDisposition.Applied, hub.PublishDisplayFrame(DisplaySnapshotFrame(1, ConsoleSnapshot.Empty)).Disposition);
-        Assert.Equal(RealtimeFrameKind.Snapshot, (await subscription.ReadAsync()).Kind);
+        RealtimeFrame initialFrame = await subscription.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.Snapshot, initialFrame.Kind);
+        Assert.Equal("initial-snapshot", initialFrame.Reason);
+        Assert.Equal(0, hub.Statistics.ResyncCount);
 
         W.DisplayFrame frame = DisplayDeltaFrame(
             2,
@@ -96,13 +101,13 @@ public sealed class RealtimeOutputTests
     }
 
     [Fact]
-    public async Task OversizedCommittedDeltaFallsBackToTheCommittedSnapshot()
+    public async Task LargeCommittedDeltaRemainsAnAtomicDisplayFrame()
     {
         var options = RealtimeOutputOptions.Default with
         {
             BatchTargetBytes = 256,
             ConnectionQueueSoftBytes = 4 * 1024,
-            ConnectionQueueHardBytes = 8 * 1024,
+            ConnectionQueueHardBytes = 16 * 1024,
         };
         await using var hub = new SessionOutputHub("session-1", "worker-1", 31, options);
         await using RealtimeSubscription subscription = hub.Subscribe();
@@ -110,13 +115,37 @@ public sealed class RealtimeOutputTests
         Assert.Equal(RealtimeFrameKind.Snapshot, (await subscription.ReadAsync()).Kind);
 
         hub.PublishDisplayFrame(DisplayDeltaFrame(2, 1, W.DisplayCommitReason.ExplicitRefresh, new SequencedConsoleTransaction(1, new ConsoleTransaction([
-            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode(new string('x', 2_000))])),
+            ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode(new string('x', 8_000))])),
         ]))));
 
         RealtimeFrame replacement = await subscription.ReadAsync();
+        Assert.Equal(RealtimeFrameKind.DisplayFrame, replacement.Kind);
+        Assert.Equal(2, replacement.FrameId);
+        Assert.Equal(1, replacement.FirstSequence);
+        Assert.Equal(1, replacement.LastSequence);
+        Assert.DoesNotContain("\"requiresSnapshot\":true", Encoding.UTF8.GetString(replacement.Payload.Span));
+        Assert.Contains(new string('x', 8_000), Encoding.UTF8.GetString(replacement.Payload.Span));
+        Assert.Equal(0, hub.Statistics.ResyncCount);
+    }
+
+    [Fact]
+    public async Task CommittedSnapshotReplacesLiveStateWithoutAResyncMarker()
+    {
+        await using var hub = new SessionOutputHub("session-1", "worker-1", 32);
+        await using RealtimeSubscription subscription = hub.Subscribe();
+        hub.PublishDisplayFrame(DisplaySnapshotFrame(1, ConsoleSnapshot.Empty));
+        Assert.Equal("initial-snapshot", (await subscription.ReadAsync()).Reason);
+
+        var snapshot = new ConsoleSnapshot(
+            1,
+            [new ConsoleLine("line-1", [new TextNode("replacement")])]);
+        hub.PublishDisplayFrame(DisplaySnapshotFrame(2, snapshot));
+
+        RealtimeFrame replacement = await subscription.ReadAsync();
         Assert.Equal(RealtimeFrameKind.Snapshot, replacement.Kind);
-        Assert.Contains("\"committedFrameId\":2", Encoding.UTF8.GetString(replacement.Payload.Span));
-        Assert.Contains(new string('x', 2_000), Encoding.UTF8.GetString(replacement.Payload.Span));
+        Assert.Equal("committed-snapshot", replacement.Reason);
+        Assert.Contains("replacement", Encoding.UTF8.GetString(replacement.Payload.Span));
+        Assert.Equal(0, hub.Statistics.ResyncCount);
     }
 
     [Fact]
@@ -129,6 +158,7 @@ public sealed class RealtimeOutputTests
         RealtimeFrame frame = await subscription.ReadAsync();
 
         Assert.Equal(RealtimeFrameKind.Snapshot, frame.Kind);
+        Assert.Equal("initial-snapshot", frame.Reason);
         Assert.Equal(1, frame.FirstSequence);
         Assert.Equal(1, frame.LastSequence);
         Assert.Contains("current", Encoding.UTF8.GetString(frame.Payload.Span));
@@ -191,6 +221,18 @@ public sealed class RealtimeOutputTests
         RealtimeQueueRead result = await pending;
         Assert.Equal(RealtimeQueueReadKind.ResyncRequired, result.Kind);
         Assert.Equal("sequence-gap", result.Reason);
+    }
+
+    [Fact]
+    public async Task InitialSnapshotRequestIsNotReportedAsResync()
+    {
+        var queue = new BoundedRealtimeQueue(softMessages: 2, hardMessages: 4, softBytes: 100, hardBytes: 200);
+        Task<RealtimeQueueRead> pending = queue.ReadAsync().AsTask();
+        queue.RequestInitialSnapshot();
+
+        RealtimeQueueRead result = await pending;
+        Assert.Equal(RealtimeQueueReadKind.InitialSnapshot, result.Kind);
+        Assert.False(queue.Statistics.NeedsResync);
     }
 
     [Fact]
@@ -397,17 +439,20 @@ public sealed class RealtimeOutputTests
         await using RealtimeSubscription first = hub.Subscribe();
         RealtimeFrame snapshot = await first.ReadAsync();
         Assert.Equal(RealtimeFrameKind.Snapshot, snapshot.Kind);
+        Assert.Equal("initial-snapshot", snapshot.Reason);
         Assert.Equal(1, hub.Statistics.SnapshotEncodingCount);
 
         await using RealtimeSubscription second = hub.Subscribe();
         RealtimeFrame cached = await second.ReadAsync();
         Assert.Equal(RealtimeFrameKind.Snapshot, cached.Kind);
+        Assert.Equal("initial-snapshot", cached.Reason);
         Assert.Equal(1, hub.Statistics.SnapshotEncodingCount);
 
         hub.PublishDisplayBatch(DeltaBatch(Transaction(3, "three")));
         await using RealtimeSubscription third = hub.Subscribe();
         RealtimeFrame refreshed = await third.ReadAsync();
         Assert.Equal(RealtimeFrameKind.Snapshot, refreshed.Kind);
+        Assert.Equal("initial-snapshot", refreshed.Reason);
         Assert.Equal(2, hub.Statistics.SnapshotEncodingCount);
     }
 

@@ -419,7 +419,41 @@ describe("ScrollbackRenderer", () => {
     expect(div).toBeInTheDocument();
     expect(div.style.position).toBe("absolute");
     expect(div.style.left).toBe("1px");
+    expect(div.style.width).toBe("32px");
+    expect(div.style.height).toBe("12px");
     expect(screen.getByRole("button", { name: "Go" })).toHaveStyle({ position: "relative", left: "42px" });
+  });
+
+  it("matches upstream div painted dimensions after applying the box-model margins", () => {
+    // PLAY-002/COMP-007: ConsoleDivPart removes margins from its painted
+    // rectangle before drawing the border. Keeping the declared dimensions
+    // unchanged in CSS makes margin-heavy eraFL panels reach the main-panel
+    // edge and shifts their lower border.
+    const stateLine: RealtimeLine = {
+      lineId: "div-box-model",
+      nodes: [{
+        type: "div",
+        children: [{ type: "text", text: "Panel", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 16, foreground: null, background: null } }],
+        bounds: { x: 10, y: 20, width: 80, height: 40 },
+        zIndex: 0,
+        background: null,
+        isRelative: true,
+        box: {
+          margin: { top: 1, right: 2, bottom: 3, left: 4 },
+          padding: { top: 5, right: 6, bottom: 7, left: 8 },
+          border: { top: 1, right: 1, bottom: 1, left: 1 },
+          radius: { top: 2, right: 2, bottom: 2, left: 2 },
+          borderColors: [null, null, null, null],
+        },
+      }],
+      alignment: "left",
+      temporary: false,
+    };
+
+    render(<ScrollbackRenderer lines={[stateLine]} assets={assets} onInput={() => undefined} />);
+
+    const div = document.querySelector(".console-emuera-div") as HTMLElement;
+    expect(div).toHaveStyle({ width: "76px", height: "36px", margin: "1px 2px 3px 4px" });
   });
 
   it("keeps buttons clickable inside pointer-transparent Emuera div layers", () => {

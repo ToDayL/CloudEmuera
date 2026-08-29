@@ -201,7 +201,29 @@ public sealed class RealtimeStateMachineTests
         {
             Assert.Equal("session.snapshot", snapshot.RootElement.GetProperty("type").GetString());
             Assert.Equal(0, snapshot.RootElement.GetProperty("payload").GetProperty("snapshotSequence").GetInt64());
+            Assert.Equal(1, snapshot.RootElement.GetProperty("payload").GetProperty("committedFrameId").GetInt64());
         }
+        Assert.DoesNotContain(socket.SentTexts, text => text.Contains("\"type\":\"resync.required\"", StringComparison.Ordinal));
+
+        int replacementStart = socket.SentTexts.Length;
+        hub.PublishDisplayFrame(new W.DisplayFrame
+        {
+            FrameId = 2,
+            CommitSequence = 1,
+            Reason = W.DisplayCommitReason.ExplicitRefresh,
+            RequiresSnapshot = true,
+            Snapshot = StructuredConsoleWireMapper.ToProto(new ConsoleSnapshot(
+                1,
+                [new ConsoleLine("line-1", [new TextNode("replacement")])])),
+        });
+        string replacementText = await WaitForSentTextAsync(socket, "session.snapshot", replacementStart);
+        using (JsonDocument replacement = JsonDocument.Parse(replacementText))
+        {
+            Assert.Equal(2, replacement.RootElement.GetProperty("payload").GetProperty("committedFrameId").GetInt64());
+        }
+        Assert.DoesNotContain(
+            socket.SentTexts.Skip(replacementStart),
+            text => text.Contains("\"type\":\"resync.required\"", StringComparison.Ordinal));
 
         socket.EnqueueClose();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -353,12 +375,12 @@ public sealed class RealtimeStateMachineTests
         },
     });
 
-    private static async Task<string> WaitForSentTextAsync(ScriptedWebSocket socket, string marker)
+    private static async Task<string> WaitForSentTextAsync(ScriptedWebSocket socket, string marker, int startingIndex = 0)
     {
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(2);
         while (DateTimeOffset.UtcNow < deadline)
         {
-            string? value = socket.SentTexts.FirstOrDefault(text => text.Contains(marker, StringComparison.Ordinal));
+            string? value = socket.SentTexts.Skip(startingIndex).FirstOrDefault(text => text.Contains(marker, StringComparison.Ordinal));
             if (value is not null)
                 return value;
             await Task.Delay(10);
@@ -480,7 +502,7 @@ public sealed class RealtimeStateMachineTests
         private readonly List<string> sentTexts = [];
         private WebSocketState state = WebSocketState.Open;
 
-        public IReadOnlyList<string> SentTexts
+        public string[] SentTexts
         {
             get { lock (sync) return sentTexts.ToArray(); }
         }

@@ -118,6 +118,7 @@ describe("RealtimeConnectionManager", () => {
     socket.message({ protocolVersion: 5, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, committedFrameId: 0, consoleState: state } });
     socket.message({ protocolVersion: 5, type: "resync.required", messageId: "resync", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, observedSequence: 1, reason: "snapshot-replaced" } });
     expect(manager.getSessionState("s1")?.phase).toBe("resyncing");
+    expect(manager.getSessionState("s1")?.fatalRenderError).toBeNull();
     expect(socket.sent.filter(value => JSON.parse(value).type === "session.unsubscribe")).toHaveLength(0);
     socket.message({ protocolVersion: 5, type: "session.snapshot", messageId: "replacement", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, snapshotSequence: 1, committedFrameId: 1, consoleState: state } });
     expect(manager.getSessionState("s1")?.phase).toBe("snapshot_ready");

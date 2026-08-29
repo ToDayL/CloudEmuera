@@ -91,6 +91,57 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task Issue15EnumeratedWindowsPathLoadsXmlOnLinux()
+    {
+        // COMP-002/COMP-006/GAME-008/issue #15: ENUMFILES returns a path
+        // relative to Program.ExeDir, and the pinned upstream helper rewrites
+        // its '/' separator to '\\' before LOADTEXT reads it. The complete
+        // EraFL loader shape must still reach XML_GET with the file contents.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "VARS DOCS, 100\n" +
+            "VARI FILE_COUNT\n" +
+            "FILE_COUNT = ENUMFILES(\"XML\", \"SKILL_BATTLE*\")\n" +
+            "ARRAYCOPY \"RESULTS\", \"DOCS\"\n" +
+            "FOR LOCAL, 0, FILE_COUNT\n" +
+            "    LOADTEXT DOCS:LOCAL\n" +
+            "    XML_GET RESULTS, \"/skilldef\", 1, 2\n" +
+            "NEXT\n" +
+            "PRINTFORML ISSUE15-FILES={FILE_COUNT}\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\nLOADTEXTとSAVETEXTで使える拡張子:txt,xml\n",
+            configureGame: game =>
+            {
+                File.WriteAllText(
+                    Path.Combine(game, "setting.json"),
+                    "{\"UseScopedVariableInstruction\":true}");
+                string xmlRoot = Path.Combine(game, "XML");
+                Directory.CreateDirectory(xmlRoot);
+                File.WriteAllText(
+                    Path.Combine(xmlRoot, "SKILL_BATTLE_A.xml"),
+                    "<skilldef><skill id=\"A\" /></skilldef>");
+                File.WriteAllText(
+                    Path.Combine(xmlRoot, "SKILL_BATTLE_B.xml"),
+                    "<skilldef><skill id=\"B\" /></skilldef>");
+            });
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        Assert.Contains(
+            "ISSUE15-FILES=2",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     [Trait("Category", "EmueraFeatureMatrix")]
     public void DynamicGraphicsPublishesBoundedBrowserRasterDrawable()
     {
@@ -935,6 +986,108 @@ public sealed class HeadlessRuntimeFixtureTests
                 Assert.Equal("front", layer.Action!.Value);
                 Assert.Equal(153, layer.MeasuredWidth);
             });
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "FontLayout")]
+    public async Task HtmlPrintConvertsRelativeButtonPositionsToPhysicalPixels()
+    {
+        // PLAY-002/COMP-007: the pinned HtmlManager stores button pos in
+        // hundredths of the configured font size (800 means 8 em), while the
+        // browser-facing positioned segment uses physical pixels. Both
+        // interactive and noninteractive positioned parts must cross that
+        // boundary exactly once.
+        const string html = "<p align='left'><nobr>" +
+            "<button value='left' pos='800'>L</button>" +
+            "<nonbutton title='right' pos='1600'>R</nonbutton>" +
+            "</nobr></p>";
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            $"HTML_PRINT \"{html}\"\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:400\n字体大小:12\n一行の高さ:14\n");
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        ConsoleLine line = Assert.Single(
+            fixture.Console.Snapshot.Scrollback,
+            item => item.Nodes.Count == 2 && item.Nodes.All(node => node is PositionedInlineSegmentNode));
+        PositionedInlineSegmentNode[] segments = line.Nodes.Cast<PositionedInlineSegmentNode>().ToArray();
+        // RuntimeHostFixture binds the default 18px face; 800/1600 relative
+        // units therefore become 144/288 physical pixels.
+        Assert.Equal(144, segments[0].PositionX);
+        Assert.Equal(288, segments[1].PositionX);
+        Assert.Equal("L", RuntimeTranscriptProjector.Project(segments[0].Children));
+        Assert.Equal("R", RuntimeTranscriptProjector.Project(segments[1].Children));
+        Assert.NotNull(segments[0].Action);
+        Assert.NotNull(segments[1].Action);
+        Assert.False(segments[1].Action!.Enabled);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "FontLayout")]
+    public async Task HtmlPrintResetsFlowCursorAfterExplicitPositionMovesBack()
+    {
+        // PLAY-002/COMP-007: WindowDrawer concatenates independently
+        // positioned windows into one no-wrap row. When a later window moves
+        // back to a lower absolute position, an unpositioned path button must
+        // continue from that window, not from the row's maximum extent.
+        const string html = "<p align='left'><nobr>" +
+            "<nonbutton title='module' pos='8400'>H</nonbutton>" +
+            "<nonbutton title='path' pos='2000'>L</nonbutton>" +
+            "<button value='continue'>P</button>" +
+            "</nobr></p>";
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            $"HTML_PRINT \"{html}\"\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:2000\n字体大小:18\n每行高度:21\n");
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        ConsoleLine line = Assert.Single(
+            fixture.Console.Snapshot.Scrollback,
+            item => item.Nodes.Count == 3 && item.Nodes.All(node => node is PositionedInlineSegmentNode));
+        PositionedInlineSegmentNode[] segments = line.Nodes.Cast<PositionedInlineSegmentNode>().ToArray();
+
+        Assert.True(segments[0].PositionX > segments[1].PositionX);
+        Assert.Equal(segments[1].PositionX + segments[1].MeasuredWidth, segments[2].PositionX);
+        Assert.True(segments[2].PositionX < segments[0].PositionX);
+        Assert.Equal("H", RuntimeTranscriptProjector.Project(segments[0].Children));
+        Assert.Equal("L", RuntimeTranscriptProjector.Project(segments[1].Children));
+        Assert.Equal("P", RuntimeTranscriptProjector.Project(segments[2].Children));
     }
 
     [Fact]
@@ -1831,6 +1984,61 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(100, EncodingHandler.shiftjisEncoding.GetByteCount(secondRow));
         Assert.DoesNotContain("\n", firstRow, StringComparison.Ordinal);
         Assert.DoesNotContain("\n", secondRow, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task EraFlStyleSingleTableIsNotTruncatedByStructuredByteBudget()
+    {
+        // PLAY-002/COMP-007: eraFL redraws one fixed-height table made of
+        // positioned button columns. A byte-budget eviction must not remove
+        // part of this legal table or create a partial physical row.
+        const int rowCount = 39;
+        const int columnCount = 27;
+        var script = new StringBuilder("@SYSTEM_TITLE\n");
+        for (int row = 0; row < rowCount; row++)
+        {
+            for (int column = 0; column < columnCount; column++)
+                script.Append("PRINTBUTTON \"C").Append(column).Append("\", ").Append(column + 1).Append('\n');
+            script.Append("PRINTL\n");
+        }
+        script.Append("QUIT\n");
+
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogDigest = Convert.ToHexString(
+            SHA256.HashData(File.ReadAllBytes(Path.Combine(fontRoot, "catalog.json"))))
+            .ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            script.ToString(),
+            configuration: "Use sav folder:NO\n窗口宽度:1400\n字体大小:16\n一行の高さ:16\nボタンの途中で行を折りかえさない:YES\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            browserWidth: 1180,
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+
+        ConsoleSnapshot snapshot = fixture.Console.Snapshot;
+        Assert.False(snapshot.Truncation.WasTruncated);
+        Assert.Equal(rowCount, snapshot.Scrollback.Count);
+        Assert.All(snapshot.Scrollback, line =>
+        {
+            Assert.Equal(line.LogicalLineId, line.LineId);
+            Assert.Equal(0, line.PhysicalIndex);
+            Assert.Equal(columnCount, line.Nodes.OfType<PositionedInlineSegmentNode>().Count());
+            Assert.Equal(columnCount, line.Nodes.OfType<PositionedInlineSegmentNode>().Count(segment => segment.Action is not null));
+        });
+        Assert.True(snapshot.EstimatedBytes <= new ConsoleHistoryOptions().MaxEstimatedBytes);
     }
 
     [Fact]
@@ -3007,6 +3215,52 @@ public sealed class HeadlessRuntimeFixtureTests
             result.Status == EmueraRuntimeStatus.Completed,
             result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
         Assert.Contains("HTML_RESULT=7", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput()
+    {
+        // PLAY-002/COMP-007: EraFL uses ONEINPUTS with multi-character HTML
+        // button IDs. The pinned upstream config explicitly allows long
+        // values from mouse buttons, so the headless bridge must preserve the
+        // full value while keeping keyboard ONEINPUTS single-character.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nHTML_PRINT \"<button value='4000'>PRESET</button>\"\nONEINPUTS\n" +
+            "PRINTFORML ONEINPUTS_HTML_RESULT=%RESULTS%\nQUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:400\n字体大小:18\n每行高度:20\n" +
+                "ONEINPUT系命令でマウスによる2文字以上の入力を許可する:YES\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        if (!SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)))
+        {
+            EmueraRuntimeResult earlyResult = await run;
+            string diagnostics = string.Join(" | ", earlyResult.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message));
+            Assert.Fail("ONEINPUTS did not open a prompt: " + earlyResult.Status + "; " + diagnostics);
+        }
+
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputType.Text, prompt.InputType);
+        Assert.True(prompt.OneInput);
+        Assert.True(prompt.AllowLongInputByButton);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt(
+                "oneinputs-html-button",
+                "4000",
+                ConsoleInputSource.Button)).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
+        Assert.Contains(
+            "ONEINPUTS_HTML_RESULT=4000",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
     }
 
     [Fact]

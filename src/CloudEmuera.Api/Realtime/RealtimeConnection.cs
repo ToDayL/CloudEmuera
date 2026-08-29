@@ -335,7 +335,7 @@ public sealed class RealtimeConnection
         lock (subscriptionSync)
             previous = subscriptions.GetValueOrDefault(sessionId);
         // Register the subscription before the Worker publishes its first
-        // display batch. The hub wakes this reader with a resync snapshot
+        // display batch. The hub wakes this reader with an initial snapshot
         // when that batch arrives; rejecting the route here creates a race
         // between Ready and the first output and leaves clients polling.
         if (writer is null || !await writer.AddSubscriptionAsync(sessionId, route.Subscription, cancellationToken).ConfigureAwait(false))

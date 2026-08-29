@@ -111,7 +111,8 @@ internal sealed class EmueraConsole
         string? Text,
         ConsoleTextStyle? TextStyle,
         ConsoleInlineAction? Action,
-        int? LockedX);
+        int? LockedX,
+        bool LockedXIsRelative);
 
     private sealed record PhysicalLineDraft(
         IReadOnlyList<PositionedInlineSegmentNode> Segments,
@@ -651,7 +652,8 @@ internal sealed class EmueraConsole
             stopMessageSkip: request.StopMesskip,
             displayTime: request.DisplayTime,
             timeoutMessage: request.TimeUpMes is null ? null : DisplayText(request.TimeUpMes),
-            allowedSources: ConsoleInputSource.All);
+            allowedSources: ConsoleInputSource.All,
+            allowLongInputByButton: Config.AllowLongInputByMouse);
         if (request.DisplayTime && timeout is not null)
             EmitTimeoutCountdown(timeout.Value);
         GameConsoleInput input = adapter.Read(prompt, cancellationToken);
@@ -1422,20 +1424,26 @@ internal sealed class EmueraConsole
         bool temporary,
         bool noWrap,
         bool truncate,
-        bool lineEnd)
+        bool lineEnd,
+        ISet<ButtonNode>? physicalPositionButtons = null)
     {
         int layoutWidth = Config.DrawableWidth > 0 ? Config.DrawableWidth : viewportWidth;
         int lineHeight = Math.Max(Config.FontSize, Config.LineHeight);
-        var atoms = CreateLayoutAtoms(nodes);
+        var atoms = CreateLayoutAtoms(nodes, physicalPositionButtons);
         var drafts = new List<PhysicalLineDraft>();
         var current = new List<PositionedInlineSegmentNode>();
+        // `cursor` is the origin for the next unpositioned atom. Explicit
+        // positions may move it backwards, while `contentWidth` remains the
+        // maximum painted extent used for line alignment.
         int cursor = 0;
+        int contentWidth = 0;
 
         void FlushDraft()
         {
-            drafts.Add(new PhysicalLineDraft(current.ToArray(), cursor));
+            drafts.Add(new PhysicalLineDraft(current.ToArray(), contentWidth));
             current.Clear();
             cursor = 0;
+            contentWidth = 0;
         }
 
         // PRINTSINGLE* uses the upstream single-row buffer, but a browser
@@ -1447,23 +1455,25 @@ internal sealed class EmueraConsole
             noWrap = true;
             foreach (LayoutAtom atom in atoms)
             {
-                int position = ResolveAtomPosition(cursor, atom.LockedX);
+                int position = ResolveAtomPosition(cursor, atom);
                 bool fits = layoutWidth <= 0 || position + atom.Width <= layoutWidth;
                 if (fits)
                 {
                     current.Add(new PositionedInlineSegmentNode(position, atom.Width, atom.Children, atom.Action));
-                    cursor = Math.Max(cursor, checked(position + atom.Width));
+                    cursor = checked(position + atom.Width);
+                    contentWidth = Math.Max(contentWidth, cursor);
                     continue;
                 }
 
                 if (atom.CanDivide)
                 {
-                    int available = Math.Max(0, layoutWidth - cursor);
+                    int available = Math.Max(0, layoutWidth - position);
                     int fittingCharacters = FindFittingCharacters(atom, available);
                     if (fittingCharacters > 0 && TrySplitAtom(atom, fittingCharacters, out LayoutAtom? prefix, out _))
                     {
-                        current.Add(new PositionedInlineSegmentNode(cursor, prefix.Width, prefix.Children, prefix.Action));
-                        cursor = checked(cursor + prefix.Width);
+                        current.Add(new PositionedInlineSegmentNode(position, prefix.Width, prefix.Children, prefix.Action));
+                        cursor = checked(position + prefix.Width);
+                        contentWidth = Math.Max(contentWidth, cursor);
                     }
                 }
                 break;
@@ -1476,12 +1486,13 @@ internal sealed class EmueraConsole
                 LayoutAtom remaining = original;
                 while (true)
                 {
-                    int position = ResolveAtomPosition(cursor, remaining.LockedX);
+                    int position = ResolveAtomPosition(cursor, remaining);
                     bool fits = noWrap || layoutWidth <= 0 || position + remaining.Width <= layoutWidth;
                     if (fits)
                     {
                         current.Add(new PositionedInlineSegmentNode(position, remaining.Width, remaining.Children, remaining.Action));
-                        cursor = Math.Max(cursor, checked(position + remaining.Width));
+                        cursor = checked(position + remaining.Width);
+                        contentWidth = Math.Max(contentWidth, cursor);
                         break;
                     }
 
@@ -1493,12 +1504,13 @@ internal sealed class EmueraConsole
 
                     if (remaining.CanDivide)
                     {
-                        int available = Math.Max(0, layoutWidth - cursor);
+                        int available = Math.Max(0, layoutWidth - position);
                         int fittingCharacters = FindFittingCharacters(remaining, available);
                         if (fittingCharacters > 0 && TrySplitAtom(remaining, fittingCharacters, out LayoutAtom? prefix, out LayoutAtom? suffix))
                         {
-                            current.Add(new PositionedInlineSegmentNode(cursor, prefix.Width, prefix.Children, prefix.Action));
-                            cursor = checked(cursor + prefix.Width);
+                            current.Add(new PositionedInlineSegmentNode(position, prefix.Width, prefix.Children, prefix.Action));
+                            cursor = checked(position + prefix.Width);
+                            contentWidth = Math.Max(contentWidth, cursor);
                             FlushDraft();
                             remaining = suffix;
                             continue;
@@ -1516,6 +1528,7 @@ internal sealed class EmueraConsole
                     // upstream overflow rule instead of looping forever.
                     current.Add(new PositionedInlineSegmentNode(0, remaining.Width, remaining.Children, remaining.Action));
                     cursor = remaining.Width;
+                    contentWidth = Math.Max(contentWidth, cursor);
                     break;
                 }
             }
@@ -1557,16 +1570,24 @@ internal sealed class EmueraConsole
         return result;
     }
 
-    private static int ResolveAtomPosition(int cursor, int? lockedX)
+    private int ResolveAtomPosition(int cursor, LayoutAtom atom)
     {
-        // An explicit Emuera `button pos` is an absolute overlay coordinate.
-        // It may intentionally move backwards to place several portrait
-        // layers on the same origin; only unpositioned atoms follow the flow
-        // cursor.
+        // HtmlManager keeps the exact source `button pos` value in
+        // RelativePointX. It is expressed in hundredths of the configured
+        // font size, while PositionedInlineSegmentNode is a physical-pixel
+        // contract. Convert only semantic ButtonNodes here; an already
+        // positioned segment is already measured and must not be scaled a
+        // second time. Explicit positions may move backwards to compose
+        // several portrait layers at one origin.
+        int? lockedX = atom.LockedX;
+        if (atom.LockedXIsRelative && lockedX is { } relativeX)
+            lockedX = checked((int)((long)relativeX * Config.FontSize / 100));
         return lockedX is { } position ? Math.Max(0, position) : cursor;
     }
 
-    private IReadOnlyList<LayoutAtom> CreateLayoutAtoms(IReadOnlyList<ConsoleNode> nodes)
+    private IReadOnlyList<LayoutAtom> CreateLayoutAtoms(
+        IReadOnlyList<ConsoleNode> nodes,
+        ISet<ButtonNode>? physicalPositionButtons = null)
     {
         var atoms = new List<LayoutAtom>(nodes.Count);
         foreach (ConsoleNode node in nodes)
@@ -1574,7 +1595,7 @@ internal sealed class EmueraConsole
             switch (node)
             {
                 case TextNode text:
-                    atoms.Add(new LayoutAtom([text], MeasureWithStyle(text.Text, text.Style), true, text.Text, text.Style, null, null));
+                    atoms.Add(new LayoutAtom([text], MeasureWithStyle(text.Text, text.Style), true, text.Text, text.Style, null, null, false));
                     break;
                 case ButtonNode button:
                     atoms.Add(new LayoutAtom(
@@ -1584,13 +1605,14 @@ internal sealed class EmueraConsole
                         button.Children.OfType<TextNode>().Any() ? string.Concat(button.Children.OfType<TextNode>().Select(child => child.Text)) : null,
                         button.Children.OfType<TextNode>().Select(child => child.Style).Distinct().Count() == 1 ? button.Children.OfType<TextNode>().First().Style : null,
                         new ConsoleInlineAction(button.Value, button.Tooltip is null ? null : DisplayText(button.Tooltip), button.Enabled, button.Generation),
-                        button.PositionX));
+                        button.PositionX,
+                        physicalPositionButtons is null || !physicalPositionButtons.Contains(button)));
                     break;
                 case PositionedInlineSegmentNode segment:
-                    atoms.Add(new LayoutAtom(segment.Children, segment.MeasuredWidth, false, null, null, segment.Action, segment.PositionX));
+                    atoms.Add(new LayoutAtom(segment.Children, segment.MeasuredWidth, false, null, null, segment.Action, segment.PositionX, false));
                     break;
                 default:
-                    atoms.Add(new LayoutAtom([node], MeasureInlineNode(node), false, null, null, null, null));
+                    atoms.Add(new LayoutAtom([node], MeasureInlineNode(node), false, null, null, null, null, false));
                     break;
             }
         }
@@ -1691,18 +1713,23 @@ internal sealed class EmueraConsole
             throw new InvalidOperationException("The last logical line has no physical lines.");
 
         var originalNodes = new List<ConsoleNode>();
+        var physicalPositionButtons = new HashSet<ButtonNode>();
         foreach (ConsoleLine line in existingGroup)
         {
             foreach (PositionedInlineSegmentNode segment in line.Nodes.OfType<PositionedInlineSegmentNode>())
             {
                 if (segment.Action is { } action)
-                    originalNodes.Add(new ButtonNode(
+                {
+                    ButtonNode button = new(
                         segment.Children,
                         action.Value,
                         action.Tooltip,
                         action.Enabled,
                         action.Generation,
-                        segment.PositionX));
+                        segment.PositionX);
+                    originalNodes.Add(button);
+                    physicalPositionButtons.Add(button);
+                }
                 else
                     originalNodes.AddRange(segment.Children);
             }
@@ -1720,7 +1747,8 @@ internal sealed class EmueraConsole
             existingGroup[0].Temporary,
             existingGroup[0].NoWrap,
             pending.Truncate,
-            pending.LineEnd);
+            pending.LineEnd,
+            physicalPositionButtons);
 
         var oldIds = existingGroup.Select(line => line.LineId).ToHashSet(StringComparer.Ordinal);
         var newIds = relaidOut.Select(line => line.LineId).ToHashSet(StringComparer.Ordinal);

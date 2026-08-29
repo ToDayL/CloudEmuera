@@ -27,6 +27,21 @@ inside modified upstream files and does not replace Git history or review.
 Future entries must list modified files or bounded areas, behavior changes,
 requirements/ADR references, and verification commands.
 
+## 2026-08-28 — Normalize upstream Windows separators in controlled SessionRoot paths (issue #15)
+
+- `UpstreamHeadless/HeadlessFileSystem.cs` now translates the pinned upstream
+  runtime's Windows backslash separator to the host separator before containment and
+  case-insensitive component lookup. This is required because
+  `Utils.GetValidPath` rewrites logical `/` paths before the aliased headless
+  `File`/`Directory` APIs receive them.
+- The normalization remains limited to the already validated private
+  SessionRoot; paths outside that root retain normal host filesystem behavior.
+- Scope: `ENUMFILES` → `LOADTEXT` → `XML_GET` in EraFL 0.48, where the old
+  Linux lookup returned an empty string and raised `Root element is missing`.
+  References: COMP-002/006, GAME-008, SAVE-011, ADR-0011.
+- Verification: `Issue15EnumeratedWindowsPathLoadsXmlOnLinux` and its targeted
+  RuntimeCompatibility run in the development Docker environment.
+
 ## 2026-08-28 — Expand literal PRINT tabs at the structured display boundary (issue #18)
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` and
@@ -43,6 +58,25 @@ requirements/ADR references, and verification commands.
 - Verification: `Issue18LiteralPrintTabsBecomeDisplaySpacesBeforeStructuredValidation`,
   `Issue18LiteralPrintTabsDoNotAbortPinnedInterpreter`, and the targeted
   RuntimeCompatibility tests in the development Docker environment.
+
+## 2026-08-28 — Preserve configured long button values for ONEINPUT prompts
+
+- `RuntimeAdapter/Input/ConsolePrompt.cs` carries the headless equivalent of
+  the pinned upstream `AllowLongInputByMouse` setting, and
+  `UpstreamHeadless/HeadlessEmueraConsole.cs` binds it from the loaded game
+  configuration when opening a prompt.
+- `RuntimeAdapter/Input/InputCoordinator.cs` now applies the one-character
+  `ONEINPUT` normalization to keyboard input while preserving a complete
+  semantic button value when the game has enabled the upstream exception.
+  This keeps EraFL's `4000`-series `ONEINPUTS` menu IDs intact without
+  changing the browser or IPC/Realtime protocols.
+- Scope: EraFL `QUEST/QUEST_MENU.ERB`, where `ONEINPUTS` dispatches numeric
+  HTML button IDs through `%RESULTS%`; references PLAY-002/007/008/011 and
+  COMP-007.
+- Verification: `OneInputButtonValueHonorsConfiguredLongInputException`,
+  `OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput`, and the
+  targeted RuntimeAdapter/RuntimeCompatibility tests in the development
+  Docker environment.
 
 ## 2026-08-28 — Preserve HTML overlay layout and nested button hit targets
 
@@ -751,3 +785,40 @@ requirements/ADR references, and verification commands.
   `v18-core`/`em-ee-core` fixture scenarios, five-project Playwright tooltip
   matrix, IPC v7 contracts, Realtime v5 contracts and the static capability
   verifier.
+
+## 2026-08-29 — Normalize HTML `button pos` before physical layout
+
+- `UpstreamHtmlFragmentMaterializer` preserves the pinned HtmlManager's raw
+  `RelativePointX` value. `UpstreamHeadless/HeadlessEmueraConsole.cs` now
+  converts that value from hundredths of the configured font size to physical
+  pixels at the layout boundary, matching `ConsoleButtonString.LockPointX`.
+- Already materialized `PositionedInlineSegmentNode` coordinates are treated
+  as physical and are not scaled again. Incremental logical-line reflow marks
+  reconstructed physical buttons separately, while pending HTML output keeps
+  the raw coordinate available to `HTML_POPPRINTINGSTR`.
+- Scope: PLAY-002/COMP-007 visual compatibility for WindowDrawer/eraFL
+  positioned tables and layered HTML output. No protocol or upstream version
+  change.
+- Verification:
+  `HeadlessRuntimeFixtureTests.HtmlPrintConvertsRelativeButtonPositionsToPhysicalPixels`,
+  the complete RuntimeCompatibility suite (146 passed), and the existing
+  layered portrait/reflow coverage.
+
+## 2026-08-29 — Keep HTML flow cursor local to explicit positions
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now tracks the inline flow
+  cursor separately from the physical line's maximum painted extent. An
+  explicit HTML `pos` therefore establishes the starting point for following
+  unpositioned content even when it moves backwards over an earlier window.
+  This preserves the concatenated WindowDrawer `nobr` layout used by eraFL:
+  module borders retain their absolute coordinates while path buttons follow
+  their own window instead of inheriting the module's far-right edge.
+- Alignment still uses the maximum painted extent, so layered portraits and
+  other overlapping absolute segments retain their existing composition.
+  No protocol or upstream version change is required.
+- Scope: PLAY-002/COMP-007 visual compatibility for positioned tables and
+  mixed absolute/flow HTML output.
+- Verification:
+  `HeadlessRuntimeFixtureTests.HtmlPrintResetsFlowCursorAfterExplicitPositionMovesBack`,
+  the complete RuntimeCompatibility suite, and the existing layered
+  portrait/reflow coverage.
