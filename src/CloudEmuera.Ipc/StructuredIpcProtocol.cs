@@ -471,7 +471,8 @@ public static class StructuredIpcValidator
                 IsText(node.Button.Tooltip) && node.Button.Generation >= 0 &&
                 (!node.Button.HasPositionX || node.Button.PositionX is >= -1_000_000 and <= 1_000_000),
             ConsoleNode.KindOneofCase.PositionedInlineSegment =>
-                node.PositionedInlineSegment.PositionX >= 0 && node.PositionedInlineSegment.MeasuredWidth >= 0 &&
+                node.PositionedInlineSegment.PositionX is >= -1_000_000 and <= 1_000_000 &&
+                node.PositionedInlineSegment.MeasuredWidth is >= 0 and <= 1_000_000 &&
                 (long)node.PositionedInlineSegment.PositionX + node.PositionedInlineSegment.MeasuredWidth <= 1_000_000 &&
                 node.PositionedInlineSegment.Children.Count > 0 &&
                 node.PositionedInlineSegment.Children.Count <= StructuredIpcLimits.MaxSegmentsPerPhysicalLine &&

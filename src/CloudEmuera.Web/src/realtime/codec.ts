@@ -216,7 +216,7 @@ function decodeNode(value: JsonValue): RealtimeNode {
     case "lineBreak": return { type: "lineBreak" };
     case "button": return { type: "button", children: array(node.children, "children").map(decodeNode), value: string(node.value, "value"), tooltip: nullableString(node.tooltip, "tooltip"), enabled: bool(node.enabled, "enabled"), generation: nonNegativeInteger(node.generation, "generation"), positionX: optionalBoundedInteger(node.positionX, "positionX", -1_000_000, 1_000_000) };
     case "positionedInlineSegment": {
-      const positionX = boundedInteger(node.positionX, "positionX", 0, 1_000_000);
+      const positionX = boundedInteger(node.positionX, "positionX", -1_000_000, 1_000_000);
       const measuredWidth = boundedInteger(node.measuredWidth, "measuredWidth", 0, 1_000_000);
       if (positionX + measuredWidth > 1_000_000) throw new RealtimeDecodeError("invalid_payload", "positionedInlineSegment 几何超限。");
       const action = node.action === null || node.action === undefined ? node.action : decodeInlineAction(object(node.action, "action"));

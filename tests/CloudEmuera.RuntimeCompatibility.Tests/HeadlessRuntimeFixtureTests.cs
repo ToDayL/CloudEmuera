@@ -1043,6 +1043,43 @@ public sealed class HeadlessRuntimeFixtureTests
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     [Trait("Category", "FontLayout")]
+    public async Task HtmlPrintPreservesNegativeButtonPositionForViewportClipping()
+    {
+        // PLAY-002/COMP-007: Emuera permits a negative HTML button pos. Games
+        // use it to move the transparent shoulders of a wide composite beyond
+        // the console viewport; the viewport, not alpha inspection, clips it.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "HTML_PRINT \"<p align='left'><nobr><button value='cutin' pos='-100'>X</button><nonbutton pos='100'>Y</nonbutton></nobr></p>\"\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:400\n字体大小:12\n一行の高さ:14\n");
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        PositionedInlineSegmentNode[] segments = Assert.Single(fixture.Console.Snapshot.Scrollback)
+            .Nodes
+            .Cast<PositionedInlineSegmentNode>()
+            .ToArray();
+        Assert.Equal(2, segments.Length);
+        Assert.Equal(-18, segments[0].PositionX);
+        Assert.Equal("cutin", segments[0].Action?.Value);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "FontLayout")]
     public async Task HtmlPrintResetsFlowCursorAfterExplicitPositionMovesBack()
     {
         // PLAY-002/COMP-007: WindowDrawer concatenates independently

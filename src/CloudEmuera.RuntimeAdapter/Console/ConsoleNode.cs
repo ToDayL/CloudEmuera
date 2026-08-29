@@ -155,7 +155,7 @@ public sealed class PositionedInlineSegmentNode : ConsoleNode
         IEnumerable<ConsoleNode> children,
         ConsoleInlineAction? action = null)
     {
-        if (positionX < 0 || positionX > 1_000_000 || measuredWidth < 0 || measuredWidth > 1_000_000 ||
+        if (positionX < -1_000_000 || positionX > 1_000_000 || measuredWidth < 0 || measuredWidth > 1_000_000 ||
             (long)positionX + measuredWidth > 1_000_000)
             throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A positioned inline segment is outside its limit.");
         ArgumentNullException.ThrowIfNull(children);
@@ -401,7 +401,9 @@ internal static class ConsoleNodeValidation
 
                 break;
             case PositionedInlineSegmentNode segment:
-                if (segment.PositionX < 0 || segment.MeasuredWidth < 0 || (long)segment.PositionX + segment.MeasuredWidth > 1_000_000)
+                if (segment.PositionX < -1_000_000 || segment.PositionX > 1_000_000 ||
+                    segment.MeasuredWidth < 0 || segment.MeasuredWidth > 1_000_000 ||
+                    (long)segment.PositionX + segment.MeasuredWidth > 1_000_000)
                     throw new ConsoleContractException(ConsoleContractViolationReason.InvalidGeometry, "A positioned inline segment is outside its limit.");
                 if (segment.Children.Count == 0 || segment.Children.Count > limits.MaxBatchNodeCount)
                     throw new ConsoleContractException(ConsoleContractViolationReason.EmptyBatch, "A positioned inline segment needs children.");

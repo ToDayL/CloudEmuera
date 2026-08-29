@@ -61,6 +61,22 @@ describe("realtime codec", () => {
     }
   });
 
+  it("preserves a bounded negative positioned segment for viewport clipping", () => {
+    const style = { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null };
+    const state = {
+      ...emptyState,
+      scrollback: [{ lineId: "cutin", nodes: [{
+        type: "positionedInlineSegment", positionX: -60, measuredWidth: 300, action: null,
+        children: [{ type: "text", text: "cutin", style }],
+      }], alignment: "left", temporary: false }],
+    };
+
+    const decoded = decodeRealtimeMessage(envelope("session.snapshot", { workerEpoch: 2, snapshotSequence: 0, committedFrameId: 0, consoleState: state }, { sessionId: "s1", workerEpoch: 2, sequence: 0 }));
+    const node = (decoded as Extract<typeof decoded, { type: "session.snapshot" }>).payload.consoleState.scrollback[0].nodes[0];
+    expect(node.type).toBe("positionedInlineSegment");
+    if (node.type === "positionedInlineSegment") expect(node.positionX).toBe(-60);
+  });
+
   it("accepts structured upstream HTML islands without falling back to legacy HTML", () => {
     const style = { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null };
     const state = {
