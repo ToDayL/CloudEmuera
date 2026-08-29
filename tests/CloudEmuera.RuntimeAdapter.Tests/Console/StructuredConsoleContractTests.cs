@@ -290,6 +290,25 @@ public sealed class StructuredConsoleContractTests
     }
 
     [Fact]
+    public void PositionedSegmentAcceptsBoundedNegativeCoordinates()
+    {
+        var segment = new PositionedInlineSegmentNode(
+            positionX: -60,
+            measuredWidth: 300,
+            children: [new TextNode("cutin")]);
+        var line = new ConsoleLine("negative-cutin", [segment], layoutWidth: 800);
+        var store = new ConsoleStateStore();
+
+        store.ApplyTransaction(new ConsoleTransaction([ConsoleOperation.AppendLine(line)]));
+
+        Assert.Equal(-60, segment.PositionX);
+        Assert.Throws<ConsoleContractException>(() => new PositionedInlineSegmentNode(
+            positionX: -1_000_001,
+            measuredWidth: 1,
+            children: [new TextNode("outside")]));
+    }
+
+    [Fact]
     public void StructuredByteTrimRemovesCompleteWrappedLogicalLineGroups()
     {
         var store = new ConsoleStateStore(new ConsoleHistoryOptions

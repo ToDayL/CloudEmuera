@@ -309,6 +309,25 @@ describe("ScrollbackRenderer", () => {
     expect(document.querySelector<HTMLElement>(".positioned-inline-segment")).toHaveStyle({ overflow: "visible" });
   });
 
+  it("renders Emuera negative positioned segments left of the viewport origin", () => {
+    const cutinLine: RealtimeLine = {
+      lineId: "negative-cutin",
+      nodes: [{
+        type: "positionedInlineSegment",
+        positionX: -60,
+        measuredWidth: 300,
+        action: null,
+        children: [{ type: "text", text: "cutin", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }],
+      }],
+      alignment: "left",
+      temporary: false,
+    };
+
+    render(<ScrollbackRenderer lines={[cutinLine]} assets={assets} onInput={() => undefined} />);
+
+    expect(document.querySelector<HTMLElement>(".positioned-inline-segment")).toHaveStyle({ left: "-60px", width: "300px" });
+  });
+
   it("reserves leading space for a title image with a negative ypos", () => {
     const titleLine: RealtimeLine = {
       lineId: "title-line",

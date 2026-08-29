@@ -1582,7 +1582,7 @@ internal sealed class EmueraConsole
         int? lockedX = atom.LockedX;
         if (atom.LockedXIsRelative && lockedX is { } relativeX)
             lockedX = checked((int)((long)relativeX * Config.FontSize / 100));
-        return lockedX is { } position ? Math.Max(0, position) : cursor;
+        return lockedX ?? cursor;
     }
 
     private IReadOnlyList<LayoutAtom> CreateLayoutAtoms(

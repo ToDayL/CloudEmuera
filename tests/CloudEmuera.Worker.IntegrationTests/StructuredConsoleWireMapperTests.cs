@@ -36,6 +36,24 @@ public sealed class StructuredConsoleWireMapperTests
     }
 
     [Fact]
+    public void NegativePositionedSegmentRoundTripsForEmueraViewportClipping()
+    {
+        var original = new PositionedInlineSegmentNode(
+            -60,
+            300,
+            [new TextNode("cutin")],
+            new ConsoleInlineAction("2000"));
+
+        ConsoleNode roundTripped = StructuredConsoleWireMapper.FromProto(
+            StructuredConsoleWireMapper.ToProto(original));
+
+        PositionedInlineSegmentNode segment = Assert.IsType<PositionedInlineSegmentNode>(roundTripped);
+        Assert.Equal(-60, segment.PositionX);
+        Assert.Equal(300, segment.MeasuredWidth);
+        Assert.Equal("2000", segment.Action?.Value);
+    }
+
+    [Fact]
     public void SnapshotMapperPreservesScrollbackSceneMediaAndPrompt()
     {
         var store = new ConsoleStateStore();
