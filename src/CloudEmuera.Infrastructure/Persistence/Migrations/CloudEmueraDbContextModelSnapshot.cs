@@ -1719,7 +1719,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
-                        .HasDefaultValue("ORIGIN")
+                        .HasDefaultValue("ADAPTIVE")
                         .HasColumnName("width_mode");
 
                     b.HasKey("Id")
@@ -1787,7 +1787,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_sessions_waiting_prompt", "waiting_for_input IN (0, 1) AND ((waiting_for_input = 1 AND current_prompt_id IS NOT NULL AND length(current_prompt_id) BETWEEN 1 AND 256) OR (waiting_for_input = 0 AND current_prompt_id IS NULL))");
 
-                            t.HasCheckConstraint("ck_sessions_width_configuration", "width_mode IN ('ORIGIN', 'MAX', 'CUSTOM') AND ((width_mode = 'CUSTOM' AND custom_width BETWEEN 240 AND 16384) OR (width_mode <> 'CUSTOM' AND custom_width IS NULL))");
+                            t.HasCheckConstraint("ck_sessions_width_configuration", "width_mode IN ('ORIGINAL', 'MAX', 'ADAPTIVE', 'CUSTOM') AND ((width_mode = 'CUSTOM' AND custom_width BETWEEN 240 AND 16384) OR (width_mode <> 'CUSTOM' AND custom_width IS NULL))");
                         });
                 });
 

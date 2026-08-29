@@ -85,7 +85,7 @@ public sealed record SessionRuntimeLease(
     int LineHeight = 19,
     string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
     string FontCatalogDigest = "",
-    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
     bool ConvertBackslashToYen = true);
 
@@ -174,7 +174,7 @@ public sealed record WorkerLaunchSpec(
     int LineHeight = 19,
     string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
     string FontCatalogDigest = "",
-    SessionWidthMode WidthMode = SessionWidthMode.Origin,
+    SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
     bool ConvertBackslashToYen = true);
 

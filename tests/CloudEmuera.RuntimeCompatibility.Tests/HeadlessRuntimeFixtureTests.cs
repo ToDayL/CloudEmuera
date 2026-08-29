@@ -1594,15 +1594,18 @@ public sealed class HeadlessRuntimeFixtureTests
     }
 
     [Theory]
+    [InlineData(RuntimeWidthMode.Original, null, 390, 760)]
     [InlineData(RuntimeWidthMode.Max, null, 2500, 2000)]
     [InlineData(RuntimeWidthMode.Max, null, 900, 900)]
+    [InlineData(RuntimeWidthMode.Adaptive, null, 390, 390)]
     [InlineData(RuntimeWidthMode.Custom, 1200, 1600, 1200)]
-    [InlineData(RuntimeWidthMode.Custom, 1200, 900, 900)]
+    [InlineData(RuntimeWidthMode.Custom, 1200, 900, 1200)]
     [Trait("Category", "RuntimeBridge")]
     public async Task ConfiguredWidthModeSelectsTheAuthoritativeLayoutWidth(RuntimeWidthMode widthMode, int? customWidth, int browserWidth, int expectedWidth)
     {
-        // SESS-014/PLAY-015: Max overrides WindowX up to 2000 CSS px;
-        // Custom overrides it up to the persisted value. Both remain capped by the browser.
+        // SESS-014/PLAY-015: Original uses WindowX exactly; Max keeps its
+        // 2000px cap; Adaptive is the former Origin behavior; Custom uses the
+        // persisted value without a browser-width cap.
         using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
         await using EmueraRuntimeHost host = fixture.CreateHost(browserWidth: browserWidth, widthMode: widthMode, customWidth: customWidth);
 
@@ -4024,7 +4027,7 @@ public sealed class HeadlessRuntimeFixtureTests
             TimeSpan? runDeadline = null,
             Action? upstreamGateAcquired = null,
             int browserWidth = 0,
-            RuntimeWidthMode widthMode = RuntimeWidthMode.Origin,
+            RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive,
             int? customWidth = null,
             string fontFaceId = "sarasa-fixed-sc-1.0.40-regular",
             string fontCatalogDigest = "",
@@ -4055,7 +4058,7 @@ public sealed class HeadlessRuntimeFixtureTests
             TimeSpan? runDeadline = null,
             Action? upstreamGateAcquired = null,
             int browserWidth = 0,
-            RuntimeWidthMode widthMode = RuntimeWidthMode.Origin,
+            RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive,
             int? customWidth = null,
             string fontFaceId = "sarasa-fixed-sc-1.0.40-regular",
             string fontCatalogDigest = "",

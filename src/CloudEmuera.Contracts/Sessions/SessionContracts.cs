@@ -8,7 +8,7 @@ public sealed record CreateSessionRequest(
     string FontFaceId = "sarasa-fixed-sc-1.0.40-regular",
     int FontSize = 18,
     int LineHeight = 19,
-    string WidthMode = "ORIGIN",
+    string WidthMode = "ADAPTIVE",
     int? CustomWidth = null,
     bool ConvertBackslashToYen = true);
 
@@ -17,7 +17,7 @@ public sealed record UpdateSessionConfigurationRequest(
     string FontFaceId = "sarasa-fixed-sc-1.0.40-regular",
     int FontSize = 18,
     int LineHeight = 19,
-    string WidthMode = "ORIGIN",
+    string WidthMode = "ADAPTIVE",
     int? CustomWidth = null,
     bool ConvertBackslashToYen = true);
 

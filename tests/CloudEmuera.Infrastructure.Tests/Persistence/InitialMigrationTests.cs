@@ -62,7 +62,7 @@ public sealed class InitialMigrationTests
         Assert.Contains("convert_backslash_to_yen", sessionColumns);
         Assert.Contains("session_identity_mode", sessionColumns);
         Assert.Contains("session_snapshot_id", sessionColumns);
-        Assert.Equal(24, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(25, await ScalarIntAsync(scope.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class InitialMigrationTests
         Assert.Equal(backupsBefore, backupsAfter);
         await using DbContextScope verify = database.OpenContext();
         Assert.Equal("Fixture qtp_fixture", await verify.Context.QuotaProfiles.Select(profile => profile.Name).SingleAsync());
-        Assert.Equal(24, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(25, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public sealed class InitialMigrationTests
         Assert.Null(user.PasswordChangedAt);
         Assert.False(user.MustChangePassword);
         Assert.Equal(InstanceStateRow.Required, (await verify.Context.InstanceStates.SingleAsync()).BootstrapStatus);
-        Assert.Equal(24, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
+        Assert.Equal(25, await ScalarIntAsync(verify.Connection, "SELECT COUNT(*) FROM schema_migrations;"));
     }
 
     [Fact]
@@ -191,12 +191,21 @@ public sealed class InitialMigrationTests
             Assert.Equal("lxgw-bright-code-2.922-extralight", faces["sess_lxgw_light"]);
             Assert.Equal("lxgw-bright-code-2.922-light", faces["sess_lxgw_regular"]);
             Assert.Equal("lxgw-bright-code-2.922-regular", faces["sess_lxgw_medium"]);
+            Assert.All(await verify.Context.Sessions.Select(session => session.WidthMode).ToArrayAsync(), mode => Assert.Equal(SessionWidthMode.Adaptive, mode));
             Assert.All(await verify.Context.Sessions.Select(session => session.ConvertBackslashToYen).ToArrayAsync(), Assert.True);
             Assert.Contains("\"fontFaceId\":\"lxgw-bright-code-2.922-regular\"", (await verify.Context.Users.SingleAsync()).PreferencesJson, StringComparison.Ordinal);
             Assert.Contains("\"convertBackslashToYen\":true", (await verify.Context.Users.SingleAsync()).PreferencesJson, StringComparison.Ordinal);
             Assert.Contains("\"unrelated\":true", (await verify.Context.Users.SingleAsync()).PreferencesJson, StringComparison.Ordinal);
             Assert.Contains("\"fontFaceId\":\"lxgw-bright-code-2.922-light\"", (await verify.Context.IdempotencyRecords.SingleAsync()).ResponseJson, StringComparison.Ordinal);
             Assert.Contains("\"other\":\"kept\"", (await verify.Context.IdempotencyRecords.SingleAsync()).ResponseJson, StringComparison.Ordinal);
+
+            string sessionSchema = await ReadStringAsync(verify.Connection, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions';");
+            Assert.Contains("'ORIGINAL'", sessionSchema, StringComparison.Ordinal);
+            Assert.Contains("'ADAPTIVE'", sessionSchema, StringComparison.Ordinal);
+            Assert.DoesNotContain("'ORIGIN'", sessionSchema, StringComparison.Ordinal);
+            await ExecuteAsync(verify.Connection, "UPDATE sessions SET width_mode = 'ORIGINAL' WHERE id = 'sess_lxgw_light';");
+            await ExecuteAsync(verify.Connection, "UPDATE sessions SET width_mode = 'ADAPTIVE' WHERE id = 'sess_lxgw_light';");
+            await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(verify.Connection, "UPDATE sessions SET width_mode = 'ORIGIN' WHERE id = 'sess_lxgw_light';"));
         }
     }
 
@@ -310,7 +319,7 @@ public sealed class InitialMigrationTests
         MigrationResult result = await database.CheckAsync();
 
         Assert.Equal(MigrationExitCodes.DatabaseNewerThanBinary, result.ExitCode);
-        Assert.Equal(25, await CountHistoryRowsAsync(database));
+        Assert.Equal(26, await CountHistoryRowsAsync(database));
     }
 
     private static int CountBackups(TemporarySqliteDatabase database) =>

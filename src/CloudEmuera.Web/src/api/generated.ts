@@ -7,7 +7,7 @@
 
 export type SessionStateDto = "CREATING" | "STARTING" | "RUNNING" | "STOPPING" | "CLOSED" | "CRASHED";
 
-export type RuntimeWidthModeDto = "ORIGIN" | "MAX" | "CUSTOM";
+export type RuntimeWidthModeDto = "ORIGINAL" | "MAX" | "ADAPTIVE" | "CUSTOM";
 
 export type SaveLayoutDto = "ROOT" | "SAV_DIRECTORY";
 

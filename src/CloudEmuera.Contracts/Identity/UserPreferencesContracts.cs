@@ -12,6 +12,6 @@ public sealed record UpdateSessionStartupDefaultsRequest(
     string FontFaceId,
     int FontSize,
     int LineHeight,
-    string WidthMode = "ORIGIN",
+    string WidthMode = "ADAPTIVE",
     int? CustomWidth = null,
     bool ConvertBackslashToYen = true);

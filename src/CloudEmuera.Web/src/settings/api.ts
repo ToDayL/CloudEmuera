@@ -15,7 +15,7 @@ export const DEFAULT_SESSION_STARTUP_DEFAULTS: SessionStartupDefaults = {
   fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
   fontSize: 18,
   lineHeight: 19,
-  widthMode: "ORIGIN",
+  widthMode: "ADAPTIVE",
   customWidth: null,
   convertBackslashToYen: true,
 };

@@ -13,6 +13,7 @@ public partial class AddSessionBackslashToYenOption : Migration
     protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasAnnotation(SessionConfiguration.ExcludePathRevisionIdentitySchemaAnnotation, true);
+        modelBuilder.HasAnnotation(SessionConfiguration.LegacyRuntimeWidthSchemaAnnotation, true);
         modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(CloudEmueraDbContext).Assembly);
     }

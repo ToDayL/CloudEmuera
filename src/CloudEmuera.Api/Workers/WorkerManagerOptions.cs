@@ -128,7 +128,7 @@ public sealed record WorkerLaunchRequest
         long initialOutputSequence = 0,
         int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
         string fontFaceId = RuntimeFontDefaults.DefaultFaceId, string fontCatalogDigest = "",
-        SessionWidthMode widthMode = SessionWidthMode.Origin, int? customWidth = null,
+        SessionWidthMode widthMode = SessionWidthMode.Adaptive, int? customWidth = null,
         bool convertBackslashToYen = true)
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));

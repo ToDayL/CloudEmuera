@@ -93,7 +93,7 @@ public sealed class SqliteSessionApplicationServiceTests
 
         SessionApplicationException active = await Assert.ThrowsAsync<SessionApplicationException>(() =>
             service.UpdateConfigurationAsync(actor,
-                new SessionConfigurationCommand(created.Id, created.Name, created.FontSize, created.LineHeight, "configure-active", WidthMode: SessionWidthMode.Origin)));
+                new SessionConfigurationCommand(created.Id, created.Name, created.FontSize, created.LineHeight, "configure-active", WidthMode: SessionWidthMode.Adaptive)));
         Assert.Equal(SessionErrorCodes.SessionNotReady, active.Code);
     }
 

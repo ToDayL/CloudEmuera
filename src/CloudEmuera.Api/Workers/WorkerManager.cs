@@ -8,6 +8,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Api.Security;
+using CloudEmuera.Domain.Sessions;
 using CloudEmuera.Ipc;
 using CloudEmuera.Ipc.V7;
 using CloudEmuera.Infrastructure.Persistence;
@@ -379,7 +380,14 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             LineHeight = request.LineHeight,
             FontFaceId = request.FontFaceId,
             FontCatalogDigest = request.FontCatalogDigest,
-            WidthMode = request.WidthMode.ToString().ToUpperInvariant(),
+            WidthMode = request.WidthMode switch
+            {
+                SessionWidthMode.Original => "ORIGINAL",
+                SessionWidthMode.Max => "MAX",
+                SessionWidthMode.Adaptive => "ADAPTIVE",
+                SessionWidthMode.Custom => "CUSTOM",
+                _ => throw new ArgumentOutOfRangeException(nameof(request)),
+            },
             CustomWidth = request.CustomWidth,
             ConvertBackslashToYen = request.ConvertBackslashToYen,
         };

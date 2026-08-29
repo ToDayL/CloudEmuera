@@ -76,7 +76,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         Func<string, RuntimeSpriteDefinition> imageResolver,
         Action runtimeGateAcquired = null,
         int browserWidth = 0, int fontSize = 16, int lineHeight = 16,
-        RuntimeWidthMode widthMode = RuntimeWidthMode.Origin, int? customWidth = null,
+        RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
         string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "",
         bool convertBackslashToYen = true)
@@ -147,9 +147,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         AConfigItem configuredFontSize = GetHeadlessConfigItem(ConfigCode.FontSize);
         AConfigItem configuredLineHeight = GetHeadlessConfigItem(ConfigCode.LineHeight);
         int configuredWidth = windowWidth.GetValue<int>();
-        int effectiveWidth = browserWidth > 0
-            ? RuntimeWidthPolicy.Resolve(configuredWidth, browserWidth, widthMode, customWidth)
-            : configuredWidth;
+        int effectiveWidth = RuntimeWidthPolicy.Resolve(configuredWidth, browserWidth, widthMode, customWidth);
         SetHeadlessConfigValue(windowWidth, effectiveWidth);
         SetHeadlessConfigValue(configuredFontSize, fontSize);
         SetHeadlessConfigValue(configuredLineHeight, lineHeight);

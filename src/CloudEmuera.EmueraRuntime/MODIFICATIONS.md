@@ -1,8 +1,9 @@
 # CloudEmuera modifications to Emuera.EM+EE
 
-- Added a Session-bound width policy at the headless configuration seam: Origin caps game `WindowX` by the startup
-  browser CSS width, Max overrides it up to 2000px, and Custom overrides it up to the persisted user width. All modes
-  remain capped by the startup browser width and do not reflow during a Worker run (SESS-014/PLAY-015, ADR-0030).
+- Added a Session-bound width policy at the headless configuration seam: Original uses the game's `WindowX` exactly,
+  Max uses the lesser of startup browser CSS width and 2000px, Adaptive uses the lesser of startup browser CSS width
+  and `WindowX`, and Custom uses the persisted user width exactly. Only Max and Adaptive are browser-bounded; no mode
+  reflows during a Worker run (SESS-014/PLAY-015, ADR-0030/0037).
 - Added a Session-bound display projection that maps U+005C to U+00A5 before headless font measurement when enabled.
   The default-on mapping affects visible text only; runtime strings, button values, input and paths remain unchanged
   (SESS-015/PLAY-016, ADR-0031).

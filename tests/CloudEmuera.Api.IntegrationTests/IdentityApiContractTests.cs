@@ -105,9 +105,21 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.Equal("sarasa-fixed-sc-1.0.40-regular", initial.FontFaceId);
         Assert.Equal(18, initial.FontSize);
         Assert.Equal(19, initial.LineHeight);
-        Assert.Equal("ORIGIN", initial.WidthMode);
+        Assert.Equal("ADAPTIVE", initial.WidthMode);
         Assert.Null(initial.CustomWidth);
         Assert.True(initial.ConvertBackslashToYen);
+
+        csrf = await GetCsrfAsync(client);
+        SessionStartupDefaultsResponse original = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
+            new UpdateSessionStartupDefaultsRequest("sarasa-fixed-sc-1.0.40-regular", 18, 19, "ORIGINAL"), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Original width preference response was missing.");
+        Assert.Equal("ORIGINAL", original.WidthMode);
+        Assert.Null(original.CustomWidth);
+
+        csrf = await GetCsrfAsync(client);
+        SessionStartupDefaultsResponse legacyOrigin = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
+            new UpdateSessionStartupDefaultsRequest("sarasa-fixed-sc-1.0.40-regular", 18, 19, "ORIGIN"), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Legacy Origin preference response was missing.");
+        Assert.Equal("ADAPTIVE", legacyOrigin.WidthMode);
+        Assert.Null(legacyOrigin.CustomWidth);
 
         csrf = await GetCsrfAsync(client);
         SessionStartupDefaultsResponse saved = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",

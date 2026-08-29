@@ -194,6 +194,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
             new CreateSessionRequest(current.Id, "HTTP Session 2"), csrf, idempotencyKey: "session-create-2");
         Assert.Equal(HttpStatusCode.Created, secondCreateResponse.StatusCode);
         SessionResponse secondCreated = await secondCreateResponse.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Second session create response was missing.");
+        Assert.Equal("ADAPTIVE", secondCreated.WidthMode);
 
         (HttpResponseMessage secondOpenedResponse, SessionResponse secondOpened) = await WaitForLifecycleAsync(client, secondCreated.Id, "open", "session-open-2");
         Assert.Equal(HttpStatusCode.OK, secondOpenedResponse.StatusCode);

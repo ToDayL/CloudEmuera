@@ -18,7 +18,7 @@ const schemaOrder = [
 ];
 const aliases = [
   ["SessionStateDto", ["CREATING", "STARTING", "RUNNING", "STOPPING", "CLOSED", "CRASHED"]],
-  ["RuntimeWidthModeDto", ["ORIGIN", "MAX", "CUSTOM"]],
+  ["RuntimeWidthModeDto", ["ORIGINAL", "MAX", "ADAPTIVE", "CUSTOM"]],
   ["SaveLayoutDto", ["ROOT", "SAV_DIRECTORY"]],
 ];
 const fieldTypeOverrides = {
