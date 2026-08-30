@@ -145,6 +145,10 @@ internal sealed class EmueraConsole
         this.fontCatalogDigest = fontCatalogDigest ?? string.Empty;
         this.webFontAssetDigest = webFontAssetDigest ?? string.Empty;
         this.convertBackslashToYen = convertBackslashToYen;
+        // Emuera starts with the color loaded from emuera.config. Keep the
+        // initial structured window metadata consistent with the upstream
+        // desktop console before the game calls SETBGCOLOR.
+        bgColor = Config.BackColor;
         stringStyle = new StringStyle(Config.ForeColor, FontStyle.Regular, string.Empty);
         // BINPUT/BINPUTS access the upstream print buffer even though the
         // headless structured path does not use it to render output. Keep the

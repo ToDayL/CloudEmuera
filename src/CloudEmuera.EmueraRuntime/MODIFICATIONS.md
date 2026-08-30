@@ -15,6 +15,19 @@ This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
 
+## 2026-08-30 — Preserve the configured console background
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` initializes the structured window
+  background from `Config.BackColor`, matching the pinned desktop console
+  before a game invokes `SETBGCOLOR`.
+- `Web/src/console/ConsolePage.tsx` applies the reported default background to
+  both the server-sized stage and its full-width game surface.
+- Scope: PLAY-002, eraFL dev Session visual compatibility; the realtime/IPC
+  schemas remain unchanged. Verification uses
+  `ConfigBackgroundPublishesAsInitialWindowBackground`, the existing
+  `SetBgColorPublishesWindowBackgroundInsteadOfTextBackground` and the
+  ConsolePage tests in the development Docker environment.
+
 ## 2026-08-30 — Authoritative button generation projection
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` now uses one mirror of the
