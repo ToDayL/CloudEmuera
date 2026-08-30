@@ -7,7 +7,7 @@ public sealed record BuildInfo(
     int HttpProtocolVersion,
     int RealtimeProtocolVersion,
     int IpcProtocolVersion,
-    string RealtimePayloadSchemaVersion = "p1-s09-tooltip");
+    string RealtimePayloadSchemaVersion = "p1-s10-button-generation");
 
 public sealed record VersionResponse(
     string Product,

@@ -2511,9 +2511,11 @@ public sealed class HeadlessRuntimeFixtureTests
         Task<EmueraRuntimeResult> run = host.RunAsync();
         Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
         string stalePromptId = fixture.Console.CurrentPrompt!.PromptId;
+        long timedOutGeneration = fixture.Console.CurrentPrompt.ButtonGeneration;
         Assert.True(SpinWait.SpinUntil(
             () => fixture.Console.CurrentPrompt is { PromptId: not null } current && current.PromptId != stalePromptId,
             TimeSpan.FromSeconds(2)));
+        Assert.NotEqual(timedOutGeneration, fixture.Console.CurrentPrompt!.ButtonGeneration);
 
         Assert.Equal(
             ConsoleInputResultKind.Accepted,
@@ -2521,6 +2523,47 @@ public sealed class HeadlessRuntimeFixtureTests
 
         EmueraRuntimeResult result = await run;
         Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Contains("DONE", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "TimedInput")]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "ButtonGenerationCompatibility")]
+    public async Task RestartingTheSameTimedInputLineKeepsRetainedButtonsActive()
+    {
+        // eraAM SHOP_TIME.ERB loops on the same 30 ms TINPUT while only its
+        // animation row is redrawn. The pinned newGeneration() keeps the
+        // retained menu generation active until the script moves to another
+        // input source line or emits a new button generation.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTBUTTON \"CHOICE\", 1\nPRINTL\n" +
+            "CALL ANIMATED_INPUT\n" +
+            "PRINTL DONE\nQUIT\n\n" +
+            "@ANIMATED_INPUT\n" +
+            "TINPUT 30, 9999, 0\n" +
+            "IF RESULT == 9999\nRESTART\nENDIF\nRETURN\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt firstPrompt = fixture.Console.CurrentPrompt!;
+        ButtonNode retainedButton = fixture.Console.Snapshot.VisibleNodes.OfType<ButtonNode>().Single(button => button.Value == "1");
+        Assert.Equal(retainedButton.Generation, firstPrompt.ButtonGeneration);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => fixture.Console.CurrentPrompt is { } current && current.PromptId != firstPrompt.PromptId,
+            TimeSpan.FromSeconds(2)));
+        ConsolePrompt refreshedPrompt = fixture.Console.CurrentPrompt!;
+        Assert.Equal(firstPrompt.ButtonGeneration, refreshedPrompt.ButtonGeneration);
+        Assert.Equal(retainedButton.Generation, refreshedPrompt.ButtonGeneration);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("era-am-retained-choice", "1", ConsoleInputSource.Button)).Kind);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
         Assert.Contains("DONE", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
     }
 
@@ -2849,7 +2892,7 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Empty(report.Errors);
         Assert.True(report.AssertionCount >= 14);
         Assert.Equal(RuntimeBaseline.UpstreamCommit, report.UpstreamCommit);
-        Assert.Equal("headless-p0.5.1", report.IntegrationVersion);
+        Assert.Equal("headless-p0.5.3", report.IntegrationVersion);
         Assert.Contains(
             report.AssertionEvidence,
             evidence => evidence.Name == "score=3" && evidence.Passed && evidence.VerifiedByVisibleOutput);
@@ -3590,6 +3633,38 @@ public sealed class HeadlessRuntimeFixtureTests
             result.Diagnostics,
             diagnostic => diagnostic.Code == "runtime_script_failed" &&
                 diagnostic.Message.Contains("BINPUT", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "ButtonGenerationCompatibility")]
+    public async Task ConsecutiveMenusPublishTheCurrentButtonGenerationOnEachPrompt()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTBUTTON \"FIRST\", 1\nPRINTL\nINPUT\n" +
+            "PRINTBUTTON \"SECOND\", 2\nPRINTL\nINPUT\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt firstPrompt = fixture.Console.CurrentPrompt!;
+        ButtonNode firstButton = fixture.Console.Snapshot.VisibleNodes.OfType<ButtonNode>().Single(button => button.Value == "1");
+        Assert.Equal(firstButton.Generation, firstPrompt.ButtonGeneration);
+        Assert.Equal(ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("first-menu", "1", ConsoleInputSource.Button)).Kind);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => fixture.Console.CurrentPrompt is { } current && current.PromptId != firstPrompt.PromptId,
+            TimeSpan.FromSeconds(2)));
+        ConsolePrompt secondPrompt = fixture.Console.CurrentPrompt!;
+        ButtonNode secondButton = fixture.Console.Snapshot.VisibleNodes.OfType<ButtonNode>().Single(button => button.Value == "2");
+        Assert.Equal(secondButton.Generation, secondPrompt.ButtonGeneration);
+        Assert.NotEqual(firstPrompt.ButtonGeneration, secondPrompt.ButtonGeneration);
+        Assert.Equal(ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("second-menu", "2", ConsoleInputSource.Button)).Kind);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
     }
 
     [Fact]

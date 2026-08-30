@@ -15,6 +15,7 @@ using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using MinorShift.Emuera.Forms;
 using MinorShift.Emuera.Runtime;
 using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Runtime.Script.Statements;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.Runtime.Utils.EvilMask;
 using MinorShift.Emuera.UI.Game;
@@ -46,10 +47,14 @@ internal sealed class EmueraConsole
     private bool hasFatalError;
     private bool isTimeOut;
     private string windowTitle = string.Empty;
-    private int generation;
-    private int upstreamNewButtonGeneration = 1;
-    private int upstreamLastButtonGeneration = 1;
-    private bool upstreamLastButtonIsInput = true;
+    // One authoritative mirror of the pinned upstream button-generation
+    // state machine. `nextButtonGeneration` stamps newly-created actions;
+    // `activeButtonGeneration` is the generation eligible at the current
+    // prompt and used by BINPUT's legacy display facade.
+    private long nextButtonGeneration = 1;
+    private long activeButtonGeneration = 1;
+    private bool lastButtonInputWasInteger = true;
+    private LogicalLine lastInputLine;
     private long lineId;
     private long logicalLineCount;
     private long deletedLines;
@@ -184,9 +189,9 @@ internal sealed class EmueraConsole
     public ConsoleButtonString[] bitmapCacheArray = new ConsoleButtonString[256];
     public const nint bitmapCacheArrayCap = 256;
     public nint bitmapCacheArrayIndex;
-    public int LastButtonGeneration => upstreamLastButtonGeneration;
-    public int NewButtonGeneration => generation;
-    internal int LegacyNewButtonGeneration => upstreamNewButtonGeneration;
+    public long LastButtonGeneration => activeButtonGeneration;
+    public long NewButtonGeneration => nextButtonGeneration;
+    internal long LegacyNewButtonGeneration => nextButtonGeneration;
     public int GetLineNo => checked((int)logicalLineCount);
     public long LineCount => logicalLineCount;
     public long DeletedLines => deletedLines;
@@ -494,7 +499,7 @@ internal sealed class EmueraConsole
                 Math.Max(fontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight),
                 ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.ForeColor),
                 ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.FocusColor),
-                generation,
+                nextButtonGeneration,
                 ResolveSpriteDefinition,
                 mode,
                 convertBackslashToYen,
@@ -545,6 +550,8 @@ internal sealed class EmueraConsole
             lastLineCanAppend = false;
         }
         AppendHtmlNodes(translated.Nodes, translated.Alignment, translated.NoWrap, toPrintBuffer);
+        if (ContainsSelectableAction(translated.Nodes))
+            UpdateGeneration();
         if (!toPrintBuffer)
             FlushPendingLine();
     }
@@ -609,10 +616,9 @@ internal sealed class EmueraConsole
         ProjectTooltipResources();
         ConsoleInputType type = MapInputType(request.InputType);
         if (ShouldSkipMessageWait(type, request.StopMesskip))
-        {
-            CompleteInputButtonGeneration(request.InputType);
             return;
-        }
+
+        PrepareInputButtonGeneration(request.InputType);
 
         // Desktop PressEnterKey stops message skipping as soon as the next
         // input needs a value (or is a forced wait). Keep that boundary when
@@ -653,11 +659,17 @@ internal sealed class EmueraConsole
             displayTime: request.DisplayTime,
             timeoutMessage: request.TimeUpMes is null ? null : DisplayText(request.TimeUpMes),
             allowedSources: ConsoleInputSource.All,
-            allowLongInputByButton: Config.AllowLongInputByMouse);
+            allowLongInputByButton: Config.AllowLongInputByMouse,
+            buttonGeneration: activeButtonGeneration);
         if (request.DisplayTime && timeout is not null)
             EmitTimeoutCountdown(timeout.Value);
         GameConsoleInput input = adapter.Read(prompt, cancellationToken);
         ApplyInputMessageSkip(input);
+        // BINPUT validates its inventory before opening the prompt. Once that
+        // prompt closes, retire the consumed button generation before the
+        // interpreter can execute another BINPUT inventory scan.
+        if (request.InputType is InputType.IntButton or InputType.StrButton)
+            activeButtonGeneration = nextButtonGeneration;
         isTimeOut = adapter is StructuredGameConsole structured && structured.IsTimeOut;
         if (isTimeOut && request.TimeUpMes is not null)
         {
@@ -684,7 +696,6 @@ internal sealed class EmueraConsole
                 GlobalStatic.Process.InputSystemInteger(request.DefIntValue);
             else
                 GlobalStatic.Process.InputInteger(request.DefIntValue);
-            CompleteInputButtonGeneration(request.InputType);
             return;
         }
 
@@ -718,7 +729,6 @@ internal sealed class EmueraConsole
                 GlobalStatic.Process.InputString(input.Value);
             }
         }
-        CompleteInputButtonGeneration(request.InputType);
     }
 
     public void ReadAnyKey(bool anykey = false, bool stopMesskip = false)
@@ -741,7 +751,8 @@ internal sealed class EmueraConsole
         GameConsoleInput input = adapter.Read(new ConsolePrompt(
             inputType,
             stopMessageSkip: stopMesskip,
-            allowedSources: ConsoleInputSource.All), cancellationToken);
+            allowedSources: ConsoleInputSource.All,
+            buttonGeneration: activeButtonGeneration), cancellationToken);
         ApplyInputMessageSkip(input);
     }
 
@@ -829,19 +840,16 @@ internal sealed class EmueraConsole
     public string GetWindowTitle() => windowTitle;
     public void UpdateGeneration()
     {
-        generation++;
-        upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+        activeButtonGeneration = nextButtonGeneration;
         updatedGeneration = true;
     }
 
-    internal void UpdateLegacyGeneration() =>
-        upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+    internal void UpdateLegacyGeneration() => UpdateGeneration();
 
     public void forceUpdateGeneration()
     {
-        generation++;
-        upstreamNewButtonGeneration = checked(upstreamNewButtonGeneration + 1);
-        upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+        nextButtonGeneration = checked(nextButtonGeneration + 1);
+        activeButtonGeneration = nextButtonGeneration;
         updatedGeneration = true;
     }
     public bool ButtonIsSelected(ConsoleButtonString button) => false;
@@ -1175,6 +1183,8 @@ internal sealed class EmueraConsole
             translated.Nodes,
             new ConsoleRect(0, 0, 1, 1),
             zIndex: 1)));
+        if (ContainsSelectableAction(translated.Nodes))
+            UpdateGeneration();
     }
 
     public void ClearHTMLIsland()
@@ -1330,10 +1340,11 @@ internal sealed class EmueraConsole
             ButtonNode button = new(
                 [new TextNode(DisplayText(label), ToConsoleTextStyle())],
                 input,
-                generation: generation);
+                generation: nextButtonGeneration);
             if (isInteger)
                 integerButtonNodes.Add(button);
             AppendNode(button);
+            UpdateGeneration();
         }
     }
 
@@ -2041,9 +2052,10 @@ internal sealed class EmueraConsole
                 ButtonNode button = new(
                     children,
                     primitive.Input.ToString(CultureInfo.InvariantCulture),
-                    generation: generation);
+                    generation: nextButtonGeneration);
                 integerButtonNodes.Add(button);
                 destination.Add(button);
+                UpdateGeneration();
             }
             else
             {
@@ -2144,31 +2156,60 @@ internal sealed class EmueraConsole
         }
     }
 
-    private void CompleteInputButtonGeneration(InputType inputType)
+    private static bool ContainsSelectableAction(IReadOnlyList<ConsoleNode> nodes)
     {
-        if (inputType is InputType.IntValue or InputType.IntButton)
+        foreach (ConsoleNode node in nodes)
         {
-            if (upstreamLastButtonGeneration == upstreamNewButtonGeneration)
-                upstreamNewButtonGeneration = checked(upstreamNewButtonGeneration + 1);
-            else if (!upstreamLastButtonIsInput)
-                upstreamLastButtonGeneration = upstreamNewButtonGeneration;
-            upstreamLastButtonIsInput = true;
-        }
-        else if (inputType is InputType.StrValue or InputType.StrButton or InputType.AnyValue)
-        {
-            if (upstreamLastButtonGeneration == upstreamNewButtonGeneration)
-                upstreamNewButtonGeneration = checked(upstreamNewButtonGeneration + 1);
-            else if (upstreamLastButtonIsInput)
-                upstreamLastButtonGeneration = upstreamNewButtonGeneration;
-            upstreamLastButtonIsInput = false;
+            switch (node)
+            {
+                case ButtonNode { Enabled: true }:
+                    return true;
+                case PositionedInlineSegmentNode { Action.Enabled: true }:
+                    return true;
+                case DivNode div when ContainsSelectableAction(div.Children):
+                    return true;
+            }
         }
 
-        // The synchronous headless Read returns after the input has already
-        // been applied. Advance the active generation now so a subsequent
-        // BINPUT cannot count buttons from the consumed prompt. New buttons
-        // emitted by the script will call UpdateGeneration and adopt this
-        // generation before the next BINPUT scan.
-        upstreamLastButtonGeneration = upstreamNewButtonGeneration;
+        return false;
+    }
+
+    private void PrepareInputButtonGeneration(InputType inputType)
+    {
+        bool integerInput = inputType is InputType.IntValue or InputType.IntButton;
+        bool stringInput = inputType is InputType.StrValue or InputType.StrButton or InputType.AnyValue;
+        if (!integerInput && !stringInput)
+            return;
+
+        // This is the pinned desktop newGeneration() boundary. A RESTART loop
+        // that returns to the same TINPUT source line without printing a new
+        // button deliberately keeps the existing active generation. eraAM's
+        // 30 ms shop animation relies on that rule while it redraws only the
+        // animation line and retains the command menu.
+        LogicalLine currentInputLine = GlobalStatic.Process?.getCurrentLine;
+        if (!updatedGeneration && currentInputLine != lastInputLine)
+            activeButtonGeneration = nextButtonGeneration;
+        else
+            updatedGeneration = false;
+        lastInputLine = currentInputLine;
+
+        if (integerInput)
+        {
+            if (activeButtonGeneration == nextButtonGeneration)
+                nextButtonGeneration = checked(nextButtonGeneration + 1);
+            else if (!lastButtonInputWasInteger)
+                activeButtonGeneration = nextButtonGeneration;
+            lastButtonInputWasInteger = true;
+        }
+        else
+        {
+            if (activeButtonGeneration == nextButtonGeneration)
+                nextButtonGeneration = checked(nextButtonGeneration + 1);
+            else if (lastButtonInputWasInteger)
+                activeButtonGeneration = nextButtonGeneration;
+            lastButtonInputWasInteger = false;
+        }
+
     }
 
     private string FormatPrintCValue(string value, bool alignmentRight)

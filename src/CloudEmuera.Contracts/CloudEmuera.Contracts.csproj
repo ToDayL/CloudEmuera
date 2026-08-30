@@ -2,5 +2,6 @@
   <ItemGroup>
     <None Update="Realtime/realtime-v3.schema.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Realtime/realtime-v5.schema.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Realtime/realtime-v6.schema.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -15,7 +15,7 @@
   ],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
-    "matrixVersion": { "type": "string", "const": "p1-s09" },
+    "matrixVersion": { "type": "string", "const": "p1-s10" },
     "upstreamCommit": {
       "type": "string",
       "pattern": "^[0-9a-f]{40}$"

@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
-import type { RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode, RealtimeRect } from "../realtime/protocol";
+import type { Prompt, RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode, RealtimeRect } from "../realtime/protocol";
 import { useConsoleTooltipTarget } from "./TooltipLayer";
 
 export interface ConsoleInputEvent {
@@ -17,6 +17,7 @@ interface NodeRendererProps {
   node: RealtimeNode;
   assets: AssetResolver;
   onInput: (event: ConsoleInputEvent) => void;
+  activation?: ConsoleActivationContext;
   onRenderError?: (message: string) => void;
 }
 
@@ -29,6 +30,37 @@ const VIRTUAL_OVERSCAN_SCREENS = 1;
 const DEFAULT_VIRTUAL_VIEWPORT_HEIGHT = 640;
 const BOTTOM_DISTANCE_EPSILON_PX = 1;
 
+export interface ConsoleActivationContext {
+  prompt: Prompt | null | undefined;
+  connectionReady: boolean;
+  resyncing: boolean;
+  terminal: boolean;
+  pendingInput: boolean;
+}
+
+const inactiveConsoleActivation: ConsoleActivationContext = {
+  prompt: null,
+  connectionReady: false,
+  resyncing: false,
+  terminal: false,
+  pendingInput: false,
+};
+
+const buttonPromptTypes = new Set<Prompt["inputType"]>([
+  "integer", "text", "anyValue", "integerButton", "textButton",
+]);
+
+export function canActivateConsoleAction(
+  action: { enabled: boolean; generation: number },
+  context: ConsoleActivationContext,
+): boolean {
+  const prompt = context.prompt;
+  return context.connectionReady && !context.resyncing && !context.terminal && !context.pendingInput &&
+    prompt !== null && prompt !== undefined && buttonPromptTypes.has(prompt.inputType) &&
+    prompt.allowedSources.includes("button") && action.enabled &&
+    action.generation === prompt.buttonGeneration;
+}
+
 export interface ScrollbackRendererProps {
   lines: RealtimeLine[];
   assets: AssetResolver;
@@ -38,9 +70,10 @@ export interface ScrollbackRendererProps {
   scrollVersion?: string | number;
   forceScrollVersion?: string | number;
   defaultLineHeight?: number;
+  activation?: ConsoleActivationContext;
 }
 
-export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion, defaultLineHeight }: ScrollbackRendererProps) {
+export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion, defaultLineHeight, activation = inactiveConsoleActivation }: ScrollbackRendererProps) {
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
   const scrollbackShellRef = useRef<HTMLDivElement>(null);
@@ -178,7 +211,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
             className="console-virtual-row"
             style={{ width: "max-content", minWidth: "100%", height: virtualItem.size, pointerEvents: "none" }}
           >
-            <ConsoleLineView line={line} assets={assets} onInput={onInput} onRenderError={onRenderError} />
+            <ConsoleLineView line={line} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />
           </div>;
         })}
       </div>
@@ -274,31 +307,31 @@ function sliceTextNodes(children: readonly Extract<RealtimeNode, { type: "text" 
   return result;
 }
 
-const ConsoleLineView = memo(function ConsoleLineView({ line, assets, onInput, onRenderError }: ConsoleLineViewProps) {
+const ConsoleLineView = memo(function ConsoleLineView({ line, assets, onInput, activation = inactiveConsoleActivation, onRenderError }: ConsoleLineViewProps) {
   return <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} style={physicalLineStyle(line)}>
-    {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}
+    {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />)}
   </div>;
 });
 
-export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInput, onRenderError }: NodeRendererProps): ReactNode {
+export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInput, activation = inactiveConsoleActivation, onRenderError }: NodeRendererProps): ReactNode {
   switch (node.type) {
     case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{renderRuntimeText(node.text)}</span>;
     case "lineBreak": return <br />;
     case "button": {
       if (!node.enabled && node.value.length === 0) {
-        return <TooltipNonButton node={node} style={positionStyle(node.positionX)} assets={assets} onInput={onInput} onRenderError={onRenderError} />;
+        return <TooltipNonButton node={node} style={positionStyle(node.positionX)} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />;
       }
       const parts = splitButtonLabel(node.children);
-      const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
+      const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />);
       const buttonStyle: CSSProperties = interactivePositionStyle(node.positionX);
       return <Fragment>
         {renderChildren(parts.leading, "leading")}
-        <TooltipButton node={node} style={buttonStyle} onInput={onInput}><span className="console-choice-label">{renderChildren(parts.label, "label")}</span></TooltipButton>
+        <TooltipButton node={node} style={buttonStyle} onInput={onInput} activation={activation}><span className="console-choice-label">{renderChildren(parts.label, "label")}</span></TooltipButton>
         {renderChildren(parts.trailing, "trailing")}
       </Fragment>;
     }
     case "positionedInlineSegment": {
-      const children = node.children.map((child, index) => <NodeRenderer key={`positioned-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />);
+      const children = node.children.map((child, index) => <NodeRenderer key={`positioned-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />);
       const hasEscapedVisual = node.children.some(containsEscapedVisual);
       const style: CSSProperties = {
         position: "absolute",
@@ -318,7 +351,7 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
       if (!node.action || (!node.action.enabled && node.action.value.length === 0)) {
         return node.action ? <TooltipPositionedNonButton action={node.action} style={style}>{children}</TooltipPositionedNonButton> : <span className="positioned-inline-segment" style={style}>{children}</span>;
       }
-      return <TooltipPositionedButton action={node.action} style={style} onInput={onInput}>{children}</TooltipPositionedButton>;
+      return <TooltipPositionedButton action={node.action} style={style} onInput={onInput} activation={activation}>{children}</TooltipPositionedButton>;
     }
     case "image": {
       const destination = node.destination ?? node.sourceRect;
@@ -327,26 +360,28 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
     }
     case "sprite": return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(node.destination)}><SpriteCanvas sprite={node} assets={assets} alt={node.altText ?? "游戏精灵"} className="console-sprite" width={node.destination.width} height={node.destination.height} style={inlineSpriteStyle(node.destination)} onRenderError={onRenderError} /></span>;
     case "shape": return <ShapeSvg shape={node.shape} bounds={node.bounds} points={node.points} fill={node.fill} stroke={node.stroke} buttonColor={node.buttonColor} />;
-    case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}</div>;
+    case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />)}</div>;
     case "htmlIsland": return node.nodes
-      ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)
+      ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />)
       : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
 });
 
-function TooltipButton({ node, style, onInput, children }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; children: ReactNode }) {
+function TooltipButton({ node, style, onInput, activation, children }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; children: ReactNode }) {
   const target = useConsoleTooltipTarget(node.tooltip, node.generation);
-  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="console-choice console-tooltip-target" style={{ ...style, pointerEvents: "auto" }} type="button" disabled={!node.enabled} onClick={() => onInput({ value: node.value, source: "BUTTON" })}>{children}{target.badge}</button>;
+  const active = canActivateConsoleAction(node, activation);
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className={`console-choice console-tooltip-target ${active ? "" : "is-stale"}`} style={{ ...style, pointerEvents: "auto" }} type="button" aria-disabled={!active} onClick={() => { if (canActivateConsoleAction(node, activation)) onInput({ value: node.value, source: "BUTTON" }); }}>{children}{target.badge}</button>;
 }
 
-function TooltipNonButton({ node, style, assets, onInput, onRenderError }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; onRenderError?: (message: string) => void }) {
+function TooltipNonButton({ node, style, assets, onInput, activation, onRenderError }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; onRenderError?: (message: string) => void }) {
   const target = useConsoleTooltipTarget(node.tooltip, node.generation, true);
-  return <span ref={target.ref as React.RefCallback<HTMLSpanElement>} className="console-nonbutton console-tooltip-target" style={style}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} assets={assets} onInput={onInput} onRenderError={onRenderError} />)}{target.badge}</span>;
+  return <span ref={target.ref as React.RefCallback<HTMLSpanElement>} className="console-nonbutton console-tooltip-target" style={style}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />)}{target.badge}</span>;
 }
 
-function TooltipPositionedButton({ action, style, onInput, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; children: ReactNode }) {
+function TooltipPositionedButton({ action, style, onInput, activation, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; children: ReactNode }) {
   const target = useConsoleTooltipTarget(action.tooltip, action.generation);
-  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className="console-choice positioned-inline-action console-tooltip-target" style={{ ...style, pointerEvents: "auto" }} type="button" disabled={!action.enabled} onClick={() => onInput({ value: action.value, source: "BUTTON" })}>{children}{target.badge}</button>;
+  const active = canActivateConsoleAction(action, activation);
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className={`console-choice positioned-inline-action console-tooltip-target ${active ? "" : "is-stale"}`} style={{ ...style, pointerEvents: "auto" }} type="button" aria-disabled={!active} onClick={() => { if (canActivateConsoleAction(action, activation)) onInput({ value: action.value, source: "BUTTON" }); }}>{children}{target.badge}</button>;
 }
 
 function TooltipPositionedNonButton({ action, style, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; children: ReactNode }) {

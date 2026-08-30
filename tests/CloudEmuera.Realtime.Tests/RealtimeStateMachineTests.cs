@@ -13,7 +13,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.RuntimeAdapter;
-using W = CloudEmuera.Ipc.V7;
+using W = CloudEmuera.Ipc.V8;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -31,7 +31,7 @@ namespace CloudEmuera.Realtime.Tests;
 [Trait("Category", "SessionLifecycle")]
 public sealed class RealtimeStateMachineTests
 {
-    private static readonly int[] SupportedProtocolVersions = [5];
+    private static readonly int[] SupportedProtocolVersions = [6];
 
     [Fact]
     public void KestrelPortResolutionHonorsConfiguredUrlsAndExplicitPort()
@@ -339,7 +339,7 @@ public sealed class RealtimeStateMachineTests
 
     private static string ClientHello(string messageId) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 5,
+        protocolVersion = 6,
         type = "client.hello",
         messageId,
         payload = new
@@ -352,7 +352,7 @@ public sealed class RealtimeStateMachineTests
 
     private static string Resume(string messageId, string sessionId) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 5,
+        protocolVersion = 6,
         type = "session.resume",
         messageId,
         sessionId,
@@ -361,7 +361,7 @@ public sealed class RealtimeStateMachineTests
 
     private static string Input(string messageId, string sessionId, ulong workerEpoch) => JsonSerializer.Serialize(new
     {
-        protocolVersion = 5,
+        protocolVersion = 6,
         type = "session.input",
         messageId,
         sessionId,

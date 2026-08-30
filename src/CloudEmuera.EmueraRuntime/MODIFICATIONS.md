@@ -15,6 +15,29 @@ This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
 
+## 2026-08-30 — Authoritative button generation projection
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now uses one mirror of the
+  pinned upstream `newButtonGeneration`/`lastButtonGeneration` state for
+  legacy BINPUT inventory, structured ButtonNode creation and the committed
+  ConsolePrompt. The prompt exposes the active generation so retained output
+  can stay visible while a browser suppresses actions from older generations.
+- Successful semantic button creation adopts the next generation. Value
+  prompt creation mirrors upstream `newGeneration()`, including its
+  `updatedGeneration`, current `LogicalLine`, and integer/string family rules.
+  A timeout that restarts the same TINPUT source line without new buttons does
+  not advance the active generation; eraAM's 30 ms animation loop therefore
+  keeps its retained command buttons selectable. Partial-line projection,
+  physical splitting and local redraw retain existing stamped generations.
+- IPC v8 and Realtime v6 carry prompt `buttonGeneration`; `session.input`
+  remains the original untargeted current-slot intent and carries no
+  generation. Scope: PLAY-002/003/008, COMP-007 and ADR-0025/0038.
+- Verification: `ConsecutiveMenusPublishTheCurrentButtonGenerationOnEachPrompt`,
+  `BinputDoesNotReuseConsumedButtonGeneration`,
+  `RestartingTheSameTimedInputLineKeepsRetainedButtonsActive`, the distinct-line
+  timed-input regression, Realtime/IPC contract tests and browser activation
+  tests.
+
 ## 2026-08-04 — Direct-source import
 
 - Scope: imported the complete upstream source tree without content changes.

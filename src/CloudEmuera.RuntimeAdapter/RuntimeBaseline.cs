@@ -14,9 +14,9 @@ public static class RuntimeBaseline
 {
     public const string UpstreamRepository = "https://gitlab.com/EvilMask/emuera.em.git";
     public const string UpstreamCommit = "2175f8a629257efb08214e093704b3a3d3d06d05";
-    public const string CloudEmueraIntegrationVersion = "headless-p0.5.1";
+    public const string CloudEmueraIntegrationVersion = "headless-p0.5.3";
     public const string CompatibilityProfile = "v18-compatible";
-    public const int StructuredIpcProtocolVersion = 7;
-    public const string CapabilityMatrixVersion = "p1-s09";
-    public const string CapabilitySetDigest = "8aaac87d04ee4b49ef343c7bd5b5d4a0858f047c67c2da31129dfc6e12a7f002";
+    public const int StructuredIpcProtocolVersion = 8;
+    public const string CapabilityMatrixVersion = "p1-s10";
+    public const string CapabilitySetDigest = "c847f0edba5379ffc03dbb13311ec5c8cd0d927b0850f5b162050ba64057448b";
 }

@@ -22,6 +22,7 @@ function prompt(inputType: Prompt["inputType"]): Prompt {
     openedAtUnixMilliseconds: Date.now(),
     deadlineUnixMilliseconds: Date.now() + 30_000,
     timeoutMilliseconds: 30_000,
+    buttonGeneration: 1,
   };
 }
 

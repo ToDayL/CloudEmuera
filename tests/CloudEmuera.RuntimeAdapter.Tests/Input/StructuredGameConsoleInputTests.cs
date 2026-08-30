@@ -80,6 +80,20 @@ public sealed class StructuredGameConsoleInputTests
     }
 
     [Fact]
+    public void PromptGenerationIsNonNegativeAndSurvivesIdentityAndTimingAssignment()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ConsolePrompt(ConsoleInputType.Integer, buttonGeneration: -1));
+
+        var template = new ConsolePrompt(ConsoleInputType.Integer, buttonGeneration: 17);
+        ConsolePrompt opened = template.WithPromptId("generated").WithTiming(
+            DateTimeOffset.FromUnixTimeMilliseconds(1_000),
+            deadlineUnixMilliseconds: 2_000);
+
+        Assert.Equal(17, opened.ButtonGeneration);
+    }
+
+    [Fact]
     public async Task ManualClockTimeoutClosesPromptWithoutWallClockDelay()
     {
         var clock = new ManualRuntimeClock();

@@ -4,7 +4,7 @@ using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.Infrastructure.Sessions;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V7;
+using CloudEmuera.Ipc.V8;
 using CloudEmuera.RuntimeAdapter;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -90,7 +90,7 @@ public sealed class WorkerHeartbeatLivenessTests
                 CompatibilityProfile: "v18-compatible",
                 SaveLayout: (int)RuntimeSaveLayout.Root,
                 SessionRootManifestDigest: "manifest-digest",
-                RuntimeVersion: "headless-p0.5.1",
+                RuntimeVersion: "headless-p0.5.3",
                 InitialOutputSequence: 0),
             persistenceReady: true);
         using var connection = new ApiWorkerConnection(session);

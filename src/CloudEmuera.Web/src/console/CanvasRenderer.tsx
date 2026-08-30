@@ -3,18 +3,19 @@ import type { CSSProperties } from "react";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer } from "./SafeHtmlRenderer";
 import type { BackgroundLayer, CanvasScene, HitRegion, RealtimeDrawable, WindowMetadata } from "../realtime/protocol";
-import { NodeRenderer, type ConsoleInputEvent } from "./ScrollbackRenderer";
+import { NodeRenderer, type ConsoleActivationContext, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { SpriteCanvas } from "./SpriteRenderer";
 import { useConsoleTooltipTarget } from "./TooltipLayer";
 
 const pngSignature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets, onInput, onRenderError, interactive = true }: {
+export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets, onInput, onRenderError, activation, interactive = true }: {
   scene: CanvasScene;
   backgroundLayers: BackgroundLayer[];
   windowMetadata: WindowMetadata;
   assets: AssetResolver;
   onInput: (event: ConsoleInputEvent) => void;
+  activation?: ConsoleActivationContext;
   onRenderError?: (message: string) => void;
   interactive?: boolean;
 }) {
@@ -45,7 +46,7 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
       if (drawable.type === "htmlIsland") {
         const islandNodes = drawable.nodes;
         return <div key={drawable.drawableId} className="canvas-html-island" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }}>
-          {islandNodes ? islandNodes.map((node, nodeIndex) => <NodeRenderer key={`${drawable.drawableId}-${nodeIndex}`} node={node} assets={assets} onInput={onInput} onRenderError={onRenderError} />) : <SafeHtmlRenderer node={drawable.root!} assets={assets} onRenderError={onRenderError} />}
+          {islandNodes ? islandNodes.map((node, nodeIndex) => <NodeRenderer key={`${drawable.drawableId}-${nodeIndex}`} node={node} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />) : <SafeHtmlRenderer node={drawable.root!} assets={assets} onRenderError={onRenderError} />}
         </div>;
       }
       return <DrawableCanvas key={drawable.drawableId} drawable={drawable} layer={layer} windowMetadata={windowMetadata} hoveredRasterId={hoveredRasterId} onRenderError={onRenderError} />;
