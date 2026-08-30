@@ -1,6 +1,6 @@
 import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleWidth, isBlankConsoleSurfaceTarget } from "./ConsolePage";
+import { consoleBackgroundStyle, consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleWidth, isBlankConsoleSurfaceTarget } from "./ConsolePage";
 
 describe("console surface click filtering", () => {
   it("accepts non-control output areas and ignores buttons and form controls", () => {
@@ -173,6 +173,8 @@ describe("console surface background", () => {
   it("applies the runtime default background to the whole surface", () => {
     expect(consoleSurfaceStyle({ red: 18, green: 52, blue: 86, alpha: 255 })).toEqual({ backgroundColor: "rgba(18, 52, 86, 1)" });
     expect(consoleSurfaceStyle(null)).toEqual({});
+    expect(consoleBackgroundStyle({ red: 18, green: 52, blue: 86, alpha: 255 })).toEqual({ backgroundColor: "rgba(18, 52, 86, 1)" });
+    expect(consoleBackgroundStyle(null)).toEqual({});
   });
 
   it("uses the server-selected runtime viewport width", () => {

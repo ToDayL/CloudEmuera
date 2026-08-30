@@ -181,6 +181,21 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task ConfigBackgroundPublishesAsInitialWindowBackground()
+    {
+        // PLAY-002: the emuera.config background is the initial console
+        // surface color even when the game never calls SETBGCOLOR.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nQUIT\n",
+            configuration: "Use sav folder:NO\n背景色:18,52,86\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(new RuntimeConsoleColor(0x12, 0x34, 0x56), fixture.Console.Snapshot.WindowMetadata.DefaultBackground);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task FindElementEscapedLiteralUsesLiteralPathAndKeepsRegexFallback()
     {
         using var fixture = RuntimeHostFixture.Create(

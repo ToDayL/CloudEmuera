@@ -172,7 +172,7 @@ export function ConsolePage() {
       <button className="danger-text" aria-label="关闭 Session" onClick={() => void close()} disabled={closing || session.data.state !== "RUNNING"}>{closing ? "正在关闭…" : "关闭"}</button>
     </div>
     <div className="console-layout">
-      <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台">
+      <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台" style={consoleBackgroundStyle(state?.windowMetadata.defaultBackground)}>
         <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, undefined, session.data.fontSize, session.data.lineHeight, runtimeCssFamily)} onClick={handleConsoleSurfaceClick}>
         <h1 className="sr-only">{session.data.name}</h1>
         <p className="sr-only">Session 状态：<span>{sessionStateLabel(session.data.state)}</span></p>
@@ -352,12 +352,16 @@ function surfacePointerPosition(target: HTMLElement, clientX: number, clientY: n
 export function consoleSurfaceStyle(background: RealtimeColor | null | undefined, viewportWidth?: number, _screenWidth?: number, fontSize?: number, lineHeight?: number, runtimeCssFamily?: string): CSSProperties {
   const width = effectiveConsoleWidth(viewportWidth);
   return {
-    ...(background ? { backgroundColor: colorToCss(background) } : {}),
+    ...consoleBackgroundStyle(background),
     ...(width > 0 ? { width: `${width}px` } : {}),
     ...(fontSize && fontSize > 0 ? { "--runtime-font-size": `${fontSize}px` } : {}),
     ...(lineHeight && lineHeight > 0 ? { "--runtime-line-height": `${lineHeight}px` } : {}),
     ...(runtimeCssFamily ? { "--runtime-font-family": `"${runtimeCssFamily}"`, fontFamily: `"${runtimeCssFamily}"` } : {}),
   };
+}
+
+export function consoleBackgroundStyle(background: RealtimeColor | null | undefined): CSSProperties {
+  return background ? { backgroundColor: colorToCss(background) } : {};
 }
 
 export function effectiveConsoleWidth(runtimeWidth?: number, _screenWidth?: number): number {
