@@ -232,7 +232,8 @@ public sealed record RealtimePrompt(
     string? TimeoutMessage,
     long OpenedAtUnixMilliseconds,
     long DeadlineUnixMilliseconds,
-    long? TimeoutMilliseconds);
+    long? TimeoutMilliseconds,
+    long ButtonGeneration);
 
 public sealed record RealtimeInputConstraints(
     string Type,

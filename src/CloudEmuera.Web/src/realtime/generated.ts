@@ -1,7 +1,7 @@
-/* GENERATED CONTRACT SNAPSHOT — source: realtime-v5.schema.json. */
-export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v5.schema.json" as const;
-export const REALTIME_PROTOCOL_VERSION = 5 as const;
-export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-s09-tooltip" as const;
+/* GENERATED CONTRACT SNAPSHOT — source: realtime-v6.schema.json. */
+export const REALTIME_SCHEMA_ID = "https://cloudemuera.invalid/schema/realtime-v6.schema.json" as const;
+export const REALTIME_PROTOCOL_VERSION = 6 as const;
+export const REALTIME_PAYLOAD_SCHEMA_VERSION = "p1-s10-button-generation" as const;
 export const REALTIME_MESSAGE_TYPES = ["client.hello","server.hello","connection.ping","connection.pong","session.resume","session.resume.result","session.unsubscribe","session.snapshot","display.frame","resync.required","session.stream.ended","session.input","session.input.result","protocol.error"] as const;
 
 export type EmptyPayload = Record<never, never>;
@@ -13,8 +13,8 @@ export interface ClientHelloPayload {
 }
 
 export interface ServerHelloPayload {
-  protocolVersion: 5;
-  payloadSchemaVersion: "p1-s09-tooltip";
+  protocolVersion: 6;
+  payloadSchemaVersion: "p1-s10-button-generation";
   connectionId: string;
   serverNowUnixMilliseconds: number;
   heartbeatIntervalMilliseconds: number;
@@ -249,6 +249,7 @@ export interface Prompt {
   openedAtUnixMilliseconds: number;
   deadlineUnixMilliseconds: number;
   timeoutMilliseconds?: number | null;
+  buttonGeneration: number;
 }
 
 export interface WindowMetadata {
@@ -572,7 +573,7 @@ export type ShapeKind = "rectangle" | "ellipse" | "line" | "polygon" | "space";
 export type InputType = "enterKey" | "anyKey" | "integer" | "text" | "anyValue" | "integerButton" | "textButton" | "primitivePointerKey" | "waitOnly";
 
 export interface RealtimeEnvelope<TType extends string, TPayload> {
-  protocolVersion: 5;
+  protocolVersion: 6;
   type: TType;
   messageId: string;
   correlationId?: string;

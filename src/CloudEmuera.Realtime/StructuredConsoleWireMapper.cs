@@ -1,7 +1,7 @@
 using System.IO;
-using CloudEmuera.Ipc.V7;
+using CloudEmuera.Ipc.V8;
 using R = CloudEmuera.RuntimeAdapter;
-using W = CloudEmuera.Ipc.V7;
+using W = CloudEmuera.Ipc.V8;
 
 namespace CloudEmuera.Realtime;
 
@@ -798,7 +798,8 @@ public static class StructuredConsoleWireMapper
             HasDeadline = prompt.HasDeadline,
             DisplayTime = prompt.DisplayTime,
             TimeoutMessage = prompt.TimeoutMessage ?? string.Empty,
-            TimeoutAction = ToProto(prompt.TimeoutAction)
+            TimeoutAction = ToProto(prompt.TimeoutAction),
+            ButtonGeneration = prompt.ButtonGeneration
         };
         return result;
     }
@@ -839,7 +840,8 @@ public static class StructuredConsoleWireMapper
             timeoutAction,
             (R.ConsoleInputSource)(int)prompt.AllowedSources,
             prompt.OpenedAtUnixMilliseconds,
-            deadline);
+            deadline,
+            buttonGeneration: prompt.ButtonGeneration);
     }
 
     private static W.InputConstraints ToProto(R.ConsoleInputConstraints constraints)

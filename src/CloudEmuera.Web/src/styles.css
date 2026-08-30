@@ -741,14 +741,14 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   text-underline-offset: 2px;
   text-decoration-line: underline;
 }
-.realtime-console .console-choice:hover:not(:disabled),
-.realtime-console .console-choice:focus-visible:not(:disabled) {
+.realtime-console .console-choice:hover:not(:disabled):not(.is-stale),
+.realtime-console .console-choice:focus-visible:not(:disabled):not(.is-stale) {
   color: inherit;
   background: #23402b;
   outline: none;
 }
 .realtime-console .console-choice.is-stale,
-.realtime-console .console-choice:disabled { color: inherit; background: transparent; opacity: .55; }
+.realtime-console .console-choice:disabled { color: inherit; background: transparent; opacity: .55; cursor: default; }
 .console-tooltip-root { position: relative; min-width: 100%; }
 .console-tooltip-target { position: relative; }
 .console-tooltip-badge {

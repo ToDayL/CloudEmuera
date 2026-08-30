@@ -2,7 +2,7 @@ using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using System.Text;
 using CloudEmuera.Ipc;
-using W = CloudEmuera.Ipc.V7;
+using W = CloudEmuera.Ipc.V8;
 using Xunit;
 
 namespace CloudEmuera.Ipc.ContractTests;
@@ -13,7 +13,7 @@ public sealed class StructuredIpcContractTests
     private static readonly WorkerBinding Binding = new("sess_structured", "wrk_structured", 9);
 
     [Fact]
-    public void V5InputDescriptorReservesPromptFieldAndUsesOptionalResolvedPromptPresence()
+    public void V8InputDescriptorReservesPromptFieldAndUsesOptionalResolvedPromptPresence()
     {
         MessageDescriptor submitInput = W.StructuredWorkerReflection.Descriptor.MessageTypes.Single(message => message.Name == "SubmitInput");
         MessageDescriptor inputResult = W.StructuredWorkerReflection.Descriptor.MessageTypes.Single(message => message.Name == "InputResult");
@@ -53,7 +53,7 @@ public sealed class StructuredIpcContractTests
             Binding,
             "registration-1",
             "startup_token_1",
-            "headless-p0.5.1",
+            "headless-p0.5.3",
             Environment.ProcessId);
         W.WorkerEnvelope parsed = W.WorkerEnvelope.Parser.ParseFrom(original.ToByteArray());
 
@@ -168,7 +168,7 @@ public sealed class StructuredIpcContractTests
     }
 
     [Fact]
-    public void V5RejectsLegacyDisplayBatchBeforeRouting()
+    public void V8RejectsLegacyDisplayBatchBeforeRouting()
     {
         var envelope = new W.WorkerEnvelope
         {

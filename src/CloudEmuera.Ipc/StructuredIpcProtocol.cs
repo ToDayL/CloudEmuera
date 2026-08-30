@@ -1,24 +1,24 @@
 using System.Security.Cryptography;
 using System.Text;
-using CloudEmuera.Ipc.V7;
-using ProtoConsoleColor = CloudEmuera.Ipc.V7.ConsoleColor;
+using CloudEmuera.Ipc.V8;
+using ProtoConsoleColor = CloudEmuera.Ipc.V8.ConsoleColor;
 
 namespace CloudEmuera.Ipc;
 
 /// <summary>Versioned constants for the lossless structured Worker protocol.</summary>
 public static class StructuredIpcProtocol
 {
-    public const uint CurrentVersion = 7;
-    public const string CapabilityMatrixVersion = "p1-s09";
+    public const uint CurrentVersion = 8;
+    public const string CapabilityMatrixVersion = "p1-s10";
     public const string UpstreamCommit = "2175f8a629257efb08214e093704b3a3d3d06d05";
 
     public static string CapabilitySetDigest { get; } = Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v7-authoritative-layout")))
+        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v8-button-generation")))
         .ToLowerInvariant();
 }
 
 /// <summary>
-/// Builds and checks the v7 bootstrap handshake. Registration carries the
+/// Builds and checks the v8 bootstrap handshake. Registration carries the
 /// same capability digest in the envelope and payload so a peer cannot
 /// silently downgrade by dropping the new contract metadata.
 /// </summary>
@@ -78,7 +78,7 @@ public static class StructuredIpcHandshake
                 ReasonCode = reasonCode,
                 NegotiatedProtocolVersion = StructuredIpcProtocol.CurrentVersion,
                 CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
-                RuntimeIntegrationVersion = "headless-p0.5.1",
+                RuntimeIntegrationVersion = "headless-p0.5.3",
                 UpstreamCommit = StructuredIpcProtocol.UpstreamCommit,
                 ControlPlaneInstanceId = controlPlaneInstanceId
             }
@@ -166,7 +166,7 @@ public static class StructuredIpcValidator
             WorkerEnvelope.PayloadOneofCase.Heartbeat => ValidateHeartbeat(envelope.Heartbeat),
             // DisplayBatch remains in the generated message only so old
             // source fixtures can be read during the migration. It is not a
-            // valid v5 Worker payload and must never reach API routing.
+            // valid v8 Worker payload and must never reach API routing.
             WorkerEnvelope.PayloadOneofCase.DisplayBatch =>
                 IpcValidationResult.Invalid(IpcReasonCodes.UnsupportedMessage),
             WorkerEnvelope.PayloadOneofCase.DisplayFrame => ValidateDisplayFrame(envelope.DisplayFrame),
@@ -614,7 +614,8 @@ public static class StructuredIpcValidator
         (((int)prompt.AllowedSources & ~((int)InputSource.Keyboard | (int)InputSource.Button | (int)InputSource.Pointer | (int)InputSource.System)) == 0) &&
         (!prompt.HasDeadline || prompt.OpenedAtUnixMilliseconds <= prompt.DeadlineUnixMilliseconds) &&
         (!prompt.HasDeadline || prompt.DeadlineUnixMilliseconds > 0) &&
-        prompt.TimeoutAction != TimeoutAction.Unspecified && prompt.Constraints is not null && ValidateConstraints(prompt.Constraints);
+        prompt.ButtonGeneration >= 0 && prompt.TimeoutAction != TimeoutAction.Unspecified &&
+        prompt.Constraints is not null && ValidateConstraints(prompt.Constraints);
 
     private static bool ValidateConstraints(InputConstraints constraints) => constraints.KindCase switch
     {

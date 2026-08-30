@@ -214,7 +214,7 @@ public sealed class IpcContractTests
         Registration = new WorkerRegistration
         {
             StartupToken = "token_1",
-            RuntimeIntegrationVersion = "headless-p0.5.1",
+            RuntimeIntegrationVersion = "headless-p0.5.3",
             UpstreamCommit = "commit",
             ProcessId = 1
         }

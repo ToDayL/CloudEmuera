@@ -1,6 +1,6 @@
 using System.Text.Json;
 using CloudEmuera.Contracts.Realtime;
-using CloudEmuera.Ipc.V7;
+using CloudEmuera.Ipc.V8;
 using R = CloudEmuera.RuntimeAdapter;
 using RuntimeMapper = CloudEmuera.Realtime.StructuredConsoleWireMapper;
 
@@ -332,7 +332,8 @@ public static class RealtimePayloadMapper
         prompt.TimeoutMessage,
         prompt.OpenedAtUnixMilliseconds,
         prompt.DeadlineUnixMilliseconds,
-        prompt.Timeout is null ? null : prompt.Timeout == Timeout.InfiniteTimeSpan ? -1 : checked((long)prompt.Timeout.Value.TotalMilliseconds));
+        prompt.Timeout is null ? null : prompt.Timeout == Timeout.InfiniteTimeSpan ? -1 : checked((long)prompt.Timeout.Value.TotalMilliseconds),
+        prompt.ButtonGeneration);
 
     private static RealtimeInputConstraints ToConstraints(R.ConsoleInputConstraints constraints) => constraints switch
     {

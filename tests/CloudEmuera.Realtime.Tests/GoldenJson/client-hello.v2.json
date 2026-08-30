@@ -1,1 +1,1 @@
-{"protocolVersion":5,"type":"client.hello","messageId":"msg_01KHELLO","payload":{"supportedProtocolVersions":[5],"capabilityDigest":"sha256:runtime-v7","supportedCapabilities":["structured-console-v7-authoritative-layout"]},"unknownOptionalField":"ignored"}
+{"protocolVersion":6,"type":"client.hello","messageId":"msg_01KHELLO","payload":{"supportedProtocolVersions":[6],"capabilityDigest":"sha256:runtime-v8","supportedCapabilities":["structured-console-v8-button-generation"]},"unknownOptionalField":"ignored"}

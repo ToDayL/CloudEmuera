@@ -1,1 +1,1 @@
-{"protocolVersion":5,"type":"session.input","messageId":"msg_01KINPUT","sessionId":"sess_01KSESSION","workerEpoch":4,"payload":{"clientMessageId":"cmsg_01KCLIENT","source":"BUTTON","value":"0","pointer":null,"key":null}}
+{"protocolVersion":6,"type":"session.input","messageId":"msg_01KINPUT","sessionId":"sess_01KSESSION","workerEpoch":4,"payload":{"clientMessageId":"cmsg_01KCLIENT","source":"BUTTON","value":"0","pointer":null,"key":null}}

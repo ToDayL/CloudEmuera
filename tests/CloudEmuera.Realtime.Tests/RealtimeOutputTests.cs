@@ -3,7 +3,7 @@ using System.Linq;
 using System.Text;
 using CloudEmuera.Api.Realtime;
 using RuntimeColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
-using W = CloudEmuera.Ipc.V7;
+using W = CloudEmuera.Ipc.V8;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Realtime;
 using Xunit;
@@ -250,7 +250,8 @@ public sealed class RealtimeOutputTests
                 ConsoleInputType.Text,
                 timeout: TimeSpan.FromSeconds(10),
                 openedAtUnixMilliseconds: 1000,
-                deadlineUnixMilliseconds: 11000));
+                deadlineUnixMilliseconds: 11000,
+                buttonGeneration: 19));
 
         byte[] payload = new RealtimePayloadSerializer().SerializeSnapshot(3, snapshot).Bytes.ToArray();
         string json = Encoding.UTF8.GetString(payload);
@@ -260,6 +261,7 @@ public sealed class RealtimeOutputTests
         Assert.Contains("\"type\":\"text\"", json);
         Assert.Contains("iVBORw0KGgo=", json);
         Assert.Contains("\"deadlineUnixMilliseconds\":11000", json);
+        Assert.Contains("\"buttonGeneration\":19", json);
         Assert.DoesNotContain("$type", json);
         Assert.DoesNotContain("<html", json, StringComparison.OrdinalIgnoreCase);
     }

@@ -135,14 +135,14 @@ describe("realtime reducer", () => {
       workerEpoch: 4,
       snapshotSequence: 0,
       committedFrameId: 0,
-      consoleState: { ...initial, currentPrompt: { promptId: "prompt-old", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null } },
+      consoleState: { ...initial, currentPrompt: { promptId: "prompt-old", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null, buttonGeneration: 1 } },
     });
     state = createPendingInput(state, { workerEpoch: 4, clientMessageId: "client-1", value: "answer", source: "KEYBOARD" });
     state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 1 }, {
       workerEpoch: 4,
       snapshotSequence: 1,
       committedFrameId: 1,
-      consoleState: { ...initial, currentPrompt: { promptId: "prompt-new", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null } },
+      consoleState: { ...initial, currentPrompt: { promptId: "prompt-new", inputType: "text", promptText: null, defaultValue: null, constraints: { type: "text", maxLength: 20, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null }, timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard"], oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null, openedAtUnixMilliseconds: 0, deadlineUnixMilliseconds: 0, timeoutMilliseconds: null, buttonGeneration: 2 } },
     });
     expect(state.pendingInput?.status).toBe("pending");
 

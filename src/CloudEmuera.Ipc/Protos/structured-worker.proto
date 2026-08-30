@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-option csharp_namespace = "CloudEmuera.Ipc.V7";
+option csharp_namespace = "CloudEmuera.Ipc.V8";
 
-package cloudemuera.ipc.v7;
+package cloudemuera.ipc.v8;
 
 service WorkerControl {
   rpc Connect(stream WorkerEnvelope) returns (stream WorkerCommandEnvelope);
@@ -476,6 +476,7 @@ message ConsolePrompt {
   bool display_time = 14;
   string timeout_message = 15;
   TimeoutAction timeout_action = 16;
+  int64 button_generation = 17;
 }
 message PromptTiming { int64 opened_at_unix_milliseconds = 1; int64 deadline_unix_milliseconds = 2; int64 server_now_unix_milliseconds = 3; int64 remaining_milliseconds = 4; }
 message InputConstraints { oneof kind { TextInputConstraints text = 1; IntegerInputConstraints integer = 2; AnyValueInputConstraints any_value = 3; } }

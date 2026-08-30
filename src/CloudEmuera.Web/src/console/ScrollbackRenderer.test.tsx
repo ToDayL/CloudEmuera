@@ -2,12 +2,42 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AssetResolver } from "./AssetResolver";
-import { ScrollbackRenderer, leadingVisualOverflow, trailingVisualOverflow, trimTrailingEmptyLines } from "./ScrollbackRenderer";
-import type { RealtimeLine, RealtimeNode } from "../realtime/protocol";
+import { canActivateConsoleAction, ScrollbackRenderer, leadingVisualOverflow, trailingVisualOverflow, trimTrailingEmptyLines, type ConsoleActivationContext } from "./ScrollbackRenderer";
+import type { Prompt, RealtimeLine, RealtimeNode } from "../realtime/protocol";
 
 const assets = new AssetResolver("s1");
 const clockAssets = new AssetResolver("s1");
 const line = (id: string, text: string): RealtimeLine => ({ lineId: id, nodes: [{ type: "text", text, style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], alignment: "left", temporary: false });
+
+const prompt = (buttonGeneration: number, overrides: Partial<Prompt> = {}): Prompt => ({
+  promptId: "prompt-1",
+  inputType: "integer",
+  promptText: null,
+  defaultValue: null,
+  constraints: { type: "integer", maxLength: null, minimum: null, maximum: null, allowSign: true, allowControlCharacters: null },
+  timeoutBehavior: "wait",
+  timeoutAction: "close",
+  allowedSources: ["keyboard", "button"],
+  oneInput: false,
+  systemInput: false,
+  stopMessageSkip: false,
+  displayTime: false,
+  timeoutMessage: null,
+  openedAtUnixMilliseconds: 1,
+  deadlineUnixMilliseconds: 0,
+  timeoutMilliseconds: null,
+  buttonGeneration,
+  ...overrides,
+});
+
+const activation = (buttonGeneration: number, overrides: Partial<ConsoleActivationContext> = {}): ConsoleActivationContext => ({
+  prompt: prompt(buttonGeneration),
+  connectionReady: true,
+  resyncing: false,
+  terminal: false,
+  pendingInput: false,
+  ...overrides,
+});
 
 function scrollContainer(atLatest: boolean) {
   const ref = createRef<HTMLElement>();
@@ -342,7 +372,7 @@ describe("ScrollbackRenderer", () => {
     expect(document.querySelector<HTMLElement>(".console-virtual-content")).toHaveStyle({ height: "648px" });
   });
 
-  it("submits enabled choice buttons from old display frames to the current input slot", () => {
+  it("submits only buttons from the current prompt generation", () => {
     const onInput = vi.fn();
     const choiceLine = (id: string, generation: number, value: string): RealtimeLine => ({
       lineId: id,
@@ -350,15 +380,26 @@ describe("ScrollbackRenderer", () => {
       alignment: "left",
       temporary: false,
     });
-    render(<ScrollbackRenderer lines={[choiceLine("old", 1, "old"), choiceLine("current", 2, "current")]} assets={assets} onInput={onInput} />);
+    render(<ScrollbackRenderer lines={[choiceLine("old", 1, "old"), choiceLine("current", 2, "current")]} assets={assets} onInput={onInput} activation={activation(2)} />);
     const buttons = screen.getAllByRole("button");
-    expect(buttons[0]).toBeEnabled();
-    expect(buttons[1]).toBeEnabled();
+    expect(buttons[0]).toHaveAttribute("aria-disabled", "true");
+    expect(buttons[1]).toHaveAttribute("aria-disabled", "false");
     fireEvent.click(buttons[0]);
     fireEvent.click(buttons[1]);
-    expect(onInput).toHaveBeenCalledTimes(2);
-    expect(onInput).toHaveBeenNthCalledWith(1, { value: "old", source: "BUTTON" });
+    expect(onInput).toHaveBeenCalledTimes(1);
     expect(onInput).toHaveBeenCalledWith({ value: "current", source: "BUTTON" });
+  });
+
+  it("fails closed while disconnected, resyncing, terminal, pending, or outside a button prompt", () => {
+    const action = { enabled: true, generation: 7 };
+    expect(canActivateConsoleAction(action, activation(7))).toBe(true);
+    expect(canActivateConsoleAction(action, activation(7, { connectionReady: false }))).toBe(false);
+    expect(canActivateConsoleAction(action, activation(7, { resyncing: true }))).toBe(false);
+    expect(canActivateConsoleAction(action, activation(7, { terminal: true }))).toBe(false);
+    expect(canActivateConsoleAction(action, activation(7, { pendingInput: true }))).toBe(false);
+    expect(canActivateConsoleAction(action, { ...activation(7), prompt: prompt(7, { inputType: "waitOnly" }) })).toBe(false);
+    expect(canActivateConsoleAction(action, { ...activation(7), prompt: prompt(7, { allowedSources: ["keyboard"] }) })).toBe(false);
+    expect(canActivateConsoleAction({ enabled: false, generation: 7 }, activation(7))).toBe(false);
   });
 
   it("keeps PRINTC padding outside the underlined and clickable label", () => {
@@ -505,7 +546,7 @@ describe("ScrollbackRenderer", () => {
       temporary: false,
     };
 
-    render(<ScrollbackRenderer lines={[stateLine]} assets={assets} onInput={onInput} />);
+    render(<ScrollbackRenderer lines={[stateLine]} assets={assets} onInput={onInput} activation={activation(1)} />);
 
     const button = screen.getByRole("button", { name: "Invite" });
     expect(button).toHaveStyle({ pointerEvents: "auto" });
@@ -578,7 +619,7 @@ describe("ScrollbackRenderer", () => {
       alignment: "left",
       temporary: false,
     };
-    render(<ScrollbackRenderer lines={[structuredLine]} assets={assets} onInput={() => undefined} />);
-    expect(screen.getByRole("button", { name: "Island Go" })).toBeEnabled();
+    render(<ScrollbackRenderer lines={[structuredLine]} assets={assets} onInput={() => undefined} activation={activation(4)} />);
+    expect(screen.getByRole("button", { name: "Island Go" })).toHaveAttribute("aria-disabled", "false");
   });
 });

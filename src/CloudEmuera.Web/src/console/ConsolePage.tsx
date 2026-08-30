@@ -8,7 +8,7 @@ import { CanvasRenderer } from "./CanvasRenderer";
 import { MediaController } from "./media";
 import { PromptController, type PromptControllerHandle } from "./PromptController";
 import { colorToCss } from "./SafeHtmlRenderer";
-import { ScrollbackRenderer, type ConsoleInputEvent } from "./ScrollbackRenderer";
+import { ScrollbackRenderer, type ConsoleActivationContext, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { getRealtimeConnectionManager, type ConnectionPhase } from "../realtime/connection";
 import type { RealtimeColor } from "../realtime/protocol";
 import { createSessionStoreState, type SessionStoreState } from "../realtime/sessionStore";
@@ -157,6 +157,13 @@ export function ConsolePage() {
 
   const state = stream.consoleState;
   const terminalSession = session.data.state === "CLOSED" || session.data.state === "CRASHED";
+  const activation: ConsoleActivationContext = {
+    prompt: state?.currentPrompt,
+    connectionReady: connectionPhase === "ready" && networkOnline,
+    resyncing: stream.phase === "resyncing" || stream.phase === "resuming",
+    terminal: terminalSession || stream.phase === "ended" || stream.phase === "error" || stream.phase === "forbidden",
+    pendingInput: stream.pendingInput?.status === "pending",
+  };
   const fatal = stream.fatalRenderError ?? rendererError;
   return <ConsoleSurface promptControllerRef={promptControllerRef} className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
     <div className="console-overlay-actions">
@@ -175,7 +182,7 @@ export function ConsolePage() {
         {(closeError || stream.pendingInput?.status === "unknown") && <div className="error-banner" role="alert"><strong>实时操作提示</strong><small>{closeError ?? "上次输入的结果未知；服务端可能已经处理，请确认当前提示后再决定是否重试。"}</small>{stream.pendingInput?.status === "unknown" && <button className="secondary-button" onClick={() => manager.retryUnknownInput(sessionId)}>重试上次输入</button>}</div>}
         {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
-        {state ? <ConsoleTooltipProvider presentation={state.tooltipPresentation} resources={state.tooltipResources}><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} defaultLineHeight={session.data.lineHeight} /></ConsoleTooltipProvider> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
+        {state ? <ConsoleTooltipProvider presentation={state.tooltipPresentation} resources={state.tooltipResources}><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} activation={activation} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} activation={activation} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} defaultLineHeight={session.data.lineHeight} /></ConsoleTooltipProvider> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
         </div>
       </main>

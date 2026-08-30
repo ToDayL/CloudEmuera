@@ -66,10 +66,13 @@ public sealed class ConsolePrompt
         ConsoleInputSource allowedSources = ConsoleInputSource.All,
         long openedAtUnixMilliseconds = 0,
         long deadlineUnixMilliseconds = 0,
-        bool allowLongInputByButton = false)
+        bool allowLongInputByButton = false,
+        long buttonGeneration = 0)
     {
         ValidateInputType(inputType);
         ValidateTimeout(timeout);
+        if (buttonGeneration < 0)
+            throw new ArgumentOutOfRangeException(nameof(buttonGeneration), "Button generation cannot be negative.");
         PromptId = promptId ?? string.Empty;
         InputType = inputType;
         PromptText = promptText;
@@ -92,6 +95,7 @@ public sealed class ConsolePrompt
         OpenedAtUnixMilliseconds = openedAtUnixMilliseconds;
         DeadlineUnixMilliseconds = deadlineUnixMilliseconds;
         AllowLongInputByButton = allowLongInputByButton;
+        ButtonGeneration = buttonGeneration;
     }
 
     public ConsolePrompt(
@@ -110,10 +114,11 @@ public sealed class ConsolePrompt
         ConsoleInputSource allowedSources = ConsoleInputSource.All,
         long openedAtUnixMilliseconds = 0,
         long deadlineUnixMilliseconds = 0,
-        bool allowLongInputByButton = false)
+        bool allowLongInputByButton = false,
+        long buttonGeneration = 0)
         : this(string.Empty, inputType, promptText, defaultValue, constraints, timeout, timeoutBehavior, oneInput, systemInput,
             stopMessageSkip, displayTime, timeoutMessage, timeoutAction, allowedSources, openedAtUnixMilliseconds, deadlineUnixMilliseconds,
-            allowLongInputByButton)
+            allowLongInputByButton, buttonGeneration)
     {
     }
 
@@ -144,6 +149,13 @@ public sealed class ConsolePrompt
     /// </summary>
     public bool AllowLongInputByButton { get; }
 
+    /// <summary>
+    /// Runtime-authoritative generation of the game buttons that may be
+    /// activated while this prompt is current. This is display state and is
+    /// intentionally not part of an input attempt's identity.
+    /// </summary>
+    public long ButtonGeneration { get; }
+
     public bool SystemInput { get; }
 
     public bool StopMessageSkip { get; }
@@ -167,7 +179,7 @@ public sealed class ConsolePrompt
     public ConsolePrompt WithPromptId(string promptId) =>
         new(promptId, InputType, PromptText, DefaultValue, Constraints, Timeout, TimeoutBehavior, OneInput, SystemInput,
             StopMessageSkip, DisplayTime, TimeoutMessage, TimeoutAction, AllowedSources, OpenedAtUnixMilliseconds, DeadlineUnixMilliseconds,
-            AllowLongInputByButton);
+            AllowLongInputByButton, ButtonGeneration);
 
     public ConsolePrompt WithTiming(DateTimeOffset openedAt, long? deadlineUnixMilliseconds)
     {
@@ -175,7 +187,7 @@ public sealed class ConsolePrompt
         long deadline = deadlineUnixMilliseconds ?? 0;
         return new ConsolePrompt(PromptId, InputType, PromptText, DefaultValue, Constraints, Timeout, TimeoutBehavior, OneInput,
             SystemInput, StopMessageSkip, DisplayTime, TimeoutMessage, TimeoutAction, AllowedSources, opened, deadline,
-            AllowLongInputByButton);
+            AllowLongInputByButton, ButtonGeneration);
     }
 
     internal void Validate(ConsoleContractLimits limits)

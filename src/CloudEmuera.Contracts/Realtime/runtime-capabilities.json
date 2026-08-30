@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "matrixVersion": "p1-s09",
+  "matrixVersion": "p1-s10",
   "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
-  "runtimeIntegrationVersion": "headless-p0.5.1",
-  "protocolVersion": 7,
-  "capabilitySetDigest": "8aaac87d04ee4b49ef343c7bd5b5d4a0858f047c67c2da31129dfc6e12a7f002",
+  "runtimeIntegrationVersion": "headless-p0.5.3",
+  "protocolVersion": 8,
+  "capabilitySetDigest": "c847f0edba5379ffc03dbb13311ec5c8cd0d927b0850f5b162050ba64057448b",
   "capabilities": [
     {
       "capabilityId": "console.text-lines",
@@ -29,11 +29,11 @@
       "category": "console",
       "classification": "Supported",
       "reasonCode": "STRUCTURED_BUTTON_NODE",
-      "adapterTypes": ["ButtonNode", "ConsoleInputCoordinator"],
-      "ipcTypes": ["ButtonNode", "InputSource", "SubmitInput"],
+      "adapterTypes": ["ButtonNode", "ConsolePrompt.ButtonGeneration", "ConsoleInputCoordinator"],
+      "ipcTypes": ["ButtonNode", "ConsolePrompt.button_generation", "InputSource", "SubmitInput"],
       "fixtureScenarios": ["v18-core/input-roundtrip"],
-      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredTimedInputContractTests.OneInputButtonValueHonorsConfiguredLongInputException", "HeadlessRuntimeFixtureTests.OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput"],
-      "securityNotes": ["Button values are bounded opaque input values and do not become URLs or executable markup."]
+      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredTimedInputContractTests.OneInputButtonValueHonorsConfiguredLongInputException", "HeadlessRuntimeFixtureTests.OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput", "HeadlessRuntimeFixtureTests.ConsecutiveMenusPublishTheCurrentButtonGenerationOnEachPrompt", "HeadlessRuntimeFixtureTests.RestartingTheSameTimedInputLineKeepsRetainedButtonsActive"],
+      "securityNotes": ["Button values are bounded opaque input values and do not become URLs or executable markup.", "The runtime-authored prompt generation suppresses stale browser actions but is not an authorization boundary and is intentionally absent from session.input."]
     },
     {
       "capabilityId": "console.styles-layout",
@@ -162,7 +162,7 @@
       "adapterTypes": ["IRuntimeClock", "RuntimeDeadline", "ConsolePromptTimeoutAction", "ConsoleTruncationMetadata"],
       "ipcTypes": ["PromptTiming", "ConsolePrompt", "InputResult", "ClosePrompt"],
       "fixtureScenarios": ["timed-input", "timeout-display-timeupmes"],
-      "testNames": ["StructuredTimedInputContractTests.MonotonicTimeoutIgnoresWallClockJumpAndContinuesWithoutValue", "StructuredGameConsoleInputTests.ManualClockTimeoutClosesPromptWithoutWallClockDelay"],
+      "testNames": ["StructuredTimedInputContractTests.MonotonicTimeoutIgnoresWallClockJumpAndContinuesWithoutValue", "StructuredGameConsoleInputTests.ManualClockTimeoutClosesPromptWithoutWallClockDelay", "HeadlessRuntimeFixtureTests.RestartingTheSameTimedInputLineKeepsRetainedButtonsActive"],
       "securityNotes": ["Monotonic time decides timeout; wall-clock fields are display metadata only and cannot reset a prompt."]
     },
     {

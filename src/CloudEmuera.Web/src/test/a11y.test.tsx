@@ -31,6 +31,7 @@ const prompt: Prompt = {
   openedAtUnixMilliseconds: Date.now(),
   deadlineUnixMilliseconds: Date.now() + 10_000,
   timeoutMilliseconds: 10_000,
+  buttonGeneration: 1,
 };
 
 describe("browser accessibility smoke checks", () => {

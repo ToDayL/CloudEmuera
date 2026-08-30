@@ -1,4 +1,4 @@
-using CloudEmuera.Ipc.V7;
+using CloudEmuera.Ipc.V8;
 using CloudEmuera.RuntimeAdapter;
 using Xunit;
 
