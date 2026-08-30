@@ -3202,7 +3202,9 @@ public sealed class HeadlessRuntimeFixtureTests
             fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("text-message", "001 text")).Kind);
 
         Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
-        Assert.Equal("TEXT=001 text", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes));
+        Assert.Equal(
+            "001 text\nTEXT=001 text",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes));
     }
 
     [Fact]
@@ -3680,6 +3682,56 @@ public sealed class HeadlessRuntimeFixtureTests
             fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("second-menu", "2", ConsoleInputSource.Button)).Kind);
 
         Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "InputEcho")]
+    public async Task AcceptedKeyboardAndButtonValuesAreEchoedIntoCommittedSnapshots()
+    {
+        // PLAY-018: pinned desktop Emuera prints the accepted submission value
+        // before script execution resumes. The headless Worker must publish the
+        // same text through structured display state, not synthesize it in Web.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nPRINTL KEYBOARD\nINPUTS\n" +
+            "PRINTBUTTON \"BUTTON LABEL\", \"button-echo\"\nPRINTL\nINPUTS\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        string firstPromptId = fixture.Console.CurrentPrompt!.PromptId;
+        Assert.Equal(ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("keyboard-echo", "typed-echo")).Kind);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => fixture.Console.CurrentPrompt is { } prompt && prompt.PromptId != firstPromptId,
+            TimeSpan.FromSeconds(2)));
+        string secondTranscript = RuntimeTranscriptProjector.Project(
+            Assert.IsType<ConsoleSnapshot>(fixture.Console.CommittedSnapshot).VisibleNodes);
+        Assert.Contains("typed-echo", secondTranscript, StringComparison.Ordinal);
+
+        ButtonNode button = fixture.Console.Snapshot.VisibleNodes
+            .OfType<ButtonNode>()
+            .Single(node => node.Value == "button-echo");
+        Assert.Equal(ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt(
+                "button-echo",
+                button.Value,
+                ConsoleInputSource.Button)).Kind);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
+        string workingTranscript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("button-echo", workingTranscript, StringComparison.Ordinal);
+
+        // Production WorkerRuntimeController performs this terminal promotion
+        // before sending RuntimeCompleted. Keep the Runtime-only fixture's
+        // boundary explicit while proving the reconnect baseline contains it.
+        fixture.Console.CommitDisplayFrame(DisplayCommitReason.RuntimeCompleted);
+        string finalTranscript = RuntimeTranscriptProjector.Project(
+            Assert.IsType<ConsoleSnapshot>(fixture.Console.CommittedSnapshot).VisibleNodes);
+        Assert.Contains("typed-echo", finalTranscript, StringComparison.Ordinal);
+        Assert.Contains("button-echo", finalTranscript, StringComparison.Ordinal);
     }
 
     [Fact]
