@@ -8,7 +8,7 @@ import { CanvasRenderer } from "./CanvasRenderer";
 import { MediaController } from "./media";
 import { PromptController, type PromptControllerHandle } from "./PromptController";
 import { colorToCss } from "./SafeHtmlRenderer";
-import { ScrollbackRenderer, type ConsoleActivationContext, type ConsoleInputEvent } from "./ScrollbackRenderer";
+import { consolePointerPayload, ScrollbackRenderer, type ConsoleActivationContext, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { getRealtimeConnectionManager, type ConnectionPhase } from "../realtime/connection";
 import type { RealtimeColor } from "../realtime/protocol";
 import { createSessionStoreState, type SessionStoreState } from "../realtime/sessionStore";
@@ -134,8 +134,11 @@ export function ConsolePage() {
   const reportRendererError = useCallback((message: string) => setRendererError(message), []);
   const handleConsoleSurfaceClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (!isBlankConsoleSurfaceTarget(event.target)) return;
+    const target = event.target instanceof HTMLElement ? event.target : event.currentTarget;
+    if (submitConsoleSurfacePointer(promptControllerRef.current, target, event.clientX, event.clientY, 0,
+      stream.consoleState?.windowMetadata.viewportHeight)) return;
     promptControllerRef.current?.submitBlankEnter();
-  }, []);
+  }, [stream.consoleState?.windowMetadata.viewportHeight]);
   const close = async () => {
     if (!sessionId || !session.data || closing) return;
     if (!window.confirm(`关闭「${session.data.name}」？Worker 会停止，但 SessionRoot 和原生存档会保留。`)) return;
@@ -165,7 +168,7 @@ export function ConsolePage() {
     pendingInput: stream.pendingInput?.status === "pending",
   };
   const fatal = stream.fatalRenderError ?? rendererError;
-  return <ConsoleSurface promptControllerRef={promptControllerRef} className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
+  return <ConsoleSurface promptControllerRef={promptControllerRef} runtimeViewportHeight={state?.windowMetadata.viewportHeight} className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
     <div className="console-overlay-actions">
       <Link className="console-overlay-back" to="/sessions" aria-label="离开游戏">←</Link>
       <span className={`connection-chip ${connectionPhase === "ready" && networkOnline ? "is-online" : ""}`} role="status" aria-live="polite"><span className={connectionPhase === "ready" && networkOnline ? "online" : "offline"}/>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</span>
@@ -182,7 +185,7 @@ export function ConsolePage() {
         {(closeError || stream.pendingInput?.status === "unknown") && <div className="error-banner" role="alert"><strong>实时操作提示</strong><small>{closeError ?? "上次输入的结果未知；服务端可能已经处理，请确认当前提示后再决定是否重试。"}</small>{stream.pendingInput?.status === "unknown" && <button className="secondary-button" onClick={() => manager.retryUnknownInput(sessionId)}>重试上次输入</button>}</div>}
         {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
-        {state ? <ConsoleTooltipProvider presentation={state.tooltipPresentation} resources={state.tooltipResources}><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} activation={activation} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} activation={activation} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} defaultLineHeight={session.data.lineHeight} /></ConsoleTooltipProvider> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
+        {state ? <ConsoleTooltipProvider presentation={state.tooltipPresentation} resources={state.tooltipResources}><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} activation={activation} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} activation={activation} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} defaultLineHeight={session.data.lineHeight} viewportHeight={state.windowMetadata.viewportHeight} /></ConsoleTooltipProvider> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
         </div>
       </main>
@@ -196,6 +199,7 @@ export function ConsolePage() {
 interface ConsoleSurfaceProps {
   children: ReactNode;
   promptControllerRef: { current: PromptControllerHandle | null };
+  runtimeViewportHeight?: number;
   className?: string;
   style?: CSSProperties;
 }
@@ -210,7 +214,7 @@ interface MousePress {
   moved: boolean;
 }
 
-export function ConsoleSurface({ children, promptControllerRef, className, style }: ConsoleSurfaceProps) {
+export function ConsoleSurface({ children, promptControllerRef, runtimeViewportHeight, className, style }: ConsoleSurfaceProps) {
   const suppressTouchContextMenuUntil = useRef(0);
   const suppressTouchClickUntil = useRef(0);
   const touchGestureActive = useRef(false);
@@ -254,13 +258,20 @@ export function ConsoleSurface({ children, promptControllerRef, className, style
     }
     const stage = consoleStageElement(event.currentTarget);
     if (stage && event.target instanceof Node && stage.contains(event.target)) {
-      promptControllerRef.current?.submitRightClick(surfacePointerPosition(stage, event.clientX, event.clientY));
+      const target = event.target instanceof HTMLElement ? event.target : stage;
+      if (!isActiveConsoleActionTarget(target)) {
+        const pointer = consolePointerPayload(target, event.clientX, event.clientY, 2, runtimeViewportHeight);
+        const controller = promptControllerRef.current;
+        if (!controller?.submitPointer?.(pointer)) {
+          controller?.submitRightClick({ x: pointer.x, y: pointer.y });
+        }
+      }
     }
     // The console surface is an application surface. Do not expose the
     // browser's context menu there, including when the current prompt cannot
     // consume a right click.
     event.preventDefault();
-  }, [promptControllerRef]);
+  }, [promptControllerRef, runtimeViewportHeight]);
   const handleTouchStartCapture = useCallback((event: React.TouchEvent<HTMLElement>) => {
     if (event.touches.length < 2) return;
     if (touchGestureActive.current) {
@@ -277,6 +288,15 @@ export function ConsoleSurface({ children, promptControllerRef, className, style
   }, [promptControllerRef]);
   const handlePointerDownCapture = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (event.pointerType === "mouse") {
+      if (event.button === 1) {
+        const stage = consoleStageElement(event.currentTarget);
+        if (!stage || !(event.target instanceof Node) || !stage.contains(event.target)) return;
+        const target = event.target instanceof HTMLElement ? event.target : stage;
+        if (isActiveConsoleActionTarget(target)) return;
+        const pointer = consolePointerPayload(target, event.clientX, event.clientY, 1, runtimeViewportHeight);
+        if (promptControllerRef.current?.submitPointer?.(pointer)) event.preventDefault();
+        return;
+      }
       if (event.button !== 0) return;
       cancelPendingSelectionClear();
       const stage = consoleStageElement(event.currentTarget);
@@ -297,7 +317,7 @@ export function ConsoleSurface({ children, promptControllerRef, className, style
     const suppressionDeadline = Date.now() + touchSuppressionMilliseconds;
     suppressTouchClickUntil.current = suppressionDeadline;
     suppressTouchContextMenuUntil.current = Date.now() + 1_000;
-  }, [cancelPendingSelectionClear, promptControllerRef]);
+  }, [cancelPendingSelectionClear, promptControllerRef, runtimeViewportHeight]);
   const handlePointerMoveCapture = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (event.pointerType !== "mouse") return;
     const press = mousePressRef.current;
@@ -333,6 +353,22 @@ export function ConsoleSurface({ children, promptControllerRef, className, style
 
 export function isBlankConsoleSurfaceTarget(target: EventTarget | null): boolean {
   return target instanceof Element && !target.closest("button, a, input, select, textarea, [role=\"button\"]");
+}
+
+export function submitConsoleSurfacePointer(
+  controller: PromptControllerHandle | null,
+  target: HTMLElement,
+  clientX: number,
+  clientY: number,
+  button: number,
+  runtimeViewportHeight?: number,
+): boolean {
+  return controller?.submitPointer?.(
+    consolePointerPayload(target, clientX, clientY, button, runtimeViewportHeight)) ?? false;
+}
+
+function isActiveConsoleActionTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("button.console-choice[aria-disabled=\"false\"]"));
 }
 
 function consoleStageElement(root: HTMLElement): HTMLElement | null {

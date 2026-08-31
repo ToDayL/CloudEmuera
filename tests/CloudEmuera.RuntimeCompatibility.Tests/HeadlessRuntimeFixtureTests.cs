@@ -3293,6 +3293,122 @@ public sealed class HeadlessRuntimeFixtureTests
             RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes));
     }
 
+    [Theory]
+    [InlineData(0, 1, "LEFT")]
+    [InlineData(1, 3, "MIDDLE")]
+    [InlineData(2, 2, "RIGHT")]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task InputsWithMousePointerPreserveUpstreamButtonResults(int browserButton, int expectedResult, string value)
+    {
+        // PLAY-009: INPUTS,1 is the upstream mouse-aware string prompt used
+        // by EraFL's combat panel. DOM pointer numbering is left=0,
+        // middle=1, right=2; Emuera exposes left=1, right=2, middle=3 in
+        // RESULT:1 and the selected button value in RESULTS:1.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "INPUTS , 1\n" +
+            "PRINTFORML MOUSE={RESULT:1}:%RESULTS:1%\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.Equal(ConsoleInputType.Text, fixture.Console.CurrentPrompt!.InputType);
+        Assert.True(fixture.Console.CurrentPrompt.AllowedSources.HasFlag(ConsoleInputSource.Pointer));
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt(
+                $"mouse-{value.ToLowerInvariant()}",
+                value,
+                ConsoleInputSource.Pointer,
+                pointer: new ConsolePointerPayload(12, 34, button: browserButton))).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        Assert.Contains(
+            $"MOUSE={expectedResult}:{value}",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task InputsWithoutMouseDoesNotAdvertiseBackgroundPointerInput()
+    {
+        // PLAY-009: the browser must not reinterpret ordinary INPUTS prompts
+        // as background mouse-input slots merely because game buttons remain
+        // activatable through the separate Button source.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "INPUTS\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        using var cancellation = new CancellationTokenSource();
+        Task<EmueraRuntimeResult> run = host.RunAsync(cancellation.Token);
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.True(fixture.Console.CurrentPrompt!.AllowedSources.HasFlag(ConsoleInputSource.Button));
+        Assert.False(fixture.Console.CurrentPrompt.AllowedSources.HasFlag(ConsoleInputSource.Pointer));
+
+        cancellation.Cancel();
+        Assert.Equal(EmueraRuntimeStatus.Cancelled, (await run).Status);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "HtmlLayout")]
+    public async Task MouseAwareHtmlPopupUsesTheLastPointerPosition()
+    {
+        // PLAY-009/COMP-007: EraFL builds OPTION_POPUP's absolute-looking
+        // frame from MOUSEX()/MOUSEY() immediately after INPUTS,1 resumes.
+        // The pinned desktop console exposes Y from a lower-left origin, so
+        // the headless bridge must retain the pointer position and apply the
+        // same transform before evaluating the interpolated HTML string.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "INPUTS , 1\n" +
+            "HTML_PRINT @\"<div rect='{MOUSEX() + 20}px, {MOUSEY() - 100}px, 1500, 500' border='2px'><button value='POP'>Option</button><br><button value='CLOSE'>Close</button></div>\", 1\n" +
+            "INPUTS , 1\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:800\n窗口高度:600\n字体大小:18\n每行高度:19\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        using var cancellation = new CancellationTokenSource();
+        Task<EmueraRuntimeResult> run = host.RunAsync(cancellation.Token);
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        string firstPromptId = fixture.Console.CurrentPrompt!.PromptId;
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt(
+                "open-popup",
+                "OPEN",
+                ConsoleInputSource.Pointer,
+                pointer: new ConsolePointerPayload(120, 480, button: 0))).Kind);
+        Assert.True(SpinWait.SpinUntil(
+            () => fixture.Console.CurrentPrompt is { } prompt && prompt.PromptId != firstPromptId,
+            TimeSpan.FromSeconds(2)));
+
+        DivNode popup = EnumerateDivNodes(
+            fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes))
+            .Single();
+        Assert.Equal(new ConsoleRect(140, -220, 270, 95), popup.Bounds);
+        Assert.Contains(
+            "Option",
+            RuntimeTranscriptProjector.Project(popup.Children),
+            StringComparison.Ordinal);
+
+        cancellation.Cancel();
+        // The runtime is intentionally waiting for the popup choice. Close
+        // the host through cancellation so the fixture does not submit a
+        // second synthetic pointer event.
+        Assert.Equal(EmueraRuntimeStatus.Cancelled, (await run).Status);
+    }
+
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     public async Task PrintButtonPreservesIntegerAndStringSubmissionValues()
@@ -4172,6 +4288,33 @@ public sealed class HeadlessRuntimeFixtureTests
                     break;
                 case DivNode div:
                     foreach (SpriteNode child in EnumerateSpriteNodes(div.Children))
+                        yield return child;
+                    break;
+            }
+        }
+    }
+
+    private static IEnumerable<DivNode> EnumerateDivNodes(IEnumerable<ConsoleNode> nodes)
+    {
+        foreach (ConsoleNode node in nodes)
+        {
+            switch (node)
+            {
+                case DivNode div:
+                    yield return div;
+                    foreach (DivNode child in EnumerateDivNodes(div.Children))
+                        yield return child;
+                    break;
+                case ButtonNode button:
+                    foreach (DivNode child in EnumerateDivNodes(button.Children))
+                        yield return child;
+                    break;
+                case PositionedInlineSegmentNode segment:
+                    foreach (DivNode child in EnumerateDivNodes(segment.Children))
+                        yield return child;
+                    break;
+                case HtmlIslandNode { StructuredNodes: { } structuredNodes }:
+                    foreach (DivNode child in EnumerateDivNodes(structuredNodes))
                         yield return child;
                     break;
             }

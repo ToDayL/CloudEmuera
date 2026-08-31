@@ -46,14 +46,28 @@ describe("PromptController", () => {
     expect(onInput).toHaveBeenCalledWith({ value: "", source: "POINTER", pointer: { x: 24, y: 12, button: 2, pressed: true } });
   });
 
-  it("does not turn a right pointer press into a value or primitive-pointer input", () => {
+  it("accepts all physical buttons for mouse-enabled value and primitive-pointer prompts", () => {
     const onInput = vi.fn();
     const controller = createRef<PromptControllerHandle>();
     const { rerender } = render(<PromptController ref={controller} prompt={prompt("text")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
 
-    expect(controller.current?.submitRightClick()).toBe(false);
+    expect(controller.current?.submitPointer?.({ x: 10, y: 20, button: 0, pressed: true })).toBe(true);
+    expect(controller.current?.submitPointer?.({ x: 10, y: 20, button: 1, pressed: true })).toBe(true);
+    expect(controller.current?.submitRightClick({ x: 10, y: 20 })).toBe(true);
     rerender(<PromptController ref={controller} prompt={prompt("primitivePointerKey")} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
-    expect(controller.current?.submitRightClick()).toBe(false);
+    expect(controller.current?.submitPointer?.({ x: 30, y: 40, button: 1, pressed: true })).toBe(true);
+    expect(onInput).toHaveBeenNthCalledWith(1, { value: "", source: "POINTER", pointer: { x: 10, y: 20, button: 0, pressed: true } });
+    expect(onInput).toHaveBeenNthCalledWith(2, { value: "", source: "POINTER", pointer: { x: 10, y: 20, button: 1, pressed: true } });
+    expect(onInput).toHaveBeenNthCalledWith(3, { value: "", source: "POINTER", pointer: { x: 10, y: 20, button: 2, pressed: true } });
+    expect(onInput).toHaveBeenNthCalledWith(4, { value: "", source: "POINTER", pointer: { x: 30, y: 40, button: 1, pressed: true } });
+  });
+
+  it("rejects background pointer input when the runtime prompt did not enable mouse input", () => {
+    const onInput = vi.fn();
+    const controller = createRef<PromptControllerHandle>();
+    render(<PromptController ref={controller} prompt={{ ...prompt("text"), allowedSources: ["keyboard", "button"] }} serverTimeOffsetMilliseconds={0} onInput={onInput} />);
+
+    expect(controller.current?.submitPointer?.({ x: 10, y: 20, button: 0, pressed: true })).toBe(false);
     expect(onInput).not.toHaveBeenCalled();
   });
 

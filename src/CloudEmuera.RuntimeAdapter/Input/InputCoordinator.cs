@@ -178,7 +178,7 @@ public sealed class InputCoordinator
             // values such as EraFL's 4000-series menu IDs.
             bool preserveLongButtonValue = currentPrompt.OneInput &&
                 currentPrompt.AllowLongInputByButton &&
-                attempt.Source == ConsoleInputSource.Button;
+                attempt.Source is ConsoleInputSource.Button or ConsoleInputSource.Pointer;
             string value = currentPrompt.OneInput && !preserveLongButtonValue && attempt.Value.Length > 1
                 ? attempt.Value[..1]
                 : attempt.Value;
@@ -192,7 +192,12 @@ public sealed class InputCoordinator
             ConsolePrompt prompt = currentPrompt;
             bool skipMessage = attempt.IsMessageSkip &&
                 prompt.InputType is ConsoleInputType.EnterKey or ConsoleInputType.AnyKey;
-            var input = new GameConsoleInput(prompt.PromptId, prompt.InputType, value, skipMessage: skipMessage);
+            var input = new GameConsoleInput(
+                prompt.PromptId,
+                prompt.InputType,
+                value,
+                skipMessage: skipMessage,
+                pointer: attempt.Pointer);
             result = ConsoleInputResult.Accepted(attempt, input);
             currentPrompt = null;
             MarkPromptCompleted(prompt.PromptId);

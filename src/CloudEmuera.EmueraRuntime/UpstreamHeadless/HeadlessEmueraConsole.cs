@@ -46,6 +46,12 @@ internal sealed class EmueraConsole
     private bool isRunning = true;
     private bool hasFatalError;
     private bool isTimeOut;
+    // The pinned desktop console exposes mouse coordinates in a client
+    // coordinate system whose origin is at the lower-left: its GetMousePosition
+    // subtracts ClientHeight from the browser/control Y coordinate. Keep that
+    // transformed position until the next pointer event so ERB helpers such
+    // as MOUSEX()/MOUSEY() see the coordinates of the input that woke them.
+    private Point mousePosition = Point.Empty;
     private string windowTitle = string.Empty;
     // One authoritative mirror of the pinned upstream button-generation
     // state machine. `nextButtonGeneration` stamps newly-created actions;
@@ -662,12 +668,19 @@ internal sealed class EmueraConsole
             stopMessageSkip: request.StopMesskip,
             displayTime: request.DisplayTime,
             timeoutMessage: request.TimeUpMes is null ? null : DisplayText(request.TimeUpMes),
-            allowedSources: ConsoleInputSource.All,
+            // Pointer presses outside a game button are an INPUT/INPUTS
+            // capability only when the optional mouse argument is enabled.
+            // Button activation remains available for ordinary input, while
+            // the pointer bit lets the browser distinguish INPUTS,1 from a
+            // normal text prompt without adding a second protocol flag.
+            allowedSources: ConsoleInputSource.Keyboard | ConsoleInputSource.Button |
+                (request.MouseInput ? ConsoleInputSource.Pointer : ConsoleInputSource.None),
             allowLongInputByButton: Config.AllowLongInputByMouse,
             buttonGeneration: activeButtonGeneration);
         if (request.DisplayTime && timeout is not null)
             EmitTimeoutCountdown(timeout.Value);
         GameConsoleInput input = adapter.Read(prompt, cancellationToken);
+        ApplyMouseInputResults(request, input);
         ApplyInputMessageSkip(input);
         // BINPUT validates its inventory before opening the prompt. Once that
         // prompt closes, retire the consumed button generation before the
@@ -794,6 +807,49 @@ internal sealed class EmueraConsole
         }
     }
 
+    /// <summary>
+    /// Mirrors the pinned desktop mouse-input path for INPUT/INPUTS requests
+    /// whose optional mouse argument is enabled. The browser pointer button
+    /// uses DOM numbering (left=0, middle=1, right=2), while Emuera exposes
+    /// left=1, right=2, middle=3 through RESULT:1. The selected button value
+    /// is exposed through RESULTS:1 before the normal textual input path
+    /// stores the value in RESULTS.
+    /// </summary>
+    private void ApplyMouseInputResults(InputRequest request, GameConsoleInput input)
+    {
+        if (input.Pointer is not { } pointer)
+            return;
+
+        // The pointer payload is in the runtime's top-left client coordinate
+        // system, matching the coordinate received by the pinned desktop
+        // MouseEventArgs path. The upstream MOUSEX/MOUSEY methods expose the
+        // Y coordinate after converting it to the lower-left origin.
+        mousePosition = new Point(
+            pointer.Position.X,
+            checked(pointer.Position.Y - viewportHeight));
+
+        if (!request.MouseInput || !pointer.Pressed)
+            return;
+
+        int result = pointer.Button switch
+        {
+            0 => 1,
+            1 => 3,
+            2 => 2,
+            _ => 0,
+        };
+        if (result == 0)
+            return;
+
+        GlobalStatic.VEvaluator.RESULTS_ARRAY[1] = input.Value;
+        GlobalStatic.VEvaluator.RESULT_ARRAY[1] = result;
+        // Modifier and mapped-colour payloads are not part of the current
+        // structured pointer contract. Clear these slots rather than leaking
+        // values left by an earlier upstream input event.
+        GlobalStatic.VEvaluator.RESULT_ARRAY[2] = 0;
+        GlobalStatic.VEvaluator.RESULT_ARRAY[3] = 0;
+    }
+
     private void ClearInputMessageSkip()
     {
         if (!inputMessageSkipActive)
@@ -879,8 +935,16 @@ internal sealed class EmueraConsole
     }
     public bool ButtonIsSelected(ConsoleButtonString button) => false;
     public bool ButtonIsPointing(ConsoleButtonString button) => false;
-    public Point GetMousePosition() => Point.Empty;
-    public bool MoveMouse(Point point) => false;
+    public Point GetMousePosition() => mousePosition;
+    public bool MoveMouse(Point point)
+    {
+        // MoveMouse receives a top-left client coordinate from the pinned
+        // desktop event path. There is no headless hover-state bitmap to
+        // refresh, but retaining the coordinate is still required for the
+        // next ERB MOUSEX()/MOUSEY() evaluation.
+        mousePosition = new Point(point.X, checked(point.Y - viewportHeight));
+        return false;
+    }
 
     public ConsoleDisplayLine[] GetDisplayLines(long lineNo) => DisplayLineList.ToArray();
 
