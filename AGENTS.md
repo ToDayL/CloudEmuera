@@ -158,6 +158,12 @@ Use the following evidence hierarchy when correlating a runtime or UI report:
   the persisted display configuration, the structured node fields, and—when
   authenticated browser access is available—DOM measurements such as
   `getBoundingClientRect()`, `overflow`, `scrollHeight`, and `clientHeight`.
+- For interaction reports, verify the event source and payload at every
+  boundary (DOM, realtime message, IPC, adapter, and runtime), and distinguish
+  a control being rendered or hit from the input being accepted and interpreted
+  with the intended semantics. If a trace does not record client attempts,
+  treat that as an observability gap and use boundary-level logs or a copied
+  deterministic fixture rather than inferring that no input was sent.
 
 For any layout investigation, record the Session ID, Worker epoch, relevant
 trace lines, source location, display settings, coordinate units, and the
@@ -189,6 +195,11 @@ disposal, cache lifetime, repeated initialization, and cross-Worker static
 state; lazy native failures frequently surface later than the operation that
 created the invalid state. For lifecycle failures, compare epochs and sequence
 numbers rather than assuming the most recent connection event is authoritative.
+
+At compatibility boundaries, keep execution data (such as input values, paths,
+and identifiers) exact, and project only display-only delimiters or whitespace
+into the canonical presentation form required by the next contract. Do not
+weaken a global validator just to accept one legacy display convention.
 
 Reproduce a suspected runtime failure with the smallest deterministic fixture
 that preserves the same operation order and lifecycle (including repeated
