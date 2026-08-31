@@ -19,6 +19,78 @@ This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
 
+## 2026-08-31 — Preserve mouse-button input semantics across the headless boundary
+
+- `RuntimeAdapter` retains an accepted pointer payload, and the headless
+  `INPUTS,1` path maps browser left/middle/right buttons to the pinned
+  upstream `RESULT:1` values while preserving the selected value in
+  `RESULTS:1`.
+- Structured Web game actions submit physical pointer events for left, middle,
+  and right activation, and mouse-enabled prompts accept the same three
+  presses from non-button console areas. Ordinary prompts do not advertise
+  the pointer capability, and keyboard/input-dock activation remains a
+  semantic `BUTTON` submission.
+- Scope: `INPUTS`/`INPUTS,1` compatibility and PLAY-009 mouse interaction.
+  Verification is `HeadlessRuntimeFixtureTests.InputsWithMousePointerPreserveUpstreamButtonResults`
+  and the structured `ScrollbackRenderer` pointer-action tests in the
+  development Docker environment.
+
+## 2026-08-31 — Rebase scrollback pointer anchors to their output line
+
+- Scrollback action coordinates are rebased to the owning rendered output
+  line before they cross the browser/runtime boundary. This prevents the
+  canvas, scrollback history, and scroll offset from being counted again when
+  upstream relative HTML divs use `MOUSEX()`/`MOUSEY()` as their anchor.
+- The Session viewport height remains the conversion seam: the browser adds
+  it to the line-local Y coordinate and the headless console applies the
+  upstream lower-left conversion. Canvas controls keep their existing
+  viewport coordinate path.
+- Scope: pointer-anchored structured HTML overlays and PLAY-009 visual/input
+  compatibility. Verification is the owning-line scrollback pointer test in
+  `ScrollbackRenderer.test.tsx`.
+
+## 2026-08-31 — Preserve upstream depth ordering for structured HTML divs
+
+- The browser scrollback renderer now inverts upstream HTML `depth` values at
+  the CSS boundary because the pinned desktop renderer paints escaped parts in
+  descending depth order, making the smaller depth the foreground layer.
+- The virtualized console content is an isolated stacking context so negative
+  CSS levels remain inside the console rather than disappearing behind the
+  page background. This preserves both positive and negative `depth` values
+  without changing the wire contract.
+- Scope: structured `HTML_PRINT` div painting, including EraFL's
+  `OPTION_POPUP` frame. Verification is the negative-depth popup regression in
+  `ScrollbackRenderer.test.tsx` and the RuntimeCompatibility HTML layout suite.
+
+## 2026-08-31 — Keep graphics-owned fonts separate from the shared cache
+
+- `Upstream/Emuera/UI/FontFactory.cs` now exposes an owned-font copy for
+  graphics surfaces. `GSETFONT` uses that copy, while measurement and default
+  text rendering continue to use the shared cache entry.
+- `Upstream/Emuera/UI/Game/Image/GraphicsImage.cs` uses the bound font's
+  pixel size directly for headless path text drawing. This avoids unsupported
+  lazy `Font.Height`/private-family metric queries in libgdiplus while keeping
+  glyph construction on the selected Session face.
+- This prevents `GCREATE`/`GDISPOSE` from disposing a cached `Font` that a later
+  `GSETFONT` returns, which otherwise fails lazily at `Font.GetHeight()` during
+  `GDRAWTEXT`.
+- Scope: P1-S04, ADR-0029, and the headless graphics compatibility boundary.
+  Verification is the repeated graphics-surface/font/draw regression in
+  `HeadlessRuntimeFixtureTests` and the dev-Docker RuntimeCompatibility suite.
+
+## 2026-08-31 — Project line breaks in HTML tooltip presentation
+
+- `UpstreamHeadless/UpstreamHtmlTranslator.cs` projects line-feed, carriage
+  return, and CRLF separators in upstream HTML `title` attributes to the
+  existing `<br>` tooltip representation before constructing structured button
+  nodes. Ordinary display text, input values, paths, and identifiers remain
+  unchanged.
+- This keeps the structured console contract free of control characters while
+  retaining the upstream tooltip's line-oriented presentation in the browser.
+- Scope: the HTML compatibility boundary. Verification is the LF/CR/CRLF
+  multiline tooltip regression in `HeadlessRuntimeFixtureTests` and the
+  dev-Docker RuntimeCompatibility suite.
+
 ## 2026-08-30 — Echo accepted input through structured Worker output
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` mirrors the pinned desktop

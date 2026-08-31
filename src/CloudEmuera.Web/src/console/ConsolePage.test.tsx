@@ -1,6 +1,6 @@
 import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { consoleBackgroundStyle, consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleWidth, isBlankConsoleSurfaceTarget } from "./ConsolePage";
+import { consoleBackgroundStyle, consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleWidth, isBlankConsoleSurfaceTarget, submitConsoleSurfacePointer } from "./ConsolePage";
 
 describe("console surface click filtering", () => {
   it("accepts non-control output areas and ignores buttons and form controls", () => {
@@ -118,6 +118,56 @@ describe("console surface click filtering", () => {
       getSelection.mockRestore();
       vi.unstubAllGlobals();
     }
+  });
+
+  it("submits a middle press from ordinary game output to a mouse-enabled prompt", () => {
+    const submitPointer = vi.fn(() => true);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick: vi.fn(() => false), submitPointer } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef} runtimeViewportHeight={600}><div className="realtime-console-stage"><div>战斗面板空白</div></div></ConsoleSurface>);
+
+    const output = screen.getByText("战斗面板空白");
+    const middleDown = createEvent.pointerDown(output, { pointerId: 1, pointerType: "mouse", button: 1, clientX: 24, clientY: 12 });
+    fireEvent(output, middleDown);
+
+    expect(middleDown.defaultPrevented).toBe(true);
+    expect(submitPointer).toHaveBeenCalledWith({ x: 0, y: 0, button: 1, pressed: true });
+  });
+
+  it("submits a left click from ordinary game output to a mouse-enabled prompt", () => {
+    const submitPointer = vi.fn(() => true);
+    const submitBlankEnter = vi.fn();
+    const controller = { submitBlankEnter, submitRightClick: vi.fn(() => false), submitPointer };
+    const output = document.createElement("div");
+
+    expect(submitConsoleSurfacePointer(controller, output, 24, 12, 0, 600)).toBe(true);
+
+    expect(submitPointer).toHaveBeenCalledWith({ x: 0, y: 0, button: 0, pressed: true });
+    expect(submitBlankEnter).not.toHaveBeenCalled();
+  });
+
+  it("submits a right press from ordinary game output to a mouse-enabled prompt", () => {
+    const submitPointer = vi.fn(() => true);
+    const submitRightClick = vi.fn(() => false);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick, submitPointer } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef} runtimeViewportHeight={600}><div className="realtime-console-stage"><div>战斗面板空白</div></div></ConsoleSurface>);
+
+    const output = screen.getByText("战斗面板空白");
+    const contextMenu = createEvent.contextMenu(output, { button: 2, clientX: 24, clientY: 12 });
+    fireEvent(output, contextMenu);
+
+    expect(contextMenu.defaultPrevented).toBe(true);
+    expect(submitPointer).toHaveBeenCalledWith({ x: 0, y: 0, button: 2, pressed: true });
+    expect(submitRightClick).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate a middle press handled by an active game button", () => {
+    const submitPointer = vi.fn(() => true);
+    const promptControllerRef = { current: { submitBlankEnter: vi.fn(), submitRightClick: vi.fn(() => false), submitPointer } };
+    render(<ConsoleSurface promptControllerRef={promptControllerRef} runtimeViewportHeight={600}><div className="realtime-console-stage"><button className="console-choice" aria-disabled="false">自动</button></div></ConsoleSurface>);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "自动" }), { pointerId: 1, pointerType: "mouse", button: 1, clientX: 24, clientY: 12 });
+
+    expect(submitPointer).not.toHaveBeenCalled();
   });
 
   it("suppresses the native context menu for ordinary game-stage output", () => {

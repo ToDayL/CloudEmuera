@@ -32,7 +32,7 @@
       "adapterTypes": ["ButtonNode", "ConsolePrompt.ButtonGeneration", "ConsoleInputCoordinator"],
       "ipcTypes": ["ButtonNode", "ConsolePrompt.button_generation", "InputSource", "SubmitInput"],
       "fixtureScenarios": ["v18-core/input-roundtrip"],
-      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredTimedInputContractTests.OneInputButtonValueHonorsConfiguredLongInputException", "HeadlessRuntimeFixtureTests.OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput", "HeadlessRuntimeFixtureTests.ConsecutiveMenusPublishTheCurrentButtonGenerationOnEachPrompt", "HeadlessRuntimeFixtureTests.RestartingTheSameTimedInputLineKeepsRetainedButtonsActive"],
+      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredTimedInputContractTests.OneInputButtonValueHonorsConfiguredLongInputException", "HeadlessRuntimeFixtureTests.OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput", "HeadlessRuntimeFixtureTests.InputsWithMousePointerPreserveUpstreamButtonResults", "HeadlessRuntimeFixtureTests.ConsecutiveMenusPublishTheCurrentButtonGenerationOnEachPrompt", "HeadlessRuntimeFixtureTests.RestartingTheSameTimedInputLineKeepsRetainedButtonsActive"],
       "securityNotes": ["Button values are bounded opaque input values and do not become URLs or executable markup.", "The runtime-authored prompt generation suppresses stale browser actions but is not an authorization boundary and is intentionally absent from session.input."]
     },
     {
@@ -149,7 +149,7 @@
       "adapterTypes": ["ConsolePrompt", "ConsoleInputAttempt", "InputCoordinator", "ConsolePointerPayload", "ConsoleKeyPayload"],
       "ipcTypes": ["ConsolePrompt", "SubmitInput", "PointerPayload", "KeyPayload", "InputResult"],
       "fixtureScenarios": ["v18-core/input-roundtrip", "em-ee-core/input-roundtrip", "timed-input"],
-      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredTimedInputContractTests.OneInputButtonValueHonorsConfiguredLongInputException", "HeadlessRuntimeFixtureTests.OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput", "StructuredIpcContractTests.RichDisplayTransactionRoundTripsWithoutFlattening"],
+      "testNames": ["StructuredTimedInputContractTests.OneInputAndSourceConstraintAreAppliedBeforeAcceptance", "StructuredTimedInputContractTests.OneInputButtonValueHonorsConfiguredLongInputException", "HeadlessRuntimeFixtureTests.OneinputsPreservesLongHtmlButtonValueWhenConfigAllowsMouseInput", "HeadlessRuntimeFixtureTests.InputsWithMousePointerPreserveUpstreamButtonResults", "StructuredIpcContractTests.RichDisplayTransactionRoundTripsWithoutFlattening"],
       "securityNotes": ["Input attempts use clientMessageId receipts, source allowlists and bounded values; the Worker resolves the current prompt under its input lock and duplicate messages are idempotent."]
     },
     {

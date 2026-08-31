@@ -473,7 +473,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .canvas-hit:hover, .canvas-hit:focus-visible { border-color: var(--accent); background: rgb(232 104 60 / 16%); }
 .scrollback { width: min(800px, 100%); min-height: 170px; margin: 0 auto; padding: 20px clamp(18px, 4vw, 42px); border: 1px solid #d7d9d0; color: #232821; background: #fffef9; box-shadow: 0 16px 45px rgb(0 0 0 / 12%); overflow: hidden; }
 .scrollback-shell { position: relative; width: min(800px, 100%); margin: 0 auto; }.scrollback-shell .scrollback { width: 100%; }.scrollback-latest { position: sticky; z-index: 2; bottom: 12px; display: block; min-height: 44px; margin: -56px auto 12px; padding: 0 14px; border: 1px solid #b96a4c; border-radius: 999px; color: #fff8f3; background: #9b482e; box-shadow: 0 5px 18px rgb(0 0 0 / 18%); font-size: 11px; font-weight: 700; }.scrollback-latest.is-hidden { visibility: hidden; pointer-events: none; }
-.console-virtual-content { position: relative; width: max-content; min-width: 100%; }
+.console-virtual-content { position: relative; isolation: isolate; width: max-content; min-width: 100%; }
 /* A div can paint beyond its owning one-line virtual row. Rows and line
    shells must stay out of hit testing so later blank rows cannot cover an
    overflowing panel; semantic descendants opt back in below. */

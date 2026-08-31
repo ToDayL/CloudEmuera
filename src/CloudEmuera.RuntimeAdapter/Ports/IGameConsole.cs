@@ -5,6 +5,7 @@ namespace CloudEmuera.RuntimeAdapter;
 /// original textual form so adapters can apply the upstream's exact parsing
 /// rules without losing what the client submitted.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1720", Justification = "Pointer payload is part of the stable structured input contract.")]
 public sealed record GameConsoleInput
 {
     public GameConsoleInput(
@@ -12,7 +13,8 @@ public sealed record GameConsoleInput
         ConsoleInputType inputType,
         string value,
         bool isDefaultValue = false,
-        bool skipMessage = false)
+        bool skipMessage = false,
+        ConsolePointerPayload? pointer = null)
     {
         ConsoleContractValidation.ValidateIdentifier(
             promptId,
@@ -31,6 +33,7 @@ public sealed record GameConsoleInput
         Value = value;
         IsDefaultValue = isDefaultValue;
         SkipMessage = skipMessage;
+        Pointer = pointer;
     }
 
     public string PromptId { get; }
@@ -48,6 +51,13 @@ public sealed record GameConsoleInput
     /// skipping (the browser encodes this as a pressed right pointer button).
     /// </summary>
     public bool SkipMessage { get; }
+
+    /// <summary>
+    /// The physical pointer event that produced this accepted input, when
+    /// one exists. Headless Emuera uses it to preserve INPUTS,1's upstream
+    /// left/middle/right mouse result semantics.
+    /// </summary>
+    public ConsolePointerPayload? Pointer { get; }
 }
 
 /// <summary>

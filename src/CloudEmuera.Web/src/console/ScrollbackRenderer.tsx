@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent, type ReactNode, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
@@ -19,6 +19,7 @@ interface NodeRendererProps {
   onInput: (event: ConsoleInputEvent) => void;
   activation?: ConsoleActivationContext;
   onRenderError?: (message: string) => void;
+  viewportHeight?: number;
 }
 
 interface ConsoleLineViewProps extends Omit<NodeRendererProps, "node"> {
@@ -61,6 +62,64 @@ export function canActivateConsoleAction(
     action.generation === prompt.buttonGeneration;
 }
 
+export function consolePointerPayload(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number,
+  button: number,
+  viewportHeight?: number,
+): NonNullable<ConsoleInputEvent["pointer"]> {
+  const virtualContent = element.closest<HTMLElement>(".console-virtual-content");
+  const virtualContentBounds = virtualContent?.getBoundingClientRect();
+  const outputOriginOffset = Number(virtualContent?.dataset.runtimeOutputOriginY);
+  const runtimeViewportHeight = Number.isFinite(viewportHeight) && (viewportHeight ?? 0) > 0
+    ? Math.round(viewportHeight!)
+    : 600;
+  if (virtualContentBounds && virtualContentBounds.width > 0 && virtualContentBounds.height > 0 &&
+      Number.isFinite(outputOriginOffset) && Number.isFinite(clientX) && Number.isFinite(clientY)) {
+    // MOUSEY is consumed by upstream relative divs after the input has
+    // emitted a new physical line. Use the latest output-line origin, not the
+    // clicked line or the full scrolling document, so a div whose Y is based
+    // on MOUSEY remains anchored to the clicked screen position.
+    return {
+      x: Math.max(0, Math.round(clientX - virtualContentBounds.left)),
+      y: Math.round(runtimeViewportHeight + clientY - virtualContentBounds.top - outputOriginOffset),
+      button,
+      pressed: true,
+    };
+  }
+  const line = element.closest<HTMLElement>(".console-line");
+  const lineBounds = line?.getBoundingClientRect();
+  if (lineBounds && lineBounds.width > 0 && lineBounds.height > 0 && Number.isFinite(clientX) && Number.isFinite(clientY)) {
+    // Keep a line-local fallback for isolated renderer use where the virtual
+    // content has no measurable DOM box (including unit-test/jsdom hosts).
+    return {
+      x: Math.max(0, Math.round(clientX - lineBounds.left)),
+      y: Math.round(runtimeViewportHeight + clientY - lineBounds.top),
+      button,
+      pressed: true,
+    };
+  }
+  const stage = element.closest<HTMLElement>(".realtime-console-stage");
+  const bounds = stage?.getBoundingClientRect();
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0 || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return { x: 0, y: 0, button, pressed: true };
+  }
+  const scrollContainer = element.closest<HTMLElement>(".realtime-game-console");
+  // Non-line controls (for example a future canvas-adjacent HTML island) use
+  // the stage fallback. Its rectangle already follows the scroll container,
+  // so remove the document scroll offset exactly once.
+  const scrollTop = scrollContainer && Number.isFinite(scrollContainer.scrollTop)
+    ? Math.max(0, scrollContainer.scrollTop)
+    : 0;
+  return {
+    x: Math.max(0, Math.round(clientX - bounds.left)),
+    y: Math.max(0, Math.round(clientY - bounds.top - scrollTop)),
+    button,
+    pressed: true,
+  };
+}
+
 export interface ScrollbackRendererProps {
   lines: RealtimeLine[];
   assets: AssetResolver;
@@ -70,10 +129,11 @@ export interface ScrollbackRendererProps {
   scrollVersion?: string | number;
   forceScrollVersion?: string | number;
   defaultLineHeight?: number;
+  viewportHeight?: number;
   activation?: ConsoleActivationContext;
 }
 
-export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion, defaultLineHeight, activation = inactiveConsoleActivation }: ScrollbackRendererProps) {
+export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion, defaultLineHeight, viewportHeight, activation = inactiveConsoleActivation }: ScrollbackRendererProps) {
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
   const scrollbackShellRef = useRef<HTMLDivElement>(null);
@@ -86,6 +146,13 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     const line = displayLines[index];
     return line ? effectiveLineFlowHeight(line, lineHeight) : lineHeight;
   }, [displayLines, lineHeight]);
+  const runtimeOutputOriginY = useMemo(() => {
+    let offset = leadingOverflow;
+    for (let index = 0; index < displayLines.length - 1; index++) {
+      offset += getLineFlowHeight(index);
+    }
+    return offset;
+  }, [displayLines.length, getLineFlowHeight, leadingOverflow]);
   const getItemKey = useCallback((index: number) => displayLines[index]?.lineId ?? index, [displayLines]);
   const measureElement = useCallback((element: HTMLDivElement) => {
     const index = Number(element.dataset.index);
@@ -200,7 +267,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   }, [scrollContainerRef]);
   return <div ref={scrollbackShellRef} className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
-      <div ref={setVirtualContentRef} className="console-virtual-content">
+      <div ref={setVirtualContentRef} className="console-virtual-content" data-runtime-output-origin-y={runtimeOutputOriginY}>
         {virtualItems.map(virtualItem => {
           const line = displayLines[virtualItem.index];
           if (!line) return null;
@@ -211,7 +278,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
             className="console-virtual-row"
             style={{ width: "max-content", minWidth: "100%", height: virtualItem.size, pointerEvents: "none" }}
           >
-            <ConsoleLineView line={line} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />
+            <ConsoleLineView line={line} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />
           </div>;
         })}
       </div>
@@ -307,31 +374,31 @@ function sliceTextNodes(children: readonly Extract<RealtimeNode, { type: "text" 
   return result;
 }
 
-const ConsoleLineView = memo(function ConsoleLineView({ line, assets, onInput, activation = inactiveConsoleActivation, onRenderError }: ConsoleLineViewProps) {
+const ConsoleLineView = memo(function ConsoleLineView({ line, assets, onInput, activation = inactiveConsoleActivation, onRenderError, viewportHeight }: ConsoleLineViewProps) {
   return <div className={`console-line align-${line.alignment} ${line.temporary ? "is-temporary" : ""} ${line.noWrap ? "is-nowrap" : ""}`} style={physicalLineStyle(line)}>
-    {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />)}
+    {trimTrailingLineBreaks(line.nodes).map((node, index) => <NodeRenderer key={`${line.lineId}-${index}`} node={node} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />)}
   </div>;
 });
 
-export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInput, activation = inactiveConsoleActivation, onRenderError }: NodeRendererProps): ReactNode {
+export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInput, activation = inactiveConsoleActivation, onRenderError, viewportHeight }: NodeRendererProps): ReactNode {
   switch (node.type) {
     case "text": return <span className={node.style.buttonColor ? "console-text has-button-color" : "console-text"} style={textStyleToCss(node.style, assets)}>{renderRuntimeText(node.text)}</span>;
     case "lineBreak": return <br />;
     case "button": {
       if (!node.enabled && node.value.length === 0) {
-        return <TooltipNonButton node={node} style={positionStyle(node.positionX)} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />;
+        return <TooltipNonButton node={node} style={positionStyle(node.positionX)} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />;
       }
       const parts = splitButtonLabel(node.children);
-      const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />);
+      const renderChildren = (children: readonly RealtimeNode[], prefix: string) => children.map((child, index) => <NodeRenderer key={`${prefix}-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />);
       const buttonStyle: CSSProperties = interactivePositionStyle(node.positionX);
       return <Fragment>
         {renderChildren(parts.leading, "leading")}
-        <TooltipButton node={node} style={buttonStyle} onInput={onInput} activation={activation}><span className="console-choice-label">{renderChildren(parts.label, "label")}</span></TooltipButton>
+        <TooltipButton node={node} style={buttonStyle} onInput={onInput} activation={activation} viewportHeight={viewportHeight}><span className="console-choice-label">{renderChildren(parts.label, "label")}</span></TooltipButton>
         {renderChildren(parts.trailing, "trailing")}
       </Fragment>;
     }
     case "positionedInlineSegment": {
-      const children = node.children.map((child, index) => <NodeRenderer key={`positioned-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />);
+      const children = node.children.map((child, index) => <NodeRenderer key={`positioned-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />);
       const hasEscapedVisual = node.children.some(containsEscapedVisual);
       const style: CSSProperties = {
         position: "absolute",
@@ -351,7 +418,7 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
       if (!node.action || (!node.action.enabled && node.action.value.length === 0)) {
         return node.action ? <TooltipPositionedNonButton action={node.action} style={style}>{children}</TooltipPositionedNonButton> : <span className="positioned-inline-segment" style={style}>{children}</span>;
       }
-      return <TooltipPositionedButton action={node.action} style={style} onInput={onInput} activation={activation}>{children}</TooltipPositionedButton>;
+      return <TooltipPositionedButton action={node.action} style={style} onInput={onInput} activation={activation} viewportHeight={viewportHeight}>{children}</TooltipPositionedButton>;
     }
     case "image": {
       const destination = node.destination ?? node.sourceRect;
@@ -360,28 +427,88 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
     }
     case "sprite": return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(node.destination)}><SpriteCanvas sprite={node} assets={assets} alt={node.altText ?? "游戏精灵"} className="console-sprite" width={node.destination.width} height={node.destination.height} style={inlineSpriteStyle(node.destination)} onRenderError={onRenderError} /></span>;
     case "shape": return <ShapeSvg shape={node.shape} bounds={node.bounds} points={node.points} fill={node.fill} stroke={node.stroke} buttonColor={node.buttonColor} />;
-    case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />)}</div>;
+    case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />)}</div>;
     case "htmlIsland": return node.nodes
-      ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />)
+      ? node.nodes.map((child, index) => <NodeRenderer key={`island-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />)
       : <SafeHtmlRenderer node={node.root!} assets={assets} className="console-html-island" onRenderError={onRenderError} />;
   }
 });
 
-function TooltipButton({ node, style, onInput, activation, children }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; children: ReactNode }) {
+function TooltipButton({ node, style, onInput, activation, viewportHeight, children }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; viewportHeight?: number; children: ReactNode }) {
   const target = useConsoleTooltipTarget(node.tooltip, node.generation);
   const active = canActivateConsoleAction(node, activation);
-  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className={`console-choice console-tooltip-target ${active ? "" : "is-stale"}`} style={{ ...style, pointerEvents: "auto" }} type="button" aria-disabled={!active} onClick={() => { if (canActivateConsoleAction(node, activation)) onInput({ value: node.value, source: "BUTTON" }); }}>{children}{target.badge}</button>;
+  const suppressClick = useRef(false);
+  const pointerInput = activation.prompt?.allowedSources.includes("pointer") ?? false;
+  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button === 0) {
+      suppressClick.current = false;
+      return;
+    }
+    if (event.button !== 1 && event.button !== 2) return;
+    if (!pointerInput || !canActivateConsoleAction(node, activation)) return;
+    suppressClick.current = true;
+    event.preventDefault();
+    onInput({
+      value: node.value,
+      source: "POINTER",
+      pointer: consolePointerPayload(event.currentTarget, event.clientX, event.clientY, event.button, viewportHeight),
+    });
+  };
+  const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
+    // detail === 0 is keyboard/programmatic activation and therefore has no
+    // physical mouse button or coordinate to preserve.
+    if (event.detail === 0) suppressClick.current = false;
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      event.preventDefault();
+      return;
+    }
+    if (!canActivateConsoleAction(node, activation)) return;
+    onInput(pointerInput && event.detail > 0
+      ? { value: node.value, source: "POINTER", pointer: consolePointerPayload(event.currentTarget, event.clientX, event.clientY, 0, viewportHeight) }
+      : { value: node.value, source: "BUTTON" });
+  };
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className={`console-choice console-tooltip-target ${active ? "" : "is-stale"}`} style={{ ...style, pointerEvents: "auto" }} type="button" aria-disabled={!active} onPointerDown={handlePointerDown} onClick={handleClick}>{children}{target.badge}</button>;
 }
 
-function TooltipNonButton({ node, style, assets, onInput, activation, onRenderError }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; onRenderError?: (message: string) => void }) {
+function TooltipNonButton({ node, style, assets, onInput, activation, onRenderError, viewportHeight }: { node: Extract<RealtimeNode, { type: "button" }>; style: CSSProperties; assets: AssetResolver; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; onRenderError?: (message: string) => void; viewportHeight?: number }) {
   const target = useConsoleTooltipTarget(node.tooltip, node.generation, true);
-  return <span ref={target.ref as React.RefCallback<HTMLSpanElement>} className="console-nonbutton console-tooltip-target" style={style}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} />)}{target.badge}</span>;
+  return <span ref={target.ref as React.RefCallback<HTMLSpanElement>} className="console-nonbutton console-tooltip-target" style={style}>{node.children.map((child, index) => <NodeRenderer key={`nonbutton-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />)}{target.badge}</span>;
 }
 
-function TooltipPositionedButton({ action, style, onInput, activation, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; children: ReactNode }) {
+function TooltipPositionedButton({ action, style, onInput, activation, viewportHeight, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; onInput: (event: ConsoleInputEvent) => void; activation: ConsoleActivationContext; viewportHeight?: number; children: ReactNode }) {
   const target = useConsoleTooltipTarget(action.tooltip, action.generation);
   const active = canActivateConsoleAction(action, activation);
-  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className={`console-choice positioned-inline-action console-tooltip-target ${active ? "" : "is-stale"}`} style={{ ...style, pointerEvents: "auto" }} type="button" aria-disabled={!active} onClick={() => { if (canActivateConsoleAction(action, activation)) onInput({ value: action.value, source: "BUTTON" }); }}>{children}{target.badge}</button>;
+  const suppressClick = useRef(false);
+  const pointerInput = activation.prompt?.allowedSources.includes("pointer") ?? false;
+  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button === 0) {
+      suppressClick.current = false;
+      return;
+    }
+    if (event.button !== 1 && event.button !== 2) return;
+    if (!pointerInput || !canActivateConsoleAction(action, activation)) return;
+    suppressClick.current = true;
+    event.preventDefault();
+    onInput({
+      value: action.value,
+      source: "POINTER",
+      pointer: consolePointerPayload(event.currentTarget, event.clientX, event.clientY, event.button, viewportHeight),
+    });
+  };
+  const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
+    if (event.detail === 0) suppressClick.current = false;
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      event.preventDefault();
+      return;
+    }
+    if (!canActivateConsoleAction(action, activation)) return;
+    onInput(pointerInput && event.detail > 0
+      ? { value: action.value, source: "POINTER", pointer: consolePointerPayload(event.currentTarget, event.clientX, event.clientY, 0, viewportHeight) }
+      : { value: action.value, source: "BUTTON" });
+  };
+  return <button ref={target.ref as React.RefCallback<HTMLButtonElement>} {...target.props} className={`console-choice positioned-inline-action console-tooltip-target ${active ? "" : "is-stale"}`} style={{ ...style, pointerEvents: "auto" }} type="button" aria-disabled={!active} onPointerDown={handlePointerDown} onClick={handleClick}>{children}{target.badge}</button>;
 }
 
 function TooltipPositionedNonButton({ action, style, children }: { action: NonNullable<Extract<RealtimeNode, { type: "positionedInlineSegment" }>["action"]>; style: CSSProperties; children: ReactNode }) {
@@ -544,7 +671,11 @@ function divStyle(bounds: { x: number; y: number; width: number; height: number 
     bottom: isRelative ? undefined : bounds.y,
     width: Math.max(0, bounds.width + 2 - margin.left - margin.right),
     height: Math.max(0, bounds.height - margin.top - margin.bottom),
-    zIndex,
+    // ConsoleEscapedParts and CBG layers are painted in descending upstream
+    // depth. A smaller depth is therefore closer to the foreground, while
+    // CSS paints larger z-index values later. Keep the wire value as the
+    // upstream depth and invert it only at this browser rendering boundary.
+    zIndex: -zIndex,
     backgroundColor: colorToCss(background),
     boxSizing: "border-box",
     overflow: "hidden",

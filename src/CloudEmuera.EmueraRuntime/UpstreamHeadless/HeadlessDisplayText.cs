@@ -24,6 +24,20 @@ internal static class HeadlessDisplayText
         return value;
     }
 
+    // HTML title attributes are display-only text. The pinned upstream game
+    // uses line-feed separators in them (for example, token name followed by
+    // its description), while the structured console contract deliberately
+    // keeps control characters out of text fields. Keep the line break in the
+    // browser-facing canonical form already understood by TooltipLayer.
+    public static string ProjectTooltip(string value, bool convertBackslashToYen)
+    {
+        value = Project(value, convertBackslashToYen);
+        return value
+            .Replace("\r\n", "<br>", StringComparison.Ordinal)
+            .Replace("\r", "<br>", StringComparison.Ordinal)
+            .Replace("\n", "<br>", StringComparison.Ordinal);
+    }
+
     public static string ExpandTabs(string value)
     {
         ArgumentNullException.ThrowIfNull(value);

@@ -6,6 +6,7 @@ import type { ConsoleInputEvent } from "./ScrollbackRenderer";
 export interface PromptControllerHandle {
   submitBlankEnter: () => void;
   submitRightClick: (position?: { x: number; y: number }) => boolean;
+  submitPointer?: (pointer: NonNullable<ConsoleInputEvent["pointer"]>) => boolean;
 }
 
 interface PromptControllerProps {
@@ -59,11 +60,17 @@ export const PromptController = forwardRef<PromptControllerHandle, PromptControl
     if (!showInputForm || value.length !== 0) return;
     submit("KEYBOARD", "", { key: { keyCode: 13, control: false, alt: false, shift: false } });
   }, [showInputForm, submit, value]);
-  const submitRightClick = (position: { x: number; y: number } = { x: 0, y: 0 }): boolean => {
-    if (prompt?.inputType !== "enterKey" && prompt?.inputType !== "anyKey") return false;
-    return submit("POINTER", "", { pointer: { x: position.x, y: position.y, button: 2, pressed: true } });
+  const submitPointer = (pointer: NonNullable<ConsoleInputEvent["pointer"]>): boolean => {
+    if (!prompt?.allowedSources.includes("pointer") || prompt.inputType === "waitOnly") return false;
+    // The desktop Enter/AnyKey path recognizes left-to-continue and
+    // right-to-skip only. Mouse-enabled value prompts and primitive pointer
+    // prompts preserve all three physical buttons.
+    if ((prompt.inputType === "enterKey" || prompt.inputType === "anyKey") && pointer.button === 1) return false;
+    return submit("POINTER", "", { pointer });
   };
-  useImperativeHandle(ref, () => ({ submitBlankEnter, submitRightClick }), [submitBlankEnter, submitRightClick]);
+  const submitRightClick = (position: { x: number; y: number } = { x: 0, y: 0 }): boolean =>
+    submitPointer({ x: position.x, y: position.y, button: 2, pressed: true });
+  useImperativeHandle(ref, () => ({ submitBlankEnter, submitRightClick, submitPointer }), [submitBlankEnter, submitPointer]);
 
   const promptLabel = prompt?.systemInput ? "游戏运行时输入" : "游戏输入提示";
   const enterButtonDisabled = controlsDisabled;

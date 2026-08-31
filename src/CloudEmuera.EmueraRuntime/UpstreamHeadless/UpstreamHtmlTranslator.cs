@@ -58,6 +58,8 @@ internal sealed class UpstreamHtmlTranslationContext
     public Action<ButtonNode> IntegerButtonMarker { get; }
 
     public string DisplayText(string value) => HeadlessDisplayText.Project(value, ConvertBackslashToYen);
+
+    public string DisplayTooltip(string value) => HeadlessDisplayText.ProjectTooltip(value, ConvertBackslashToYen);
 }
 
 internal sealed class UpstreamHtmlTranslationResult
@@ -150,7 +152,7 @@ internal static class UpstreamHtmlTranslator
             ButtonNode button = new(
                 children,
                 value,
-                segment.Title is null ? null : context.DisplayText(segment.Title),
+                segment.Title is null ? null : context.DisplayTooltip(segment.Title),
                 enabled: true,
                 generation: context.ButtonGeneration,
                 positionX: segment.PositionX);
@@ -170,7 +172,7 @@ internal static class UpstreamHtmlTranslator
                 new ButtonNode(
                     children,
                     string.Empty,
-                    segment.Title is null ? null : context.DisplayText(segment.Title),
+                    segment.Title is null ? null : context.DisplayTooltip(segment.Title),
                     enabled: false,
                     generation: context.ButtonGeneration,
                     positionX: segment.PositionX)

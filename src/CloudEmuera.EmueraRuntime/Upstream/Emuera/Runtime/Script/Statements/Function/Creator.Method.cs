@@ -5554,8 +5554,10 @@ internal static partial class FunctionMethodCreator
 			}
 
 			// CloudEmuera S04: GSETFONT retains the requested style and size but
-			// resolves the family through the selected Session face only.
-			Font styledFont = FontFactory.GetFont(Config.FontName, fs, checked((int)fontsize));
+			// resolves the family through the selected Session face only. The
+			// graphics surface owns its font, so do not pass it FontFactory's
+			// shared cache entry.
+			Font styledFont = FontFactory.GetOwnedFont(Config.FontName, fs, checked((int)fontsize));
 			if (styledFont is null)
 				return 0;
 			// g.GSetFont(styledFont);
@@ -5668,12 +5670,13 @@ internal static partial class FunctionMethodCreator
 				g.GDrawString(text, p.X, p.Y);
 			}
 			//生成する画像のサイズを取得
-			var bitmap = new Bitmap(16, 16);
+			using var bitmap = new Bitmap(16, 16);
 			//Graphics canvas = Graphics.FromImage(bitmap);
-			var graphics = Graphics.FromImage(bitmap);
+			using var graphics = Graphics.FromImage(bitmap);
 			Font font = g.Fnt;
 			if (font == null)
-				font = new Font(Config.FontName, 100, GlobalStatic.Console.StringStyle.FontStyle, GraphicsUnit.Pixel);
+				font = FontFactory.GetFont(Config.FontName, GlobalStatic.Console.StringStyle.FontStyle, 100)
+					?? throw new InvalidOperationException("The bound Session font could not create a graphics measurement font.");
 			var size = graphics.MeasureString(text, font, int.MaxValue, StringFormat.GenericTypographic);
 
 			//TextRenderer

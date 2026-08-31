@@ -390,6 +390,110 @@ describe("ScrollbackRenderer", () => {
     expect(onInput).toHaveBeenCalledWith({ value: "current", source: "BUTTON" });
   });
 
+  it("preserves the physical mouse button for a game action", () => {
+    const onInput = vi.fn();
+    const choiceLine: RealtimeLine = {
+      lineId: "mouse-choice",
+      nodes: [{ type: "button", children: [{ type: "text", text: "choice", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], value: "choice", tooltip: null, enabled: true, generation: 2 }],
+      alignment: "left",
+      temporary: false,
+    };
+    render(<ScrollbackRenderer lines={[choiceLine]} assets={assets} onInput={onInput} activation={activation(2, { prompt: prompt(2, { allowedSources: ["keyboard", "button", "pointer"] }) })} />);
+
+    const button = screen.getByRole("button", { name: "choice" });
+    fireEvent.click(button, { detail: 1 });
+    fireEvent.pointerDown(button, { pointerType: "mouse", button: 1, clientX: 12, clientY: 18 });
+    fireEvent.pointerDown(button, { pointerType: "mouse", button: 2, clientX: 12, clientY: 18 });
+
+    expect(onInput).toHaveBeenNthCalledWith(1, { value: "choice", source: "POINTER", pointer: { x: 0, y: 0, button: 0, pressed: true } });
+    expect(onInput).toHaveBeenNthCalledWith(2, { value: "choice", source: "POINTER", pointer: { x: 0, y: 0, button: 1, pressed: true } });
+    expect(onInput).toHaveBeenNthCalledWith(3, { value: "choice", source: "POINTER", pointer: { x: 0, y: 0, button: 2, pressed: true } });
+  });
+
+  it("rebases a scrolled scrollback click to the desktop line origin", () => {
+    const onInput = vi.fn();
+    const choiceLine: RealtimeLine = {
+      lineId: "scrolled-mouse-choice",
+      nodes: [{ type: "button", children: [{ type: "text", text: "choice", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], value: "choice", tooltip: null, enabled: true, generation: 2 }],
+      alignment: "left",
+      temporary: false,
+    };
+    render(<main className="realtime-game-console"><div className="realtime-console-stage"><ScrollbackRenderer lines={[choiceLine]} assets={assets} onInput={onInput} activation={activation(2, { prompt: prompt(2, { allowedSources: ["keyboard", "button", "pointer"] }) })} viewportHeight={600} /></div></main>);
+
+    const container = document.querySelector<HTMLElement>(".realtime-game-console");
+    const stage = document.querySelector<HTMLElement>(".realtime-console-stage");
+    const outputLine = document.querySelector<HTMLElement>(".console-line");
+    expect(container).not.toBeNull();
+    expect(stage).not.toBeNull();
+    expect(outputLine).not.toBeNull();
+    Object.defineProperty(container, "scrollTop", { configurable: true, value: 240 });
+    vi.spyOn(stage!, "getBoundingClientRect").mockReturnValue({
+      bottom: 460,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: -140,
+      width: 800,
+      x: 10,
+      y: -140,
+      toJSON: () => ({}),
+    } as DOMRect);
+    vi.spyOn(outputLine!, "getBoundingClientRect").mockReturnValue({
+      bottom: 100,
+      height: 20,
+      left: 10,
+      right: 810,
+      top: 80,
+      width: 800,
+      x: 10,
+      y: 80,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent.click(screen.getByRole("button", { name: "choice" }), { detail: 1, clientX: 112, clientY: 100 });
+
+    // Relative div Y values are consumed as CSS top offsets inside the
+    // owning line. MOUSEY must therefore preserve the local click offset;
+    // subtracting another lineHeight would move the whole popup up by a row.
+    expect(onInput).toHaveBeenCalledWith({ value: "choice", source: "POINTER", pointer: { x: 102, y: 620, button: 0, pressed: true } });
+  });
+
+  it("rebases a pointer action to the latest output line instead of the clicked history line", () => {
+    const onInput = vi.fn();
+    const clickedLine: RealtimeLine = {
+      lineId: "earlier-choice",
+      nodes: [{ type: "button", children: [{ type: "text", text: "open popup", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], value: "popup", tooltip: null, enabled: true, generation: 2 }],
+      alignment: "left",
+      temporary: false,
+      lineHeight: 20,
+    };
+    const latestLine = { ...line("latest-output", "latest"), lineHeight: 20 };
+    render(<ScrollbackRenderer lines={[clickedLine, latestLine]} assets={assets} onInput={onInput} activation={activation(2, { prompt: prompt(2, { allowedSources: ["keyboard", "button", "pointer"] }) })} viewportHeight={600} defaultLineHeight={20} />);
+
+    const virtualContent = document.querySelector<HTMLElement>(".console-virtual-content");
+    expect(virtualContent).not.toBeNull();
+    expect(virtualContent).toHaveAttribute("data-runtime-output-origin-y", "20");
+    vi.spyOn(virtualContent!, "getBoundingClientRect").mockReturnValue({
+      bottom: 1100,
+      height: 1000,
+      left: 10,
+      right: 810,
+      top: 100,
+      width: 800,
+      x: 10,
+      y: 100,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent.click(screen.getByRole("button", { name: "open popup" }), { detail: 1, clientX: 195, clientY: 110 });
+
+    // The click is 10px below the earlier line but 10px above the latest
+    // output origin. Worker subtracts viewportHeight, yielding MOUSEY=-10;
+    // a subsequent rect Y of MOUSEY()-100 therefore lands at -110px in the
+    // newly emitted line instead of incorrectly using +10-100=-90px.
+    expect(onInput).toHaveBeenCalledWith({ value: "popup", source: "POINTER", pointer: { x: 185, y: 590, button: 0, pressed: true } });
+  });
+
   it("fails closed while disconnected, resyncing, terminal, pending, or outside a button prompt", () => {
     const action = { enabled: true, generation: 7 };
     expect(canActivateConsoleAction(action, activation(7))).toBe(true);
@@ -479,6 +583,7 @@ describe("ScrollbackRenderer", () => {
     expect(div).toBeInTheDocument();
     expect(div.style.position).toBe("absolute");
     expect(div.style.left).toBe("1px");
+    expect(div.style.zIndex).toBe("-3");
     expect(div.style.width).toBe("32px");
     expect(div.style.height).toBe("12px");
     expect(screen.getByRole("button", { name: "Go" })).toHaveStyle({ position: "relative", left: "42px" });
@@ -514,6 +619,43 @@ describe("ScrollbackRenderer", () => {
 
     const div = document.querySelector(".console-emuera-div") as HTMLElement;
     expect(div).toHaveStyle({ width: "76px", height: "36px", margin: "1px 2px 3px 4px" });
+  });
+
+  it("keeps a pointer-anchored relative div above its owning line", () => {
+    const popupLine: RealtimeLine = {
+      lineId: "pointer-popup",
+      nodes: [{
+        type: "positionedInlineSegment",
+        positionX: 0,
+        measuredWidth: 0,
+        action: null,
+        children: [{
+          type: "div",
+          children: [{
+            type: "button",
+            children: [{ type: "text", text: "Option", style: { decorations: [], fontFamily: "default", fontSize: 18, lineHeight: 19, foreground: null, background: null } }],
+            value: "option",
+            tooltip: null,
+            enabled: true,
+            generation: 1,
+          }],
+          bounds: { x: 140, y: -220, width: 270, height: 95 },
+          zIndex: -1,
+          background: null,
+          isRelative: true,
+          box: null,
+        }],
+      }],
+      alignment: "left",
+      temporary: false,
+      lineHeight: 19,
+    };
+
+    render(<ScrollbackRenderer lines={[popupLine]} assets={assets} onInput={() => undefined} />);
+
+    const div = document.querySelector(".console-emuera-div") as HTMLElement;
+    expect(div).toHaveStyle({ position: "relative", left: "140px", top: "-220px", width: "272px", height: "95px", zIndex: "1" });
+    expect(screen.getByRole("button", { name: "Option" })).toBeInTheDocument();
   });
 
   it("keeps buttons clickable inside pointer-transparent Emuera div layers", () => {
