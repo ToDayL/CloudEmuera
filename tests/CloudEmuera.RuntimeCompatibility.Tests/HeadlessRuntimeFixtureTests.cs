@@ -1861,6 +1861,33 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal("Clear", RuntimeTranscriptProjector.Project(clearLine.Nodes));
     }
 
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r")]
+    [InlineData("\r\n")]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Tooltip")]
+    public void HtmlPrintProjectsUpstreamMultilineTooltipsWithoutAborting(string lineBreak)
+    {
+        // EraFL and other games put a display name and description on
+        // separate lines in an HTML title attribute. Keep that presentation
+        // break in the canonical <br> form before the control-character-free
+        // structured console contract validates the tooltip.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(
+            $"<nonbutton title='TOKEN{lineBreak}DETAIL'><img src='CC_ICON_TOKEN_0' srcb='' height='150' ypos='-20'>1</nonbutton>",
+            toPrintBuffer: false);
+
+        ConsoleLine line = Assert.Single(console.Snapshot.Scrollback);
+        ButtonNode nonbutton = Assert.IsType<ButtonNode>(Assert.Single(line.Nodes));
+        Assert.False(nonbutton.Enabled);
+        Assert.Equal("TOKEN<br>DETAIL", nonbutton.Tooltip);
+        Assert.Contains("CC_ICON_TOKEN_0", RuntimeTranscriptProjector.Project(nonbutton.Children), StringComparison.Ordinal);
+    }
+
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     public void HtmlPrintMapsImageVariantsAndMixedNumberGeometryThroughTheResolver()

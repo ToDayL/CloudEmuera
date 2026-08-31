@@ -78,6 +78,19 @@ inside modified upstream files and does not replace Git history or review.
   Verification is the repeated graphics-surface/font/draw regression in
   `HeadlessRuntimeFixtureTests` and the dev-Docker RuntimeCompatibility suite.
 
+## 2026-08-31 — Project line breaks in HTML tooltip presentation
+
+- `UpstreamHeadless/UpstreamHtmlTranslator.cs` projects line-feed, carriage
+  return, and CRLF separators in upstream HTML `title` attributes to the
+  existing `<br>` tooltip representation before constructing structured button
+  nodes. Ordinary display text, input values, paths, and identifiers remain
+  unchanged.
+- This keeps the structured console contract free of control characters while
+  retaining the upstream tooltip's line-oriented presentation in the browser.
+- Scope: the HTML compatibility boundary. Verification is the LF/CR/CRLF
+  multiline tooltip regression in `HeadlessRuntimeFixtureTests` and the
+  dev-Docker RuntimeCompatibility suite.
+
 ## 2026-08-30 — Echo accepted input through structured Worker output
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` mirrors the pinned desktop
