@@ -1189,6 +1189,54 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "FontLayout")]
+    public async Task HtmlPrintDivUsesFontSizeHorizontallyAndLineHeightVertically()
+    {
+        // PLAY-002/COMP-007: EraFL's panel dimensions are expressed as
+        // font-relative MixedNum values, but child <br> rows advance by the
+        // configured physical line height. The frame must use the same
+        // horizontal/vertical bases or its last action row is clipped.
+        const string panel =
+            "<div rect='100,200,300,1300' " +
+            "margin='100,200,300,400' " +
+            "padding='200,300,400,500' " +
+            "border='300,400,500,600' " +
+            "radius='400,500,600,700'>D</div>";
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            $"HTML_PRINT \"{panel}\"\n" +
+            "QUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:1600\n字体大小:16\n每行高度:18\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontSize: 16,
+            lineHeight: 18,
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        PositionedInlineSegmentNode segment = Assert.IsType<PositionedInlineSegmentNode>(
+            Assert.Single(Assert.Single(fixture.Console.Snapshot.Scrollback).Nodes));
+        DivNode div = Assert.IsType<DivNode>(Assert.Single(segment.Children));
+        Assert.Equal(new ConsoleRect(16, 36, 48, 234), div.Bounds);
+        ConsoleBoxModel box = Assert.IsType<ConsoleBoxModel>(div.Box);
+        Assert.Equal(new ConsoleInsets(18, 32, 54, 64), box.Margin);
+        Assert.Equal(new ConsoleInsets(36, 48, 72, 80), box.Padding);
+        Assert.Equal(new ConsoleInsets(54, 64, 90, 96), box.Border);
+        Assert.Equal(new ConsoleInsets(72, 80, 108, 112), box.Radius);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HtmlPrintButtonsUseTheCurrentRuntimeGeneration()
     {
         var console = new StructuredGameConsole();
@@ -4208,6 +4256,8 @@ public sealed class HeadlessRuntimeFixtureTests
             int browserWidth = 0,
             RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive,
             int? customWidth = null,
+            int fontSize = 18,
+            int lineHeight = 19,
             string fontFaceId = "sarasa-fixed-sc-1.0.40-regular",
             string fontCatalogDigest = "",
             string runtimeFontPath = "",
@@ -4223,6 +4273,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 browserWidth,
                 widthMode,
                 customWidth,
+                fontSize,
+                lineHeight,
                 fontFaceId,
                 fontCatalogDigest,
                 runtimeFontPath,
@@ -4239,6 +4291,8 @@ public sealed class HeadlessRuntimeFixtureTests
             int browserWidth = 0,
             RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive,
             int? customWidth = null,
+            int fontSize = 18,
+            int lineHeight = 19,
             string fontFaceId = "sarasa-fixed-sc-1.0.40-regular",
             string fontCatalogDigest = "",
             string runtimeFontPath = "",
@@ -4258,6 +4312,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 initializationDeadline ?? TimeSpan.FromSeconds(5),
                 runDeadline ?? TimeSpan.FromSeconds(5),
                 browserWidth: browserWidth,
+                fontSize: fontSize,
+                lineHeight: lineHeight,
                 widthMode: widthMode,
                 customWidth: customWidth,
                 fontFaceId: fontFaceId,

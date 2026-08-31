@@ -92,6 +92,79 @@ All development containers and images must use the host UID/GID. New Compose ser
 
 NuGet and pnpm dependencies must be locked. Update packages.lock.json or pnpm-lock.yaml when dependencies change. Do not commit bin/, obj/, node_modules/, dist/, runtime data, or secrets.
 
+## Dev Session and runtime trace debugging
+
+The development Compose environment stores `/data` in a named volume. The
+repository's `./data` directory is not necessarily the data directory used by
+the running API. Always resolve a Session from the database before opening its
+files or logs; do not infer paths from the repository layout.
+
+~~~bash
+# Inspect the running services and identify the API container.
+docker compose -f docker/compose.dev.yml ps
+api_container="$(docker compose -f docker/compose.dev.yml ps -q api)"
+
+# Copy the SQLite database read-only, including WAL/SHM when present. Keep the
+# three files together before querying the copy.
+trace_tmp="$(mktemp -d)"
+docker cp "$api_container:/data/cloudemuera.db" "$trace_tmp/cloudemuera.db"
+docker cp "$api_container:/data/cloudemuera.db-wal" "$trace_tmp/cloudemuera.db-wal"
+docker cp "$api_container:/data/cloudemuera.db-shm" "$trace_tmp/cloudemuera.db-shm"
+
+# Locate a Session by a stable identifier or a carefully scoped name. Record
+# the state, worker fencing data, root path, and display configuration.
+python3 - "$trace_tmp/cloudemuera.db" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+connection.row_factory = sqlite3.Row
+for row in connection.execute(
+    """select id, name, state, worker_epoch, waiting_for_input,
+              current_prompt_id, last_output_sequence, session_root_path,
+              font_face_id, font_size, line_height, width_mode, custom_width
+       from sessions where id = ?""",
+    ("<session-id>",),
+):
+    print(dict(row))
+PY
+~~~
+
+`session_root_path` is relative to `/data`. A Worker's runtime traces are
+stored in the sibling `metadata` directory rather than inside the SessionRoot:
+
+~~~text
+/data/<session_root_path>                         # SessionRoot
+/data/<session_root_path parent>/metadata/runtime-debug.jsonl
+/data/<session_root_path parent>/metadata/worker-error.jsonl
+~~~
+
+Use the following evidence hierarchy when correlating a runtime or UI report:
+
+- `runtime-debug.jsonl` is the primary structured trace for runtime behavior,
+  output, and layout-related events. Use `worker-error.jsonl` for Worker
+  failures. Treat `emuera.log` as supplemental rather than authoritative for
+  structured Console behavior.
+- Use `runtime_width` to compare configured, browser, effective, and drawable
+  widths. Read font face, font size, line height, width mode, and Session paths
+  from the database record being investigated.
+- Use `erb_output` to map runtime output to `sourceFile`, `sourceLine`,
+  `instruction`, and input-wait state; use `erb_wait` to identify input points;
+  use `console_operation` to correlate output sequence, line IDs, and node
+  summaries. Escaped path separators in JSON may require normalized search
+  patterns.
+- Treat a trace as evidence of emitted output, not necessarily complete visual
+  geometry. When geometry matters, combine the trace with the generating ERB,
+  the persisted display configuration, the structured node fields, and—when
+  authenticated browser access is available—DOM measurements such as
+  `getBoundingClientRect()`, `overflow`, `scrollHeight`, and `clientHeight`.
+
+For any layout investigation, record the Session ID, Worker epoch, relevant
+trace lines, source location, display settings, coordinate units, and the
+rendering boundary where the discrepancy appears. Keep diagnosis separate from
+changes to the running Session, and do not attempt interactive login when the
+available credentials are not valid.
+
 ## Upstream source rules
 
 Emuera.EM+EE is stored as ordinary Git files under src/CloudEmuera.EmueraRuntime/Upstream, from commit 2175f8a629257efb08214e093704b3a3d3d06d05.

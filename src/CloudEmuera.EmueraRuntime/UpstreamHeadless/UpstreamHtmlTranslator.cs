@@ -288,10 +288,15 @@ internal static class UpstreamHtmlTranslator
         TranslationCounter counter)
     {
         counter.Depth(div.Depth);
-        int x = div.X is { } xValue ? ToPixels(xValue, context.FontSize) : 0;
-        int y = div.Y is { } yValue ? ToPixels(yValue, context.FontSize) : 0;
-        int width = Math.Abs(ToPixels(div.Width, context.FontSize));
-        int height = Math.Abs(ToPixels(div.Height, context.FontSize));
+        // A div is the layout frame for line-oriented HTML output. Keep the
+        // two axes in their native units: horizontal coordinates/sizes use the
+        // glyph width (FontSize), while vertical coordinates/sizes use the
+        // physical row advance (LineHeight). Explicit px values are preserved
+        // by ToPixels on either axis.
+        int x = div.X is { } xValue ? ToHorizontalPixels(xValue, context) : 0;
+        int y = div.Y is { } yValue ? ToVerticalPixels(yValue, context) : 0;
+        int width = Math.Abs(ToHorizontalPixels(div.Width, context));
+        int height = Math.Abs(ToVerticalPixels(div.Height, context));
         if (width <= 0 || height <= 0)
             throw Unsupported("The upstream HTML div has a non-positive rectangle.");
 
@@ -340,10 +345,10 @@ internal static class UpstreamHtmlTranslator
         if (box == null)
             return null;
 
-        ConsoleInsets margin = ToInsets(box.Margin, context.FontSize);
-        ConsoleInsets padding = ToInsets(box.Padding, context.FontSize);
-        ConsoleInsets border = ToInsets(box.Border, context.FontSize);
-        ConsoleInsets radius = ToInsets(box.Radius, context.FontSize);
+        ConsoleInsets margin = ToInsets(box.Margin, context);
+        ConsoleInsets padding = ToInsets(box.Padding, context);
+        ConsoleInsets border = ToInsets(box.Border, context);
+        ConsoleInsets radius = ToInsets(box.Radius, context);
         ConsoleColor?[] colors = new ConsoleColor?[4];
         if (box.BorderColorsRgb != null)
         {
@@ -355,17 +360,19 @@ internal static class UpstreamHtmlTranslator
         return new ConsoleBoxModel(margin, padding, border, radius, colors);
     }
 
-    private static ConsoleInsets ToInsets(UpstreamHtmlLength[] values, int fontSize)
+    private static ConsoleInsets ToInsets(
+        UpstreamHtmlLength[] values,
+        UpstreamHtmlTranslationContext context)
     {
         if (values == null)
             return ConsoleInsets.Zero;
         if (values.Length != 4)
             throw Unsupported("The upstream HTML div has an invalid box-model array.");
         return new ConsoleInsets(
-            ToPixels(values[0], fontSize),
-            ToPixels(values[1], fontSize),
-            ToPixels(values[2], fontSize),
-            ToPixels(values[3], fontSize));
+            ToVerticalPixels(values[0], context),
+            ToHorizontalPixels(values[1], context),
+            ToVerticalPixels(values[2], context),
+            ToHorizontalPixels(values[3], context));
     }
 
     private static RuntimeSpriteDefinition ResolveSprite(
@@ -455,6 +462,16 @@ internal static class UpstreamHtmlTranslator
             throw Unsupported("The upstream HTML length is outside the geometry range.");
         return (int)result;
     }
+
+    private static int ToHorizontalPixels(
+        UpstreamHtmlLength value,
+        UpstreamHtmlTranslationContext context) =>
+        ToPixels(value, context.FontSize);
+
+    private static int ToVerticalPixels(
+        UpstreamHtmlLength value,
+        UpstreamHtmlTranslationContext context) =>
+        ToPixels(value, context.LineHeight);
 
     private static int AbsChecked(int value) => value == int.MinValue
         ? throw Unsupported("The upstream HTML geometry is outside the positive range.")

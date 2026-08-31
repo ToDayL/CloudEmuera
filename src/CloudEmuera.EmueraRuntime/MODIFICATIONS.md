@@ -10,6 +10,10 @@
 - Added a headless display projection that expands upstream U+0009 tabs to eight U+0020 spaces before structured
   text validation and authoritative measurement. The original game/script data and input values are not rewritten;
   the projection keeps the RuntimeAdapter control-character boundary closed (PLAY-001/PLAY-014, issue #18).
+- Added axis-aware MixedNum conversion for headless HTML `div` frames: horizontal coordinates, dimensions and
+  left/right box-model insets use the Session `FontSize`, while vertical coordinates, dimensions and top/bottom
+  insets use the physical `LineHeight`; explicit `px` values remain exact. This keeps fixed EraFL task-panel frames
+  large enough for their line-height-spaced child rows (PLAY-002/COMP-007).
 
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
