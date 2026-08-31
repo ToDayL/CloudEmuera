@@ -333,7 +333,7 @@ internal static class RuntimeScenarioRunner
                 string startupPrefix = fixtureId == "v18-core"
                     ? "V18-START\nV18-TOOLTIP\nV18-READY\nV18-INPUT"
                     : "EMEE-START\nEMEE-TOOLTIP-IMAGE\nEMEE-INPUT";
-                string expected = $"{startupPrefix}\n{string.Join('\n', scenario.LoadOutputs)}";
+                string expected = $"{startupPrefix}\n{scenario.LoadInput}\n{string.Join('\n', scenario.LoadOutputs)}";
                 bool loaded = string.Equals(transcript, expected, StringComparison.Ordinal);
                 Check(loaded, $"Loaded values were not visible as expected. Actual: {transcript}", errors, ref assertions);
                 evidence.Add(new RuntimeScenarioAssertionEvidence("native-save-values", loaded, VerifiedByVisibleOutput: true));

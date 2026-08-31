@@ -86,7 +86,7 @@
         },
         {
           "path": "v18-core/expected-transcript.txt",
-          "sha256": "fc9b2531bf207a020e5d67f243243981601108a68a337652fee35405bdafa871",
+          "sha256": "3a3115822032b401eacb229225b9abeb9fa8e7432337e55573dfd18399b73294",
           "mediaType": "text/plain",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",
@@ -182,7 +182,7 @@
         },
         {
           "path": "em-ee-core/expected-transcript.txt",
-          "sha256": "7e08286253a31afccc37817da17b2af9668dec8ab4a45f4723b87152f43b7ac4",
+          "sha256": "47f439b933db980688701e6306fe8e2281d44647470da786def1ea46cd38bd06",
           "mediaType": "text/plain",
           "encoding": "utf-8",
           "source": "authored-for-cloudemuera",

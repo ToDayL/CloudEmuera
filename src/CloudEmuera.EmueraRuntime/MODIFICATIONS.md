@@ -15,6 +15,21 @@ This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
 
+## 2026-08-30 — Echo accepted input through structured Worker output
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` mirrors the pinned desktop
+  `doInputToEmueraProgram` path by printing and flushing an accepted keyboard
+  or semantic button submission before runtime execution continues.
+- The echoed text is the actual submission value, not the button label. Empty
+  values retain upstream `Print`'s invisible behavior, while primitive
+  pointer/key input remains non-textual.
+- The echo uses ordinary sequenced Console transactions, so committed frames,
+  bounded history, API mirrors, and reconnect snapshots all observe the same
+  state. No IPC or Realtime protocol change is required.
+- Scope: PLAY-004/005/006/018 and AC-002/005. Verification:
+  `AcceptedKeyboardAndButtonValuesAreEchoedIntoCommittedSnapshots` plus the
+  RuntimeBridge and full repository checks in the development Docker environment.
+
 ## 2026-08-30 — Preserve the configured console background
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` initializes the structured window

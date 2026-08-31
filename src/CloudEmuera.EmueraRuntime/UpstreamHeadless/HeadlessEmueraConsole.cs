@@ -700,6 +700,9 @@ internal sealed class EmueraConsole
                 GlobalStatic.Process.InputSystemInteger(request.DefIntValue);
             else
                 GlobalStatic.Process.InputInteger(request.DefIntValue);
+            EchoAcceptedInput(type is ConsoleInputType.Text or ConsoleInputType.TextButton
+                ? request.DefStrValue ?? string.Empty
+                : request.DefIntValue.ToString(CultureInfo.InvariantCulture));
             return;
         }
 
@@ -712,12 +715,14 @@ internal sealed class EmueraConsole
                 GlobalStatic.Process.InputSystemInteger(value);
             else
                 GlobalStatic.Process.InputInteger(value);
+            EchoAcceptedInput(input.Value);
         }
         else if (type is ConsoleInputType.Text or ConsoleInputType.TextButton)
         {
             if (request.IsSystemInput)
                 GlobalStatic.Process.InputSystemInteger(request.HasDefValue ? request.DefIntValue : 0);
             GlobalStatic.Process.InputString(input.Value);
+            EchoAcceptedInput(input.Value);
         }
         else if (type == ConsoleInputType.AnyValue)
         {
@@ -732,6 +737,7 @@ internal sealed class EmueraConsole
             {
                 GlobalStatic.Process.InputString(input.Value);
             }
+            EchoAcceptedInput(input.Value);
         }
     }
 
@@ -758,6 +764,21 @@ internal sealed class EmueraConsole
             allowedSources: ConsoleInputSource.All,
             buttonGeneration: activeButtonGeneration), cancellationToken);
         ApplyInputMessageSkip(input);
+        EchoAcceptedInput(input.Value);
+    }
+
+    /// <summary>
+    /// Mirrors pinned desktop Emuera's successful input path: after the
+    /// interpreter accepts the value, doInputToEmueraProgram calls Print and
+    /// PrintFlush so the submitted value becomes ordinary console history.
+    /// Keeping the echo in the headless Worker runtime makes it part of the
+    /// sequenced display state and every committed snapshot. Empty values
+    /// remain invisible through Print's existing upstream-compatible rule.
+    /// </summary>
+    private void EchoAcceptedInput(string value)
+    {
+        Print(value);
+        FlushPendingLine();
     }
 
     private bool ShouldSkipMessageWait(ConsoleInputType inputType, bool stopMessageSkip) =>
