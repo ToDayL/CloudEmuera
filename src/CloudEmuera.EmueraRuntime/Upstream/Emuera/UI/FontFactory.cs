@@ -54,6 +54,24 @@ internal class FontFactory
 		}
 	}
 
+	public static Font GetOwnedFont(string requestFontName, FontStyle style, int? requestedSize = null)
+	{
+		// GetFont returns a shared measurement/rendering instance. GraphicsImage
+		// owns and disposes its selected font, so hand it an independent copy.
+		Font shared = GetFont(requestFontName, style, requestedSize);
+		if (shared is null)
+			return null;
+
+		try
+		{
+			return new Font(shared.FontFamily, shared.Size, shared.Style, shared.Unit);
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
 	public static void ClearFont()
 	{
 		foreach (var font in fontDic)

@@ -165,6 +165,39 @@ rendering boundary where the discrepancy appears. Keep diagnosis separate from
 changes to the running Session, and do not attempt interactive login when the
 available credentials are not valid.
 
+## Runtime crash triage
+
+When a Session is `CRASHED`, treat the newest fatal runtime record as the
+starting point. Capture its timestamp, `workerEpoch`, `lastOutputSequence`,
+phase, error code, exception type, and complete message before interpreting the
+failure. A Session can retain failures from several Worker attempts; older
+records are history, and a later `connection_closed:Cancelled` record is often
+cleanup after the fatal event rather than the cause.
+
+Read the raw JSONL records, not only a shortened dashboard or a final log line.
+Correlate `worker-error.jsonl` with the surrounding `runtime-debug.jsonl`
+events, especially `erb_output`, `erb_wait`, and `console_operation`. Use the
+source file, source line, instruction, and output sequence to inspect the exact
+ERB call site and its immediate caller chain. If a message is truncated, retain
+the raw record and use the stack's first project-owned frame plus the local
+source to recover the missing context.
+
+Classify the failure boundary before changing code: game/ERB execution,
+upstream compatibility, native or resource handling, Worker lifecycle, IPC, or
+browser rendering. For native-resource failures, explicitly inspect ownership,
+disposal, cache lifetime, repeated initialization, and cross-Worker static
+state; lazy native failures frequently surface later than the operation that
+created the invalid state. For lifecycle failures, compare epochs and sequence
+numbers rather than assuming the most recent connection event is authoritative.
+
+Reproduce a suspected runtime failure with the smallest deterministic fixture
+that preserves the same operation order and lifecycle (including repeated
+create/dispose or reopen paths when relevant). Cover the first-use path, the
+repeated/lifecycle path, and a bounded failure path. Keep the live SessionRoot
+and its traces read-only; make code changes and regression tests against a
+copied or temporary fixture, then validate through the development Docker
+environment.
+
 ## Upstream source rules
 
 Emuera.EM+EE is stored as ordinary Git files under src/CloudEmuera.EmueraRuntime/Upstream, from commit 2175f8a629257efb08214e093704b3a3d3d06d05.

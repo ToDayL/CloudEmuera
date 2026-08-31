@@ -205,7 +205,16 @@ internal sealed class GraphicsImage : AbstractImage
 		GraphicsPath gp =
 			new();
 		//一部のフォントで描画がずれる問題修正
+#if CLOUDEMUERA_HEADLESS
+		// CloudEmuera: libgdiplus can create a Font from the Session's private
+		// font collection but fail later when Font.Height or FontFamily metrics
+		// are queried. The FontFactory size is already the requested pixel size,
+		// so use it directly for the headless path and keep the actual bound face
+		// and style for glyph construction.
+		float emSize = usingFont.Size;
+#else
 		float emSize = (float)usingFont.Height * usingFont.FontFamily.GetEmHeight(usingFont.Style) / usingFont.FontFamily.GetLineSpacing(usingFont.Style);
+#endif
 		gp.AddString(text, usingFont.FontFamily, (int)usingFont.Style, emSize, new Point(x, y), format);
 		g.SmoothingMode = SmoothingMode.AntiAlias;
 		if (brush != null)

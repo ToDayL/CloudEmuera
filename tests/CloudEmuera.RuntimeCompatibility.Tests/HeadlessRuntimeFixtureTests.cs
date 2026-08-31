@@ -163,6 +163,44 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task RecreatedGraphicsSurfaceDoesNotReuseDisposedFontCacheEntry()
+    {
+        // COMP-007/ADR-0029: GCREATE disposes the prior graphics surface, so
+        // a graphics-owned GSETFONT value must not be the shared FontFactory
+        // cache entry. This mirrors games that rebuild an icon surface before
+        // drawing the next token.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "GCREATE 0, 16, 16\n" +
+            "GSETFONT 0, \"game-icons\", 12, 0\n" +
+            "GDRAWTEXT 0, \"A\", 0, 0\n" +
+            "GCREATE 0, 16, 16\n" +
+            "GSETFONT 0, \"game-icons\", 12, 0\n" +
+            "GDRAWTEXT 0, \"B\", 0, 0\n" +
+            "PRINTL GRAPHICS-FONT-REUSE-OK\n" +
+            "QUIT\n");
+        string fontRoot = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(), "assets", "runtime-fonts");
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}:{diagnostic.Message}")));
+        Assert.Contains(
+            "GRAPHICS-FONT-REUSE-OK",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void SetBgColorPublishesWindowBackgroundInsteadOfTextBackground()
     {
         // PLAY-002: SETBGCOLOR changes the whole Emuera console surface, not

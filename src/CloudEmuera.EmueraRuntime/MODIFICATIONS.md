@@ -19,6 +19,22 @@ This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
 
+## 2026-08-31 — Keep graphics-owned fonts separate from the shared cache
+
+- `Upstream/Emuera/UI/FontFactory.cs` now exposes an owned-font copy for
+  graphics surfaces. `GSETFONT` uses that copy, while measurement and default
+  text rendering continue to use the shared cache entry.
+- `Upstream/Emuera/UI/Game/Image/GraphicsImage.cs` uses the bound font's
+  pixel size directly for headless path text drawing. This avoids unsupported
+  lazy `Font.Height`/private-family metric queries in libgdiplus while keeping
+  glyph construction on the selected Session face.
+- This prevents `GCREATE`/`GDISPOSE` from disposing a cached `Font` that a later
+  `GSETFONT` returns, which otherwise fails lazily at `Font.GetHeight()` during
+  `GDRAWTEXT`.
+- Scope: P1-S04, ADR-0029, and the headless graphics compatibility boundary.
+  Verification is the repeated graphics-surface/font/draw regression in
+  `HeadlessRuntimeFixtureTests` and the dev-Docker RuntimeCompatibility suite.
+
 ## 2026-08-30 — Echo accepted input through structured Worker output
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` mirrors the pinned desktop
