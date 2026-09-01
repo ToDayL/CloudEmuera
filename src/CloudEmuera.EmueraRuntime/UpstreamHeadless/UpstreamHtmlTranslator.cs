@@ -268,9 +268,22 @@ internal static class UpstreamHtmlTranslator
                 kind = ConsoleShapeKind.Rectangle;
                 bounds = new ConsoleRect(0, 0, Math.Max(1, Math.Abs(pixels[0])), Math.Max(1, context.LineHeight));
                 break;
-            case "rect" when pixels.Length == 4 && pixels[0] >= 0 && pixels[2] > 0 && pixels[3] > 0:
+            // The upstream parser accepts a positive floating-point rectangle
+            // even when its eventual desktop raster width is below one pixel.
+            // Check the original semantic values first, then keep that shape
+            // representable after integer pixel quantisation.  This matters to
+            // gauge HTML such as eraBlue's MAX(1, ...) width: 1% at a 12px
+            // font is 0.12px upstream but must not become an unsupported shape.
+            case "rect" when pixels.Length == 4 &&
+                shape.Parameters[0].Value >= 0 &&
+                shape.Parameters[2].Value > 0 &&
+                shape.Parameters[3].Value > 0:
                 kind = ConsoleShapeKind.Rectangle;
-                bounds = new ConsoleRect(pixels[0], pixels[1], Math.Max(1, pixels[2]), Math.Max(1, pixels[3]));
+                bounds = new ConsoleRect(
+                    pixels[0],
+                    pixels[1],
+                    Math.Max(1, pixels[2]),
+                    Math.Max(1, pixels[3]));
                 break;
             default:
                 throw Unsupported($"The upstream HTML shape '{shape.Type}' is not representable.");

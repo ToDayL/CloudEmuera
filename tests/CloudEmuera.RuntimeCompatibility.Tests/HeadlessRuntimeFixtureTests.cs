@@ -92,6 +92,115 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void EtxDisplaySentinelIsRemovedBeforeStructuredTextValidation()
+    {
+        // PLAY-001/PLAY-014: GET_BETWEEN_STRING uses U+0003 as its
+        // display-only out-of-range sentinel. The headless projection must
+        // remove that sentinel without changing surrounding visible text.
+        var adapter = new StructuredGameConsole();
+        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.Print("before\u0003after");
+        headless.NewLine();
+
+        string transcript = RuntimeTranscriptProjector.Project(adapter.Snapshot.VisibleNodes);
+        Assert.Equal("beforeafter", transcript);
+        Assert.DoesNotContain('\u0003', transcript);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task EtxDisplaySentinelDoesNotAbortPinnedInterpreter()
+    {
+        // PLAY-001/PLAY-014: exercise the pinned interpreter-to-console path
+        // with the exact ETX byte that the missing CSTR field returns.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTL before\u0003after\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("beforeafter", transcript, StringComparison.Ordinal);
+        Assert.DoesNotContain('\u0003', transcript);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r")]
+    [InlineData("\r\n")]
+    [Trait("Category", "RuntimeBridge")]
+    public void MeaningfulPrintLineBreaksBecomeStructuredLines(string lineBreak)
+    {
+        // PLAY-001/PLAY-014: the pinned upstream accepts LF/CR line
+        // separators. They must become Console line boundaries, not raw
+        // control characters in a TextNode; CRLF is one boundary.
+        var adapter = new StructuredGameConsole();
+        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.Print($"before{lineBreak}after");
+        headless.NewLine();
+
+        Assert.Equal(
+            ["before", "after"],
+            adapter.Snapshot.Scrollback.Select(line => RuntimeTranscriptProjector.Project(line.Nodes)));
+    }
+
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\r\n")]
+    [Trait("Category", "RuntimeBridge")]
+    public void MeaningfulHtmlCarriageReturnsBecomeStructuredBreaks(string lineBreak)
+    {
+        // PLAY-001/PLAY-014: HtmlManager's structural newline path is LF
+        // based, so headless normalizes meaningful CR variants before parsing.
+        var adapter = new StructuredGameConsole();
+        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml($"<p align='left'>before{lineBreak}after</p>", toPrintBuffer: false);
+
+        Assert.Equal(
+            ["before", "after"],
+            adapter.Snapshot.Scrollback.Select(line => RuntimeTranscriptProjector.Project(line.Nodes)));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void UnsupportedDisplayControlCharactersAreDroppedBeforeValidation()
+    {
+        // PLAY-001/PLAY-014: no C0/C1 control other than the separately
+        // handled TAB/LF/CR controls may abort a display-only operation. The
+        // complete Unicode control set verifies this is generic rather than
+        // an allowlist derived from one game's current output.
+        var adapter = new StructuredGameConsole();
+        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        string controls = new string(
+            Enumerable.Range(char.MinValue, char.MaxValue + 1)
+                .Select(value => (char)value)
+                .Where(value => char.IsControl(value) && value is not ('\t' or '\n' or '\r'))
+                .ToArray());
+
+        headless.Print($"before{controls}after");
+        headless.NewLine();
+
+        string transcript = RuntimeTranscriptProjector.Project(adapter.Snapshot.VisibleNodes);
+        Assert.Equal("beforeafter", transcript);
+        Assert.DoesNotContain(transcript, character => char.IsControl(character));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task Issue15EnumeratedWindowsPathLoadsXmlOnLinux()
     {
         // COMP-002/COMP-006/GAME-008/issue #15: ENUMFILES returns a path
@@ -1920,6 +2029,50 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal("asset-map", sprite.MappingAssetId?.Value);
         Assert.Single(sprite.AnimationFrames);
         Assert.Equal("asset-frame", sprite.AnimationFrames[0].AssetId.Value);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintKeepsPositiveSubpixelShapeDimensionsRepresentable()
+    {
+        // PLAY-002: upstream accepts a positive 4-parameter rectangle whose
+        // font-relative width rounds below one pixel. It must remain a valid
+        // structured shape instead of becoming HTML_TRANSLATION_UNSUPPORTED.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(
+            "<shape type='rect' param='0,70,1,30'>",
+            toPrintBuffer: true);
+        headless.PrintFlush(force: true);
+
+        ShapeNode shape = Assert.IsType<ShapeNode>(
+            Assert.Single(console.Snapshot.Scrollback.Single().Nodes));
+        Assert.Equal(1, shape.Bounds.Width);
+        Assert.True(shape.Bounds.Height > 0);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintRetainsTheSpecificTranslationFailureReason()
+    {
+        // PLAY-002: a semantically non-positive div remains fail-closed, but
+        // the diagnostic must identify the translator branch rather than only
+        // reporting the generic UNSUPPORTED code.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        NotSupportedException exception = Assert.Throws<NotSupportedException>(() =>
+            headless.PrintHtml(
+                "<div rect='0,0,0px,1px'>invalid</div>",
+                toPrintBuffer: false));
+
+        Assert.Equal(
+            "EMUERA_HTML_TRANSLATION_UNSUPPORTED: The upstream HTML div has a non-positive rectangle.",
+            exception.Message);
+        Assert.Empty(console.Snapshot.Scrollback);
     }
 
     [Fact]
