@@ -9,8 +9,14 @@ internal sealed record ScannedGameTree(
 
 internal static class GameContentTreeScanner
 {
-    public static ScannedGameTree Scan(string root)
+    public static ScannedGameTree Scan(
+        string root,
+        int maxEntryCount = GameContentScanLimits.MaxEntryCount,
+        long maxSingleFileBytes = GameContentScanLimits.MaxSingleFileBytes,
+        long maxTotalBytes = GameContentScanLimits.MaxTotalBytes)
     {
+        if (maxEntryCount <= 0 || maxSingleFileBytes < 0 || maxTotalBytes < 0)
+            throw new ArgumentOutOfRangeException(nameof(maxEntryCount));
         if (!Directory.Exists(root)) throw new IOException("The game content directory is missing.");
         var pending = new Stack<(DirectoryInfo Directory, int Depth)>();
         pending.Push((new DirectoryInfo(root), 0));
@@ -23,7 +29,7 @@ internal static class GameContentTreeScanner
             Reject(directory);
             foreach (FileSystemInfo entry in directory.EnumerateFileSystemInfos().OrderByDescending(value => value.Name, StringComparer.Ordinal))
             {
-                if (++entryCount > GameContentScanLimits.MaxEntryCount)
+                if (++entryCount > maxEntryCount)
                     throw new GameContentLimitException("GAME_CONTENT_ENTRY_LIMIT");
                 Reject(entry);
                 string logical = Path.GetRelativePath(root, entry.FullName).Replace('\\', '/');
@@ -36,11 +42,11 @@ internal static class GameContentTreeScanner
                 }
                 else if (entry is FileInfo file)
                 {
-                    if (file.Length > GameContentScanLimits.MaxSingleFileBytes)
+                    if (file.Length > maxSingleFileBytes)
                         throw new GameContentLimitException("GAME_CONTENT_FILE_LIMIT");
-                    total = checked(total + file.Length);
-                    if (total > GameContentScanLimits.MaxTotalBytes)
+                    if (file.Length > maxTotalBytes - total)
                         throw new GameContentLimitException("GAME_CONTENT_TOTAL_LIMIT");
+                    total += file.Length;
                     using Microsoft.Win32.SafeHandles.SafeFileHandle handle = File.OpenHandle(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
                     if (LinuxFileOperations.ReadIdentity(handle).LinkCount != 1)
                         throw new IOException("The game content tree contains a hard link.");

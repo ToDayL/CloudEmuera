@@ -8,10 +8,10 @@ internal static class GamePackageRejectionMessages
     private static readonly Dictionary<string, string> Catalog = new(StringComparer.Ordinal)
     {
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.ArchiveTooLarge] = "压缩包超过允许的大小限制。",
-        [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.ArchiveFormatUnsupported] = "压缩包格式不受支持（多卷、ZIP64 或带尾随数据）。",
+        [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.ArchiveFormatUnsupported] = "压缩包格式不受支持（多卷或带尾随数据）。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.ArchiveCorrupt] = "压缩包已损坏，或文件内容与压缩信息不一致。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.ArchiveEncrypted] = "不支持加密压缩包，请先移除密码再上传。",
-        [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.Zip64Unsupported] = "不支持 ZIP64 格式的压缩包。",
+        [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.Zip64Unsupported] = "ZIP64 结构无效或不完整。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.ZipMethodUnsupported] = "压缩包使用了不支持的压缩方法。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.EntryCountExceeded] = "压缩包内文件/目录数量超过限制。",
         [CloudEmuera.Application.GamePackages.GamePackageRejectionCodes.CentralDirectoryTooLarge] = "压缩包目录信息过大。",

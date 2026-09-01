@@ -337,8 +337,9 @@ public sealed class GamePackageIngestionService(
             if (!directory)
             {
                 if (entry.ExpandedBytes > limits.MaxSingleFileBytes) Reject(GamePackageRejectionCodes.EntryTooLarge, "ZIP entry exceeds the single-file limit.", path);
-                total = checked(total + entry.ExpandedBytes);
-                if (total > limits.MaxExpandedBytes) Reject(GamePackageRejectionCodes.ExpandedSizeExceeded, "ZIP expanded size exceeds the limit.", path);
+                if (entry.ExpandedBytes > limits.MaxExpandedBytes - total)
+                    Reject(GamePackageRejectionCodes.ExpandedSizeExceeded, "ZIP expanded size exceeds the limit.", path);
+                total += entry.ExpandedBytes;
                 double ratio = entry.ExpandedBytes == 0 ? 1 : entry.CompressedBytes == 0 ? double.PositiveInfinity : (double)entry.ExpandedBytes / entry.CompressedBytes;
                 if (ratio > limits.MaxCompressionRatio) Reject(GamePackageRejectionCodes.CompressionRatioExceeded, "ZIP entry compression ratio exceeds the limit.", path);
             }

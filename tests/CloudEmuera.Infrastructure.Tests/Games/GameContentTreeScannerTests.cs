@@ -12,10 +12,12 @@ public sealed class GameContentTreeScannerTests
         Directory.CreateDirectory(root);
         try
         {
-            for (int index = 0; index <= GameContentScanLimits.MaxEntryCount; index++)
+            const int testLimit = 8;
+            for (int index = 0; index <= testLimit; index++)
                 await File.WriteAllTextAsync(Path.Combine(root, $"{index:D5}.TXT"), string.Empty);
 
-            GameContentLimitException exception = Assert.Throws<GameContentLimitException>(() => GameContentTreeScanner.Scan(root));
+            GameContentLimitException exception = Assert.Throws<GameContentLimitException>(() =>
+                GameContentTreeScanner.Scan(root, maxEntryCount: testLimit));
             Assert.Equal("GAME_CONTENT_ENTRY_LIMIT", exception.Code);
         }
         finally

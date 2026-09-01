@@ -180,10 +180,10 @@ public sealed class SessionRootPublishedManifest
 public sealed class SessionRootCopyLimits
 {
     public SessionRootCopyLimits(
-        long maxFileCount = 100_000,
-        long maxDirectoryCount = 100_000,
-        long maxTotalBytes = 4L * 1024 * 1024 * 1024,
-        long maxSingleFileBytes = 512L * 1024 * 1024)
+        long maxFileCount = 1_000_000,
+        long maxDirectoryCount = 1_000_000,
+        long maxTotalBytes = 16L * 1024 * 1024 * 1024,
+        long maxSingleFileBytes = 1L * 1024 * 1024 * 1024)
     {
         if (maxFileCount <= 0 || maxDirectoryCount <= 0 || maxTotalBytes < 0 || maxSingleFileBytes < 0)
         {

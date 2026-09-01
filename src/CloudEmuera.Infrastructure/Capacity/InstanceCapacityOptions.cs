@@ -9,14 +9,14 @@ public sealed record InstanceCapacityOptions
 {
     public const int DefaultMaxActiveWorkers = 8;
     public const int DefaultMaxInactiveSessions = 64;
-    public const long DefaultMaxArchiveBytes = 2L * 1024 * 1024 * 1024;
+    public const long DefaultMaxArchiveBytes = 8L * 1024 * 1024 * 1024;
     public const long DefaultMaxGamePackageBytes = DefaultMaxArchiveBytes;
-    public const long DefaultMaxExpandedBytes = 4L * 1024 * 1024 * 1024;
+    public const long DefaultMaxExpandedBytes = 16L * 1024 * 1024 * 1024;
     public const long DefaultMaxArchiveSingleFileBytes = 1L * 1024 * 1024 * 1024;
-    public const int DefaultMaxArchiveEntryCount = 50_000;
-    public const long DefaultMaxSessionRootBytes = 4L * 1024 * 1024 * 1024;
-    public const int DefaultMaxSessionRootFileCount = 50_000;
-    public const long DefaultMaxStagingReservedBytes = 12L * 1024 * 1024 * 1024;
+    public const int DefaultMaxArchiveEntryCount = 1_000_000;
+    public const long DefaultMaxSessionRootBytes = 16L * 1024 * 1024 * 1024;
+    public const int DefaultMaxSessionRootFileCount = 1_000_000;
+    public const long DefaultMaxStagingReservedBytes = 32L * 1024 * 1024 * 1024;
     public const long DefaultMinDataRootFreeBytes = 1L * 1024 * 1024 * 1024;
     public const long DefaultMaxSaveFileBytes = 64L * 1024 * 1024;
     public const int DefaultMaxSaveListedFiles = 4_096;
@@ -24,7 +24,7 @@ public sealed record InstanceCapacityOptions
 
     public const int AbsoluteMaxWorkerCount = 4_096;
     public const int AbsoluteMaxInactiveSessionCount = 4_096;
-    public const int AbsoluteMaxArchiveEntryCount = 65_535;
+    public const int AbsoluteMaxArchiveEntryCount = 1_000_000;
     public const int AbsoluteMaxSessionRootFileCount = 1_000_000;
     public const long AbsoluteMaxCapacityBytes = 16L * 1024 * 1024 * 1024 * 1024;
 
