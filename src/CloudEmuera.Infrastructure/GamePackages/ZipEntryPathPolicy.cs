@@ -7,6 +7,7 @@ internal sealed class ZipEntryPathPolicy(GamePackageIngestionLimits limits)
 {
     private readonly Dictionary<string, (string Path, bool Directory)> paths = new(StringComparer.Ordinal);
     private readonly HashSet<string> explicitDirectories = new(StringComparer.Ordinal);
+    private readonly HashSet<string> pathsWithDescendants = new(StringComparer.Ordinal);
 
     public string Add(string rawName, bool directory)
     {
@@ -44,8 +45,10 @@ internal sealed class ZipEntryPathPolicy(GamePackageIngestionLimits limits)
             paths.Add(normalized, (normalized, directory));
             if (directory) explicitDirectories.Add(normalized);
         }
-        if (!directory && paths.Keys.Any(key => key.StartsWith(normalized + "/", StringComparison.Ordinal)))
+        if (!directory && pathsWithDescendants.Contains(normalized))
             Reject(GamePackageRejectionCodes.PathTypeConflict, "A file conflicts with an existing directory prefix.");
+        for (int index = 1; index < segments.Length; index++)
+            pathsWithDescendants.Add(string.Join('/', segments.Take(index)));
         return normalized;
     }
 

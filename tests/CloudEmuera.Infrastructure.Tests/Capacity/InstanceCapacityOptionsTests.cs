@@ -11,8 +11,11 @@ public sealed class InstanceCapacityOptionsTests
         InstanceCapacityOptions.Default.Validate();
         Assert.Equal(8, InstanceCapacityOptions.DefaultMaxActiveWorkers);
         Assert.Equal(64, InstanceCapacityOptions.DefaultMaxInactiveSessions);
+        Assert.Equal(8L * 1024 * 1024 * 1024, InstanceCapacityOptions.DefaultMaxArchiveBytes);
+        Assert.Equal(16L * 1024 * 1024 * 1024, InstanceCapacityOptions.DefaultMaxExpandedBytes);
+        Assert.Equal(1_000_000, InstanceCapacityOptions.DefaultMaxArchiveEntryCount);
         Assert.Equal(InstanceCapacityOptions.DefaultMaxArchiveBytes, InstanceCapacityOptions.Default.MaxArchiveBytes);
-        Assert.Equal(50_000, InstanceCapacityOptions.Default.MaxSessionRootFileCount);
+        Assert.Equal(1_000_000, InstanceCapacityOptions.Default.MaxSessionRootFileCount);
         Assert.Equal(4_096, InstanceCapacityOptions.Default.MaxSaveListedFiles);
     }
 
@@ -45,6 +48,7 @@ public sealed class InstanceCapacityOptionsTests
             new() { MaxExpandedBytes = 0 },
             new() { MaxArchiveSingleFileBytes = 0 },
             new() { MaxArchiveEntryCount = 0 },
+            new() { MaxArchiveEntryCount = InstanceCapacityOptions.AbsoluteMaxArchiveEntryCount + 1 },
             new() { MaxSessionRootBytes = 0 },
             new() { MaxSessionRootFileCount = 0 },
             new() { MaxStagingReservedBytes = 0 },

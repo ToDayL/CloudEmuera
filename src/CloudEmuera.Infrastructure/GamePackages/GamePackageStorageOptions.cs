@@ -3,7 +3,7 @@ namespace CloudEmuera.Infrastructure.GamePackages;
 public sealed record GamePackageStorageOptions
 {
     public required string DataRoot { get; init; }
-    public long MaxStagingReservedBytes { get; init; } = 12L * 1024 * 1024 * 1024;
+    public long MaxStagingReservedBytes { get; init; } = 32L * 1024 * 1024 * 1024;
     public long MinDataRootFreeBytes { get; init; } = 1L * 1024 * 1024 * 1024;
     public TimeSpan ReadyLifetime { get; init; } = TimeSpan.FromHours(1);
     public TimeSpan ConsumptionLifetime { get; init; } = TimeSpan.FromMinutes(15);

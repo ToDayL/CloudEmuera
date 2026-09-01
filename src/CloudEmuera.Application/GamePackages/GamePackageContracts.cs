@@ -25,11 +25,13 @@ public sealed record GamePackageProgressUpdate(
 
 public sealed record GamePackageIngestionLimits
 {
-    public long MaxArchiveBytes { get; init; } = 2L * 1024 * 1024 * 1024;
-    public long MaxExpandedBytes { get; init; } = 4L * 1024 * 1024 * 1024;
+    public const int AbsoluteMaxEntryCount = 1_000_000;
+
+    public long MaxArchiveBytes { get; init; } = 8L * 1024 * 1024 * 1024;
+    public long MaxExpandedBytes { get; init; } = 16L * 1024 * 1024 * 1024;
     public long MaxSingleFileBytes { get; init; } = 1L * 1024 * 1024 * 1024;
-    public int MaxEntryCount { get; init; } = 50_000;
-    public long MaxCentralDirectoryBytes { get; init; } = 64L * 1024 * 1024;
+    public int MaxEntryCount { get; init; } = AbsoluteMaxEntryCount;
+    public long MaxCentralDirectoryBytes { get; init; } = 256L * 1024 * 1024;
     public int MaxDirectoryDepth { get; init; } = 32;
     public double MaxCompressionRatio { get; init; } = 200;
     public int MaxPathUtf8Bytes { get; init; } = 1024;
@@ -40,7 +42,7 @@ public sealed record GamePackageIngestionLimits
     public void Validate()
     {
         if (MaxArchiveBytes <= 0 || MaxExpandedBytes <= 0 || MaxSingleFileBytes <= 0
-            || MaxSingleFileBytes > MaxExpandedBytes || MaxEntryCount is <= 0 or > 65_535
+            || MaxSingleFileBytes > MaxExpandedBytes || MaxEntryCount is <= 0 or > AbsoluteMaxEntryCount
             || MaxCentralDirectoryBytes <= 0
             || MaxDirectoryDepth <= 0 || MaxCompressionRatio < 1
             || MaxPathUtf8Bytes <= 0 || MaxSegmentUtf8Bytes <= 0

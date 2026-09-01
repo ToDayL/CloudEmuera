@@ -361,12 +361,48 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
 
     [Fact]
     [Trait("Category", "ArchiveSecurity")]
-    public async Task RejectsZip64Sentinel()
+    public async Task AcceptsZip64ArchiveWithMoreThanClassicEntryLimit()
+    {
+        const int entryCount = 65_536;
+        byte[] zip = CreateZip64Archive(entryCount);
+        Assert.True(FindSignature(zip, 0x06064b50) >= 0);
+        IngestedGamePackage result = await Service().IngestAsync(
+            new(userId, new MemoryStream(zip)),
+            Limits() with
+            {
+                MaxArchiveBytes = 16 * 1024 * 1024,
+                MaxExpandedBytes = 1,
+                MaxSingleFileBytes = 1,
+                MaxEntryCount = entryCount,
+                MaxCentralDirectoryBytes = 16 * 1024 * 1024,
+                MaxDuration = TimeSpan.FromMinutes(2),
+            });
+
+        Assert.Equal(entryCount, result.Manifest.FileCount);
+        await Service().AbandonAsync(result.IngestionId, userId);
+    }
+
+    [Fact]
+    [Trait("Category", "ArchiveSecurity")]
+    public async Task RejectsZip64SentinelWithoutZip64Directory()
     {
         byte[] zip = CreateZip(("A.txt", "a"u8.ToArray(), null));
         int end = FindSignature(zip, 0x06054b50);
         BinaryPrimitives.WriteUInt16LittleEndian(zip.AsSpan(end + 10), ushort.MaxValue);
-        await AssertRejectedAsync(zip, GamePackageRejectionCodes.Zip64Unsupported);
+        await AssertRejectedAsync(zip, GamePackageRejectionCodes.ArchiveCorrupt);
+    }
+
+    [Fact]
+    [Trait("Category", "ArchiveSecurity")]
+    public async Task AcceptsZip64EntrySizesAndDataDescriptor()
+    {
+        byte[] zip = CreateZip64EntryWithDataDescriptor();
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+
+        Assert.Equal(1, result.Manifest.FileCount);
+        string staged = Path.Combine(root, "games", "staging", result.IngestionId, "ready", "content", "A.bin");
+        Assert.Equal("a", await File.ReadAllTextAsync(staged));
+        await Service().AbandonAsync(result.IngestionId, userId);
     }
 
     [Fact]
@@ -817,6 +853,85 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
                 target.Write(file.Content);
             }
         }
+        return memory.ToArray();
+    }
+
+    private static byte[] CreateZip64Archive(int entryCount)
+    {
+        using MemoryStream memory = new();
+        using (ZipArchive archive = new(memory, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            for (int index = 0; index < entryCount; index++)
+            {
+                ZipArchiveEntry entry = archive.CreateEntry($"images/{index:D6}.bin", CompressionLevel.NoCompression);
+                entry.LastWriteTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+                using Stream target = entry.Open();
+            }
+        }
+        return memory.ToArray();
+    }
+
+    private static byte[] CreateZip64EntryWithDataDescriptor()
+    {
+        byte[] name = "A.bin"u8.ToArray();
+        byte[] content = "a"u8.ToArray();
+        uint crc = Crc32(content);
+        byte[] zip64Extra = new byte[20];
+        BinaryPrimitives.WriteUInt16LittleEndian(zip64Extra.AsSpan(0, 2), 0x0001);
+        BinaryPrimitives.WriteUInt16LittleEndian(zip64Extra.AsSpan(2, 2), 16);
+        BinaryPrimitives.WriteUInt64LittleEndian(zip64Extra.AsSpan(4, 8), (ulong)content.Length);
+        BinaryPrimitives.WriteUInt64LittleEndian(zip64Extra.AsSpan(12, 8), (ulong)content.Length);
+
+        using MemoryStream memory = new();
+        using BinaryWriter writer = new(memory, Encoding.UTF8, leaveOpen: true);
+        writer.Write(0x04034b50u);
+        writer.Write((ushort)45);
+        writer.Write((ushort)0x8);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(uint.MaxValue);
+        writer.Write(uint.MaxValue);
+        writer.Write((ushort)name.Length);
+        writer.Write((ushort)zip64Extra.Length);
+        writer.Write(name);
+        writer.Write(zip64Extra);
+        writer.Write(content);
+        writer.Write(0x08074b50u);
+        writer.Write(crc);
+        writer.Write((ulong)content.Length);
+        writer.Write((ulong)content.Length);
+
+        uint centralOffset = checked((uint)memory.Position);
+        writer.Write(0x02014b50u);
+        writer.Write((ushort)45);
+        writer.Write((ushort)45);
+        writer.Write((ushort)0x8);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(crc);
+        writer.Write(uint.MaxValue);
+        writer.Write(uint.MaxValue);
+        writer.Write((ushort)name.Length);
+        writer.Write((ushort)zip64Extra.Length);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write(name);
+        writer.Write(zip64Extra);
+        uint centralBytes = checked((uint)memory.Position - centralOffset);
+        writer.Write(0x06054b50u);
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)1);
+        writer.Write((ushort)1);
+        writer.Write(centralBytes);
+        writer.Write(centralOffset);
+        writer.Write((ushort)0);
         return memory.ToArray();
     }
 

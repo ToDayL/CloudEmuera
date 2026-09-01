@@ -899,9 +899,9 @@ public sealed class GameLibraryService(
                     throw new GameContentLimitException("GAME_CONTENT_FILE_LIMIT");
                 if (progress is not null)
                     await progress.ReportAsync(GameContentOperationStage.ValidatingContent, logical, token).ConfigureAwait(false);
-                total = checked(total + file.Length);
-                if (total > GameContentScanLimits.MaxTotalBytes)
+                if (file.Length > GameContentScanLimits.MaxTotalBytes - total)
                     throw new GameContentLimitException("GAME_CONTENT_TOTAL_LIMIT");
+                total += file.Length;
                 using Microsoft.Win32.SafeHandles.SafeFileHandle handle = File.OpenHandle(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
                 if (LinuxFileOperations.ReadIdentity(handle).LinkCount != 1) throw UnsafePath();
                 fileCount++;

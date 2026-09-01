@@ -8,6 +8,17 @@ namespace CloudEmuera.RuntimeAdapter.Tests.Paths;
 public sealed class SessionRootLayoutBuilderTests
 {
     [Fact]
+    public void DefaultCopyLimitsSupportLargeGamePackageBoundary()
+    {
+        SessionRootCopyLimits limits = new();
+
+        Assert.Equal(1_000_000, limits.MaxFileCount);
+        Assert.Equal(1_000_000, limits.MaxDirectoryCount);
+        Assert.Equal(16L * 1024 * 1024 * 1024, limits.MaxTotalBytes);
+        Assert.Equal(1L * 1024 * 1024 * 1024, limits.MaxSingleFileBytes);
+    }
+
+    [Fact]
     public void RootOnlyBuilderCopiesCompleteTreeWithoutPerFileManifest()
     {
         using var workspace = new RuntimeTestWorkspace();
