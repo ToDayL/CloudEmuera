@@ -220,14 +220,14 @@ internal sealed class EmueraConsole
         if (!outputEnabled || string.IsNullOrEmpty(value))
             return;
 
-        int lineEndIndex = value.IndexOf('\n', StringComparison.Ordinal);
-        if (lineEndIndex >= 0)
+        if (HeadlessDisplayText.TryGetLineBreak(value, out int lineBreakIndex, out int lineBreakLength))
         {
-            AppendText(value[..lineEndIndex]);
+            AppendText(value[..lineBreakIndex]);
             pendingLineEnd = true;
             NewLine();
-            if (lineEndIndex < value.Length - 1)
-                Print(value[(lineEndIndex + 1)..]);
+            int remainderIndex = lineBreakIndex + lineBreakLength;
+            if (remainderIndex < value.Length)
+                Print(value[remainderIndex..], lineEnd);
             return;
         }
 
@@ -254,12 +254,21 @@ internal sealed class EmueraConsole
     public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) =>
         RecordMessageAndQueue(FormatDiagnostic(value, position));
     public void PrintTemporaryLine(string value) => EmitLine(value, temporary: true);
-    public void PrintPlain(string value) => EmitText(value);
+    public void PrintPlain(string value) => Print(value, lineEnd: false);
     public void PrintPlainWithSingleLineFix(string value) => EmitLine(value);
     public void PrintC(string value, bool alignmentRight)
     {
         if (!outputEnabled || string.IsNullOrEmpty(value))
             return;
+        if (HeadlessDisplayText.TryGetLineBreak(value, out int lineBreakIndex, out int lineBreakLength))
+        {
+            PrintC(value[..lineBreakIndex], alignmentRight);
+            NewLine();
+            int remainderIndex = lineBreakIndex + lineBreakLength;
+            if (remainderIndex < value.Length)
+                PrintC(value[remainderIndex..], alignmentRight);
+            return;
+        }
         // Upstream PRINTC appends a fixed-width field to PrintStringBuffer. It
         // does not commit a display line; PRINTL/PrintFlush owns that boundary.
         pendingLine.Add(new TextNode(DisplayText(FormatPrintCValue(value, alignmentRight)), ToConsoleTextStyle()));
@@ -488,6 +497,7 @@ internal sealed class EmueraConsole
         UpstreamHtmlParseMode mode,
         Action<ButtonNode> integerButtonMarker = null)
     {
+        fragment = HeadlessDisplayText.NormalizeHtmlLineBreaks(fragment);
         int fontSize = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize);
         ConsoleContractLimits limits = HtmlContractLimits;
         try
@@ -521,7 +531,10 @@ internal sealed class EmueraConsole
         }
         catch (UpstreamHtmlTranslationException exception)
         {
-            throw new NotSupportedException(exception.ReasonCode, exception);
+            // Preserve the translator detail in the runtime failure.  The reason
+            // code is stable for clients, while the message identifies the exact
+            // HTML construct that needs compatibility work.
+            throw new NotSupportedException($"{exception.ReasonCode}: {exception.Message}", exception);
         }
         catch (ConsoleContractException exception)
         {
@@ -667,7 +680,7 @@ internal sealed class EmueraConsole
             systemInput: request.IsSystemInput,
             stopMessageSkip: request.StopMesskip,
             displayTime: request.DisplayTime,
-            timeoutMessage: request.TimeUpMes is null ? null : DisplayText(request.TimeUpMes),
+            timeoutMessage: request.TimeUpMes is null ? null : DisplaySingleLine(request.TimeUpMes),
             // Pointer presses outside a game button are an INPUT/INPUTS
             // capability only when the optional mouse argument is enabled.
             // Button activation remains available for ordinary input, while
@@ -694,7 +707,7 @@ internal sealed class EmueraConsole
             {
                 EmitStructured(ConsoleOperation.ReplaceLine(new ConsoleLine(
                     lastLineId,
-                    [new TextNode(DisplayText(request.TimeUpMes))],
+                    [new TextNode(DisplaySingleLine(request.TimeUpMes))],
                     ConsoleLineAlignment.Left,
                     temporary: false)));
                 lastLineTemporary = false;
@@ -1383,7 +1396,7 @@ internal sealed class EmueraConsole
             id,
             new ConsoleRect(x, y, normal.DestBaseSize.Width, normal.DestBaseSize.Height),
             buttonValue.ToString(CultureInfo.InvariantCulture),
-            tooltip: tooltip is null ? null : DisplayText(tooltip))));
+            tooltip: tooltip is null ? null : DisplayTooltip(tooltip))));
         return true;
     }
     public void SetRedraw(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
@@ -1424,10 +1437,14 @@ internal sealed class EmueraConsole
 
     private void EmitButton(string label, string input, bool isInteger)
     {
-        if (outputEnabled && !string.IsNullOrEmpty(label))
+        if (!outputEnabled || string.IsNullOrEmpty(label))
+            return;
+
+        string displayLabel = DisplaySingleLine(label);
+        if (!string.IsNullOrEmpty(displayLabel))
         {
             ButtonNode button = new(
-                [new TextNode(DisplayText(label), ToConsoleTextStyle())],
+                [new TextNode(displayLabel, ToConsoleTextStyle())],
                 input,
                 generation: nextButtonGeneration);
             if (isInteger)
@@ -1442,7 +1459,10 @@ internal sealed class EmueraConsole
         if (!outputEnabled || string.IsNullOrEmpty(value))
             return;
 
-        string formatted = FormatPrintCValue(value, alignmentRight);
+        string displayValue = DisplaySingleLine(value);
+        if (string.IsNullOrEmpty(displayValue))
+            return;
+        string formatted = FormatPrintCValue(displayValue, alignmentRight);
         // The real layout path keeps PRINTBUTTONC/PRINTBUTTONLC padding out of
         // the action box. The compatibility path without a bound runtime font
         // retains the old logical ButtonNode projection used by legacy host
@@ -1454,11 +1474,11 @@ internal sealed class EmueraConsole
             return;
         }
 
-        int labelStart = alignmentRight ? formatted.Length - value.Length : 0;
+        int labelStart = alignmentRight ? formatted.Length - displayValue.Length : 0;
         string leading = formatted[..labelStart];
-        string trailing = formatted[(labelStart + value.Length)..];
+        string trailing = formatted[(labelStart + displayValue.Length)..];
         AppendText(leading);
-        EmitButton(value, input, isInteger);
+        EmitButton(displayValue, input, isInteger);
         AppendText(trailing);
         pendingLineEnd = true;
     }
@@ -1469,6 +1489,16 @@ internal sealed class EmueraConsole
     {
         if (!outputEnabled)
             return;
+
+        if (!string.IsNullOrEmpty(value) &&
+            HeadlessDisplayText.TryGetLineBreak(value, out int lineBreakIndex, out int lineBreakLength))
+        {
+            EmitLine(value[..lineBreakIndex], temporary);
+            int remainderIndex = lineBreakIndex + lineBreakLength;
+            if (remainderIndex < value.Length)
+                EmitLine(value[remainderIndex..], temporary);
+            return;
+        }
 
         // PrintSingleLine and diagnostic output flush the ordinary PRINT
         // buffer first. If that buffer was marked as a partial line, the
@@ -1704,7 +1734,7 @@ internal sealed class EmueraConsole
                         button.Children.All(child => child is TextNode),
                         button.Children.OfType<TextNode>().Any() ? string.Concat(button.Children.OfType<TextNode>().Select(child => child.Text)) : null,
                         button.Children.OfType<TextNode>().Select(child => child.Style).Distinct().Count() == 1 ? button.Children.OfType<TextNode>().First().Style : null,
-                        new ConsoleInlineAction(button.Value, button.Tooltip is null ? null : DisplayText(button.Tooltip), button.Enabled, button.Generation),
+                        new ConsoleInlineAction(button.Value, button.Tooltip is null ? null : DisplayTooltip(button.Tooltip), button.Enabled, button.Generation),
                         button.PositionX,
                         physicalPositionButtons is null || !physicalPositionButtons.Contains(button)));
                     break;
@@ -2597,7 +2627,7 @@ internal sealed class EmueraConsole
     }
 
     private WindowMetadata CurrentWindowMetadata() => new(
-        DisplayText(windowTitle),
+        DisplaySingleLine(windowTitle),
         viewportWidth,
         viewportHeight,
         defaultBackground: ToConsoleColor(bgColor),
@@ -2609,6 +2639,10 @@ internal sealed class EmueraConsole
         webFontAssetDigest: webFontAssetDigest);
 
     private string DisplayText(string value) => HeadlessDisplayText.Project(value, convertBackslashToYen);
+
+    private string DisplayTooltip(string value) => HeadlessDisplayText.ProjectTooltip(value, convertBackslashToYen);
+
+    private string DisplaySingleLine(string value) => HeadlessDisplayText.ProjectSingleLine(value, convertBackslashToYen);
 
     private ConsoleContractLimits HtmlContractLimits => adapter is StructuredGameConsole structured
         ? structured.StateStore.Options.ContractLimits

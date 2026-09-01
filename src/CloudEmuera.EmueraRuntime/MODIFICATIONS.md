@@ -10,6 +10,13 @@
 - Added a headless display projection that expands upstream U+0009 tabs to eight U+0020 spaces before structured
   text validation and authoritative measurement. The original game/script data and input values are not rewritten;
   the projection keeps the RuntimeAdapter control-character boundary closed (PLAY-001/PLAY-014, issue #18).
+- Added structural handling for upstream U+000A/U+000D line separators across PRINT, PRINTPLAIN, PRINTC and
+  HTML display paths; CRLF is treated as one line break. Single-line labels and metadata consume the same
+  separators without entering TextNode validation (PLAY-001/PLAY-014).
+- Added a display-only projection for the pinned upstream U+0003 ETX sentinel returned by `GET_BETWEEN_STRING`
+  when an optional field is out of range. The sentinel is removed before structured text validation; runtime values,
+  script data and input values remain unchanged. The same projection drops every other C0/C1 control with no
+  pinned display meaning; runtime values, input values, paths and identifiers remain strict (PLAY-001/PLAY-014).
 - Added axis-aware MixedNum conversion for headless HTML `div` frames: horizontal coordinates, dimensions and
   left/right box-model insets use the Session `FontSize`, while vertical coordinates, dimensions and top/bottom
   insets use the physical `LineHeight`; explicit `px` values remain exact. This keeps fixed EraFL task-panel frames
@@ -18,6 +25,29 @@
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
+
+## 2026-09-01 — Normalize meaningful upstream display controls
+
+- `HeadlessDisplayText` handles the pinned upstream's meaningful display
+  controls: eight-space tab expansion, structural LF/CR/CRLF line breaks, and
+  removal of the U+0003 ETX out-of-range sentinel from visible text. Other
+  C0/C1 controls are dropped only in this display-only projection because they
+  have no portable upstream/browser presentation.
+- HTML fragments normalize CR variants before the pinned HtmlManager's LF to
+  `<br>` path; buttons, window titles and prompt metadata remain single-line
+  fields. The display projection is not applied to runtime or input values.
+- Scope: the `eraInSchoolML` Session trace at `OPTION.ERB:2801`, where the
+  missing CSTR index 102 produced U+0003 and aborted the Worker with `text
+  contains a control character`. That trace is regression evidence only; the
+  compatibility rule is derived from the pinned upstream display contract and
+  the complete Unicode control set, not from scanning or allowlisting games.
+  Runtime values, input values, paths and identifiers remain fail-closed.
+- Verification: `EtxDisplaySentinelIsRemovedBeforeStructuredTextValidation`,
+  `EtxDisplaySentinelDoesNotAbortPinnedInterpreter`,
+  `MeaningfulPrintLineBreaksBecomeStructuredLines`,
+  `MeaningfulHtmlCarriageReturnsBecomeStructuredBreaks`,
+  `UnsupportedDisplayControlCharactersAreDroppedBeforeValidation`, and the
+  targeted RuntimeCompatibility tests in the development Docker environment.
 
 ## 2026-08-31 — Preserve mouse-button input semantics across the headless boundary
 
