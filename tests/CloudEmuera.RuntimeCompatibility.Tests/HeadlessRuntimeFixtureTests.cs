@@ -2103,6 +2103,54 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintAllowsHighDivDepthAsLayerOrderWithoutIncreasingNodeDepth()
+    {
+        // PLAY-002: upstream HTML depth is paint order. A large depth is a
+        // valid background layer and must not be confused with ConsoleNode
+        // tree nesting.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(
+            "<div rect='0px,0px,100px,100px' depth='999'>background</div>",
+            toPrintBuffer: false);
+
+        DivNode div = Assert.IsType<DivNode>(Assert.Single(console.Snapshot.Scrollback.Single().Nodes));
+        Assert.Equal(999, div.ZIndex);
+        Assert.Equal("background", RuntimeTranscriptProjector.Project(div.Children));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlTranslatorLimitsSemanticNestingIndependentlyOfDivLayerDepth()
+    {
+        // PLAY-002/ADR-0024: the translator still bounds the actual
+        // ConsoleNode tree even when every div carries a large paint depth.
+        UpstreamHtmlTranslationContext Context() => new(
+            ConsoleContractLimits.Default,
+            fontSize: 16,
+            lineHeight: 16,
+            defaultForeground: null,
+            defaultButtonColor: null,
+            buttonGeneration: 0,
+            imageResolver: null,
+            mode: UpstreamHtmlParseMode.PrintBufferParts);
+
+        UpstreamHtmlTranslationResult translated = UpstreamHtmlTranslator.Translate(
+            CreateNestedSemanticDivFragment(ConsoleContractLimits.Default.MaxNodeDepth, layerDepth: 999),
+            Context());
+        Assert.Equal(999, Assert.IsType<DivNode>(Assert.Single(translated.Nodes)).ZIndex);
+
+        UpstreamHtmlTranslationException exception = Assert.Throws<UpstreamHtmlTranslationException>(() =>
+            UpstreamHtmlTranslator.Translate(
+                CreateNestedSemanticDivFragment(ConsoleContractLimits.Default.MaxNodeDepth + 1, layerDepth: 999),
+                Context()));
+        Assert.Equal("EMUERA_HTML_DEPTH_LIMIT", exception.ReasonCode);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HtmlPrintBudgetRejectionDoesNotConsumePendingOutput()
     {
         ConsoleContractLimits limits = ConsoleContractLimits.Default with { MaxHtmlTagCount = 1 };
@@ -4729,6 +4777,33 @@ public sealed class HeadlessRuntimeFixtureTests
         BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(offset + 14, 2), checked((ushort)width));
         BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(offset + 16, 2), checked((ushort)height));
         return result;
+    }
+
+    private static UpstreamHtmlFragment CreateNestedSemanticDivFragment(int divCount, int layerDepth)
+    {
+        UpstreamHtmlSequence children = new([]);
+        for (int index = 0; index < divCount; index++)
+        {
+            children = new UpstreamHtmlSequence(
+            [
+                UpstreamHtmlSequenceItem.FromSegment(new UpstreamHtmlSegment
+                {
+                    Parts =
+                    [
+                        new UpstreamHtmlDivPart
+                        {
+                            Width = new UpstreamHtmlLength(100, isPixels: true),
+                            Height = new UpstreamHtmlLength(100, isPixels: true),
+                            Depth = layerDepth,
+                            IsRelative = true,
+                            Children = children
+                        }
+                    ]
+                })
+            ]);
+        }
+
+        return new UpstreamHtmlFragment(UpstreamHtmlAlignment.Left, noWrap: false, children);
     }
 
     private static void WriteUInt24LittleEndian(Span<byte> destination, int value)

@@ -100,7 +100,7 @@ internal static class UpstreamHtmlTranslator
         ArgumentNullException.ThrowIfNull(context);
 
         var counter = new TranslationCounter(context.Limits);
-        var nodes = TranslateSequence(fragment.Sequence, context, counter);
+        var nodes = TranslateSequence(fragment.Sequence, context, counter, nodeDepth: 1);
         return new UpstreamHtmlTranslationResult(
             nodes.AsReadOnly(),
             ToAlignment(fragment.Alignment),
@@ -110,7 +110,8 @@ internal static class UpstreamHtmlTranslator
     private static List<ConsoleNode> TranslateSequence(
         UpstreamHtmlSequence sequence,
         UpstreamHtmlTranslationContext context,
-        TranslationCounter counter)
+        TranslationCounter counter,
+        int nodeDepth)
     {
         if (sequence == null)
             throw Unsupported("The upstream HTML fragment has no sequence.");
@@ -122,12 +123,13 @@ internal static class UpstreamHtmlTranslator
                 throw Unsupported("The upstream HTML sequence contains a null item.");
             if (item.IsBreak)
             {
+                counter.NodeDepth(nodeDepth);
                 counter.Node();
                 result.Add(LineBreakNode.Instance);
                 continue;
             }
 
-            ConsoleNode[] segmentNodes = TranslateSegment(item.Segment, context, counter);
+            ConsoleNode[] segmentNodes = TranslateSegment(item.Segment, context, counter, nodeDepth);
             result.AddRange(segmentNodes);
         }
         return result;
@@ -136,14 +138,20 @@ internal static class UpstreamHtmlTranslator
     private static ConsoleNode[] TranslateSegment(
         UpstreamHtmlSegment segment,
         UpstreamHtmlTranslationContext context,
-        TranslationCounter counter)
+        TranslationCounter counter,
+        int nodeDepth)
     {
         if (segment == null || segment.Parts == null || segment.Parts.Count == 0)
             throw Unsupported("The upstream HTML parser produced an empty segment.");
 
+        bool hasPresentationWrapper = segment.IsInteractive || segment.Title != null || segment.PositionX != null;
+        int partDepth = hasPresentationWrapper ? checked(nodeDepth + 1) : nodeDepth;
+        if (hasPresentationWrapper)
+            counter.NodeDepth(nodeDepth);
+
         var children = new List<ConsoleNode>(segment.Parts.Count);
         foreach (UpstreamHtmlPart part in segment.Parts)
-            children.Add(TranslatePart(part, context, counter));
+            children.Add(TranslatePart(part, context, counter, partDepth));
 
         if (segment.IsInteractive)
         {
@@ -185,17 +193,19 @@ internal static class UpstreamHtmlTranslator
     private static ConsoleNode TranslatePart(
         UpstreamHtmlPart part,
         UpstreamHtmlTranslationContext context,
-        TranslationCounter counter)
+        TranslationCounter counter,
+        int nodeDepth)
     {
         if (part == null)
             throw Unsupported("The upstream HTML parser produced a null part.");
 
+        counter.NodeDepth(nodeDepth);
         ConsoleNode node = part switch
         {
             UpstreamHtmlTextPart text => TranslateText(text, context, counter),
             UpstreamHtmlImagePart image => TranslateImage(image, context, counter),
             UpstreamHtmlShapePart shape => TranslateShape(shape, context, counter),
-            UpstreamHtmlDivPart div => TranslateDiv(div, context, counter),
+            UpstreamHtmlDivPart div => TranslateDiv(div, context, counter, nodeDepth),
             _ => throw Unsupported("The upstream HTML parser produced an unknown part.")
         };
         return node;
@@ -300,9 +310,13 @@ internal static class UpstreamHtmlTranslator
     private static ConsoleNode TranslateDiv(
         UpstreamHtmlDivPart div,
         UpstreamHtmlTranslationContext context,
-        TranslationCounter counter)
+        TranslationCounter counter,
+        int nodeDepth)
     {
-        counter.Depth(div.Depth);
+        // `depth` is the pinned upstream paint order (z-index), not the
+        // structural depth of the resulting ConsoleNode tree. Keep the two
+        // axes separate so a background layer such as depth=999 does not
+        // consume the node nesting budget.
         // A div is the layout frame for line-oriented HTML output. Keep the
         // two axes in their native units: horizontal coordinates/sizes use the
         // glyph width (FontSize), while vertical coordinates/sizes use the
@@ -315,7 +329,11 @@ internal static class UpstreamHtmlTranslator
         if (width <= 0 || height <= 0)
             throw Unsupported("The upstream HTML div has a non-positive rectangle.");
 
-        List<ConsoleNode> children = TranslateSequence(div.Children, context, counter);
+        List<ConsoleNode> children = TranslateSequence(
+            div.Children,
+            context,
+            counter,
+            checked(nodeDepth + 1));
         ConsoleBoxModel box = ToBox(div.Box, context);
         counter.Node();
         return new DivNode(
@@ -546,7 +564,7 @@ internal static class UpstreamHtmlTranslator
                 throw new UpstreamHtmlTranslationException("EMUERA_HTML_OUTPUT_LIMIT", "The translated HTML text exceeds its limit.");
         }
 
-        public void Depth(int depth)
+        public void NodeDepth(int depth)
         {
             if (depth > limits.MaxNodeDepth)
                 throw new UpstreamHtmlTranslationException("EMUERA_HTML_DEPTH_LIMIT", "The translated HTML node depth exceeds its limit.");

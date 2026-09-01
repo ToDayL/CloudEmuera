@@ -21,10 +21,25 @@
   left/right box-model insets use the Session `FontSize`, while vertical coordinates, dimensions and top/bottom
   insets use the physical `LineHeight`; explicit `px` values remain exact. This keeps fixed EraFL task-panel frames
   large enough for their line-height-spaced child rows (PLAY-002/COMP-007).
+- Separated the pinned upstream HTML `div` paint-order `depth` from the headless structured-node nesting depth.
+  High layer values such as `999` remain valid `DivNode.ZIndex` values, while the actual ConsoleNode tree still
+  receives the bounded `MaxNodeDepth` check (PLAY-002/ADR-0024).
 
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
+
+## 2026-09-02 — Separate HTML paint depth from structural node depth
+
+- `UpstreamHtmlTranslator` now carries the actual structured-node depth through
+  sequences, presentation wrappers, and div children. The pinned upstream
+  `div depth` field is retained only as `DivNode.ZIndex`; it no longer consumes
+  the structural nesting budget.
+- Scope: the `eraBlueResort` Session `sess_01a05dab55f5715baa68fe42698236d2`,
+  Worker epoch 2, where `背景表示関数.ERB:47-50` emitted a background div with
+  `depth='999'` and failed before `HTML_PRINT` committed output. Verification
+  covers high layer depth and rejection of actual semantic nesting beyond the
+  configured node-depth limit.
 
 ## 2026-09-01 — Normalize meaningful upstream display controls
 
