@@ -67,16 +67,33 @@ internal sealed class UpstreamHtmlTranslationResult
     public UpstreamHtmlTranslationResult(
         IReadOnlyList<ConsoleNode> nodes,
         ConsoleLineAlignment alignment,
-        bool noWrap)
+        bool noWrap,
+        UpstreamHtmlTranslationMetrics metrics)
     {
         Nodes = nodes ?? throw new ArgumentNullException(nameof(nodes));
         Alignment = alignment;
         NoWrap = noWrap;
+        Metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
     }
 
     public IReadOnlyList<ConsoleNode> Nodes { get; }
     public ConsoleLineAlignment Alignment { get; }
     public bool NoWrap { get; }
+    public UpstreamHtmlTranslationMetrics Metrics { get; }
+}
+
+internal sealed class UpstreamHtmlTranslationMetrics
+{
+    public int NodeCount { get; init; }
+    public int SegmentCount { get; init; }
+    public int TextPartCount { get; init; }
+    public int ImagePartCount { get; init; }
+    public int ShapePartCount { get; init; }
+    public int DivPartCount { get; init; }
+    public int ButtonCount { get; init; }
+    public int LineBreakCount { get; init; }
+    public int TextLength { get; init; }
+    public int MaximumNodeDepth { get; init; }
 }
 
 internal sealed class UpstreamHtmlTranslationException : Exception
@@ -104,7 +121,8 @@ internal static class UpstreamHtmlTranslator
         return new UpstreamHtmlTranslationResult(
             nodes.AsReadOnly(),
             ToAlignment(fragment.Alignment),
-            fragment.NoWrap);
+            fragment.NoWrap,
+            counter.ToMetrics());
     }
 
     private static List<ConsoleNode> TranslateSequence(
@@ -123,6 +141,7 @@ internal static class UpstreamHtmlTranslator
                 throw Unsupported("The upstream HTML sequence contains a null item.");
             if (item.IsBreak)
             {
+                counter.LineBreak();
                 counter.NodeDepth(nodeDepth);
                 counter.Node();
                 result.Add(LineBreakNode.Instance);
@@ -144,6 +163,7 @@ internal static class UpstreamHtmlTranslator
         if (segment == null || segment.Parts == null || segment.Parts.Count == 0)
             throw Unsupported("The upstream HTML parser produced an empty segment.");
 
+        counter.Segment();
         bool hasPresentationWrapper = segment.IsInteractive || segment.Title != null || segment.PositionX != null;
         int partDepth = hasPresentationWrapper ? checked(nodeDepth + 1) : nodeDepth;
         if (hasPresentationWrapper)
@@ -157,6 +177,7 @@ internal static class UpstreamHtmlTranslator
         {
             string value = segment.Value ?? string.Empty;
             counter.Node();
+            counter.Button();
             ButtonNode button = new(
                 children,
                 value,
@@ -175,6 +196,7 @@ internal static class UpstreamHtmlTranslator
         if (segment.Title != null || segment.PositionX != null)
         {
             counter.Node();
+            counter.Button();
             return
             [
                 new ButtonNode(
@@ -216,6 +238,7 @@ internal static class UpstreamHtmlTranslator
         UpstreamHtmlTranslationContext context,
         TranslationCounter counter)
     {
+        counter.TextPart();
         counter.Text(text.Text);
         counter.Node();
         return new TextNode(context.DisplayText(text.Text), ToTextStyle(text.Style, context));
@@ -226,6 +249,7 @@ internal static class UpstreamHtmlTranslator
         UpstreamHtmlTranslationContext context,
         TranslationCounter counter)
     {
+        counter.ImagePart();
         if (string.IsNullOrEmpty(image.Source))
             throw Unsupported("The upstream HTML image has no logical source name.");
 
@@ -257,6 +281,7 @@ internal static class UpstreamHtmlTranslator
         UpstreamHtmlTranslationContext context,
         TranslationCounter counter)
     {
+        counter.ShapePart();
         if (shape.ErrorText != null)
         {
             counter.Text(shape.ErrorText);
@@ -313,6 +338,7 @@ internal static class UpstreamHtmlTranslator
         TranslationCounter counter,
         int nodeDepth)
     {
+        counter.DivPart();
         // `depth` is the pinned upstream paint order (z-index), not the
         // structural depth of the resulting ConsoleNode tree. Keep the two
         // axes separate so a background layer such as depth=999 does not
@@ -545,6 +571,14 @@ internal static class UpstreamHtmlTranslator
         private readonly ConsoleContractLimits limits;
         private int nodeCount;
         private int textLength;
+        private int textPartCount;
+        private int imagePartCount;
+        private int shapePartCount;
+        private int divPartCount;
+        private int buttonCount;
+        private int lineBreakCount;
+        private int segmentCount;
+        private int maximumNodeDepth;
 
         public TranslationCounter(ConsoleContractLimits limits) => this.limits = limits;
 
@@ -554,6 +588,20 @@ internal static class UpstreamHtmlTranslator
             if (nodeCount > limits.MaxBatchNodeCount)
                 throw new UpstreamHtmlTranslationException("EMUERA_HTML_OUTPUT_LIMIT", "The translated HTML node count exceeds its limit.");
         }
+
+        public void Segment() => segmentCount = checked(segmentCount + 1);
+
+        public void TextPart() => textPartCount = checked(textPartCount + 1);
+
+        public void ImagePart() => imagePartCount = checked(imagePartCount + 1);
+
+        public void ShapePart() => shapePartCount = checked(shapePartCount + 1);
+
+        public void DivPart() => divPartCount = checked(divPartCount + 1);
+
+        public void Button() => buttonCount = checked(buttonCount + 1);
+
+        public void LineBreak() => lineBreakCount = checked(lineBreakCount + 1);
 
         public void Text(string value)
         {
@@ -568,6 +616,21 @@ internal static class UpstreamHtmlTranslator
         {
             if (depth > limits.MaxNodeDepth)
                 throw new UpstreamHtmlTranslationException("EMUERA_HTML_DEPTH_LIMIT", "The translated HTML node depth exceeds its limit.");
+            maximumNodeDepth = Math.Max(maximumNodeDepth, depth);
         }
+
+        public UpstreamHtmlTranslationMetrics ToMetrics() => new()
+        {
+            NodeCount = nodeCount,
+            SegmentCount = segmentCount,
+            TextPartCount = textPartCount,
+            ImagePartCount = imagePartCount,
+            ShapePartCount = shapePartCount,
+            DivPartCount = divPartCount,
+            ButtonCount = buttonCount,
+            LineBreakCount = lineBreakCount,
+            TextLength = textLength,
+            MaximumNodeDepth = maximumNodeDepth,
+        };
     }
 }

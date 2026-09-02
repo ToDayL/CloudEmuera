@@ -1,5 +1,10 @@
 # CloudEmuera modifications to Emuera.EM+EE
 
+- Optimized `MATCH` and `CMATCH` over supported one-dimensional, two-dimensional,
+  and character-array shapes by reading typed backing arrays directly in the
+  counting loop. Range, duplicate-counting, null/empty-string, scalar fallback,
+  and out-of-range behavior remain governed by the pinned interpreter contract;
+  no ERB changes are required (PERF/MATCH).
 - Added a Session-bound width policy at the headless configuration seam: Original uses the game's `WindowX` exactly,
   Max uses the lesser of startup browser CSS width and 2000px, Adaptive uses the lesser of startup browser CSS width
   and `WindowX`, and Custom uses the persisted user width exactly. Only Max and Adaptive are browser-bounded; no mode
@@ -24,10 +29,37 @@
 - Separated the pinned upstream HTML `div` paint-order `depth` from the headless structured-node nesting depth.
   High layer values such as `999` remain valid `DivNode.ZIndex` values, while the actual ConsoleNode tree still
   receives the bounded `MaxNodeDepth` check (PLAY-002/ADR-0024).
-
+- Added a SkiaSharp-backed fast PNG projection for headless browser/IPC rasters. It reads the existing
+  System.Drawing 32bpp ARGB surface through a `SKPixmap`, uses no PNG row filters and zlib level 1, and retains
+  a GDI+ fallback if the Linux native asset cannot load (PLAY-002/ADR-0040).
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
+
+## 2026-09-02 — Optimize MATCH array scans
+
+- `MATCH` now obtains the supported one-dimensional typed backing array once
+  and compares its elements without per-element general variable dispatch or
+  temporary index arrays. `CMATCH` uses the same approach for built-in and
+  user-defined character arrays, including two-dimensional character arrays.
+- The empty-range fast path, half-open ranges, duplicate counting,
+  null/empty-string matching, and generic scalar fallback retain the pinned
+  upstream behavior. The optimization is interpreter-only; game ERB is
+  unchanged.
+- Verification: `MatchCountsArrayValuesWithoutChangingRangeOrEmptyStringSemantics`
+  and `CMatchCountsBuiltInCharacterArraysAcrossCharacterRanges`.
+
+## 2026-09-02 — Avoid missing dynamic-call frame allocation
+
+- Modified upstream file: `Upstream/Emuera/Runtime/Script/Process.CalledFunction.cs`.
+  Non-event dynamic function calls now resolve the target label before creating the
+  per-invocation `CalledFunction` object. Missing targets therefore keep the original
+  null/TRY-CATCH behavior without allocating an unused call frame; event-target and
+  method-target errors remain unchanged.
+- Scope: interpreter-only performance optimization for compatibility probes such as
+  `TRYCCALLFORM COM_ABLE_S...`; no game ERB changes and no shared call-frame reuse.
+- Verification: `HeadlessRuntimeFixtureTests.MissingDynamicCallStillJumpsToCatch` and
+  `DynamicComAbleCallbackWithArgumentRemainsCallableAndWarningStaysOutOfConsole`.
 
 ## 2026-09-02 — Separate HTML paint depth from structural node depth
 
@@ -40,6 +72,52 @@ inside modified upstream files and does not replace Git history or review.
   `depth='999'` and failed before `HTML_PRINT` committed output. Verification
   covers high layer depth and rejection of actual semantic nesting beyond the
   configured node-depth limit.
+
+## 2026-09-02 — Add opt-in runtime timing diagnostics
+
+- `RuntimeDebugTrace` records a per-Worker trace ID and monotonic elapsed time,
+  input-consumed boundaries, ERB output/wait locations, script line deltas,
+  all game-function timings above a small threshold, sampled source locations,
+  and aggregate timings for HTML, background, dynamic-image, and
+  structured-console operations. Timing summaries are emitted at the next real
+  input wait so one button press can be correlated with the following `X
+  minutes elapsed` output; sampled source locations cover long ERB stretches
+  that do not return through a function boundary.
+- The diagnostic path is disabled unless `CLOUDEMUERA_RUNTIME_DEBUG_TRACE` is
+  `1` or `true`; it writes only to the sibling `metadata/runtime-debug.jsonl`
+  file and never records input values. It is temporary investigation support,
+  not a new runtime contract.
+- Scope: server-side investigation of slow `eraBlueResort` turn transitions
+  after the `sess_01a05dab55f5715baa68fe42698236d2` HTML-depth incident.
+- Verification: `RuntimeDebugTraceTests` and the development-container build.
+
+## 2026-09-02 — Detail HTML and raster timing diagnostics
+
+- Opt-in runtime traces now emit bounded per-stage samples for HTML
+  normalization, upstream parse/materialization, structured translation, and
+  layout flushes. Translation samples include node, text, image, shape, div,
+  button, line-break, and maximum structural-depth counts.
+- Dynamic Graphics PNG traces split bitmap encoding, SHA-256, and asset-file
+  materialization, including dimensions, pixel format, encoded byte count,
+  cache-hit/write outcome, and wall/Worker-process CPU time. CBG, Sprite, and
+  tooltip raster encodes use the same bounded encoding sample.
+- Trace samples contain no source asset path or input value and remain disabled
+  unless `CLOUDEMUERA_RUNTIME_DEBUG_TRACE` is enabled; this is temporary
+  investigation support, not a runtime contract.
+- Verification: `RuntimeDebugTraceTests` and the existing dynamic graphics,
+  HTML, tooltip, and layout compatibility fixtures.
+
+## 2026-09-02 — Add fast Skia PNG projection
+
+- Added `HeadlessPngEncoder` to `UpstreamHeadless`. The existing System.Drawing image model remains responsible for
+  drawing and pixel semantics; SkiaSharp only serializes the locked 32bpp ARGB surface to PNG through a zero-copy
+  `SKPixmap` view.
+- The default headless encoder profile is `SKPngEncoderFilterFlags.NoFilters` with zlib level 1. If the Linux
+  `libSkiaSharp` native asset is unavailable, the process records `gdiplus-fallback` and continues through the
+  previous GDI+ encoder. Raster trace records include the selected backend.
+- Added locked SkiaSharp and Linux native asset dependencies, third-party inventory/ADR records, and a regression
+  test covering Skia selection plus opaque and partially transparent ARGB pixels. This does not migrate the
+  upstream GraphicsImage drawing implementation or change the RasterDrawable byte limits.
 
 ## 2026-09-01 — Normalize meaningful upstream display controls
 

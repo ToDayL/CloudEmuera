@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -435,16 +436,119 @@ internal sealed class EmueraConsole
         }
     }
 
+    private static TimeSpan? ReadTraceCpuTime(RuntimeDebugTrace trace) => trace is null
+        ? null
+        : System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime;
+
+    private static TimeSpan? ReadTraceCpuElapsed(TimeSpan? start) => start is TimeSpan value
+        ? System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime - value
+        : null;
+
+    private static void RecordTraceStageDetail(
+        RuntimeDebugTrace trace,
+        string stage,
+        long startTimestamp,
+        TimeSpan? cpuStart,
+        long units,
+        IReadOnlyDictionary<string, object> detail)
+    {
+        if (trace is not null)
+        {
+            trace.RecordStageDetail(
+                stage,
+                Stopwatch.GetElapsedTime(startTimestamp),
+                units,
+                detail,
+                ReadTraceCpuElapsed(cpuStart));
+        }
+    }
+
     private static string MaterializeDynamicGraphics(GraphicsImage graphics)
     {
+        RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+        long startTimestamp = trace is null ? 0 : Stopwatch.GetTimestamp();
+        TimeSpan? cpuStart = ReadTraceCpuTime(trace);
+        int width = 0;
+        int height = 0;
+        string pixelFormat = "unknown";
+        int pngBytes = 0;
+        string encoder = "unknown";
+        bool cacheChecked = false;
+        bool cacheHit = false;
+        bool fileWritten = false;
+        string outcome = "error";
+        byte[] pngData = null;
         try
         {
             // GCREATE/OVERLAY_GCREATE surfaces are mutable in-memory state and
             // have no native sav file until the game explicitly calls GSAVE.
             // Materialize the current pixels under SessionRoot on first use so
             // the browser can fetch the same surface through the asset gate.
-            byte[] pngData = EncodePng(graphics.Bitmap);
-            string digest = Convert.ToHexString(SHA256.HashData(pngData)).ToLowerInvariant();
+            Bitmap bitmap = graphics.Bitmap;
+            width = bitmap.Width;
+            height = bitmap.Height;
+            pixelFormat = bitmap.PixelFormat.ToString();
+
+            long encodeStart = trace is null ? 0 : Stopwatch.GetTimestamp();
+            TimeSpan? encodeCpuStart = ReadTraceCpuTime(trace);
+            bool encodeSucceeded = false;
+            try
+            {
+                HeadlessPngEncodingResult encoding = EncodePng(bitmap);
+                pngData = encoding.PngData;
+                encoder = encoding.Backend;
+                pngBytes = pngData.Length;
+                encodeSucceeded = true;
+            }
+            finally
+            {
+                if (trace is not null)
+                {
+                    RecordTraceStageDetail(
+                        trace,
+                        "dynamic_png_encode",
+                        encodeStart,
+                        encodeCpuStart,
+                        1,
+                        new Dictionary<string, object>
+                        {
+                            ["width"] = width,
+                            ["height"] = height,
+                            ["pixelFormat"] = pixelFormat,
+                            ["encoder"] = encoder,
+                            ["pngBytes"] = pngBytes,
+                            ["outcome"] = encodeSucceeded ? "success" : "error",
+                        });
+                }
+            }
+
+            long hashStart = trace is null ? 0 : Stopwatch.GetTimestamp();
+            TimeSpan? hashCpuStart = ReadTraceCpuTime(trace);
+            bool hashSucceeded = false;
+            string digest;
+            try
+            {
+                digest = Convert.ToHexString(SHA256.HashData(pngData)).ToLowerInvariant();
+                hashSucceeded = true;
+            }
+            finally
+            {
+                if (trace is not null)
+                {
+                    RecordTraceStageDetail(
+                        trace,
+                        "dynamic_png_hash",
+                        hashStart,
+                        hashCpuStart,
+                        1,
+                        new Dictionary<string, object>
+                        {
+                            ["pngBytes"] = pngBytes,
+                            ["outcome"] = hashSucceeded ? "success" : "error",
+                        });
+                }
+            }
+
             string fullPath = Path.Combine(
                 MinorShift.Emuera.Program.ExeDir,
                 "tmp",
@@ -455,17 +559,50 @@ internal sealed class EmueraConsole
             if (string.IsNullOrWhiteSpace(parent))
                 return null;
 
-            Directory.CreateDirectory(parent);
-            if (!File.Exists(createPath))
-                File.WriteAllBytes(createPath, pngData);
+            long fileStart = trace is null ? 0 : Stopwatch.GetTimestamp();
+            TimeSpan? fileCpuStart = ReadTraceCpuTime(trace);
+            bool fileSucceeded = false;
+            try
+            {
+                Directory.CreateDirectory(parent);
+                cacheHit = File.Exists(createPath);
+                cacheChecked = true;
+                if (!cacheHit)
+                {
+                    File.WriteAllBytes(createPath, pngData);
+                    fileWritten = true;
+                }
 
-            string resolved = HeadlessPathResolver.ResolveExisting(fullPath);
-            string logicalPath = ToHeadlessLogicalPath(resolved);
-            if (logicalPath is null)
-                return null;
+                string resolved = HeadlessPathResolver.ResolveExisting(fullPath);
+                string logicalPath = ToHeadlessLogicalPath(resolved);
+                if (logicalPath is null)
+                    return null;
 
-            graphics.HeadlessAssetPath = logicalPath;
-            return logicalPath;
+                graphics.HeadlessAssetPath = logicalPath;
+                fileSucceeded = true;
+                outcome = "success";
+                return logicalPath;
+            }
+            finally
+            {
+                if (trace is not null)
+                {
+                    RecordTraceStageDetail(
+                        trace,
+                        "dynamic_png_file",
+                        fileStart,
+                        fileCpuStart,
+                        1,
+                        new Dictionary<string, object>
+                        {
+                            ["pngBytes"] = pngBytes,
+                            ["cacheChecked"] = cacheChecked,
+                            ["cacheHit"] = cacheChecked && cacheHit,
+                            ["fileWritten"] = fileWritten,
+                            ["outcome"] = fileSucceeded ? "success" : "error",
+                        });
+                }
+            }
         }
         catch (Exception exception) when (exception is ArgumentException or IOException or InvalidOperationException or ExternalException)
         {
@@ -473,6 +610,30 @@ internal sealed class EmueraConsole
             // literal fallback. It must not make the interpreter fail merely
             // because a browser asset could not be published.
             return null;
+        }
+        finally
+        {
+            if (trace is not null)
+            {
+                RecordTraceStageDetail(
+                    trace,
+                    "dynamic_graphics_png",
+                    startTimestamp,
+                    cpuStart,
+                    1,
+                    new Dictionary<string, object>
+                    {
+                        ["width"] = width,
+                        ["height"] = height,
+                        ["pixelFormat"] = pixelFormat,
+                        ["encoder"] = encoder,
+                        ["pngBytes"] = pngBytes,
+                        ["cacheChecked"] = cacheChecked,
+                        ["cacheHit"] = cacheChecked && cacheHit,
+                        ["fileWritten"] = fileWritten,
+                        ["outcome"] = outcome,
+                    });
+            }
         }
     }
 
@@ -497,33 +658,114 @@ internal sealed class EmueraConsole
         UpstreamHtmlParseMode mode,
         Action<ButtonNode> integerButtonMarker = null)
     {
-        fragment = HeadlessDisplayText.NormalizeHtmlLineBreaks(fragment);
+        RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+        int originalLength = fragment.Length;
+        string normalizedFragment = null;
+        long normalizeStart = trace is null ? 0 : Stopwatch.GetTimestamp();
+        TimeSpan? normalizeCpuStart = ReadTraceCpuTime(trace);
+        try
+        {
+            normalizedFragment = HeadlessDisplayText.NormalizeHtmlLineBreaks(fragment);
+        }
+        finally
+        {
+            if (trace is not null)
+            {
+                RecordTraceStageDetail(
+                    trace,
+                    "html_normalize",
+                    normalizeStart,
+                    normalizeCpuStart,
+                    originalLength,
+                    new Dictionary<string, object>
+                    {
+                        ["inputLength"] = originalLength,
+                        ["normalizedLength"] = normalizedFragment?.Length ?? 0,
+                        ["changed"] = normalizedFragment is not null && normalizedFragment.Length != originalLength,
+                    });
+            }
+        }
+
+        fragment = normalizedFragment;
         int fontSize = Math.Max(1, MinorShift.Emuera.Runtime.Config.Config.FontSize);
         ConsoleContractLimits limits = HtmlContractLimits;
         try
         {
-            UpstreamHtmlFragment parsed = HtmlManager.ParseFragment(fragment, new UpstreamHtmlParseOptions
+            UpstreamHtmlFragment parsed = null;
+            long parseStart = trace is null ? 0 : Stopwatch.GetTimestamp();
+            TimeSpan? parseCpuStart = ReadTraceCpuTime(trace);
+            bool parseSucceeded = false;
+            try
             {
-                Mode = mode,
-                Budget = new UpstreamHtmlParseBudget(
-                    limits.MaxHtmlInputLength,
-                    limits.MaxHtmlTagCount,
-                    limits.MaxHtmlNestingDepth,
-                    limits.MaxHtmlSegmentCount,
-                    limits.MaxHtmlPartCount,
-                    limits.MaxHtmlTextLength)
-            });
-            return UpstreamHtmlTranslator.Translate(parsed, new UpstreamHtmlTranslationContext(
-                limits,
-                fontSize,
-                Math.Max(fontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight),
-                ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.ForeColor),
-                ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.FocusColor),
-                nextButtonGeneration,
-                ResolveSpriteDefinition,
-                mode,
-                convertBackslashToYen,
-                integerButtonMarker));
+                parsed = HtmlManager.ParseFragment(fragment, new UpstreamHtmlParseOptions
+                {
+                    Mode = mode,
+                    Budget = new UpstreamHtmlParseBudget(
+                        limits.MaxHtmlInputLength,
+                        limits.MaxHtmlTagCount,
+                        limits.MaxHtmlNestingDepth,
+                        limits.MaxHtmlSegmentCount,
+                        limits.MaxHtmlPartCount,
+                        limits.MaxHtmlTextLength)
+                });
+                parseSucceeded = true;
+            }
+            finally
+            {
+                if (trace is not null)
+                {
+                    RecordTraceStageDetail(
+                        trace,
+                        "html_parse",
+                        parseStart,
+                        parseCpuStart,
+                        fragment.Length,
+                        new Dictionary<string, object>
+                        {
+                            ["mode"] = mode.ToString(),
+                            ["inputLength"] = fragment.Length,
+                            ["outcome"] = parseSucceeded ? "success" : "error",
+                        });
+                }
+            }
+
+            UpstreamHtmlTranslationResult translated = null;
+            long translateStart = trace is null ? 0 : Stopwatch.GetTimestamp();
+            TimeSpan? translateCpuStart = ReadTraceCpuTime(trace);
+            bool translateSucceeded = false;
+            try
+            {
+                translated = UpstreamHtmlTranslator.Translate(parsed, new UpstreamHtmlTranslationContext(
+                    limits,
+                    fontSize,
+                    Math.Max(fontSize, MinorShift.Emuera.Runtime.Config.Config.LineHeight),
+                    ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.ForeColor),
+                    ToConsoleColor(MinorShift.Emuera.Runtime.Config.Config.FocusColor),
+                    nextButtonGeneration,
+                    ResolveSpriteDefinition,
+                    mode,
+                    convertBackslashToYen,
+                    integerButtonMarker));
+                translateSucceeded = true;
+                return translated;
+            }
+            finally
+            {
+                if (trace is not null)
+                {
+                    Dictionary<string, object> detail = CreateHtmlMetricsDetail(translated?.Metrics);
+                    detail["mode"] = mode.ToString();
+                    detail["inputLength"] = fragment.Length;
+                    detail["outcome"] = translateSucceeded ? "success" : "error";
+                    RecordTraceStageDetail(
+                        trace,
+                        "html_translate",
+                        translateStart,
+                        translateCpuStart,
+                        translated?.Metrics.NodeCount ?? 0,
+                        detail);
+                }
+            }
         }
         catch (UpstreamHtmlBudgetExceededException exception)
         {
@@ -546,37 +788,121 @@ internal sealed class EmueraConsole
         }
     }
 
+    private static Dictionary<string, object> CreateHtmlMetricsDetail(
+        UpstreamHtmlTranslationMetrics metrics)
+    {
+        var detail = new Dictionary<string, object>
+        {
+            ["translated"] = metrics is not null,
+        };
+        if (metrics is null)
+            return detail;
+
+        detail["nodeCount"] = metrics.NodeCount;
+        detail["segmentCount"] = metrics.SegmentCount;
+        detail["textPartCount"] = metrics.TextPartCount;
+        detail["imagePartCount"] = metrics.ImagePartCount;
+        detail["shapePartCount"] = metrics.ShapePartCount;
+        detail["divPartCount"] = metrics.DivPartCount;
+        detail["buttonCount"] = metrics.ButtonCount;
+        detail["lineBreakCount"] = metrics.LineBreakCount;
+        detail["textLength"] = metrics.TextLength;
+        detail["maximumNodeDepth"] = metrics.MaximumNodeDepth;
+        return detail;
+    }
+
     public void PrintHtml(string fragment, bool toPrintBuffer)
     {
         if (string.IsNullOrEmpty(fragment) || !Enabled)
             return;
 
+        RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+        long startTimestamp = trace is null ? 0 : Stopwatch.GetTimestamp();
+        TimeSpan? cpuStart = ReadTraceCpuTime(trace);
         UpstreamHtmlParseMode mode = toPrintBuffer
             ? UpstreamHtmlParseMode.PrintBufferParts
             : UpstreamHtmlParseMode.DisplayLines;
-        var integerButtons = new List<ButtonNode>();
-        UpstreamHtmlTranslationResult translated = TranslateHtmlFragment(
-            fragment,
-            mode,
-            integerButtonMarker: integerButtons.Add);
-        // Do not mutate the legacy inventory while parsing/translating: a
-        // failed HTML fragment must not leave behind button state that was
-        // never submitted to the structured console.
-        foreach (ButtonNode button in integerButtons)
-            integerButtonNodes.Add(button);
-        if (!toPrintBuffer)
+        UpstreamHtmlTranslationResult translated = null;
+        try
+        {
+            var integerButtons = new List<ButtonNode>();
+            translated = TranslateHtmlFragment(
+                fragment,
+                mode,
+                integerButtonMarker: integerButtons.Add);
+            // Do not mutate the legacy inventory while parsing/translating: a
+            // failed HTML fragment must not leave behind button state that was
+            // never submitted to the structured console.
+            foreach (ButtonNode button in integerButtons)
+                integerButtonNodes.Add(button);
+            if (!toPrintBuffer)
+            {
+                FlushHtmlPendingLine("before");
+                // The desktop console flushes the ordinary PrintStringBuffer and
+                // then appends HTML as a new display-line range. A partial PRINT
+                // line must therefore not absorb the first HTML image/text node.
+                lastLineCanAppend = false;
+            }
+            AppendHtmlNodes(translated.Nodes, translated.Alignment, translated.NoWrap, toPrintBuffer);
+            if (ContainsSelectableAction(translated.Nodes))
+                UpdateGeneration();
+            if (!toPrintBuffer)
+                FlushHtmlPendingLine("after");
+        }
+        finally
+        {
+            if (trace is not null)
+            {
+                Dictionary<string, object> detail = CreateHtmlMetricsDetail(translated?.Metrics);
+                detail["mode"] = mode.ToString();
+                detail["inputLength"] = fragment.Length;
+                detail["outcome"] = translated is not null ? "success" : "error";
+                RecordTraceStageDetail(
+                    trace,
+                    "html_print",
+                    startTimestamp,
+                    cpuStart,
+                    fragment.Length,
+                    detail);
+            }
+        }
+    }
+
+    private void FlushHtmlPendingLine(string phase)
+    {
+        RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+        if (trace is null)
         {
             FlushPendingLine();
-            // The desktop console flushes the ordinary PrintStringBuffer and
-            // then appends HTML as a new display-line range. A partial PRINT
-            // line must therefore not absorb the first HTML image/text node.
-            lastLineCanAppend = false;
+            return;
         }
-        AppendHtmlNodes(translated.Nodes, translated.Alignment, translated.NoWrap, toPrintBuffer);
-        if (ContainsSelectableAction(translated.Nodes))
-            UpdateGeneration();
-        if (!toPrintBuffer)
+
+        long startTimestamp = Stopwatch.GetTimestamp();
+        TimeSpan? cpuStart = ReadTraceCpuTime(trace);
+        int pendingLineNodes = pendingLine.Count;
+        int pendingBufferedLineCount = pendingBufferedLines.Count;
+        bool succeeded = false;
+        try
+        {
             FlushPendingLine();
+            succeeded = true;
+        }
+        finally
+        {
+            RecordTraceStageDetail(
+                trace,
+                "html_flush_layout",
+                startTimestamp,
+                cpuStart,
+                1,
+                new Dictionary<string, object>
+                {
+                    ["phase"] = phase,
+                    ["pendingLineNodes"] = pendingLineNodes,
+                    ["pendingBufferedLines"] = pendingBufferedLineCount,
+                    ["outcome"] = succeeded ? "success" : "error",
+                });
+        }
     }
 
     public void PrintImg(string name, string nameb, string namem, MixedNum height, MixedNum width, MixedNum ypos)
@@ -692,7 +1018,28 @@ internal sealed class EmueraConsole
             buttonGeneration: activeButtonGeneration);
         if (request.DisplayTime && timeout is not null)
             EmitTimeoutCountdown(timeout.Value);
+        if (RuntimeDebugTrace.Current is not null)
+        {
+            var process = GlobalStatic.Process;
+            RuntimeDebugTrace.RecordErbWait(
+                process?.GetRunningPosition(),
+                type,
+                request.StopMesskip,
+                actualWait: true,
+                scriptLineCount: process?.HeadlessScriptLineCount ?? 0,
+                functionName: process?.HeadlessFunctionName,
+                functionDepth: process?.HeadlessFunctionDepth ?? 0);
+        }
         GameConsoleInput input = adapter.Read(prompt, cancellationToken);
+        if (RuntimeDebugTrace.Current is not null)
+        {
+            var process = GlobalStatic.Process;
+            RuntimeDebugTrace.RecordInputConsumed(
+                input,
+                process?.HeadlessScriptLineCount ?? 0,
+                process?.HeadlessFunctionName,
+                process?.HeadlessFunctionDepth ?? 0);
+        }
         ApplyMouseInputResults(request, input);
         ApplyInputMessageSkip(input);
         // BINPUT validates its inventory before opening the prompt. Once that
@@ -778,9 +1125,20 @@ internal sealed class EmueraConsole
         // EVENTCOMEND suppresses Process' fallback post-command wait.
         if (GlobalStatic.Process is not null)
             GlobalStatic.Process.NeedWaitToEventComEnd = false;
+        bool skipWait = ShouldSkipMessageWait(inputType, stopMesskip);
         if (RuntimeDebugTrace.Current is not null)
-            RuntimeDebugTrace.RecordErbWait(GlobalStatic.Process?.GetRunningPosition(), inputType, stopMesskip);
-        if (ShouldSkipMessageWait(inputType, stopMesskip))
+        {
+            var process = GlobalStatic.Process;
+            RuntimeDebugTrace.RecordErbWait(
+                process?.GetRunningPosition(),
+                inputType,
+                stopMesskip,
+                actualWait: !skipWait,
+                scriptLineCount: process?.HeadlessScriptLineCount ?? 0,
+                functionName: process?.HeadlessFunctionName,
+                functionDepth: process?.HeadlessFunctionDepth ?? 0);
+        }
+        if (skipWait)
             return;
 
         ClearInputMessageSkip();
@@ -789,6 +1147,15 @@ internal sealed class EmueraConsole
             stopMessageSkip: stopMesskip,
             allowedSources: ConsoleInputSource.All,
             buttonGeneration: activeButtonGeneration), cancellationToken);
+        if (RuntimeDebugTrace.Current is not null)
+        {
+            var process = GlobalStatic.Process;
+            RuntimeDebugTrace.RecordInputConsumed(
+                input,
+                process?.HeadlessScriptLineCount ?? 0,
+                process?.HeadlessFunctionName,
+                process?.HeadlessFunctionDepth ?? 0);
+        }
         ApplyInputMessageSkip(input);
         EchoAcceptedInput(input.Value);
     }
@@ -1300,18 +1667,53 @@ internal sealed class EmueraConsole
 
     public void AddBackgroundImage(params object[] args)
     {
-        if (args.Length < 1 || args[0] is not string name)
-            throw new NotSupportedException("A background requires a manifest sprite name.");
-        RuntimeSpriteDefinition resolved = ResolveSpriteDefinition(name);
-        if (resolved is null)
-            throw new NotSupportedException($"Background '{name}' is unavailable in the headless runtime.");
-        long depth = args.Length > 1 ? Convert.ToInt64(args[1], CultureInfo.InvariantCulture) : 0;
-        float opacity = args.Length > 2 ? Convert.ToSingle(args[2], CultureInfo.InvariantCulture) : 1f;
-        EmitStructured(ConsoleOperation.UpsertBackground(new BackgroundLayer(
-            name,
-            new ConsoleAssetId(resolved.AssetId),
-            opacity: opacity,
-            depth: depth)));
+        RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+        long startTimestamp = trace is null ? 0 : Stopwatch.GetTimestamp();
+        TimeSpan? cpuStart = ReadTraceCpuTime(trace);
+        RuntimeSpriteDefinition resolved = null;
+        long depth = 0;
+        float opacity = 1f;
+        bool succeeded = false;
+        try
+        {
+            if (args.Length < 1 || args[0] is not string name)
+                throw new NotSupportedException("A background requires a manifest sprite name.");
+            resolved = ResolveSpriteDefinition(name);
+            if (resolved is null)
+                throw new NotSupportedException($"Background '{name}' is unavailable in the headless runtime.");
+            depth = args.Length > 1 ? Convert.ToInt64(args[1], CultureInfo.InvariantCulture) : 0;
+            opacity = args.Length > 2 ? Convert.ToSingle(args[2], CultureInfo.InvariantCulture) : 1f;
+            EmitStructured(ConsoleOperation.UpsertBackground(new BackgroundLayer(
+                name,
+                new ConsoleAssetId(resolved.AssetId),
+                opacity: opacity,
+                depth: depth)));
+            succeeded = true;
+        }
+        finally
+        {
+            if (trace is not null)
+            {
+                RecordTraceStageDetail(
+                    trace,
+                    "background_upsert",
+                    startTimestamp,
+                    cpuStart,
+                    1,
+                    new Dictionary<string, object>
+                    {
+                        ["depth"] = depth,
+                        ["opacity"] = float.IsFinite(opacity) ? opacity : null,
+                        ["assetIdLength"] = resolved?.AssetId?.Length ?? 0,
+                        ["sourceWidth"] = resolved?.SourceWidth ?? 0,
+                        ["sourceHeight"] = resolved?.SourceHeight ?? 0,
+                        ["destinationWidth"] = resolved?.DestinationWidth ?? 0,
+                        ["destinationHeight"] = resolved?.DestinationHeight ?? 0,
+                        ["animationFrameCount"] = resolved?.AnimationFrames?.Count ?? 0,
+                        ["outcome"] = succeeded ? "success" : "error",
+                    });
+            }
+        }
     }
 
     public void ClearBackgroundImage() => EmitStructured(ConsoleOperation.ClearBackgrounds());
@@ -1338,7 +1740,15 @@ internal sealed class EmueraConsole
     {
         if (graphics is null || !graphics.IsCreated || graphics.Width <= 0 || graphics.Height <= 0 || zdepth == 0)
             return false;
-        EmitRasterDrawable(EncodePng(graphics.Bitmap), null, x, y, graphics.Width, graphics.Height, zdepth, hitTestMap: false);
+        EmitRasterDrawable(
+            EncodePngWithTrace(graphics.Bitmap, "raster_png_encode", "cbg_set_graphics"),
+            null,
+            x,
+            y,
+            graphics.Width,
+            graphics.Height,
+            zdepth,
+            hitTestMap: false);
         return true;
     }
 
@@ -1373,7 +1783,16 @@ internal sealed class EmueraConsole
     {
         if (graphics is null || !graphics.IsCreated || graphics.Width <= 0 || graphics.Height <= 0)
             return false;
-        EmitRasterDrawable(EncodePng(graphics.Bitmap), null, 0, 0, graphics.Width, graphics.Height, 0, hitTestMap: true, "cbg-hit-map");
+        EmitRasterDrawable(
+            EncodePngWithTrace(graphics.Bitmap, "raster_png_encode", "cbg_set_button_map"),
+            null,
+            0,
+            0,
+            graphics.Width,
+            graphics.Height,
+            0,
+            hitTestMap: true,
+            "cbg-hit-map");
         return true;
     }
 
@@ -2401,8 +2820,14 @@ internal sealed class EmueraConsole
     {
         if (adapter is StructuredGameConsole structured)
         {
+            RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+            long startTimestamp = trace is null ? 0 : Stopwatch.GetTimestamp();
             SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction([operation]));
-            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+            if (trace is not null)
+            {
+                trace.RecordConsoleTransactionTiming(transaction, Stopwatch.GetElapsedTime(startTimestamp));
+                trace.RecordTransaction(transaction);
+            }
             ProjectTooltipResources();
         }
         else
@@ -2416,8 +2841,14 @@ internal sealed class EmueraConsole
             return;
         if (adapter is StructuredGameConsole structured)
         {
+            RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+            long startTimestamp = trace is null ? 0 : Stopwatch.GetTimestamp();
             SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction(copy));
-            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+            if (trace is not null)
+            {
+                trace.RecordConsoleTransactionTiming(transaction, Stopwatch.GetElapsedTime(startTimestamp));
+                trace.RecordTransaction(transaction);
+            }
             ProjectTooltipResources();
         }
         else
@@ -2459,15 +2890,50 @@ internal sealed class EmueraConsole
         using var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using (Graphics graphics = Graphics.FromImage(bitmap))
             sprite.GraphicsDraw(graphics, new Rectangle(0, 0, width, height));
-        return EncodePng(bitmap);
+        return EncodePngWithTrace(bitmap, "raster_png_encode", "render_sprite");
     }
 
-    private static byte[] EncodePng(Bitmap bitmap)
+    private static byte[] EncodePngWithTrace(Bitmap bitmap, string stage, string operation)
     {
-        using var stream = new MemoryStream();
-        bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
-        return stream.ToArray();
+        RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+        if (trace is null)
+            return EncodePng(bitmap).PngData;
+
+        long startTimestamp = Stopwatch.GetTimestamp();
+        TimeSpan? cpuStart = ReadTraceCpuTime(trace);
+        byte[] pngData = null;
+        string encoder = "unknown";
+        bool succeeded = false;
+        try
+        {
+            HeadlessPngEncodingResult encoding = EncodePng(bitmap);
+            pngData = encoding.PngData;
+            encoder = encoding.Backend;
+            succeeded = true;
+            return pngData;
+        }
+        finally
+        {
+            RecordTraceStageDetail(
+                trace,
+                stage,
+                startTimestamp,
+                cpuStart,
+                1,
+                new Dictionary<string, object>
+                {
+                    ["operation"] = operation,
+                    ["width"] = bitmap.Width,
+                    ["height"] = bitmap.Height,
+                    ["pixelFormat"] = bitmap.PixelFormat.ToString(),
+                    ["encoder"] = encoder,
+                    ["pngBytes"] = pngData?.Length ?? 0,
+                    ["outcome"] = succeeded ? "success" : "error",
+                });
+        }
     }
+
+    private static HeadlessPngEncodingResult EncodePng(Bitmap bitmap) => HeadlessPngEncoder.Encode(bitmap);
 
     // GraphicsImage calls this for pixel mutations. Projection remains lazy:
     // only an id referenced by a visible tooltip is encoded at a display seam.
@@ -2538,7 +3004,7 @@ internal sealed class EmueraConsole
                     if (width is < 1 or > ConsoleContractLimits.MaxTooltipImageDimension ||
                         height is < 1 or > ConsoleContractLimits.MaxTooltipImageDimension)
                         throw new InvalidOperationException("dimensions");
-                    byte[] png = EncodePng(graphics.Bitmap);
+                    byte[] png = EncodePngWithTrace(graphics.Bitmap, "tooltip_png_encode", "tooltip_projection");
                     var resource = new ConsoleTooltipResource(graphicsId, png, width, height, revision);
                     long previousBytes = previous?.PngData.Count ?? 0;
                     long nextBytes = checked(projectedBytes - previousBytes + resource.PngData.Count);
@@ -2601,8 +3067,14 @@ internal sealed class EmueraConsole
         for (int offset = 0; offset < operations.Count; offset += maximum)
         {
             ConsoleOperation[] batch = operations.Skip(offset).Take(maximum).ToArray();
+            RuntimeDebugTrace trace = RuntimeDebugTrace.Current;
+            long startTimestamp = trace is null ? 0 : Stopwatch.GetTimestamp();
             SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction(batch));
-            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+            if (trace is not null)
+            {
+                trace.RecordConsoleTransactionTiming(transaction, Stopwatch.GetElapsedTime(startTimestamp));
+                trace.RecordTransaction(transaction);
+            }
         }
     }
 

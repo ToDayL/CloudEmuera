@@ -32,6 +32,12 @@ internal sealed partial class Process
 			if (Config.InfiniteLoopAlertTime > 0 && (state.lineCount % 10000 == 0))
 				checkInfiniteLoop();
 			LogicalLine line = state.CurrentLine;
+#if CLOUDEMUERA_HEADLESS
+			if ((state.lineCount & 1023) == 0)
+				CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordScriptSample(
+					line.Position,
+					HeadlessFunctionName);
+#endif
 			//これがNULLになる様な処理は現状ないはず
 			//if (line == null)
 			//	throw new ExeEE("Emuera.exeは次に実行する行を見失いました");

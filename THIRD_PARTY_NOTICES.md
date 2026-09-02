@@ -29,6 +29,18 @@ required by the zlib/libpng license. Import and modification records live in
 
 This package is intentionally pinned for the Linux MVP compatibility layer described by ADR-0019. CloudEmuera does not claim that this configuration has modern .NET non-Windows product support.
 
+## SkiaSharp
+
+- Packages: `SkiaSharp` 4.151.1 and `SkiaSharp.NativeAssets.Linux` 4.151.1
+- Source: <https://github.com/mono/SkiaSharp>
+- License: MIT
+- License: <https://github.com/mono/SkiaSharp/blob/main/LICENSE.md>
+
+The Linux native package supplies `libSkiaSharp.so` for the headless Worker. CloudEmuera uses it only for
+lossless PNG serialization of existing System.Drawing surfaces; it does not replace the upstream GraphicsImage
+drawing model. The packages include bundled third-party notices for Skia, HarfBuzz and related components; the
+published dependency artifacts and their notices must remain available with the locked package set.
+
 ## Sarasa Gothic
 
 - Release: 1.0.40
