@@ -443,8 +443,9 @@ internal sealed class EmueraConsole
             // have no native sav file until the game explicitly calls GSAVE.
             // Materialize the current pixels under SessionRoot on first use so
             // the browser can fetch the same surface through the asset gate.
-            byte[] pngData = EncodePng(graphics.Bitmap);
+            byte[] pngData = EncodePng(graphics.Bitmap).PngData;
             string digest = Convert.ToHexString(SHA256.HashData(pngData)).ToLowerInvariant();
+
             string fullPath = Path.Combine(
                 MinorShift.Emuera.Program.ExeDir,
                 "tmp",
@@ -778,8 +779,7 @@ internal sealed class EmueraConsole
         // EVENTCOMEND suppresses Process' fallback post-command wait.
         if (GlobalStatic.Process is not null)
             GlobalStatic.Process.NeedWaitToEventComEnd = false;
-        if (RuntimeDebugTrace.Current is not null)
-            RuntimeDebugTrace.RecordErbWait(GlobalStatic.Process?.GetRunningPosition(), inputType, stopMesskip);
+        RuntimeDebugTrace.RecordErbWait(GlobalStatic.Process?.GetRunningPosition(), inputType, stopMesskip);
         if (ShouldSkipMessageWait(inputType, stopMesskip))
             return;
 
@@ -1338,7 +1338,7 @@ internal sealed class EmueraConsole
     {
         if (graphics is null || !graphics.IsCreated || graphics.Width <= 0 || graphics.Height <= 0 || zdepth == 0)
             return false;
-        EmitRasterDrawable(EncodePng(graphics.Bitmap), null, x, y, graphics.Width, graphics.Height, zdepth, hitTestMap: false);
+        EmitRasterDrawable(EncodePng(graphics.Bitmap).PngData, null, x, y, graphics.Width, graphics.Height, zdepth, hitTestMap: false);
         return true;
     }
 
@@ -1373,7 +1373,7 @@ internal sealed class EmueraConsole
     {
         if (graphics is null || !graphics.IsCreated || graphics.Width <= 0 || graphics.Height <= 0)
             return false;
-        EmitRasterDrawable(EncodePng(graphics.Bitmap), null, 0, 0, graphics.Width, graphics.Height, 0, hitTestMap: true, "cbg-hit-map");
+        EmitRasterDrawable(EncodePng(graphics.Bitmap).PngData, null, 0, 0, graphics.Width, graphics.Height, 0, hitTestMap: true, "cbg-hit-map");
         return true;
     }
 
@@ -2416,8 +2416,7 @@ internal sealed class EmueraConsole
             return;
         if (adapter is StructuredGameConsole structured)
         {
-            SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction(copy));
-            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+            structured.EmitTransaction(new ConsoleTransaction(copy));
             ProjectTooltipResources();
         }
         else
@@ -2459,15 +2458,10 @@ internal sealed class EmueraConsole
         using var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using (Graphics graphics = Graphics.FromImage(bitmap))
             sprite.GraphicsDraw(graphics, new Rectangle(0, 0, width, height));
-        return EncodePng(bitmap);
+        return EncodePng(bitmap).PngData;
     }
 
-    private static byte[] EncodePng(Bitmap bitmap)
-    {
-        using var stream = new MemoryStream();
-        bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
-        return stream.ToArray();
-    }
+    private static HeadlessPngEncodingResult EncodePng(Bitmap bitmap) => HeadlessPngEncoder.Encode(bitmap);
 
     // GraphicsImage calls this for pixel mutations. Projection remains lazy:
     // only an id referenced by a visible tooltip is encoded at a display seam.
@@ -2538,7 +2532,7 @@ internal sealed class EmueraConsole
                     if (width is < 1 or > ConsoleContractLimits.MaxTooltipImageDimension ||
                         height is < 1 or > ConsoleContractLimits.MaxTooltipImageDimension)
                         throw new InvalidOperationException("dimensions");
-                    byte[] png = EncodePng(graphics.Bitmap);
+                    byte[] png = EncodePng(graphics.Bitmap).PngData;
                     var resource = new ConsoleTooltipResource(graphicsId, png, width, height, revision);
                     long previousBytes = previous?.PngData.Count ?? 0;
                     long nextBytes = checked(projectedBytes - previousBytes + resource.PngData.Count);
@@ -2601,8 +2595,7 @@ internal sealed class EmueraConsole
         for (int offset = 0; offset < operations.Count; offset += maximum)
         {
             ConsoleOperation[] batch = operations.Skip(offset).Take(maximum).ToArray();
-            SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction(batch));
-            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
+            structured.EmitTransaction(new ConsoleTransaction(batch));
         }
     }
 

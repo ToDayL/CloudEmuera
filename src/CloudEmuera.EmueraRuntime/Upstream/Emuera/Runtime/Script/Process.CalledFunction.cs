@@ -108,10 +108,8 @@ internal sealed class CalledFunction
 
 	public static CalledFunction CallFunction(Process parent, string label, LogicalLine retAddress)
 	{
-		CalledFunction called = new(label)
-		{
-			Finished = false
-		};
+		// CloudEmuera PERF: resolve before allocating the per-invocation frame;
+		// compatibility probes frequently target functions that do not exist.
 		FunctionLabelLine labelline = parent.LabelDictionary.GetNonEventLabel(label);
 		if (labelline == null)
 		{
@@ -125,6 +123,10 @@ internal sealed class CalledFunction
 		{
 			throw new CodeEE(string.Format(trerror.CallToUserFunc.Text, labelline.LabelName, labelline.Position.Value.Filename, labelline.Position.Value.LineNo.ToString()));
 		}
+		CalledFunction called = new(label)
+		{
+			Finished = false
+		};
 		called.TopLabel = labelline;
 		called.CurrentLabel = labelline;
 		called.returnAddress = retAddress;

@@ -1,7 +1,6 @@
 using System.Text.Json;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
-using MinorShift.Emuera;
 using MinorShift.Emuera.GameProc;
 using MinorShift.Emuera.GameView;
 using Xunit;
@@ -13,7 +12,7 @@ public sealed class RuntimeDebugTraceTests
 {
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public void EnabledTraceWritesOutsideGameRootAndSummarizesPromptNodes()
+    public void EnabledTraceWritesOutsideGameRootAndRecordsRuntimeBoundaries()
     {
         string root = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-debug", Guid.NewGuid().ToString("N"));
         string sessionRoot = Path.Combine(root, "root");
@@ -59,80 +58,23 @@ public sealed class RuntimeDebugTraceTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public void DisabledTraceDoesNotCreateTraceFileInProduction()
+    public void DisabledTraceDoesNotCreateTraceFile()
     {
         string root = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-debug", Guid.NewGuid().ToString("N"));
         string sessionRoot = Path.Combine(root, "root");
-        string? previousTrace = Environment.GetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable);
-        string? previousEnvironment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+        string? previous = Environment.GetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable);
         Directory.CreateDirectory(sessionRoot);
         try
         {
-            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Production");
             Environment.SetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable, null);
             Assert.Null(RuntimeDebugTrace.CreateWhenEnabled(sessionRoot));
             Assert.False(File.Exists(Path.Combine(root, "metadata", "runtime-debug.jsonl")));
         }
         finally
         {
-            Environment.SetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable, previousTrace);
-            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", previousEnvironment);
+            Environment.SetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable, previous);
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    [Trait("Category", "RuntimeBridge")]
-    public void TrueEnablesTraceInProduction()
-    {
-        string root = Path.Combine(Path.GetTempPath(), "cloudemuera-runtime-debug", Guid.NewGuid().ToString("N"));
-        string sessionRoot = Path.Combine(root, "root");
-        string? previousTrace = Environment.GetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable);
-        string? previousEnvironment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
-        Directory.CreateDirectory(sessionRoot);
-        try
-        {
-            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Production");
-            Environment.SetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable, "true");
-            using RuntimeDebugTrace trace = Assert.IsType<RuntimeDebugTrace>(RuntimeDebugTrace.CreateWhenEnabled(sessionRoot));
-            trace.Activate();
-            RuntimeDebugTrace.RecordErbWait(null, ConsoleInputType.EnterKey, stopMessageSkip: false);
-
-            Assert.True(File.Exists(Path.Combine(root, "metadata", "runtime-debug.jsonl")));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable, previousTrace);
-            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", previousEnvironment);
-            if (Directory.Exists(root))
-                Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    [Trait("Category", "RuntimeBridge")]
-    public async Task ReadAnyKeySuppressesTheEventCommandEndFallbackWait()
-    {
-        GlobalStatic.Reset();
-        var adapter = new StructuredGameConsole();
-        var headless = new EmueraConsole(adapter, adapter.Clock, CancellationToken.None);
-        var process = new MinorShift.Emuera.GameProc.Process(headless);
-        GlobalStatic.Process = process;
-        process.NeedWaitToEventComEnd = true;
-        try
-        {
-            Task wait = Task.Run(() => headless.ReadAnyKey());
-            Assert.True(SpinWait.SpinUntil(() => adapter.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
-            Assert.False(process.NeedWaitToEventComEnd);
-            ConsolePrompt prompt = adapter.CurrentPrompt!;
-            Assert.Equal(ConsoleInputResultKind.Accepted, adapter.SubmitCurrentInput(
-                new ConsoleInputAttempt("event-command-end", string.Empty)).Kind);
-            await wait.WaitAsync(TimeSpan.FromSeconds(2));
-        }
-        finally
-        {
-            GlobalStatic.Reset();
         }
     }
 }

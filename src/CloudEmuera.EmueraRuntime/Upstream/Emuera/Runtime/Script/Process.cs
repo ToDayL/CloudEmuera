@@ -45,6 +45,7 @@ internal sealed partial class Process(EmueraConsole view)
 
 	internal void ThrowIfHeadlessCancellationRequested() =>
 		headlessCancellationToken.ThrowIfCancellationRequested();
+
 #endif
 
 	public LogicalLine getCurrentLine { get { return state.CurrentLine; } }

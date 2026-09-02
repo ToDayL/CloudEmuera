@@ -14,6 +14,8 @@
   <ItemGroup>
     <ProjectReference Include="../../CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
     <PackageReference Include="Enums.NET" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
     <PackageReference Include="System.Drawing.Common" />
   </ItemGroup>
   <ItemGroup>
@@ -27,6 +29,7 @@
     <Compile Include="HeadlessPlatformStubs.cs" />
     <Compile Include="HeadlessWebpDecoder.cs" />
     <Compile Include="HeadlessFontMetrics.cs" />
+    <Compile Include="HeadlessPngEncoder.cs" />
     <Compile Include="HeadlessDisplayText.cs" />
     <Compile Include="HeadlessFileSystem.cs" />
     <Compile Include="HeadlessStringConverter.cs" />

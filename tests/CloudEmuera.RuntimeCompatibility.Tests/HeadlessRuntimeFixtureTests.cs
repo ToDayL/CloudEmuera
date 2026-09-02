@@ -272,6 +272,27 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+#pragma warning disable CA1416 // The test runs in the configured Linux System.Drawing compatibility host.
+    public void FastSkiaPngProjectionPreservesArgbPixelsAndTransparency()
+    {
+        // PLAY-002/ADR-0019: PNG serialization may change backend, but the
+        // browser-facing raster must retain the lossless 32bpp ARGB pixels.
+        using var bitmap = new Bitmap(2, 1, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        bitmap.SetPixel(0, 0, Color.FromArgb(0x80, 0x11, 0x22, 0x33));
+        bitmap.SetPixel(1, 0, Color.FromArgb(0xff, 0xaa, 0xbb, 0xcc));
+
+        HeadlessPngEncodingResult result = HeadlessPngEncoder.Encode(bitmap);
+
+        Assert.Equal(HeadlessPngEncoder.FastBackend, result.Backend);
+        using var pngStream = new MemoryStream(result.PngData, writable: false);
+        using var decoded = new Bitmap(pngStream);
+        Assert.Equal(Color.FromArgb(0x80, 0x11, 0x22, 0x33), decoded.GetPixel(0, 0));
+        Assert.Equal(Color.FromArgb(0xff, 0xaa, 0xbb, 0xcc), decoded.GetPixel(1, 0));
+    }
+#pragma warning restore CA1416
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task RecreatedGraphicsSurfaceDoesNotReuseDisposedFontCacheEntry()
     {
         // COMP-007/ADR-0029: GCREATE disposes the prior graphics surface, so
@@ -380,6 +401,97 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Contains("PLAIN-LITERAL-PARTIAL=0", transcript, StringComparison.Ordinal);
         Assert.Contains("REGEX-EXACT=0", transcript, StringComparison.Ordinal);
         Assert.Contains("REGEX-CLASS=1", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task MatchCountsArrayValuesWithoutChangingRangeOrEmptyStringSemantics()
+    {
+        // MATCH must count duplicates over the half-open range [start, end),
+        // while an empty string target still matches null array slots.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "#DIM values, 6\n" +
+            "#DIMS labels, 5\n" +
+            "values:0 = 7\n" +
+            "values:1 = 2\n" +
+            "values:2 = 7\n" +
+            "values:3 = 4\n" +
+            "values:4 = 7\n" +
+            "values:5 = 9\n" +
+            "labels:1 = alpha\n" +
+            "labels:2 = \n" +
+            "labels:3 = beta\n" +
+            "labels:4 = gamma\n" +
+            "PRINTFORML MATCH-INT-ALL={MATCH(values, 7)}\n" +
+            "PRINTFORML MATCH-INT-RANGE={MATCH(values, 7, 1, 5)}\n" +
+            "PRINTFORML MATCH-INT-EMPTY={MATCH(values, 7, 3, 3)}\n" +
+            "PRINTFORML MATCH-STR-EMPTY={MATCH(labels, \"\")}\n" +
+            "PRINTFORML MATCH-STR-ALPHA={MATCH(labels, \"alpha\", 0, 4)}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("MATCH-INT-ALL=3", transcript, StringComparison.Ordinal);
+        Assert.Contains("MATCH-INT-RANGE=2", transcript, StringComparison.Ordinal);
+        Assert.Contains("MATCH-INT-EMPTY=0", transcript, StringComparison.Ordinal);
+        Assert.Contains("MATCH-STR-EMPTY=2", transcript, StringComparison.Ordinal);
+        Assert.Contains("MATCH-STR-ALPHA=1", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task CMatchCountsBuiltInCharacterArraysAcrossCharacterRanges()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "ADDVOIDCHARA\n" +
+            "ADDVOIDCHARA\n" +
+            "CFLAG:0:0 = 1\n" +
+            "CFLAG:1:0 = 1\n" +
+            "CSTR:0:0 = alpha\n" +
+            "CSTR:1:0 = alpha\n" +
+            "PRINTFORML MATCH-CHARA={MATCH(CFLAG:0, 1)}\n" +
+            "PRINTFORML CMATCH-INT-ALL={CMATCH(CFLAG:0, 1)}\n" +
+            "PRINTFORML CMATCH-INT-RANGE={CMATCH(CFLAG:0, 1, 1, 2)}\n" +
+            "PRINTFORML CMATCH-STR={CMATCH(CSTR:0, \"alpha\")}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("MATCH-CHARA=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("CMATCH-INT-ALL=2", transcript, StringComparison.Ordinal);
+        Assert.Contains("CMATCH-INT-RANGE=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("CMATCH-STR=2", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task MatchStillRejectsAnArrayRangeOutsideTheBackingArray()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "#DIM values, 2\n" +
+            "PRINTFORML {MATCH(values, 1, 0, 3)}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.ScriptFailed, result.Status);
     }
 
     [Fact]
@@ -2103,6 +2215,54 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void HtmlPrintAllowsHighDivDepthAsLayerOrderWithoutIncreasingNodeDepth()
+    {
+        // PLAY-002: upstream HTML depth is paint order. A large depth is a
+        // valid background layer and must not be confused with ConsoleNode
+        // tree nesting.
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintHtml(
+            "<div rect='0px,0px,100px,100px' depth='999'>background</div>",
+            toPrintBuffer: false);
+
+        DivNode div = Assert.IsType<DivNode>(Assert.Single(console.Snapshot.Scrollback.Single().Nodes));
+        Assert.Equal(999, div.ZIndex);
+        Assert.Equal("background", RuntimeTranscriptProjector.Project(div.Children));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void HtmlTranslatorLimitsSemanticNestingIndependentlyOfDivLayerDepth()
+    {
+        // PLAY-002/ADR-0024: the translator still bounds the actual
+        // ConsoleNode tree even when every div carries a large paint depth.
+        UpstreamHtmlTranslationContext Context() => new(
+            ConsoleContractLimits.Default,
+            fontSize: 16,
+            lineHeight: 16,
+            defaultForeground: null,
+            defaultButtonColor: null,
+            buttonGeneration: 0,
+            imageResolver: null,
+            mode: UpstreamHtmlParseMode.PrintBufferParts);
+
+        UpstreamHtmlTranslationResult translated = UpstreamHtmlTranslator.Translate(
+            CreateNestedSemanticDivFragment(ConsoleContractLimits.Default.MaxNodeDepth, layerDepth: 999),
+            Context());
+        Assert.Equal(999, Assert.IsType<DivNode>(Assert.Single(translated.Nodes)).ZIndex);
+
+        UpstreamHtmlTranslationException exception = Assert.Throws<UpstreamHtmlTranslationException>(() =>
+            UpstreamHtmlTranslator.Translate(
+                CreateNestedSemanticDivFragment(ConsoleContractLimits.Default.MaxNodeDepth + 1, layerDepth: 999),
+                Context()));
+        Assert.Equal("EMUERA_HTML_DEPTH_LIMIT", exception.ReasonCode);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HtmlPrintBudgetRejectionDoesNotConsumePendingOutput()
     {
         ConsoleContractLimits limits = ConsoleContractLimits.Default with { MaxHtmlTagCount = 1 };
@@ -3099,6 +3259,33 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Contains("CALLBACK-RETURN=1", transcript, StringComparison.Ordinal);
         Assert.DoesNotContain("CATCH-RAN", transcript, StringComparison.Ordinal);
         Assert.DoesNotContain("COM_ABLE1", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task MissingDynamicCallStillJumpsToCatch()
+    {
+        // PERF: the missing-target path must retain TRYCCALLFORM semantics while
+        // avoiding a CalledFunction allocation in the interpreter.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "TRYCCALLFORM MISSING_DYNAMIC_{1}\n" +
+            "CATCH\n" +
+            "PRINTL MISSING-CALL-CATCH\n" +
+            "ENDCATCH\n" +
+            "PRINTL AFTER-MISSING-CALL\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("MISSING-CALL-CATCH", transcript, StringComparison.Ordinal);
+        Assert.Contains("AFTER-MISSING-CALL", transcript, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -4729,6 +4916,33 @@ public sealed class HeadlessRuntimeFixtureTests
         BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(offset + 14, 2), checked((ushort)width));
         BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(offset + 16, 2), checked((ushort)height));
         return result;
+    }
+
+    private static UpstreamHtmlFragment CreateNestedSemanticDivFragment(int divCount, int layerDepth)
+    {
+        UpstreamHtmlSequence children = new([]);
+        for (int index = 0; index < divCount; index++)
+        {
+            children = new UpstreamHtmlSequence(
+            [
+                UpstreamHtmlSequenceItem.FromSegment(new UpstreamHtmlSegment
+                {
+                    Parts =
+                    [
+                        new UpstreamHtmlDivPart
+                        {
+                            Width = new UpstreamHtmlLength(100, isPixels: true),
+                            Height = new UpstreamHtmlLength(100, isPixels: true),
+                            Depth = layerDepth,
+                            IsRelative = true,
+                            Children = children
+                        }
+                    ]
+                })
+            ]);
+        }
+
+        return new UpstreamHtmlFragment(UpstreamHtmlAlignment.Left, noWrap: false, children);
     }
 
     private static void WriteUInt24LittleEndian(Span<byte> destination, int value)

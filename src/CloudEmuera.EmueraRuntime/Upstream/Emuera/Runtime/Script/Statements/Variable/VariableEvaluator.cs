@@ -316,10 +316,29 @@ internal sealed class VariableEvaluator : IDisposable
 
 	public static long GetMatch(FixedVariableTerm p, long target, long start, long end)
 	{
+		if (start >= end)
+			return 0;
+
+		// CloudEmuera: MATCH is defined for one-dimensional arrays. Fetch the
+		// backing array once so the hot loop does not allocate an index array or
+		// dispatch through the general variable accessor for every element.
+		if (p.Identifier.IsArray1D)
+		{
+			long[] array = p.Identifier.IsCharacterData
+				? (long[])p.Identifier.GetArrayChara((int)p.Index1)
+				: (long[])p.Identifier.GetArray();
+			return CountMatches(array, target, start, end);
+		}
+
+		return GetMatchSlow(p, target, start, end);
+	}
+
+	private static long CountMatches(long[] array, long target, long start, long end)
+	{
 		long ret = 0;
 
-		for (int i = (int)start; i < (int)end; i++)
-			if (p.Identifier.GetIntValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, i] : [i]) == target)
+		for (int i = (int)start, last = (int)end; i < last; i++)
+			if (array[i] == target)
 				ret++;
 
 		return ret;
@@ -327,11 +346,29 @@ internal sealed class VariableEvaluator : IDisposable
 
 	public static long GetMatch(FixedVariableTerm p, string target, long start, long end)
 	{
+		if (start >= end)
+			return 0;
+
+		// Keep null/empty matching identical to the upstream implementation;
+		// only the element access is specialized here.
+		if (p.Identifier.IsArray1D)
+		{
+			string[] array = p.Identifier.IsCharacterData
+				? (string[])p.Identifier.GetArrayChara((int)p.Index1)
+				: (string[])p.Identifier.GetArray();
+			return CountMatches(array, target, start, end);
+		}
+
+		return GetMatchSlow(p, target, start, end);
+	}
+
+	private static long CountMatches(string[] array, string target, long start, long end)
+	{
 		long ret = 0;
 		bool targetIsNullOrEmpty = string.IsNullOrEmpty(target);
 
-		for (int i = (int)start; i < (int)end; i++)
-			if (p.Identifier.GetStrValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, i] : [i]) == target || targetIsNullOrEmpty && string.IsNullOrEmpty(p.Identifier.GetStrValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, i] : [i])))
+		for (int i = (int)start, last = (int)end; i < last; i++)
+			if (array[i] == target || targetIsNullOrEmpty && string.IsNullOrEmpty(array[i]))
 				ret++;
 
 		return ret;
@@ -339,9 +376,95 @@ internal sealed class VariableEvaluator : IDisposable
 
 	public static long GetMatchChara(FixedVariableTerm p, long target, long start, long end)
 	{
+		if (start >= end)
+			return 0;
+
+		// CMATCH walks the character dimension while the remaining indices are
+		// fixed. Read each character's backing array directly for the supported
+		// array shapes and retain the generic path for scalar values.
+		if (p.Identifier.IsCharacterData && p.Identifier.IsArray1D)
+		{
+			long ret = 0;
+			for (int i = (int)start, last = (int)end; i < last; i++)
+				if (((long[])p.Identifier.GetArrayChara(i))[p.Index2] == target)
+					ret++;
+			return ret;
+		}
+
+		if (p.Identifier.IsCharacterData && p.Identifier.IsArray2D)
+		{
+			long ret = 0;
+			for (int i = (int)start, last = (int)end; i < last; i++)
+				if (((long[,])p.Identifier.GetArrayChara(i))[p.Index2, p.Index3] == target)
+					ret++;
+			return ret;
+		}
+
+		return GetMatchCharaSlow(p, target, start, end);
+	}
+
+	public static long GetMatchChara(FixedVariableTerm p, string target, long start, long end)
+	{
+		if (start >= end)
+			return 0;
+
+		if (p.Identifier.IsCharacterData && p.Identifier.IsArray1D)
+		{
+			long ret = 0;
+			bool targetIsNullOrEmpty = string.IsNullOrEmpty(target);
+			for (int i = (int)start, last = (int)end; i < last; i++)
+			{
+				string value = ((string[])p.Identifier.GetArrayChara(i))[p.Index2];
+				if (value == target || targetIsNullOrEmpty && string.IsNullOrEmpty(value))
+					ret++;
+			}
+			return ret;
+		}
+
+		if (p.Identifier.IsCharacterData && p.Identifier.IsArray2D)
+		{
+			long ret = 0;
+			bool targetIsNullOrEmpty = string.IsNullOrEmpty(target);
+			for (int i = (int)start, last = (int)end; i < last; i++)
+			{
+				string value = ((string[,])p.Identifier.GetArrayChara(i))[p.Index2, p.Index3];
+				if (value == target || targetIsNullOrEmpty && string.IsNullOrEmpty(value))
+					ret++;
+			}
+			return ret;
+		}
+
+		return GetMatchCharaSlow(p, target, start, end);
+	}
+
+	private static long GetMatchSlow(FixedVariableTerm p, long target, long start, long end)
+	{
 		long ret = 0;
 
-		for (int i = (int)start; i < (int)end; i++)
+		for (int i = (int)start, last = (int)end; i < last; i++)
+			if (p.Identifier.GetIntValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, i] : [i]) == target)
+				ret++;
+
+		return ret;
+	}
+
+	private static long GetMatchSlow(FixedVariableTerm p, string target, long start, long end)
+	{
+		long ret = 0;
+		bool targetIsNullOrEmpty = string.IsNullOrEmpty(target);
+
+		for (int i = (int)start, last = (int)end; i < last; i++)
+			if (p.Identifier.GetStrValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, i] : [i]) == target || targetIsNullOrEmpty && string.IsNullOrEmpty(p.Identifier.GetStrValue(GlobalStatic.EMediator, p.Identifier.IsCharacterData ? [p.Index1, i] : [i])))
+				ret++;
+
+		return ret;
+	}
+
+	private static long GetMatchCharaSlow(FixedVariableTerm p, long target, long start, long end)
+	{
+		long ret = 0;
+
+		for (int i = (int)start, last = (int)end; i < last; i++)
 		{
 			if (p.Identifier.GetIntValue(GlobalStatic.EMediator, [i, p.Index2, p.Index3]) == target)
 				ret++;
@@ -350,12 +473,12 @@ internal sealed class VariableEvaluator : IDisposable
 		return ret;
 	}
 
-	public static long GetMatchChara(FixedVariableTerm p, string target, long start, long end)
+	private static long GetMatchCharaSlow(FixedVariableTerm p, string target, long start, long end)
 	{
 		long ret = 0;
 		bool targetIsNullOrEmpty = string.IsNullOrEmpty(target);
 
-		for (int i = (int)start; i < (int)end; i++)
+		for (int i = (int)start, last = (int)end; i < last; i++)
 		{
 			if (p.Identifier.GetStrValue(GlobalStatic.EMediator, [i, p.Index2, p.Index3]) == target || targetIsNullOrEmpty && string.IsNullOrEmpty(p.Identifier.GetStrValue(GlobalStatic.EMediator, [i, p.Index2, p.Index3])))
 				ret++;

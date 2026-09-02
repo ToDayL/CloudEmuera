@@ -1,5 +1,10 @@
 # CloudEmuera modifications to Emuera.EM+EE
 
+- Optimized `MATCH` and `CMATCH` over supported one-dimensional, two-dimensional,
+  and character-array shapes by reading typed backing arrays directly in the
+  counting loop. Range, duplicate-counting, null/empty-string, scalar fallback,
+  and out-of-range behavior remain governed by the pinned interpreter contract;
+  no ERB changes are required (PERF/MATCH).
 - Added a Session-bound width policy at the headless configuration seam: Original uses the game's `WindowX` exactly,
   Max uses the lesser of startup browser CSS width and 2000px, Adaptive uses the lesser of startup browser CSS width
   and `WindowX`, and Custom uses the persisted user width exactly. Only Max and Adaptive are browser-bounded; no mode
@@ -21,10 +26,89 @@
   left/right box-model insets use the Session `FontSize`, while vertical coordinates, dimensions and top/bottom
   insets use the physical `LineHeight`; explicit `px` values remain exact. This keeps fixed EraFL task-panel frames
   large enough for their line-height-spaced child rows (PLAY-002/COMP-007).
-
+- Separated the pinned upstream HTML `div` paint-order `depth` from the headless structured-node nesting depth.
+  High layer values such as `999` remain valid `DivNode.ZIndex` values, while the actual ConsoleNode tree still
+  receives the bounded `MaxNodeDepth` check (PLAY-002/ADR-0024).
+- Added a SkiaSharp-backed fast PNG projection for headless browser/IPC rasters. It reads the existing
+  System.Drawing 32bpp ARGB surface through a `SKPixmap`, uses no PNG row filters and zlib level 1, and retains
+  a GDI+ fallback if the Linux native asset cannot load (PLAY-002/ADR-0040).
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
+
+## 2026-09-02 — Optimize MATCH array scans
+
+- `MATCH` now obtains the supported one-dimensional typed backing array once
+  and compares its elements without per-element general variable dispatch or
+  temporary index arrays. `CMATCH` uses the same approach for built-in and
+  user-defined character arrays, including two-dimensional character arrays.
+- The empty-range fast path, half-open ranges, duplicate counting,
+  null/empty-string matching, and generic scalar fallback retain the pinned
+  upstream behavior. The optimization is interpreter-only; game ERB is
+  unchanged.
+- Verification: `MatchCountsArrayValuesWithoutChangingRangeOrEmptyStringSemantics`
+  and `CMatchCountsBuiltInCharacterArraysAcrossCharacterRanges`.
+
+## 2026-09-02 — Avoid missing dynamic-call frame allocation
+
+- Modified upstream file: `Upstream/Emuera/Runtime/Script/Process.CalledFunction.cs`.
+  Non-event dynamic function calls now resolve the target label before creating the
+  per-invocation `CalledFunction` object. Missing targets therefore keep the original
+  null/TRY-CATCH behavior without allocating an unused call frame; event-target and
+  method-target errors remain unchanged.
+- Scope: interpreter-only performance optimization for compatibility probes such as
+  `TRYCCALLFORM COM_ABLE_S...`; no game ERB changes and no shared call-frame reuse.
+- Verification: `HeadlessRuntimeFixtureTests.MissingDynamicCallStillJumpsToCatch` and
+  `DynamicComAbleCallbackWithArgumentRemainsCallableAndWarningStaysOutOfConsole`.
+
+## 2026-09-02 — Separate HTML paint depth from structural node depth
+
+- `UpstreamHtmlTranslator` now carries the actual structured-node depth through
+  sequences, presentation wrappers, and div children. The pinned upstream
+  `div depth` field is retained only as `DivNode.ZIndex`; it no longer consumes
+  the structural nesting budget.
+- Scope: the `eraBlueResort` Session `sess_01a05dab55f5715baa68fe42698236d2`,
+  Worker epoch 2, where `背景表示関数.ERB:47-50` emitted a background div with
+  `depth='999'` and failed before `HTML_PRINT` committed output. Verification
+  covers high layer depth and rejection of actual semantic nesting beyond the
+  configured node-depth limit.
+
+## 2026-09-02 — Remove temporary runtime performance timing
+
+- Removed only the investigation-only timing instrumentation added for the
+  `eraBlueResort` performance analysis: per-instruction/function timing,
+  sampled source hotspots, raster/HTML/layout timing and transaction timing.
+- Retained the lower-volume opt-in `RuntimeDebugTrace` boundary trace. When
+  `CLOUDEMUERA_RUNTIME_DEBUG_TRACE` is `1` or `true`, it writes
+  `metadata/runtime-debug.jsonl` beside the SessionRoot with ERB output/wait,
+  runtime width and structured console-operation records. It remains disabled
+  by default and does not record submitted input values.
+
+## 2026-08-18 — Opt-in ERB/structured-output trace
+
+- Modified file: `Upstream/Emuera/Runtime/Script/Statements/ExpressionMediator.cs`.
+  The headless build reports the current ERB source position, print
+  instruction, rendered text and wait-for-input flag immediately before normal
+  output processing; desktop compilation retains upstream behavior.
+- Headless glue: `RuntimeDebugTrace` is disabled by default and is enabled only
+  by `CLOUDEMUERA_RUNTIME_DEBUG_TRACE=1` or `true`, including in Production.
+  It appends JSON Lines to the owning Session container's
+  `metadata/runtime-debug.jsonl`, outside the game `root/`, recording
+  `erb_output`, `erb_wait`, `runtime_width` and structured console operations.
+  It never records submitted input values.
+- Scope: opt-in diagnosis for runtime output/input-boundary and layout reports.
+- Verification: `RuntimeDebugTraceTests` and the development-container build.
+
+## 2026-09-02 — Add fast Skia PNG projection
+
+- Added `HeadlessPngEncoder` to `UpstreamHeadless`. The existing System.Drawing image model remains responsible for
+  drawing and pixel semantics; SkiaSharp only serializes the locked 32bpp ARGB surface to PNG through a zero-copy
+  `SKPixmap` view.
+- The default headless encoder profile is `SKPngEncoderFilterFlags.NoFilters` with zlib level 1. If the Linux
+  `libSkiaSharp` native asset is unavailable, the process continues through the previous GDI+ encoder.
+- Added locked SkiaSharp and Linux native asset dependencies, third-party inventory/ADR records, and a regression
+  test covering Skia selection plus opaque and partially transparent ARGB pixels. This does not migrate the
+  upstream GraphicsImage drawing implementation or change the RasterDrawable byte limits.
 
 ## 2026-09-01 — Normalize meaningful upstream display controls
 
@@ -623,29 +707,14 @@ requirements/ADR references, and verification commands.
   runs the real pinned interpreter through dynamic `TRYCCALLFORM`; dev-Docker
   RuntimeBridge and full RuntimeCompatibility test suites pass.
 
-## 2026-08-18 — Opt-in ERB/structured-output trace
+## 2026-08-18 — Align headless event wait behavior
 
-- Modified upstream file: `Upstream/Emuera/Runtime/Script/Statements/ExpressionMediator.cs`.
-  Under the existing `CLOUDEMUERA_HEADLESS` build symbol it reports the current
-  ERB source position, print instruction, rendered text and wait-for-input flag
-  to the headless diagnostic bridge immediately before normal output processing.
-  Desktop builds retain upstream behavior; headless Workers remain unchanged
-  unless the explicit trace flag is enabled.
-- Headless glue: `RuntimeDebugTrace` is disabled by default and is enabled only
-  by `CLOUDEMUERA_RUNTIME_DEBUG_TRACE=1` or `true`, including in Production.
-  It appends JSON Lines to the owning Session directory's
-  `metadata/runtime-debug.jsonl` (outside game `root/`), recording `erb_output`,
-  `erb_wait` (including standalone `WAIT`) and every resulting structured
-  console operation with sequence, prompt and bounded Node summaries. It never
-  records submitted input values.
-- Scope: opt-in diagnosis for PLAY-001/PLAY-004 and the eraTW consecutive
-  empty-input investigation.
 - Behavioral parity: `HeadlessEmueraConsole.ReadAnyKey` now clears
   `Process.NeedWaitToEventComEnd`, matching upstream `EmueraConsole.ReadAnyKey`.
   Without this, eraTW's `EVENTCOMEND.ERB:487` `TWAIT 100,0` opened its own
   wait but the upstream process added a second fallback empty wait afterwards.
-- Verification: RuntimeBridge tests exercise PRINT/PRINTW output and assert the
-  trace file is created only when the explicit environment flag is enabled.
+- Verification: RuntimeBridge tests cover PRINT/PRINTW output and the event-wait
+  boundary in the development container.
 
 ## 2026-08-18 — Linux resource path composition in AppContents
 
