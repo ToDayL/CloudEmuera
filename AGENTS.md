@@ -130,43 +130,34 @@ for row in connection.execute(
 PY
 ~~~
 
-`session_root_path` is relative to `/data`. A Worker's runtime traces are
-stored in the sibling `metadata` directory rather than inside the SessionRoot:
+`session_root_path` is relative to `/data`. A Worker's failure log is stored in
+the sibling `metadata` directory rather than inside the SessionRoot:
 
 ~~~text
 /data/<session_root_path>                         # SessionRoot
-/data/<session_root_path parent>/metadata/runtime-debug.jsonl
 /data/<session_root_path parent>/metadata/worker-error.jsonl
 ~~~
 
 Use the following evidence hierarchy when correlating a runtime or UI report:
 
-- `runtime-debug.jsonl` is the primary structured trace for runtime behavior,
-  output, and layout-related events. Use `worker-error.jsonl` for Worker
-  failures. Treat `emuera.log` as supplemental rather than authoritative for
-  structured Console behavior.
-- Use `runtime_width` to compare configured, browser, effective, and drawable
-  widths. Read font face, font size, line height, width mode, and Session paths
-  from the database record being investigated.
-- Use `erb_output` to map runtime output to `sourceFile`, `sourceLine`,
-  `instruction`, and input-wait state; use `erb_wait` to identify input points;
-  use `console_operation` to correlate output sequence, line IDs, and node
-  summaries. Escaped path separators in JSON may require normalized search
-  patterns.
-- Treat a trace as evidence of emitted output, not necessarily complete visual
-  geometry. When geometry matters, combine the trace with the generating ERB,
-  the persisted display configuration, the structured node fields, and—when
-  authenticated browser access is available—DOM measurements such as
+- `worker-error.jsonl` is the primary structured record for Worker failures;
+  correlate it with the server/Worker logs and the persisted Session state.
+  Treat `emuera.log` as supplemental rather than authoritative for structured
+  Console behavior.
+- Read font face, font size, line height, width mode, and Session paths from the
+  database record being investigated. For output and layout, combine the
+  generating ERB, persisted display configuration, structured Session state,
+  and—when authenticated browser access is available—DOM measurements such as
   `getBoundingClientRect()`, `overflow`, `scrollHeight`, and `clientHeight`.
 - For interaction reports, verify the event source and payload at every
   boundary (DOM, realtime message, IPC, adapter, and runtime), and distinguish
   a control being rendered or hit from the input being accepted and interpreted
-  with the intended semantics. If a trace does not record client attempts,
-  treat that as an observability gap and use boundary-level logs or a copied
-  deterministic fixture rather than inferring that no input was sent.
+  with the intended semantics. Use boundary-level logs or a copied
+  deterministic fixture when the existing records do not include client
+  attempts.
 
 For any layout investigation, record the Session ID, Worker epoch, relevant
-trace lines, source location, display settings, coordinate units, and the
+log lines, source location, display settings, coordinate units, and the
 rendering boundary where the discrepancy appears. Keep diagnosis separate from
 changes to the running Session, and do not attempt interactive login when the
 available credentials are not valid.
@@ -180,13 +171,12 @@ failure. A Session can retain failures from several Worker attempts; older
 records are history, and a later `connection_closed:Cancelled` record is often
 cleanup after the fatal event rather than the cause.
 
-Read the raw JSONL records, not only a shortened dashboard or a final log line.
-Correlate `worker-error.jsonl` with the surrounding `runtime-debug.jsonl`
-events, especially `erb_output`, `erb_wait`, and `console_operation`. Use the
-source file, source line, instruction, and output sequence to inspect the exact
-ERB call site and its immediate caller chain. If a message is truncated, retain
-the raw record and use the stack's first project-owned frame plus the local
-source to recover the missing context.
+Read the raw `worker-error.jsonl` records, not only a shortened dashboard or a
+final log line. Correlate them with the surrounding server/Worker logs and
+persisted Session state. Use any recorded source file, source line, instruction,
+and output sequence to inspect the exact ERB call site and its immediate caller
+chain. If a message is truncated, retain the raw record and use the stack's
+first project-owned frame plus the local source to recover the missing context.
 
 Classify the failure boundary before changing code: game/ERB execution,
 upstream compatibility, native or resource handling, Worker lifecycle, IPC, or

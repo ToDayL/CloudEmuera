@@ -73,39 +73,14 @@ inside modified upstream files and does not replace Git history or review.
   covers high layer depth and rejection of actual semantic nesting beyond the
   configured node-depth limit.
 
-## 2026-09-02 — Add opt-in runtime timing diagnostics
+## 2026-09-02 — Remove temporary runtime performance trace
 
-- `RuntimeDebugTrace` records a per-Worker trace ID and monotonic elapsed time,
-  input-consumed boundaries, ERB output/wait locations, script line deltas,
-  all game-function timings above a small threshold, sampled source locations,
-  and aggregate timings for HTML, background, dynamic-image, and
-  structured-console operations. Timing summaries are emitted at the next real
-  input wait so one button press can be correlated with the following `X
-  minutes elapsed` output; sampled source locations cover long ERB stretches
-  that do not return through a function boundary.
-- The diagnostic path is disabled unless `CLOUDEMUERA_RUNTIME_DEBUG_TRACE` is
-  `1` or `true`; it writes only to the sibling `metadata/runtime-debug.jsonl`
-  file and never records input values. It is temporary investigation support,
-  not a new runtime contract.
-- Scope: server-side investigation of slow `eraBlueResort` turn transitions
-  after the `sess_01a05dab55f5715baa68fe42698236d2` HTML-depth incident.
-- Verification: `RuntimeDebugTraceTests` and the development-container build.
-
-## 2026-09-02 — Detail HTML and raster timing diagnostics
-
-- Opt-in runtime traces now emit bounded per-stage samples for HTML
-  normalization, upstream parse/materialization, structured translation, and
-  layout flushes. Translation samples include node, text, image, shape, div,
-  button, line-break, and maximum structural-depth counts.
-- Dynamic Graphics PNG traces split bitmap encoding, SHA-256, and asset-file
-  materialization, including dimensions, pixel format, encoded byte count,
-  cache-hit/write outcome, and wall/Worker-process CPU time. CBG, Sprite, and
-  tooltip raster encodes use the same bounded encoding sample.
-- Trace samples contain no source asset path or input value and remain disabled
-  unless `CLOUDEMUERA_RUNTIME_DEBUG_TRACE` is enabled; this is temporary
-  investigation support, not a runtime contract.
-- Verification: `RuntimeDebugTraceTests` and the existing dynamic graphics,
-  HTML, tooltip, and layout compatibility fixtures.
+- Removed the investigation-only `RuntimeDebugTrace` path, its interpreter and
+  headless-console hooks, Worker environment switch, development Compose
+  setting, and dedicated tests after the `eraBlueResort` performance analysis.
+- The runtime no longer emits `runtime-debug.jsonl` or performs per-instruction,
+  per-output, raster, layout, or transaction timing work. MATCH, Skia PNG,
+  HTML-depth, and other compatibility/performance changes remain active.
 
 ## 2026-09-02 — Add fast Skia PNG projection
 
@@ -113,8 +88,7 @@ inside modified upstream files and does not replace Git history or review.
   drawing and pixel semantics; SkiaSharp only serializes the locked 32bpp ARGB surface to PNG through a zero-copy
   `SKPixmap` view.
 - The default headless encoder profile is `SKPngEncoderFilterFlags.NoFilters` with zlib level 1. If the Linux
-  `libSkiaSharp` native asset is unavailable, the process records `gdiplus-fallback` and continues through the
-  previous GDI+ encoder. Raster trace records include the selected backend.
+  `libSkiaSharp` native asset is unavailable, the process continues through the previous GDI+ encoder.
 - Added locked SkiaSharp and Linux native asset dependencies, third-party inventory/ADR records, and a regression
   test covering Skia selection plus opaque and partially transparent ARGB pixels. This does not migrate the
   upstream GraphicsImage drawing implementation or change the RasterDrawable byte limits.
@@ -716,29 +690,14 @@ requirements/ADR references, and verification commands.
   runs the real pinned interpreter through dynamic `TRYCCALLFORM`; dev-Docker
   RuntimeBridge and full RuntimeCompatibility test suites pass.
 
-## 2026-08-18 — Opt-in ERB/structured-output trace
+## 2026-08-18 — Align headless event wait behavior
 
-- Modified upstream file: `Upstream/Emuera/Runtime/Script/Statements/ExpressionMediator.cs`.
-  Under the existing `CLOUDEMUERA_HEADLESS` build symbol it reports the current
-  ERB source position, print instruction, rendered text and wait-for-input flag
-  to the headless diagnostic bridge immediately before normal output processing.
-  Desktop builds retain upstream behavior; headless Workers remain unchanged
-  unless the explicit trace flag is enabled.
-- Headless glue: `RuntimeDebugTrace` is disabled by default and is enabled only
-  by `CLOUDEMUERA_RUNTIME_DEBUG_TRACE=1` or `true`, including in Production.
-  It appends JSON Lines to the owning Session directory's
-  `metadata/runtime-debug.jsonl` (outside game `root/`), recording `erb_output`,
-  `erb_wait` (including standalone `WAIT`) and every resulting structured
-  console operation with sequence, prompt and bounded Node summaries. It never
-  records submitted input values.
-- Scope: opt-in diagnosis for PLAY-001/PLAY-004 and the eraTW consecutive
-  empty-input investigation.
 - Behavioral parity: `HeadlessEmueraConsole.ReadAnyKey` now clears
   `Process.NeedWaitToEventComEnd`, matching upstream `EmueraConsole.ReadAnyKey`.
   Without this, eraTW's `EVENTCOMEND.ERB:487` `TWAIT 100,0` opened its own
   wait but the upstream process added a second fallback empty wait afterwards.
-- Verification: RuntimeBridge tests exercise PRINT/PRINTW output and assert the
-  trace file is created only when the explicit environment flag is enabled.
+- Verification: RuntimeBridge tests cover PRINT/PRINTW output and the event-wait
+  boundary in the development container.
 
 ## 2026-08-18 — Linux resource path composition in AppContents
 

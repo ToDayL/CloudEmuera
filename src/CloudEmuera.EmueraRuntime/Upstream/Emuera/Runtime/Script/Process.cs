@@ -46,11 +46,6 @@ internal sealed partial class Process(EmueraConsole view)
 	internal void ThrowIfHeadlessCancellationRequested() =>
 		headlessCancellationToken.ThrowIfCancellationRequested();
 
-	// Temporary runtime timing diagnostics. These values are sampled only by
-	// the opt-in headless trace and do not participate in interpreter behavior.
-	internal int HeadlessScriptLineCount => state?.lineCount ?? 0;
-	internal int HeadlessFunctionDepth => state?.functionCount ?? 0;
-	internal string HeadlessFunctionName => state?.Scope;
 #endif
 
 	public LogicalLine getCurrentLine { get { return state.CurrentLine; } }

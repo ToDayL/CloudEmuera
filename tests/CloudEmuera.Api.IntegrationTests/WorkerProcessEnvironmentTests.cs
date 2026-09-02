@@ -16,7 +16,6 @@ public sealed class WorkerProcessEnvironmentTests
         foreach (string variable in WorkerProcessEnvironment.ControlPlaneSecretVariableNames)
             startInfo.Environment[variable] = "must-not-reach-worker";
         startInfo.Environment["CloudEmuera__Capacity__MaxActiveWorkers"] = "8";
-        startInfo.Environment["CloudEmuera__RuntimeDebugTrace"] = "1";
         startInfo.Environment["CLOUDEMUERA_WORKER_TEST_VALUE"] = "preserved";
 
         WorkerProcessEnvironment.RemoveHostOrchestratorVariables(startInfo);
@@ -26,7 +25,6 @@ public sealed class WorkerProcessEnvironmentTests
         foreach (string variable in WorkerProcessEnvironment.ControlPlaneSecretVariableNames)
             Assert.False(startInfo.Environment.ContainsKey(variable), variable);
         Assert.False(startInfo.Environment.ContainsKey("CloudEmuera__Capacity__MaxActiveWorkers"));
-        Assert.Equal("1", startInfo.Environment["CloudEmuera__RuntimeDebugTrace"]);
         Assert.Equal("preserved", startInfo.Environment["CLOUDEMUERA_WORKER_TEST_VALUE"]);
     }
 }

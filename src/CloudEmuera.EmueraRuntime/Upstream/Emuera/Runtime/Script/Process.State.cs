@@ -254,9 +254,6 @@ internal sealed class ProcessState
 	{
 		if (Program.DebugMode && !isClone && GlobalStatic.Process.MethodStack() == 0)
 			console.DebugClearTraceLog();
-		#if CLOUDEMUERA_HEADLESS
-		CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordFunctionsCleared();
-		#endif
 		foreach (CalledFunction called in functionList)
 			if (called.CurrentLabel.hasPrivDynamicVar)
 				called.CurrentLabel.ScopeOut();
@@ -315,9 +312,6 @@ internal sealed class ProcessState
 		foreach (CalledFunction called in functionList)
 			if (called.CurrentLabel.hasPrivDynamicVar)
 				called.CurrentLabel.ScopeOut();
-		#if CLOUDEMUERA_HEADLESS
-		CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordFunctionsCleared();
-		#endif
 		functionList.Clear();
 		begintype = BeginType.NULL;
 		return;
@@ -384,9 +378,6 @@ internal sealed class ProcessState
 		{//JUMPした場合。即座にRETURN RESULTする。
 			if (called.TopLabel.hasPrivDynamicVar)
 				called.TopLabel.ScopeOut();
-			#if CLOUDEMUERA_HEADLESS
-			CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordFunctionExit(called);
-			#endif
 			functionList.Remove(called);
 			if (Program.DebugMode)
 				console.DebugRemoveTraceLog();
@@ -426,9 +417,6 @@ internal sealed class ProcessState
 		if (currentLine == null)
 		{
 			currentLine = called.ReturnAddress;
-			#if CLOUDEMUERA_HEADLESS
-			CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordFunctionExit(called);
-			#endif
 			functionList.RemoveAt(functionList.Count - 1);
 			if (currentLine == null)
 			{
@@ -518,9 +506,6 @@ internal sealed class ProcessState
 				call.TopLabel.ScopeIn();
 		}
 		functionList.Add(call);
-		#if CLOUDEMUERA_HEADLESS
-		CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordFunctionEnter(call);
-		#endif
 		//sequential = false;
 		currentLine = call.CurrentLabel;
 		lineCount++;
@@ -557,9 +542,6 @@ internal sealed class ProcessState
 		//OutはGetValue側で行う
 		//functionList[0].TopLabel.Out();
 		currentLine = functionList[^1].ReturnAddress;
-		#if CLOUDEMUERA_HEADLESS
-		CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordFunctionExit(functionList[^1]);
-		#endif
 		functionList.RemoveAt(functionList.Count - 1);
 		//nextLine = null;
 		MethodReturnValue = ret;

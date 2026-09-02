@@ -62,7 +62,6 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly string runtimeFontFamilyName;
     private readonly string webFontAssetDigest;
     private readonly bool convertBackslashToYen;
-    private RuntimeDebugTrace debugTrace;
     private EmueraConsole console;
     private Process process;
     private bool ownsGate;
@@ -176,9 +175,6 @@ public sealed class UpstreamRuntimeSession : IDisposable
         JSONConfig.Load();
         FunctionIdentifier.ReloadJsonConfiguredInstructions();
         HeadlessAudioBridge.Configure(audioPort, cancellationToken);
-        debugTrace = RuntimeDebugTrace.CreateWhenEnabled(paths.SessionRoot);
-        debugTrace?.Activate();
-        debugTrace?.RecordRuntimeWidth(configuredWidth, browserWidth, Config.WindowX, Config.DrawableWidth);
         Preload.Clear();
         await Preload.Load(MinorShift.Emuera.Program.ErbDir, cancellationToken).ConfigureAwait(false);
         await Preload.Load(MinorShift.Emuera.Program.CsvDir, cancellationToken).ConfigureAwait(false);
@@ -275,8 +271,6 @@ public sealed class UpstreamRuntimeSession : IDisposable
         }
         finally
         {
-            debugTrace?.Dispose();
-            debugTrace = null;
             if (ownsGate)
             {
                 ownsGate = false;

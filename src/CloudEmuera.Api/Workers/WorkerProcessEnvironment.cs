@@ -56,12 +56,10 @@ internal static class WorkerProcessEnvironment
         // Configuration environment variables are for the API composition
         // root. The Worker receives its private projection through the
         // bootstrap file instead of inheriting DataRoot/database/capacity or
-        // bootstrap-admin settings. Keep the explicit runtime debug switch,
-        // which is a non-secret test/diagnostic input consumed by the runtime.
+        // bootstrap-admin settings.
         foreach (string variable in startInfo.Environment.Keys.ToArray())
         {
-            if (variable.StartsWith("CloudEmuera__", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(variable, "CloudEmuera__RuntimeDebugTrace", StringComparison.OrdinalIgnoreCase))
+            if (variable.StartsWith("CloudEmuera__", StringComparison.OrdinalIgnoreCase))
                 startInfo.Environment.Remove(variable);
             else if (variable.StartsWith("CLOUDEMUERA_BOOTSTRAP_ADMIN_", StringComparison.OrdinalIgnoreCase))
                 startInfo.Environment.Remove(variable);
