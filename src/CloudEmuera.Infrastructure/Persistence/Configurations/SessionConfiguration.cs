@@ -11,6 +11,7 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
     internal const string LegacyRuntimeWidthSchemaAnnotation = "CloudEmuera:LegacyRuntimeWidthSchema";
     internal const string ExcludeBackslashToYenSchemaAnnotation = "CloudEmuera:ExcludeBackslashToYenSchema";
     internal const string ExcludePathRevisionIdentitySchemaAnnotation = "CloudEmuera:ExcludePathRevisionIdentitySchema";
+    internal const string ExcludeFontSizeLineHeightModeSchemaAnnotation = "CloudEmuera:ExcludeFontSizeLineHeightModeSchema";
 
     public void Configure(EntityTypeBuilder<SessionRow> builder)
     {
@@ -28,6 +29,9 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
             true);
         bool includePathRevisionIdentitySchema = !Equals(
             builder.Metadata.Model.FindAnnotation(ExcludePathRevisionIdentitySchemaAnnotation)?.Value,
+            true);
+        bool includeFontSizeLineHeightModeSchema = !Equals(
+            builder.Metadata.Model.FindAnnotation(ExcludeFontSizeLineHeightModeSchemaAnnotation)?.Value,
             true);
         builder.ToTable(SqliteStorageConventions.SessionsTable, table =>
         {
@@ -65,6 +69,8 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
                         : "width_mode IN ('ORIGINAL', 'MAX', 'ADAPTIVE', 'CUSTOM') AND ((width_mode = 'CUSTOM' AND custom_width BETWEEN 240 AND 16384) OR (width_mode <> 'CUSTOM' AND custom_width IS NULL))");
             if (includeBackslashToYenSchema)
                 table.HasCheckConstraint("ck_sessions_convert_backslash_to_yen", "convert_backslash_to_yen IN (0, 1)");
+            if (includeFontSizeLineHeightModeSchema)
+                table.HasCheckConstraint("ck_sessions_font_size_line_height_mode", "font_size_line_height_mode IN ('OVERRIDE', 'CONFIG')");
             table.HasCheckConstraint("ck_sessions_counters", "state_version >= 0 AND worker_epoch >= 0 AND last_output_sequence >= 0");
             table.HasCheckConstraint("ck_sessions_waiting_prompt", "waiting_for_input IN (0, 1) AND ((waiting_for_input = 1 AND current_prompt_id IS NOT NULL AND length(current_prompt_id) BETWEEN 1 AND 256) OR (waiting_for_input = 0 AND current_prompt_id IS NULL))");
             table.HasCheckConstraint("ck_sessions_close_reason", "close_reason IS NULL OR (length(close_reason) BETWEEN 1 AND 256 AND instr(close_reason, char(0)) = 0)");
@@ -102,6 +108,10 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<SessionRow
         builder.Property(row => row.Name).HasColumnName("name").HasColumnType("TEXT").HasMaxLength(PersistenceLimits.NameMaxLength).IsRequired();
         builder.Property(row => row.FontSize).HasColumnName("font_size").HasColumnType("INTEGER").HasDefaultValue(18).IsRequired();
         builder.Property(row => row.LineHeight).HasColumnName("line_height").HasColumnType("INTEGER").HasDefaultValue(19).IsRequired();
+        if (includeFontSizeLineHeightModeSchema)
+            builder.Property(row => row.FontSizeLineHeightMode).HasColumnName("font_size_line_height_mode").HasColumnType("TEXT").HasConversion(SqliteValueConverters.CreateEnumConverter<SessionFontSizeLineHeightMode>(), SqliteValueConverters.CreateEnumComparer<SessionFontSizeLineHeightMode>()).HasDefaultValue(SessionFontSizeLineHeightMode.Override).IsRequired();
+        else
+            builder.Ignore(row => row.FontSizeLineHeightMode);
         builder.Property(row => row.FontFaceId).HasColumnName("font_face_id").HasColumnType("TEXT").HasMaxLength(128).HasDefaultValue("sarasa-fixed-sc-1.0.40-regular").IsRequired();
         if (includeRuntimeWidthSchema)
         {

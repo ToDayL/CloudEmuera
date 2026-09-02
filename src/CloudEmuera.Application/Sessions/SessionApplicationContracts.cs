@@ -56,7 +56,8 @@ public sealed record CreateSessionCommand(
     string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
     SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
-    bool ConvertBackslashToYen = true);
+    bool ConvertBackslashToYen = true,
+    SessionFontSizeLineHeightMode FontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override);
 
 public sealed record SessionLifecycleCommand(string SessionId, string IdempotencyKey, int BrowserWidth = 0);
 
@@ -69,7 +70,8 @@ public sealed record SessionConfigurationCommand(
     string FontFaceId = RuntimeFontDefaults.DefaultFaceId,
     SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
-    bool ConvertBackslashToYen = true);
+    bool ConvertBackslashToYen = true,
+    SessionFontSizeLineHeightMode FontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override);
 
 public sealed record SessionDeleteCommand(string SessionId, string IdempotencyKey);
 
@@ -106,6 +108,7 @@ public sealed record SessionView(
     public SessionWidthMode WidthMode { get; init; } = SessionWidthMode.Adaptive;
     public int? CustomWidth { get; init; }
     public bool ConvertBackslashToYen { get; init; } = true;
+    public SessionFontSizeLineHeightMode FontSizeLineHeightMode { get; init; } = SessionFontSizeLineHeightMode.Override;
 }
 
 public sealed record SessionListPage(IReadOnlyList<SessionView> Items, string? NextCursor);

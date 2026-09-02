@@ -28,7 +28,8 @@ public sealed record EmueraRuntimeOptions
         RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
         string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "",
-        bool convertBackslashToYen = true)
+        bool convertBackslashToYen = true,
+        RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
     {
         Paths = paths ?? throw new ArgumentNullException(nameof(paths));
         Console = console ?? throw new ArgumentNullException(nameof(console));
@@ -71,6 +72,9 @@ public sealed record EmueraRuntimeOptions
             throw new ArgumentException("The runtime web font asset digest is invalid.", nameof(webFontAssetDigest));
         WebFontAssetDigest = webFontAssetDigest ?? string.Empty;
         ConvertBackslashToYen = convertBackslashToYen;
+        if (!Enum.IsDefined(fontSizeLineHeightMode))
+            throw new ArgumentOutOfRangeException(nameof(fontSizeLineHeightMode));
+        FontSizeLineHeightMode = fontSizeLineHeightMode;
     }
 
     public RuntimePaths Paths { get; }
@@ -94,6 +98,7 @@ public sealed record EmueraRuntimeOptions
     public string RuntimeFontFamilyName { get; }
     public string WebFontAssetDigest { get; }
     public bool ConvertBackslashToYen { get; }
+    public RuntimeFontSizeLineHeightMode FontSizeLineHeightMode { get; }
     internal Action? UpstreamGateAcquired { get; init; }
 
     private static void ValidateDeadline(TimeSpan value, string parameterName)

@@ -493,11 +493,12 @@ preferences.MapPut("/session-startup-defaults", async (HttpContext context, Upda
 {
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     if (request is null) return ApiIdentity.Error("VALIDATION_FAILED", "请求体无效。", 400);
+    if (!ApiIdentity.TryFontSizeLineHeightMode(request.FontSizeLineHeightMode, out SessionFontSizeLineHeightMode fontSizeLineHeightMode)) return ApiIdentity.Error("INVALID_SESSION_STARTUP_DEFAULTS", "Session 启动默认值无效。", 400);
     if (!ApiIdentity.TryWidthConfiguration(request.WidthMode, request.CustomWidth, out SessionWidthMode widthMode)) return ApiIdentity.Error("INVALID_SESSION_STARTUP_DEFAULTS", "Session 启动默认值无效。", 400);
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
     try
     {
-        SessionStartupDefaults defaults = await identities.UpdateSessionStartupDefaultsAsync(actor, new SessionStartupDefaultsCommand(request.FontFaceId, request.FontSize, request.LineHeight, widthMode, request.CustomWidth, request.ConvertBackslashToYen), context.RequestAborted).ConfigureAwait(false);
+        SessionStartupDefaults defaults = await identities.UpdateSessionStartupDefaultsAsync(actor, new SessionStartupDefaultsCommand(request.FontFaceId, request.FontSize, request.LineHeight, widthMode, request.CustomWidth, request.ConvertBackslashToYen, fontSizeLineHeightMode), context.RequestAborted).ConfigureAwait(false);
         context.Response.Headers.CacheControl = "no-store";
         return Results.Ok(ApiIdentity.ToResponse(defaults));
     }
@@ -687,12 +688,13 @@ sessions.MapPost("", async (HttpContext context, CreateSessionRequest? request, 
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     if (!readiness.IsReady) return ApiIdentity.Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", 503);
     if (request is null) return ApiIdentity.Error("VALIDATION_FAILED", "请求体无效。", 400);
+    if (!ApiIdentity.TryFontSizeLineHeightMode(request.FontSizeLineHeightMode, out SessionFontSizeLineHeightMode fontSizeLineHeightMode)) return ApiIdentity.Error(SessionErrorCodes.ValidationFailed, "Session 字号/行高模式无效。", 400);
     if (!ApiIdentity.TryWidthConfiguration(request.WidthMode, request.CustomWidth, out SessionWidthMode widthMode)) return ApiIdentity.Error(SessionErrorCodes.ValidationFailed, "Session 宽度配置无效。", 400);
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
     if (!ApiIdentity.TryIdempotencyKey(idempotencyKey, out string key)) return ApiIdentity.Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
     try
     {
-        SessionCommandResult result = await service.CreateAsync(actor, new CreateSessionCommand(request.GameId, request.Name, key, request.FontSize, request.LineHeight, request.FontFaceId, widthMode, request.CustomWidth, request.ConvertBackslashToYen), context.RequestAborted).ConfigureAwait(false);
+        SessionCommandResult result = await service.CreateAsync(actor, new CreateSessionCommand(request.GameId, request.Name, key, request.FontSize, request.LineHeight, request.FontFaceId, widthMode, request.CustomWidth, request.ConvertBackslashToYen, fontSizeLineHeightMode), context.RequestAborted).ConfigureAwait(false);
         return ApiIdentity.SessionCommand(context, result);
     }
     catch (SessionApplicationException exception)
@@ -742,10 +744,11 @@ sessions.MapPut("/{sessionId}/configuration", async (string sessionId, HttpConte
     if (ApiIdentity.GameActor(context) is not CurrentActor actor) return ApiIdentity.GameActorError(context);
     if (!readiness.IsReady) return ApiIdentity.Error(SessionErrorCodes.ServiceNotReady, "Session 控制面尚未完成恢复。", 503);
     if (request is null) return ApiIdentity.Error(SessionErrorCodes.ValidationFailed, "请求体无效。", 400);
+    if (!ApiIdentity.TryFontSizeLineHeightMode(request.FontSizeLineHeightMode, out SessionFontSizeLineHeightMode fontSizeLineHeightMode)) return ApiIdentity.Error(SessionErrorCodes.ValidationFailed, "Session 字号/行高模式无效。", 400);
     if (!ApiIdentity.TryWidthConfiguration(request.WidthMode, request.CustomWidth, out SessionWidthMode widthMode)) return ApiIdentity.Error(SessionErrorCodes.ValidationFailed, "Session 宽度配置无效。", 400);
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
     if (!ApiIdentity.TryIdempotencyKey(idempotencyKey, out string key)) return ApiIdentity.Error(SessionErrorCodes.IdempotencyKeyRequired, "需要 Idempotency-Key。", 428);
-    try { return ApiIdentity.SessionCommand(context, await service.UpdateConfigurationAsync(actor, new SessionConfigurationCommand(sessionId, request.Name, request.FontSize, request.LineHeight, key, request.FontFaceId, widthMode, request.CustomWidth, request.ConvertBackslashToYen), context.RequestAborted).ConfigureAwait(false)); }
+    try { return ApiIdentity.SessionCommand(context, await service.UpdateConfigurationAsync(actor, new SessionConfigurationCommand(sessionId, request.Name, request.FontSize, request.LineHeight, key, request.FontFaceId, widthMode, request.CustomWidth, request.ConvertBackslashToYen, fontSizeLineHeightMode), context.RequestAborted).ConfigureAwait(false)); }
     catch (SessionApplicationException exception) { return ApiIdentity.Error(exception.Code, exception.Message, exception.StatusCode); }
 }).RequireRateLimiting("session-write");
 
@@ -1080,7 +1083,27 @@ internal static class ApiIdentity
         return context.Response.WriteAsJsonAsync(new ApiError(code, message, RequestCorrelation.Current ?? context.TraceIdentifier));
     }
     public static CurrentUserResponse ToResponse(CurrentUser value) => new(value.Id, value.Username, value.Email, value.Role, value.Status, value.MustChangePassword, value.StateVersion);
-    public static SessionStartupDefaultsResponse ToResponse(SessionStartupDefaults value) => new(value.FontFaceId, value.FontSize, value.LineHeight, WidthModeName(value.WidthMode), value.CustomWidth, value.ConvertBackslashToYen);
+    public static SessionStartupDefaultsResponse ToResponse(SessionStartupDefaults value) => new(value.FontFaceId, value.FontSize, value.LineHeight, WidthModeName(value.WidthMode), value.CustomWidth, value.ConvertBackslashToYen, FontSizeLineHeightModeName(value.FontSizeLineHeightMode));
+    public static bool TryFontSizeLineHeightMode(string? value, out SessionFontSizeLineHeightMode mode)
+    {
+        mode = default;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        string normalized = value.Trim().ToUpperInvariant();
+        mode = normalized switch
+        {
+            "OVERRIDE" => SessionFontSizeLineHeightMode.Override,
+            "CONFIG" => SessionFontSizeLineHeightMode.Config,
+            _ => default,
+        };
+        return normalized is "OVERRIDE" or "CONFIG";
+    }
+
+    public static string FontSizeLineHeightModeName(SessionFontSizeLineHeightMode mode) => mode switch
+    {
+        SessionFontSizeLineHeightMode.Override => "OVERRIDE",
+        SessionFontSizeLineHeightMode.Config => "CONFIG",
+        _ => throw new ArgumentOutOfRangeException(nameof(mode)),
+    };
     public static bool TryWidthConfiguration(string? value, int? customWidth, out SessionWidthMode mode)
     {
         mode = default;
@@ -1129,6 +1152,7 @@ internal static class ApiIdentity
         value.FontFaceId,
         value.FontSize,
         value.LineHeight,
+        FontSizeLineHeightModeName(value.FontSizeLineHeightMode),
         WidthModeName(value.WidthMode),
         value.CustomWidth,
         value.ConvertBackslashToYen,

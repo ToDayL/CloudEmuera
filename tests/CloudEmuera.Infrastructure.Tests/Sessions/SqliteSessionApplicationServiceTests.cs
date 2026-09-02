@@ -73,14 +73,16 @@ public sealed class SqliteSessionApplicationServiceTests
         CurrentActor actor = new("usr_fixture", "PLAYER", "auth_fixture");
 
         SessionView created = (await service.CreateAsync(actor,
-            new CreateSessionCommand("game_fixture", "宽度", "create-width", WidthMode: SessionWidthMode.Max))).Value!;
+            new CreateSessionCommand("game_fixture", "宽度", "create-width", WidthMode: SessionWidthMode.Max, FontSizeLineHeightMode: SessionFontSizeLineHeightMode.Config))).Value!;
         Assert.Equal(SessionWidthMode.Max, created.WidthMode);
         Assert.Null(created.CustomWidth);
+        Assert.Equal(SessionFontSizeLineHeightMode.Config, created.FontSizeLineHeightMode);
 
         SessionView updated = (await service.UpdateConfigurationAsync(actor,
-            new SessionConfigurationCommand(created.Id, created.Name, created.FontSize, created.LineHeight, "configure-width", WidthMode: SessionWidthMode.Custom, CustomWidth: 1280))).Value!;
+            new SessionConfigurationCommand(created.Id, created.Name, created.FontSize, created.LineHeight, "configure-width", WidthMode: SessionWidthMode.Custom, CustomWidth: 1280, FontSizeLineHeightMode: SessionFontSizeLineHeightMode.Override))).Value!;
         Assert.Equal(SessionWidthMode.Custom, updated.WidthMode);
         Assert.Equal(1280, updated.CustomWidth);
+        Assert.Equal(SessionFontSizeLineHeightMode.Override, updated.FontSizeLineHeightMode);
 
         await using (DbContextScope scope = database.OpenContext())
         {

@@ -159,6 +159,11 @@ export function ConsolePage() {
   if (!runtimeFontReady) return <div className="console-loading" aria-busy="true">正在加载 Session 字体…</div>;
 
   const state = stream.consoleState;
+  const runtimeMetrics = effectiveConsoleFontMetrics(
+    session.data.fontSize,
+    session.data.lineHeight,
+    state?.windowMetadata.defaultFont,
+  );
   const terminalSession = session.data.state === "CLOSED" || session.data.state === "CRASHED";
   const activation: ConsoleActivationContext = {
     prompt: state?.currentPrompt,
@@ -176,7 +181,7 @@ export function ConsolePage() {
     </div>
     <div className="console-layout">
       <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台" style={consoleBackgroundStyle(state?.windowMetadata.defaultBackground)}>
-        <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, undefined, session.data.fontSize, session.data.lineHeight, runtimeCssFamily)} onClick={handleConsoleSurfaceClick}>
+        <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, undefined, runtimeMetrics.fontSize, runtimeMetrics.lineHeight, runtimeCssFamily)} onClick={handleConsoleSurfaceClick}>
         <h1 className="sr-only">{session.data.name}</h1>
         <p className="sr-only">Session 状态：<span>{sessionStateLabel(session.data.state)}</span></p>
         {(!networkOnline || (connectionPhase !== "ready" && connectionPhase !== "disconnected")) && <div className="reconnect-banner" role="status" aria-live="polite"><span className="mini-spinner"/><p><strong>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</strong><small>{networkOnline ? "游戏仍在服务器上运行；浏览器连接恢复后会按 epoch 和序号重新同步。" : "浏览器离线只影响当前显示；Session 和 Worker 不会被关闭。"}</small></p></div>}
@@ -185,7 +190,7 @@ export function ConsolePage() {
         {(closeError || stream.pendingInput?.status === "unknown") && <div className="error-banner" role="alert"><strong>实时操作提示</strong><small>{closeError ?? "上次输入的结果未知；服务端可能已经处理，请确认当前提示后再决定是否重试。"}</small>{stream.pendingInput?.status === "unknown" && <button className="secondary-button" onClick={() => manager.retryUnknownInput(sessionId)}>重试上次输入</button>}</div>}
         {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
-        {state ? <ConsoleTooltipProvider presentation={state.tooltipPresentation} resources={state.tooltipResources}><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} activation={activation} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} activation={activation} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} defaultLineHeight={session.data.lineHeight} viewportHeight={state.windowMetadata.viewportHeight} /></ConsoleTooltipProvider> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
+        {state ? <ConsoleTooltipProvider presentation={state.tooltipPresentation} resources={state.tooltipResources}><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} activation={activation} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} activation={activation} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} defaultLineHeight={runtimeMetrics.lineHeight} viewportHeight={state.windowMetadata.viewportHeight} /></ConsoleTooltipProvider> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
         </div>
       </main>
@@ -393,6 +398,17 @@ export function consoleSurfaceStyle(background: RealtimeColor | null | undefined
     ...(fontSize && fontSize > 0 ? { "--runtime-font-size": `${fontSize}px` } : {}),
     ...(lineHeight && lineHeight > 0 ? { "--runtime-line-height": `${lineHeight}px` } : {}),
     ...(runtimeCssFamily ? { "--runtime-font-family": `"${runtimeCssFamily}"`, fontFamily: `"${runtimeCssFamily}"` } : {}),
+  };
+}
+
+export function effectiveConsoleFontMetrics(
+  sessionFontSize: number,
+  sessionLineHeight: number,
+  runtimeDefaultFont?: { size: number; lineHeight: number },
+): { fontSize: number; lineHeight: number } {
+  return {
+    fontSize: runtimeDefaultFont?.size && runtimeDefaultFont.size > 0 ? runtimeDefaultFont.size : sessionFontSize,
+    lineHeight: runtimeDefaultFont?.lineHeight && runtimeDefaultFont.lineHeight > 0 ? runtimeDefaultFont.lineHeight : sessionLineHeight,
   };
 }
 

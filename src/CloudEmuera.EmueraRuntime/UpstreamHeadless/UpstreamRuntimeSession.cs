@@ -62,6 +62,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly string runtimeFontFamilyName;
     private readonly string webFontAssetDigest;
     private readonly bool convertBackslashToYen;
+    private readonly RuntimeFontSizeLineHeightMode fontSizeLineHeightMode;
     private RuntimeDebugTrace debugTrace;
     private EmueraConsole console;
     private Process process;
@@ -79,7 +80,8 @@ public sealed class UpstreamRuntimeSession : IDisposable
         RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
         string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "",
-        bool convertBackslashToYen = true)
+        bool convertBackslashToYen = true,
+        RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -101,6 +103,9 @@ public sealed class UpstreamRuntimeSession : IDisposable
         this.runtimeFontFamilyName = runtimeFontFamilyName ?? string.Empty;
         this.webFontAssetDigest = webFontAssetDigest ?? string.Empty;
         this.convertBackslashToYen = convertBackslashToYen;
+        if (!Enum.IsDefined(fontSizeLineHeightMode))
+            throw new ArgumentOutOfRangeException(nameof(fontSizeLineHeightMode));
+        this.fontSizeLineHeightMode = fontSizeLineHeightMode;
     }
 
     public async Task<bool> InitializeAsync(RuntimePaths paths)
@@ -149,8 +154,11 @@ public sealed class UpstreamRuntimeSession : IDisposable
         int configuredWidth = windowWidth.GetValue<int>();
         int effectiveWidth = RuntimeWidthPolicy.Resolve(configuredWidth, browserWidth, widthMode, customWidth);
         SetHeadlessConfigValue(windowWidth, effectiveWidth);
-        SetHeadlessConfigValue(configuredFontSize, fontSize);
-        SetHeadlessConfigValue(configuredLineHeight, lineHeight);
+        if (fontSizeLineHeightMode == RuntimeFontSizeLineHeightMode.Override)
+        {
+            SetHeadlessConfigValue(configuredFontSize, fontSize);
+            SetHeadlessConfigValue(configuredLineHeight, lineHeight);
+        }
         Config.SetConfig(ConfigData.Instance);
         if (!string.IsNullOrWhiteSpace(runtimeFontPath))
         {

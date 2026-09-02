@@ -323,7 +323,7 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 spec.Binding.InitialOutputSequence,
                 spec.BrowserWidth, spec.FontSize, spec.LineHeight,
                 spec.FontFaceId, spec.FontCatalogDigest,
-                spec.WidthMode, spec.CustomWidth, spec.ConvertBackslashToYen),
+                spec.WidthMode, spec.CustomWidth, spec.ConvertBackslashToYen, spec.FontSizeLineHeightMode),
             spec.Binding,
             waitForRegistration: false,
             cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -378,6 +378,12 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             BrowserWidth = request.BrowserWidth,
             FontSize = request.FontSize,
             LineHeight = request.LineHeight,
+            FontSizeLineHeightMode = request.FontSizeLineHeightMode switch
+            {
+                SessionFontSizeLineHeightMode.Override => "OVERRIDE",
+                SessionFontSizeLineHeightMode.Config => "CONFIG",
+                _ => throw new ArgumentOutOfRangeException(nameof(request)),
+            },
             FontFaceId = request.FontFaceId,
             FontCatalogDigest = request.FontCatalogDigest,
             WidthMode = request.WidthMode switch

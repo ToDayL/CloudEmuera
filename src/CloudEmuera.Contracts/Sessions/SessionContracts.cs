@@ -10,7 +10,8 @@ public sealed record CreateSessionRequest(
     int LineHeight = 19,
     string WidthMode = "ADAPTIVE",
     int? CustomWidth = null,
-    bool ConvertBackslashToYen = true);
+    bool ConvertBackslashToYen = true,
+    string FontSizeLineHeightMode = "OVERRIDE");
 
 public sealed record UpdateSessionConfigurationRequest(
     string Name,
@@ -19,7 +20,8 @@ public sealed record UpdateSessionConfigurationRequest(
     int LineHeight = 19,
     string WidthMode = "ADAPTIVE",
     int? CustomWidth = null,
-    bool ConvertBackslashToYen = true);
+    bool ConvertBackslashToYen = true,
+    string FontSizeLineHeightMode = "OVERRIDE");
 
 /// <summary>
 /// The lifecycle endpoints intentionally accept only an empty JSON object.
@@ -41,6 +43,7 @@ public sealed record SessionResponse(
     string FontFaceId,
     int FontSize,
     int LineHeight,
+    string FontSizeLineHeightMode,
     string WidthMode,
     int? CustomWidth,
     bool ConvertBackslashToYen,

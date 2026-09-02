@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, apiRequestWithMeta, getCsrfToken } from "../api";
-import type { RuntimeWidthModeDto } from "../api/generated";
+import type { RuntimeWidthModeDto, SessionFontSizeLineHeightModeDto } from "../api/generated";
 
 export interface SessionStartupDefaults {
   fontFaceId: string;
   fontSize: number;
   lineHeight: number;
+  fontSizeLineHeightMode: SessionFontSizeLineHeightModeDto;
   widthMode: RuntimeWidthModeDto;
   customWidth: number | null;
   convertBackslashToYen: boolean;
@@ -15,6 +16,7 @@ export const DEFAULT_SESSION_STARTUP_DEFAULTS: SessionStartupDefaults = {
   fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
   fontSize: 18,
   lineHeight: 19,
+  fontSizeLineHeightMode: "OVERRIDE",
   widthMode: "ADAPTIVE",
   customWidth: null,
   convertBackslashToYen: true,

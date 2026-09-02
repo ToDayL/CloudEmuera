@@ -79,6 +79,7 @@ function session(overrides: Record<string, unknown> = {}) {
     fontFaceId: runtimeFontFaceId,
     fontSize: 18,
     lineHeight: 19,
+    fontSizeLineHeightMode: "OVERRIDE",
     convertBackslashToYen: true,
     ...overrides,
   };
@@ -147,10 +148,10 @@ describe("App", () => {
   }
 
   it("loads and saves Session startup defaults from the settings page", async () => {
-    const savedDefaults = { fontFaceId: runtimeFontFaceId, fontSize: 24, lineHeight: 28, widthMode: "CUSTOM", customWidth: 1280, convertBackslashToYen: false };
+    const savedDefaults = { fontFaceId: runtimeFontFaceId, fontSize: 24, lineHeight: 28, fontSizeLineHeightMode: "CONFIG", widthMode: "CUSTOM", customWidth: 1280, convertBackslashToYen: false };
     const fetchMock = mockFetch((url, init) => {
       if (url === "/api/v1/preferences/session-startup-defaults" && init?.method === "PUT") return jsonResponse(savedDefaults);
-      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse({ fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19, widthMode: "ADAPTIVE", customWidth: null, convertBackslashToYen: true });
+      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse({ fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19, fontSizeLineHeightMode: "OVERRIDE", widthMode: "ADAPTIVE", customWidth: null, convertBackslashToYen: true });
       if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
       if (url === `/api/v1/runtime-fonts/assets/${runtimeFontDigest}.woff2`) return new Response(new TextEncoder().encode("font-test"), { headers: { "Content-Type": "font/woff2", "Content-Length": "9" } });
       if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
@@ -179,6 +180,7 @@ describe("App", () => {
 
       fireEvent.change(screen.getByLabelText("字号（px）"), { target: { value: "24" } });
       fireEvent.change(screen.getByLabelText("行高（px）"), { target: { value: "28" } });
+      fireEvent.change(screen.getByLabelText("字号/行高模式"), { target: { value: "CONFIG" } });
       fireEvent.change(screen.getByLabelText("运行宽度"), { target: { value: "CUSTOM" } });
       fireEvent.change(screen.getByLabelText("自定义宽度（CSS px）"), { target: { value: "1280" } });
       fireEvent.click(screen.getByRole("checkbox"));

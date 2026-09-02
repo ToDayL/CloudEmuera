@@ -1,6 +1,6 @@
 import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { consoleBackgroundStyle, consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleWidth, isBlankConsoleSurfaceTarget, submitConsoleSurfacePointer } from "./ConsolePage";
+import { consoleBackgroundStyle, consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleFontMetrics, effectiveConsoleWidth, isBlankConsoleSurfaceTarget, submitConsoleSurfacePointer } from "./ConsolePage";
 
 describe("console surface click filtering", () => {
   it("accepts non-control output areas and ignores buttons and form controls", () => {
@@ -231,6 +231,11 @@ describe("console surface background", () => {
     expect(consoleSurfaceStyle(null, 640, 390)).toEqual({ width: "640px" });
     expect(effectiveConsoleWidth(1000, 390)).toBe(1000);
     expect(effectiveConsoleWidth(390, 1024)).toBe(390);
+  });
+
+  it("uses the runtime config metrics when the Session leaves them unoverridden", () => {
+    expect(effectiveConsoleFontMetrics(24, 28, { size: 12, lineHeight: 14 })).toEqual({ fontSize: 12, lineHeight: 14 });
+    expect(effectiveConsoleFontMetrics(24, 28)).toEqual({ fontSize: 24, lineHeight: 28 });
   });
 });
 

@@ -9,7 +9,8 @@ public sealed record SessionStartupDefaults(
     int LineHeight,
     SessionWidthMode WidthMode,
     int? CustomWidth,
-    bool ConvertBackslashToYen = true)
+    bool ConvertBackslashToYen = true,
+    SessionFontSizeLineHeightMode FontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override)
 {
     public static SessionStartupDefaults Default { get; } = new(
         RuntimeFontDefaults.DefaultFaceId,
@@ -17,7 +18,8 @@ public sealed record SessionStartupDefaults(
         LineHeight: 19,
         WidthMode: SessionWidthMode.Adaptive,
         CustomWidth: null,
-        ConvertBackslashToYen: true);
+        ConvertBackslashToYen: true,
+        FontSizeLineHeightMode: SessionFontSizeLineHeightMode.Override);
 }
 
 public sealed record SessionStartupDefaultsCommand(
@@ -26,4 +28,5 @@ public sealed record SessionStartupDefaultsCommand(
     int LineHeight,
     SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
-    bool ConvertBackslashToYen = true);
+    bool ConvertBackslashToYen = true,
+    SessionFontSizeLineHeightMode FontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override);
