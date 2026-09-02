@@ -87,7 +87,8 @@ public sealed record SessionRuntimeLease(
     string FontCatalogDigest = "",
     SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
-    bool ConvertBackslashToYen = true);
+    bool ConvertBackslashToYen = true,
+    SessionFontSizeLineHeightMode FontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override);
 
 public enum SessionRuntimeAcquireFailure
 {
@@ -176,7 +177,8 @@ public sealed record WorkerLaunchSpec(
     string FontCatalogDigest = "",
     SessionWidthMode WidthMode = SessionWidthMode.Adaptive,
     int? CustomWidth = null,
-    bool ConvertBackslashToYen = true);
+    bool ConvertBackslashToYen = true,
+    SessionFontSizeLineHeightMode FontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override);
 
 public interface ISessionRuntimeStore
 {
@@ -333,7 +335,8 @@ public sealed class SessionRuntimeCoordinator(
                     lease.FontCatalogDigest,
                     lease.WidthMode,
                     lease.CustomWidth,
-                    lease.ConvertBackslashToYen),
+                    lease.ConvertBackslashToYen,
+                    lease.FontSizeLineHeightMode),
                 operationCancellationToken).ConfigureAwait(false);
             SessionRuntimeWriteResult identityResult = await store.RecordProcessIdentityAsync(
                 binding,

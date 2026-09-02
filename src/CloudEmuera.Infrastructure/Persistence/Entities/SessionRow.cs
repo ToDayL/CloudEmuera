@@ -32,6 +32,8 @@ public sealed class SessionRow
 
     public int LineHeight { get; set; } = 19;
 
+    public SessionFontSizeLineHeightMode FontSizeLineHeightMode { get; set; } = SessionFontSizeLineHeightMode.Override;
+
     public string FontFaceId { get; set; } = "sarasa-fixed-sc-1.0.40-regular";
 
     public SessionWidthMode WidthMode { get; set; } = SessionWidthMode.Adaptive;

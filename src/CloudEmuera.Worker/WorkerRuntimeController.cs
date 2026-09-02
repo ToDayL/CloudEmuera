@@ -368,6 +368,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             WorkerLifecycleLog.WriteRuntimeWidth(logger, binding, bootstrap.BrowserWidth);
             RuntimeFontBinding runtimeFont = RuntimeFontBindingResolver.Resolve(bootstrap.FontFaceId, bootstrap.FontCatalogDigest);
             RuntimeWidthMode widthMode = Enum.Parse<RuntimeWidthMode>(bootstrap.WidthMode, ignoreCase: true);
+            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = Enum.Parse<RuntimeFontSizeLineHeightMode>(bootstrap.FontSizeLineHeightMode, ignoreCase: true);
             var fileSystem = new LocalRuntimeFileSystem(paths);
             console = new StructuredGameConsole();
             host = EmueraRuntimeHost.Create(new EmueraRuntimeOptions(
@@ -392,7 +393,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 runtimeFontPath: runtimeFont.RuntimeTtfPath,
                 runtimeFontFamilyName: runtimeFont.RuntimeFamilyName,
                 webFontAssetDigest: runtimeFont.WebWoff2Sha256,
-                convertBackslashToYen: bootstrap.ConvertBackslashToYen));
+                convertBackslashToYen: bootstrap.ConvertBackslashToYen,
+                fontSizeLineHeightMode: fontSizeLineHeightMode));
             runtimeCancellation = new CancellationTokenSource();
             console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
 

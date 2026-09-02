@@ -9,6 +9,8 @@ export type SessionStateDto = "CREATING" | "STARTING" | "RUNNING" | "STOPPING" |
 
 export type RuntimeWidthModeDto = "ORIGINAL" | "MAX" | "ADAPTIVE" | "CUSTOM";
 
+export type SessionFontSizeLineHeightModeDto = "OVERRIDE" | "CONFIG";
+
 export type SaveLayoutDto = "ROOT" | "SAV_DIRECTORY";
 
 export interface SessionGameSummaryDto {
@@ -27,6 +29,7 @@ export interface SessionResponseDto {
   fontFaceId: string;
   fontSize: number;
   lineHeight: number;
+  fontSizeLineHeightMode: SessionFontSizeLineHeightModeDto;
   widthMode: RuntimeWidthModeDto;
   customWidth: number | null;
   convertBackslashToYen: boolean;

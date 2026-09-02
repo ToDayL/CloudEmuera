@@ -6,7 +6,8 @@ public sealed record SessionStartupDefaultsResponse(
     int LineHeight,
     string WidthMode,
     int? CustomWidth,
-    bool ConvertBackslashToYen);
+    bool ConvertBackslashToYen,
+    string FontSizeLineHeightMode);
 
 public sealed record UpdateSessionStartupDefaultsRequest(
     string FontFaceId,
@@ -14,4 +15,5 @@ public sealed record UpdateSessionStartupDefaultsRequest(
     int LineHeight,
     string WidthMode = "ADAPTIVE",
     int? CustomWidth = null,
-    bool ConvertBackslashToYen = true);
+    bool ConvertBackslashToYen = true,
+    string FontSizeLineHeightMode = "OVERRIDE");

@@ -108,6 +108,7 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.Equal("ADAPTIVE", initial.WidthMode);
         Assert.Null(initial.CustomWidth);
         Assert.True(initial.ConvertBackslashToYen);
+        Assert.Equal("OVERRIDE", initial.FontSizeLineHeightMode);
 
         csrf = await GetCsrfAsync(client);
         SessionStartupDefaultsResponse original = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
@@ -122,6 +123,11 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.Null(legacyOrigin.CustomWidth);
 
         csrf = await GetCsrfAsync(client);
+        SessionStartupDefaultsResponse configMetrics = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
+            new UpdateSessionStartupDefaultsRequest("sarasa-fixed-sc-1.0.40-regular", 18, 19, "ADAPTIVE", null, true, "CONFIG"), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Config text metrics preference response was missing.");
+        Assert.Equal("CONFIG", configMetrics.FontSizeLineHeightMode);
+
+        csrf = await GetCsrfAsync(client);
         SessionStartupDefaultsResponse saved = await (await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
             new UpdateSessionStartupDefaultsRequest("lxgw-bright-code-2.922-regular", 24, 28, "CUSTOM", 1200, false), csrf)).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Saved Session startup preferences were missing.");
         Assert.Equal("lxgw-bright-code-2.922-regular", saved.FontFaceId);
@@ -130,6 +136,7 @@ public sealed class IdentityApiContractTests : IDisposable
         Assert.Equal("CUSTOM", saved.WidthMode);
         Assert.Equal(1200, saved.CustomWidth);
         Assert.False(saved.ConvertBackslashToYen);
+        Assert.Equal("OVERRIDE", saved.FontSizeLineHeightMode);
 
         SessionStartupDefaultsResponse persisted = await (await client.GetAsync("/api/v1/preferences/session-startup-defaults")).Content.ReadFromJsonAsync<SessionStartupDefaultsResponse>() ?? throw new Xunit.Sdk.XunitException("Persisted Session startup preferences were missing.");
         Assert.Equal(saved, persisted);

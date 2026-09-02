@@ -15,7 +15,7 @@ namespace CloudEmuera.Ipc;
 public static class IpcProtocol
 {
     public const uint CurrentVersion = 2;
-    public const int BootstrapSchemaVersion = 6;
+    public const int BootstrapSchemaVersion = 7;
 
     public static string NewMessageId(string prefix = "msg")
     {
@@ -145,6 +145,7 @@ public sealed record WorkerBootstrapDocument
     public int BrowserWidth { get; init; }
     public int FontSize { get; init; } = 18;
     public int LineHeight { get; init; } = 19;
+    public string FontSizeLineHeightMode { get; init; } = "OVERRIDE";
     public string FontFaceId { get; init; } = DefaultRuntimeFontFaceId;
     public string FontCatalogDigest { get; init; } = string.Empty;
     public string WidthMode { get; init; } = "ADAPTIVE";
@@ -187,7 +188,8 @@ public sealed record WorkerBootstrapDocument
             "CUSTOM" => CustomWidth is >= 240 and <= 16_384,
             _ => false,
         };
-        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384 || FontSize is < 8 or > 72 || LineHeight < FontSize || LineHeight > 128 || string.IsNullOrWhiteSpace(FontFaceId) || !IsIdentifier(FontFaceId) || (FontCatalogDigest.Length != 0 && !IsLowerHexSha256(FontCatalogDigest)) || !validWidth)
+        bool validFontSizeLineHeightMode = FontSizeLineHeightMode is "OVERRIDE" or "CONFIG";
+        if (WorkerEpoch == 0 || SaveLayout is < 0 or > 1 || ExpectedParentProcessId <= 0 || InitialOutputSequence < 0 || BrowserWidth < 0 || BrowserWidth > 16_384 || FontSize is < 8 or > 72 || LineHeight < FontSize || LineHeight > 128 || string.IsNullOrWhiteSpace(FontFaceId) || !IsIdentifier(FontFaceId) || (FontCatalogDigest.Length != 0 && !IsLowerHexSha256(FontCatalogDigest)) || !validWidth || !validFontSizeLineHeightMode)
         {
             throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
         }

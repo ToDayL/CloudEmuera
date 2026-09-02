@@ -129,7 +129,8 @@ public sealed record WorkerLaunchRequest
         int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
         string fontFaceId = RuntimeFontDefaults.DefaultFaceId, string fontCatalogDigest = "",
         SessionWidthMode widthMode = SessionWidthMode.Adaptive, int? customWidth = null,
-        bool convertBackslashToYen = true)
+        bool convertBackslashToYen = true,
+        SessionFontSizeLineHeightMode fontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override)
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));
         SessionRoot = Path.GetFullPath(sessionRoot ?? throw new ArgumentNullException(nameof(sessionRoot)));
@@ -159,6 +160,9 @@ public sealed record WorkerLaunchRequest
         WidthMode = widthMode;
         CustomWidth = customWidth;
         ConvertBackslashToYen = convertBackslashToYen;
+        if (!Enum.IsDefined(fontSizeLineHeightMode))
+            throw new ArgumentOutOfRangeException(nameof(fontSizeLineHeightMode));
+        FontSizeLineHeightMode = fontSizeLineHeightMode;
     }
 
     public WorkerBinding Binding { get; }
@@ -181,4 +185,5 @@ public sealed record WorkerLaunchRequest
     public SessionWidthMode WidthMode { get; }
     public int? CustomWidth { get; }
     public bool ConvertBackslashToYen { get; }
+    public SessionFontSizeLineHeightMode FontSizeLineHeightMode { get; }
 }

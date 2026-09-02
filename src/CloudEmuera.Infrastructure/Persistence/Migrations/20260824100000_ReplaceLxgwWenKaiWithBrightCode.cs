@@ -12,6 +12,7 @@ public partial class ReplaceLxgwWenKaiWithBrightCode : Migration
 {
     protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasAnnotation(SessionConfiguration.ExcludeFontSizeLineHeightModeSchemaAnnotation, true);
         modelBuilder.HasAnnotation(SessionConfiguration.ExcludeBackslashToYenSchemaAnnotation, true);
         modelBuilder.HasAnnotation(SessionConfiguration.LegacyRuntimeWidthSchemaAnnotation, true);
         modelBuilder.HasAnnotation("ProductVersion", "10.0.10");

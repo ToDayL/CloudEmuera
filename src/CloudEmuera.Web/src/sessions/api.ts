@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiRequest, apiRequestWithMeta, getCsrfToken, newIdempotencyKey } from "../api";
-import type { RuntimeWidthModeDto, SessionGameSummaryDto, SessionListResponseDto, SessionResponseDto, SessionStateDto } from "../api/generated";
+import type { RuntimeWidthModeDto, SessionFontSizeLineHeightModeDto, SessionGameSummaryDto, SessionListResponseDto, SessionResponseDto, SessionStateDto } from "../api/generated";
 
 export type SessionState = SessionStateDto;
 export type SessionGameSummary = SessionGameSummaryDto;
 export type SessionView = SessionResponseDto;
 export type SessionListResponse = SessionListResponseDto;
 export type RuntimeWidthMode = RuntimeWidthModeDto;
+export type SessionFontSizeLineHeightMode = SessionFontSizeLineHeightModeDto;
 
 export interface RuntimeFontFace {
   faceId: string;
@@ -61,12 +62,12 @@ export async function getSession(sessionId: string): Promise<SessionView> {
   return apiRequest<SessionView>(`/sessions/${encodeURIComponent(sessionId)}`);
 }
 
-export async function createSession(gameId: string, name: string, fontSize = 18, lineHeight = 19, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular", widthMode: RuntimeWidthMode = "ADAPTIVE", customWidth: number | null = null, convertBackslashToYen = true): Promise<SessionView> {
+export async function createSession(gameId: string, name: string, fontSize = 18, lineHeight = 19, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular", widthMode: RuntimeWidthMode = "ADAPTIVE", customWidth: number | null = null, convertBackslashToYen = true, fontSizeLineHeightMode: SessionFontSizeLineHeightMode = "OVERRIDE"): Promise<SessionView> {
   const token = await getCsrfToken();
   return (await apiRequestWithMeta<SessionView>("/sessions", {
     method: "POST",
     headers: jsonMutationHeaders(token, idempotencyKey),
-    body: JSON.stringify({ gameId, name, fontFaceId, fontSize, lineHeight, widthMode, customWidth, convertBackslashToYen }),
+    body: JSON.stringify({ gameId, name, fontFaceId, fontSize, lineHeight, fontSizeLineHeightMode, widthMode, customWidth, convertBackslashToYen }),
   })).value;
 }
 
@@ -74,9 +75,9 @@ export async function openSession(sessionId: string, browserWidth = typeof windo
   return lifecycleRequest(sessionId, "open", browserWidth, idempotencyKey);
 }
 
-export async function updateSessionConfiguration(sessionId: string, name: string, fontSize: number, lineHeight: number, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular", widthMode: RuntimeWidthMode = "ADAPTIVE", customWidth: number | null = null, convertBackslashToYen = true): Promise<SessionView> {
+export async function updateSessionConfiguration(sessionId: string, name: string, fontSize: number, lineHeight: number, idempotencyKey = newIdempotencyKey(), fontFaceId = "sarasa-fixed-sc-1.0.40-regular", widthMode: RuntimeWidthMode = "ADAPTIVE", customWidth: number | null = null, convertBackslashToYen = true, fontSizeLineHeightMode: SessionFontSizeLineHeightMode = "OVERRIDE"): Promise<SessionView> {
   const token = await getCsrfToken();
-  return (await apiRequestWithMeta<SessionView>(`/sessions/${encodeURIComponent(sessionId)}/configuration`, { method: "PUT", headers: jsonMutationHeaders(token, idempotencyKey), body: JSON.stringify({ name, fontFaceId, fontSize, lineHeight, widthMode, customWidth, convertBackslashToYen }) })).value;
+  return (await apiRequestWithMeta<SessionView>(`/sessions/${encodeURIComponent(sessionId)}/configuration`, { method: "PUT", headers: jsonMutationHeaders(token, idempotencyKey), body: JSON.stringify({ name, fontFaceId, fontSize, lineHeight, fontSizeLineHeightMode, widthMode, customWidth, convertBackslashToYen }) })).value;
 }
 
 export async function listRuntimeFonts(): Promise<RuntimeFontCatalog> {

@@ -22,19 +22,42 @@
   when an optional field is out of range. The sentinel is removed before structured text validation; runtime values,
   script data and input values remain unchanged. The same projection drops every other C0/C1 control with no
   pinned display meaning; runtime values, input values, paths and identifiers remain strict (PLAY-001/PLAY-014).
-- Added axis-aware MixedNum conversion for headless HTML `div` frames: horizontal coordinates, dimensions and
-  left/right box-model insets use the Session `FontSize`, while vertical coordinates, dimensions and top/bottom
-  insets use the physical `LineHeight`; explicit `px` values remain exact. This keeps fixed EraFL task-panel frames
-  large enough for their line-height-spaced child rows (PLAY-002/COMP-007).
+- Added FontSize-based MixedNum conversion for headless HTML `div` frames: all non-`px` coordinates, dimensions and
+  box-model insets use the Session `FontSize`; explicit `px` values remain exact. `LineHeight` remains the row-flow
+  metric and is not used as a CSS geometry conversion base (PLAY-002/COMP-007).
 - Separated the pinned upstream HTML `div` paint-order `depth` from the headless structured-node nesting depth.
   High layer values such as `999` remain valid `DivNode.ZIndex` values, while the actual ConsoleNode tree still
   receives the bounded `MaxNodeDepth` check (PLAY-002/ADR-0024).
 - Added a SkiaSharp-backed fast PNG projection for headless browser/IPC rasters. It reads the existing
   System.Drawing 32bpp ARGB surface through a `SKPixmap`, uses no PNG row filters and zlib level 1, and retains
   a GDI+ fallback if the Linux native asset cannot load (PLAY-002/ADR-0040).
+
+- Added a persisted Session font-size/line-height mode. `OVERRIDE` keeps the existing host-controlled metrics;
+  `CONFIG` leaves the copied game's `emuera.config` values intact while retaining the Session values for a later
+  switch back to `OVERRIDE` (SESS-013/PLAY-014).
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
+
+## 2026-09-02 — Restore FontSize as the HTML geometry base
+
+- Reverted the unintended use of physical `LineHeight` as the vertical MixedNum
+  conversion base for headless HTML `div` rectangles and box-model values.
+  Every non-`px` coordinate, dimension and inset now uses the configured
+  `FontSize`; `LineHeight` remains the row-flow metric.
+- Scope: the `b67446d` HTML panel geometry regression. Verification is
+  `HtmlPrintDivUsesFontSizeForAllMixedNumGeometry` in the RuntimeCompatibility
+  suite.
+
+## 2026-09-02 — Add Session font-size/line-height mode
+
+- The Session persistence/API/Worker bootstrap now carries `OVERRIDE` or
+  `CONFIG`. `CONFIG` preserves the copied game's `emuera.config` font size and
+  line height; the stored Session values remain available when switching back.
+- The browser uses the runtime-reported default font metrics after connection,
+  so a CONFIG Session does not drift from Worker layout.
+- Verification: `ConfigFontSizeLineHeightModePreservesGameConfigMetrics`, the
+  Session/API persistence contracts, and the migration/IPC checks.
 
 ## 2026-09-02 — Optimize MATCH array scans
 

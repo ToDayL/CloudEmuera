@@ -1646,6 +1646,13 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(19)
                         .HasColumnName("line_height");
 
+                    b.Property<string>("FontSizeLineHeightMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("OVERRIDE")
+                        .HasColumnName("font_size_line_height_mode");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1761,6 +1768,7 @@ namespace CloudEmuera.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_sessions_name", "length(name) BETWEEN 1 AND 200 AND instr(name, char(0)) = 0");
 
                             t.HasCheckConstraint("ck_sessions_font_face_id", "length(font_face_id) BETWEEN 1 AND 128 AND instr(font_face_id, char(0)) = 0");
+                            t.HasCheckConstraint("ck_sessions_font_size_line_height_mode", "font_size_line_height_mode IN ('OVERRIDE', 'CONFIG')");
 
                             t.HasCheckConstraint("ck_sessions_identity_mode", "session_identity_mode IN ('LEGACY_DIGEST', 'PATH_REVISION')");
 

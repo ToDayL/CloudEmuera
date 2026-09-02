@@ -130,7 +130,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
 
         csrf = await GetCsrfAsync(client);
         HttpResponseMessage createdResponse = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
-            new CreateSessionRequest(current.Id, "HTTP Session", "lxgw-bright-code-2.922-regular", 24, 28, "MAX", null, false), csrf, idempotencyKey: "session-create");
+            new CreateSessionRequest(current.Id, "HTTP Session", "lxgw-bright-code-2.922-regular", 24, 28, "MAX", null, false, "CONFIG"), csrf, idempotencyKey: "session-create");
         Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
         SessionResponse created = await createdResponse.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Session create response was missing.");
         Assert.Equal("CLOSED", created.State);
@@ -140,12 +140,13 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal("MAX", created.WidthMode);
         Assert.Null(created.CustomWidth);
         Assert.False(created.ConvertBackslashToYen);
+        Assert.Equal("CONFIG", created.FontSizeLineHeightMode);
         Assert.NotNull(createdResponse.Headers.ETag);
         Assert.Equal($"/api/v1/sessions/{created.Id}", createdResponse.Headers.Location?.ToString());
 
         csrf = await GetCsrfAsync(client);
         HttpResponseMessage createReplay = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/sessions",
-            new CreateSessionRequest(current.Id, "HTTP Session", "lxgw-bright-code-2.922-regular", 24, 28, "MAX", null, false), csrf, idempotencyKey: "session-create");
+            new CreateSessionRequest(current.Id, "HTTP Session", "lxgw-bright-code-2.922-regular", 24, 28, "MAX", null, false, "CONFIG"), csrf, idempotencyKey: "session-create");
         SessionResponse replayed = await createReplay.Content.ReadFromJsonAsync<SessionResponse>() ?? throw new Xunit.Sdk.XunitException("Session replay response was missing.");
         Assert.Equal(HttpStatusCode.Created, createReplay.StatusCode);
         Assert.Equal(created.Id, replayed.Id);
@@ -186,6 +187,7 @@ public sealed class GameLibraryApiContractTests : IDisposable
         Assert.Equal(created.FontFaceId, reopened.FontFaceId);
         Assert.Equal(created.FontSize, reopened.FontSize);
         Assert.Equal(created.LineHeight, reopened.LineHeight);
+        Assert.Equal(created.FontSizeLineHeightMode, reopened.FontSizeLineHeightMode);
 
         (_, _) = await WaitForLifecycleAsync(client, created.Id, "close", "session-reclose");
 

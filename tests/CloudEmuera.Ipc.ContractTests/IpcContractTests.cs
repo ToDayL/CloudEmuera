@@ -150,6 +150,17 @@ public sealed class IpcContractTests
     }
 
     [Fact]
+    public void BootstrapRejectsUnknownFontSizeLineHeightMode()
+    {
+        WorkerBootstrapDocument document = CreateBootstrapDocument() with
+        {
+            FontSizeLineHeightMode = "UNKNOWN",
+        };
+
+        Assert.Throws<InvalidDataException>(document.Validate);
+    }
+
+    [Fact]
     public void BootstrapFileUsesPrivatePermissionsAndRejectsHardLinks()
     {
         if (!OperatingSystem.IsLinux())

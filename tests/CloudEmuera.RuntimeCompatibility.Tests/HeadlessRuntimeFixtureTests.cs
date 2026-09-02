@@ -1449,12 +1449,12 @@ public sealed class HeadlessRuntimeFixtureTests
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     [Trait("Category", "FontLayout")]
-    public async Task HtmlPrintDivUsesFontSizeHorizontallyAndLineHeightVertically()
+    public async Task HtmlPrintDivUsesFontSizeForAllMixedNumGeometry()
     {
-        // PLAY-002/COMP-007: EraFL's panel dimensions are expressed as
-        // font-relative MixedNum values, but child <br> rows advance by the
-        // configured physical line height. The frame must use the same
-        // horizontal/vertical bases or its last action row is clipped.
+        // PLAY-002/COMP-007: EraFL's panel dimensions and box model are
+        // expressed as font-relative MixedNum values. Child <br> rows still
+        // advance by the configured physical line height, which is separate
+        // from the CSS geometry conversion base.
         const string panel =
             "<div rect='100,200,300,1300' " +
             "margin='100,200,300,400' " +
@@ -1486,12 +1486,12 @@ public sealed class HeadlessRuntimeFixtureTests
         PositionedInlineSegmentNode segment = Assert.IsType<PositionedInlineSegmentNode>(
             Assert.Single(Assert.Single(fixture.Console.Snapshot.Scrollback).Nodes));
         DivNode div = Assert.IsType<DivNode>(Assert.Single(segment.Children));
-        Assert.Equal(new ConsoleRect(16, 36, 48, 234), div.Bounds);
+        Assert.Equal(new ConsoleRect(16, 32, 48, 208), div.Bounds);
         ConsoleBoxModel box = Assert.IsType<ConsoleBoxModel>(div.Box);
-        Assert.Equal(new ConsoleInsets(18, 32, 54, 64), box.Margin);
-        Assert.Equal(new ConsoleInsets(36, 48, 72, 80), box.Padding);
-        Assert.Equal(new ConsoleInsets(54, 64, 90, 96), box.Border);
-        Assert.Equal(new ConsoleInsets(72, 80, 108, 112), box.Radius);
+        Assert.Equal(new ConsoleInsets(16, 32, 48, 64), box.Margin);
+        Assert.Equal(new ConsoleInsets(32, 48, 64, 80), box.Padding);
+        Assert.Equal(new ConsoleInsets(48, 64, 80, 96), box.Border);
+        Assert.Equal(new ConsoleInsets(64, 80, 96, 112), box.Radius);
     }
 
     [Fact]
@@ -1970,6 +1970,27 @@ public sealed class HeadlessRuntimeFixtureTests
 
         Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
         Assert.Equal(expectedWidth, fixture.Console.Snapshot.WindowMetadata.ViewportWidth);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "FontLayout")]
+    public async Task ConfigFontSizeLineHeightModePreservesGameConfigMetrics()
+    {
+        // SESS-013/PLAY-014: CONFIG leaves the copied game's font size and
+        // line height untouched, while the Session values remain only the
+        // fallback used if the mode is switched back to OVERRIDE.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nQUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:800\n字体大小:12\n每行高度:14\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            fontSize: 30,
+            lineHeight: 32,
+            fontSizeLineHeightMode: RuntimeFontSizeLineHeightMode.Config);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(12, fixture.Console.Snapshot.WindowMetadata.DefaultFont.Size);
+        Assert.Equal(14, fixture.Console.Snapshot.WindowMetadata.DefaultFont.LineHeight);
     }
 
     [Fact]
@@ -3763,7 +3784,9 @@ public sealed class HeadlessRuntimeFixtureTests
         DivNode popup = EnumerateDivNodes(
             fixture.Console.Snapshot.Scrollback.SelectMany(line => line.Nodes))
             .Single();
-        Assert.Equal(new ConsoleRect(140, -220, 270, 95), popup.Bounds);
+        // Non-px HTML geometry uses FontSize; LineHeight only advances the
+        // line flow between the two popup buttons.
+        Assert.Equal(new ConsoleRect(140, -220, 270, 90), popup.Bounds);
         Assert.Contains(
             "Option",
             RuntimeTranscriptProjector.Project(popup.Children),
@@ -4811,7 +4834,8 @@ public sealed class HeadlessRuntimeFixtureTests
             string runtimeFontPath = "",
             string runtimeFontFamilyName = "",
             string webFontAssetDigest = "",
-            bool convertBackslashToYen = true)
+            bool convertBackslashToYen = true,
+            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
             => CreateHost(
                 Console,
                 runtimeClock,
@@ -4828,7 +4852,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 runtimeFontPath,
                 runtimeFontFamilyName,
                 webFontAssetDigest,
-                convertBackslashToYen);
+                convertBackslashToYen,
+                fontSizeLineHeightMode);
 
         public EmueraRuntimeHost CreateHost(
             StructuredGameConsole console,
@@ -4846,7 +4871,8 @@ public sealed class HeadlessRuntimeFixtureTests
             string runtimeFontPath = "",
             string runtimeFontFamilyName = "",
             string webFontAssetDigest = "",
-            bool convertBackslashToYen = true)
+            bool convertBackslashToYen = true,
+            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
         {
             var fileSystem = new LocalRuntimeFileSystem(Paths);
             var options = new EmueraRuntimeOptions(
@@ -4869,7 +4895,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 runtimeFontPath: runtimeFontPath,
                 runtimeFontFamilyName: runtimeFontFamilyName,
                 webFontAssetDigest: webFontAssetDigest,
-                convertBackslashToYen: convertBackslashToYen);
+                convertBackslashToYen: convertBackslashToYen,
+                fontSizeLineHeightMode: fontSizeLineHeightMode);
             return EmueraRuntimeHost.Create(options with { UpstreamGateAcquired = upstreamGateAcquired });
         }
 
