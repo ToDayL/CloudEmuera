@@ -130,34 +130,45 @@ for row in connection.execute(
 PY
 ~~~
 
-`session_root_path` is relative to `/data`. A Worker's failure log is stored in
-the sibling `metadata` directory rather than inside the SessionRoot:
+`session_root_path` is relative to `/data`. A Worker's runtime trace and
+failure log are stored in the sibling `metadata` directory rather than inside
+the SessionRoot:
 
 ~~~text
 /data/<session_root_path>                         # SessionRoot
+/data/<session_root_path parent>/metadata/runtime-debug.jsonl
 /data/<session_root_path parent>/metadata/worker-error.jsonl
 ~~~
 
 Use the following evidence hierarchy when correlating a runtime or UI report:
 
-- `worker-error.jsonl` is the primary structured record for Worker failures;
-  correlate it with the server/Worker logs and the persisted Session state.
-  Treat `emuera.log` as supplemental rather than authoritative for structured
-  Console behavior.
-- Read font face, font size, line height, width mode, and Session paths from the
-  database record being investigated. For output and layout, combine the
-  generating ERB, persisted display configuration, structured Session state,
-  and—when authenticated browser access is available—DOM measurements such as
+- `runtime-debug.jsonl` is the primary opt-in structured trace for runtime
+  output, input waits, runtime width and structured console operations. Use
+  `worker-error.jsonl` for Worker failures and correlate both with the
+  server/Worker logs and persisted Session state. Treat `emuera.log` as
+  supplemental rather than authoritative for structured Console behavior.
+- Use `runtime_width` to compare configured, browser, effective and drawable
+  widths. Read font face, font size, line height, width mode and Session paths
+  from the database record being investigated.
+- Use `erb_output` to map runtime output to `sourceFile`, `sourceLine`,
+  `instruction` and input-wait state; use `erb_wait` to identify input points;
+  use `console_operation` to correlate output sequence, line IDs and node
+  summaries. Escaped path separators in JSON may require normalized search
+  patterns.
+- Treat a trace as evidence of emitted output, not necessarily complete visual
+  geometry. When geometry matters, combine the trace with the generating ERB,
+  persisted display configuration, structured node fields and—when
+  authenticated browser access is available—DOM measurements such as
   `getBoundingClientRect()`, `overflow`, `scrollHeight`, and `clientHeight`.
 - For interaction reports, verify the event source and payload at every
   boundary (DOM, realtime message, IPC, adapter, and runtime), and distinguish
   a control being rendered or hit from the input being accepted and interpreted
-  with the intended semantics. Use boundary-level logs or a copied
-  deterministic fixture when the existing records do not include client
-  attempts.
+  with the intended semantics. If a trace does not record client attempts,
+  treat that as an observability gap and use boundary-level logs or a copied
+  deterministic fixture rather than inferring that no input was sent.
 
 For any layout investigation, record the Session ID, Worker epoch, relevant
-log lines, source location, display settings, coordinate units, and the
+trace lines, source location, display settings, coordinate units, and the
 rendering boundary where the discrepancy appears. Keep diagnosis separate from
 changes to the running Session, and do not attempt interactive login when the
 available credentials are not valid.

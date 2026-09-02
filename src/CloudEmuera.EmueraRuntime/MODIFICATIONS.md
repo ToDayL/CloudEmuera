@@ -73,14 +73,31 @@ inside modified upstream files and does not replace Git history or review.
   covers high layer depth and rejection of actual semantic nesting beyond the
   configured node-depth limit.
 
-## 2026-09-02 — Remove temporary runtime performance trace
+## 2026-09-02 — Remove temporary runtime performance timing
 
-- Removed the investigation-only `RuntimeDebugTrace` path, its interpreter and
-  headless-console hooks, Worker environment switch, development Compose
-  setting, and dedicated tests after the `eraBlueResort` performance analysis.
-- The runtime no longer emits `runtime-debug.jsonl` or performs per-instruction,
-  per-output, raster, layout, or transaction timing work. MATCH, Skia PNG,
-  HTML-depth, and other compatibility/performance changes remain active.
+- Removed only the investigation-only timing instrumentation added for the
+  `eraBlueResort` performance analysis: per-instruction/function timing,
+  sampled source hotspots, raster/HTML/layout timing and transaction timing.
+- Retained the lower-volume opt-in `RuntimeDebugTrace` boundary trace. When
+  `CLOUDEMUERA_RUNTIME_DEBUG_TRACE` is `1` or `true`, it writes
+  `metadata/runtime-debug.jsonl` beside the SessionRoot with ERB output/wait,
+  runtime width and structured console-operation records. It remains disabled
+  by default and does not record submitted input values.
+
+## 2026-08-18 — Opt-in ERB/structured-output trace
+
+- Modified file: `Upstream/Emuera/Runtime/Script/Statements/ExpressionMediator.cs`.
+  The headless build reports the current ERB source position, print
+  instruction, rendered text and wait-for-input flag immediately before normal
+  output processing; desktop compilation retains upstream behavior.
+- Headless glue: `RuntimeDebugTrace` is disabled by default and is enabled only
+  by `CLOUDEMUERA_RUNTIME_DEBUG_TRACE=1` or `true`, including in Production.
+  It appends JSON Lines to the owning Session container's
+  `metadata/runtime-debug.jsonl`, outside the game `root/`, recording
+  `erb_output`, `erb_wait`, `runtime_width` and structured console operations.
+  It never records submitted input values.
+- Scope: opt-in diagnosis for runtime output/input-boundary and layout reports.
+- Verification: `RuntimeDebugTraceTests` and the development-container build.
 
 ## 2026-09-02 — Add fast Skia PNG projection
 

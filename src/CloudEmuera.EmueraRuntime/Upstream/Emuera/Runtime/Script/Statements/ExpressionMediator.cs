@@ -46,6 +46,12 @@ internal sealed class ExpressionMediator
 
 	public void OutputToConsole(string str, FunctionIdentifier func, bool lineEnd)
 	{
+		#if CLOUDEMUERA_HEADLESS
+		// CloudEmuera modification: opt-in trace ties an ERB output
+		// instruction to the structured console operations it subsequently emits.
+		CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordErbOutput(
+			Process.GetRunningPosition(), func.Name, str, func.IsWaitInput());
+		#endif
 		if (func.IsPrintSingle())
 			Console.PrintSingleLine(str, false);
 		else

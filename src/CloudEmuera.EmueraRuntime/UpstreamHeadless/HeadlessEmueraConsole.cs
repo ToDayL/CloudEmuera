@@ -779,6 +779,7 @@ internal sealed class EmueraConsole
         // EVENTCOMEND suppresses Process' fallback post-command wait.
         if (GlobalStatic.Process is not null)
             GlobalStatic.Process.NeedWaitToEventComEnd = false;
+        RuntimeDebugTrace.RecordErbWait(GlobalStatic.Process?.GetRunningPosition(), inputType, stopMesskip);
         if (ShouldSkipMessageWait(inputType, stopMesskip))
             return;
 
@@ -2400,7 +2401,8 @@ internal sealed class EmueraConsole
     {
         if (adapter is StructuredGameConsole structured)
         {
-            structured.EmitTransaction(new ConsoleTransaction([operation]));
+            SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction([operation]));
+            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
             ProjectTooltipResources();
         }
         else
