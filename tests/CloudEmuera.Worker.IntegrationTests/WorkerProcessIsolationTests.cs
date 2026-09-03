@@ -3,7 +3,7 @@ using System.Text;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V8;
+using CloudEmuera.Ipc.V9;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Worker;
@@ -647,7 +647,7 @@ public sealed class WorkerProcessIsolationTests
         return normalized.EndsWith('\n') ? normalized[..^1] : normalized;
     }
 
-    private sealed class FixtureWorkspace : IAsyncDisposable
+    internal sealed class FixtureWorkspace : IAsyncDisposable
     {
         private FixtureWorkspace(
             string fixtureRoot,

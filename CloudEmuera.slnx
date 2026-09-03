@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/CloudEmuera.Debugging.Contracts/CloudEmuera.Debugging.Contracts.csproj" />
+    <Project Path="src/CloudEmuera.Debugger/CloudEmuera.Debugger.csproj" />
     <Project Path="src/CloudEmuera.Api/CloudEmuera.Api.csproj" />
     <Project Path="src/CloudEmuera.Application/CloudEmuera.Application.csproj" />
     <Project Path="src/CloudEmuera.Contracts/CloudEmuera.Contracts.csproj" />
@@ -15,6 +17,7 @@
     <Project Path="src/CloudEmuera.Worker/CloudEmuera.Worker.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/CloudEmuera.Debugging.Tests/CloudEmuera.Debugging.Tests.csproj" />
     <Project Path="tests/CloudEmuera.Domain.Tests/CloudEmuera.Domain.Tests.csproj" />
     <Project Path="tests/CloudEmuera.Ipc.ContractTests/CloudEmuera.Ipc.ContractTests.csproj" />
     <Project Path="tests/CloudEmuera.RuntimeCompatibility.Tests/CloudEmuera.RuntimeCompatibility.Tests.csproj" />

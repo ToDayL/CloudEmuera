@@ -18,5 +18,5 @@ public static class RuntimeBaseline
     public const string CompatibilityProfile = "v18-compatible";
     public const int StructuredIpcProtocolVersion = 8;
     public const string CapabilityMatrixVersion = "p1-s10";
-    public const string CapabilitySetDigest = "c847f0edba5379ffc03dbb13311ec5c8cd0d927b0850f5b162050ba64057448b";
+    public const string CapabilitySetDigest = "185fdb9cc8ea20337820dbe576f4e023fc5bebd25b47573939ce7c899116a3fc";
 }

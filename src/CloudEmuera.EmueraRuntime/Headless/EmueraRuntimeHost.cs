@@ -300,7 +300,7 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 options.BrowserWidth, options.FontSize, options.LineHeight,
                 options.WidthMode, options.CustomWidth,
                 options.FontFaceId, options.FontCatalogDigest, options.RuntimeFontPath, options.RuntimeFontFamilyName, options.WebFontAssetDigest,
-                options.ConvertBackslashToYen, options.FontSizeLineHeightMode);
+                options.ConvertBackslashToYen, options.FontSizeLineHeightMode, options.RandomSeed);
             bool initialized = session.InitializeAsync(options.Paths).GetAwaiter().GetResult();
             cancellationToken.ThrowIfCancellationRequested();
             if (!initialized)

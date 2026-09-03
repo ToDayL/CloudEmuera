@@ -10,6 +10,8 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
     private readonly object sync = new();
     private readonly IRuntimeClock clock;
     private readonly IPromptIdGenerator promptIdGenerator;
+    private readonly IConsoleInputTraceObserver? traceObserver;
+    private readonly Dictionary<string, ConsoleInputAttempt> resolvedTraceAttempts = new(StringComparer.Ordinal);
     private bool isTimeOut;
 
     public StructuredGameConsole()
@@ -25,13 +27,15 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
     public StructuredGameConsole(
         IRuntimeClock clock,
         ConsoleHistoryOptions options,
-        IPromptIdGenerator? promptIdGenerator = null)
+        IPromptIdGenerator? promptIdGenerator = null,
+        IConsoleInputTraceObserver? traceObserver = null)
     {
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
         this.clock = clock;
         this.promptIdGenerator = promptIdGenerator ?? new GuidPromptIdGenerator();
+        this.traceObserver = traceObserver;
         StateStore = new ConsoleStateStore(options);
         InputCoordinator = new InputCoordinator(options);
     }
@@ -162,6 +166,7 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
                     try
                     {
                         ApplyRuntimeOperation(assignedOperation);
+                        traceObserver?.PromptOpened(openedPrompt);
                     }
                     catch
                     {
@@ -187,11 +192,14 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
         ArgumentNullException.ThrowIfNull(attempt);
         lock (sync)
         {
+            ConsolePrompt? prompt = InputCoordinator.CurrentPrompt;
             ConsoleInputResult result = InputCoordinator.SubmitCurrent(attempt);
             if (result.Kind == ConsoleInputResultKind.Accepted)
             {
                 isTimeOut = false;
                 CloseStatePromptIfCurrent(result.ResolvedPromptId!, ConsolePromptCloseReason.InputAccepted);
+                if (prompt is not null)
+                    resolvedTraceAttempts[prompt.PromptId] = attempt;
             }
 
             return result;
@@ -199,6 +207,18 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
     }
 
     public ConsoleResumeResult ReadSince(long lastSequence) => StateStore.ReadSince(lastSequence);
+
+    public bool CancelCurrentPrompt()
+    {
+        lock (sync)
+        {
+            ConsolePrompt? prompt = InputCoordinator.CurrentPrompt;
+            if (prompt is null) return false;
+            ConsoleInputResult? result = InputCoordinator.ClosePrompt(prompt.PromptId, ConsolePromptCloseReason.Cancelled);
+            CloseStatePromptIfCurrent(prompt.PromptId, ConsolePromptCloseReason.Cancelled);
+            return result is not null;
+        }
+    }
 
     public GameConsoleInput Read(ConsolePrompt prompt, CancellationToken cancellationToken = default)
     {
@@ -215,6 +235,7 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
             try
             {
                 ApplyRuntimeOperation(new OpenPromptOperation(assignedPrompt));
+                traceObserver?.PromptOpened(assignedPrompt);
             }
             catch
             {
@@ -252,10 +273,13 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
                 case ConsoleInputResultKind.Accepted:
                     isTimeOut = false;
                     CloseStatePromptIfCurrent(assignedPrompt.PromptId, ConsolePromptCloseReason.InputAccepted);
+                    resolvedTraceAttempts.Remove(assignedPrompt.PromptId, out ConsoleInputAttempt? acceptedAttempt);
+                    traceObserver?.PromptResolved(assignedPrompt, result, acceptedAttempt);
                     return result.Input!;
                 case ConsoleInputResultKind.TimedOut:
                     isTimeOut = true;
                     CloseStatePromptIfCurrent(assignedPrompt.PromptId, ConsolePromptCloseReason.TimedOut);
+                    traceObserver?.PromptResolved(assignedPrompt, result, attempt: null);
                     if (result.Input is not null)
                     {
                         return result.Input;
@@ -270,6 +294,7 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
                 case ConsoleInputResultKind.Cancelled:
                     isTimeOut = false;
                     CloseStatePromptIfCurrent(assignedPrompt.PromptId, ConsolePromptCloseReason.Cancelled);
+                    traceObserver?.PromptResolved(assignedPrompt, result, attempt: null);
                     throw new ConsolePromptCancelledException(assignedPrompt.PromptId, cancellationToken);
                 default:
                     CloseStatePromptIfCurrent(assignedPrompt.PromptId, ConsolePromptCloseReason.Cancelled);

@@ -418,6 +418,16 @@
       "cloudemuera.contracts": {
         "type": "Project"
       },
+      "cloudemuera.debugger": {
+        "type": "Project",
+        "dependencies": {
+          "CloudEmuera.Api": "[1.0.0, )",
+          "CloudEmuera.Debugging.Contracts": "[1.0.0, )"
+        }
+      },
+      "cloudemuera.debugging.contracts": {
+        "type": "Project"
+      },
       "cloudemuera.domain": {
         "type": "Project"
       },
@@ -470,6 +480,8 @@
       "cloudemuera.worker": {
         "type": "Project",
         "dependencies": {
+          "CloudEmuera.Contracts": "[1.0.0, )",
+          "CloudEmuera.Debugging.Contracts": "[1.0.0, )",
           "CloudEmuera.EmueraRuntime": "[1.0.0, )",
           "CloudEmuera.Ipc": "[1.0.0, )",
           "CloudEmuera.Realtime": "[1.0.0, )",

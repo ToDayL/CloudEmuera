@@ -85,4 +85,20 @@ public sealed class RuntimeClockTests
         Assert.Equal(TimeSpan.FromMilliseconds(1), deadline.Timeout);
         Assert.NotEqual(0, deadline.StartingTimestamp);
     }
+
+    [Fact]
+    public async Task ReplayClockAdvancesWallAndMonotonicTimeTogether()
+    {
+        DateTimeOffset start = DateTimeOffset.UnixEpoch.AddDays(1);
+        var clock = new ReplayRuntimeClock(start);
+        ValueTask wait = clock.DelayAsync(TimeSpan.FromSeconds(3));
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.False(wait.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        await wait;
+        Assert.Equal(start.AddSeconds(3), clock.UtcNow);
+        Assert.Equal(TimeSpan.FromSeconds(3), clock.GetElapsedTime(0, clock.GetTimestamp()));
+    }
 }

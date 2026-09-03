@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "matrixVersion": "p1-s10",
+  "matrixVersion": "debug-replay-v1",
   "upstreamCommit": "2175f8a629257efb08214e093704b3a3d3d06d05",
   "runtimeIntegrationVersion": "headless-p0.5.3",
-  "protocolVersion": 8,
-  "capabilitySetDigest": "c847f0edba5379ffc03dbb13311ec5c8cd0d927b0850f5b162050ba64057448b",
+  "protocolVersion": 9,
+  "capabilitySetDigest": "185fdb9cc8ea20337820dbe576f4e023fc5bebd25b47573939ce7c899116a3fc",
   "capabilities": [
     {
       "capabilityId": "console.text-lines",

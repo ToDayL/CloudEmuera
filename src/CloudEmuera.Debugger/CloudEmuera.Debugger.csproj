@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CloudEmuera.Api/CloudEmuera.Api.csproj" />
+    <ProjectReference Include="../CloudEmuera.Debugging.Contracts/CloudEmuera.Debugging.Contracts.csproj" />
+  </ItemGroup>
+</Project>

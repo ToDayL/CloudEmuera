@@ -29,7 +29,8 @@ public sealed record EmueraRuntimeOptions
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
         string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "",
         bool convertBackslashToYen = true,
-        RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
+        RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override,
+        long randomSeed = 0)
     {
         Paths = paths ?? throw new ArgumentNullException(nameof(paths));
         Console = console ?? throw new ArgumentNullException(nameof(console));
@@ -75,6 +76,7 @@ public sealed record EmueraRuntimeOptions
         if (!Enum.IsDefined(fontSizeLineHeightMode))
             throw new ArgumentOutOfRangeException(nameof(fontSizeLineHeightMode));
         FontSizeLineHeightMode = fontSizeLineHeightMode;
+        RandomSeed = randomSeed;
     }
 
     public RuntimePaths Paths { get; }
@@ -99,6 +101,7 @@ public sealed record EmueraRuntimeOptions
     public string WebFontAssetDigest { get; }
     public bool ConvertBackslashToYen { get; }
     public RuntimeFontSizeLineHeightMode FontSizeLineHeightMode { get; }
+    public long RandomSeed { get; }
     internal Action? UpstreamGateAcquired { get; init; }
 
     private static void ValidateDeadline(TimeSpan value, string parameterName)

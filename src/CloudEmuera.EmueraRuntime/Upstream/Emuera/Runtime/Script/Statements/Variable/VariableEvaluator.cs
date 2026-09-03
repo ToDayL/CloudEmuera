@@ -21,16 +21,21 @@ internal sealed class VariableEvaluator : IDisposable
 	readonly GameBase gamebase;
 	readonly ConstantData constant;
 	readonly VariableData varData;
-	MTRandom rand = new();
+	// CloudEmuera modification: the Worker supplies one explicit seed so a
+	// captured run and its replay initialize both supported algorithms equally.
+	MTRandom rand;
 	public MTRandom Rand { get { return rand; } }
 
-	Random _newRand = new();
+	Random _newRand;
 
 	public VariableData VariableData { get { return varData; } }
 	internal ConstantData Constant { get { return constant; } }
 
 	public VariableEvaluator(GameBase gamebase, ConstantData constant)
 	{
+		long cloudEmueraSeed = CloudEmuera.EmueraRuntime.UpstreamHeadless.HeadlessDeterminism.RandomSeed;
+		rand = new MTRandom(cloudEmueraSeed);
+		_newRand = new Random(unchecked((int)cloudEmueraSeed));
 		this.gamebase = gamebase;
 		this.constant = constant;
 		varData = new VariableData(gamebase, constant);

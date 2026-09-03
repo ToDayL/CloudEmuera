@@ -63,6 +63,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
     private readonly string webFontAssetDigest;
     private readonly bool convertBackslashToYen;
     private readonly RuntimeFontSizeLineHeightMode fontSizeLineHeightMode;
+    private readonly long randomSeed;
     private RuntimeDebugTrace debugTrace;
     private EmueraConsole console;
     private Process process;
@@ -81,7 +82,8 @@ public sealed class UpstreamRuntimeSession : IDisposable
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
         string runtimeFontPath = "", string runtimeFontFamilyName = "", string webFontAssetDigest = "",
         bool convertBackslashToYen = true,
-        RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
+        RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override,
+        long randomSeed = 0)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -106,6 +108,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         if (!Enum.IsDefined(fontSizeLineHeightMode))
             throw new ArgumentOutOfRangeException(nameof(fontSizeLineHeightMode));
         this.fontSizeLineHeightMode = fontSizeLineHeightMode;
+        this.randomSeed = randomSeed;
     }
 
     public async Task<bool> InitializeAsync(RuntimePaths paths)
@@ -131,6 +134,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
             paths.SoundRoot ?? Path.Combine(paths.SessionRoot, "sound"),
             paths.FontRoot ?? Path.Combine(paths.SessionRoot, "font"));
         MinorShift.Emuera.GlobalStatic.Reset();
+        HeadlessDeterminism.ConfigureRandomSeed(randomSeed);
         FontFactory.ClearFont();
         HeadlessFontMetrics.Clear();
         if (!string.IsNullOrWhiteSpace(runtimeFontPath))

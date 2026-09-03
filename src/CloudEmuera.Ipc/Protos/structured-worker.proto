@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option csharp_namespace = "CloudEmuera.Ipc.V8";
+option csharp_namespace = "CloudEmuera.Ipc.V9";
 
 package cloudemuera.ipc.v8;
 
@@ -125,6 +125,8 @@ message WorkerCommandEnvelope {
     StartRuntime start_runtime = 11;
     SubmitInput submit_input = 12;
     StopWorker stop = 13;
+    AdvanceReplayClock advance_replay_clock = 14;
+    CancelPrompt cancel_prompt = 15;
   }
 }
 
@@ -162,6 +164,15 @@ message SubmitInput {
 message StopWorker {
   int64 deadline_unix_milliseconds = 1;
   string reason_code = 2;
+}
+
+message AdvanceReplayClock {
+  int64 milliseconds = 1;
+  int64 deadline_unix_milliseconds = 2;
+}
+
+message CancelPrompt {
+  int64 deadline_unix_milliseconds = 1;
 }
 
 message WorkerCommandResult {

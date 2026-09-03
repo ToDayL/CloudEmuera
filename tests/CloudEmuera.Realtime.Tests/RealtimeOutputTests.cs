@@ -3,7 +3,7 @@ using System.Linq;
 using System.Text;
 using CloudEmuera.Api.Realtime;
 using RuntimeColor = CloudEmuera.RuntimeAdapter.ConsoleColor;
-using W = CloudEmuera.Ipc.V8;
+using W = CloudEmuera.Ipc.V9;
 using CloudEmuera.RuntimeAdapter;
 using CloudEmuera.Realtime;
 using Xunit;

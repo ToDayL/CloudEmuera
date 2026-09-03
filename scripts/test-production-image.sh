@@ -103,7 +103,7 @@ fi
 # mount. Verify that the root-default named volume and the bind-mount image
 # both remain writable.
 "${named_compose[@]}" run --rm --no-deps --entrypoint sh api -c 'touch /data/.cloudemuera-named-volume-probe && rm /data/.cloudemuera-named-volume-probe'
-"${compose[@]}" run --rm --no-deps --entrypoint sh api -c 'test -f /app/worker/CloudEmuera.Worker.dll -a -f /app/validator/CloudEmuera.Validator.dll -a -f /app/migrator/CloudEmuera.Migrator.dll'
+"${compose[@]}" run --rm --no-deps --entrypoint sh api -c 'test -f /app/worker/CloudEmuera.Worker.dll -a -f /app/debugger/CloudEmuera.Debugger.dll -a -f /app/validator/CloudEmuera.Validator.dll -a -f /app/migrator/CloudEmuera.Migrator.dll'
 
 # The only production start command is Compose up. The image entrypoint runs
 # Migrator synchronously and then replaces itself with API.

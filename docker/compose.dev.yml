@@ -80,6 +80,7 @@ services:
       CloudEmuera__Realtime__EnvelopeMaxBytes: "${CLOUDEMUERA_REALTIME_ENVELOPE_MAX_BYTES-}"
       CloudEmuera__Worker__PendingEventMaxBytes: "${CLOUDEMUERA_WORKER_PENDING_EVENT_MAX_BYTES-}"
       CloudEmuera__Worker__PendingEventMaxMessages: "${CLOUDEMUERA_WORKER_PENDING_EVENT_MAX_MESSAGES-}"
+      CloudEmuera__Debugger__TraceMaxBytes: "${CLOUDEMUERA_DEBUG_TRACE_MAX_BYTES-}"
       CloudEmuera__Assets__MaxManifestBytes: "${CLOUDEMUERA_ASSETS_MAX_MANIFEST_BYTES-}"
       CloudEmuera__Assets__MaxAssetBytes: "${CLOUDEMUERA_ASSETS_MAX_ASSET_BYTES-}"
       CloudEmuera__Assets__MaxRangeBytes: "${CLOUDEMUERA_ASSETS_MAX_RANGE_BYTES-}"

@@ -55,6 +55,12 @@
         "resolved": "4.151.1",
         "contentHash": "G+nln30ZX2ZuhH+ungf6x/QMXCje38KTS0VTfQeMyeY8uyMBmsZwFz2D30ZxUjZqsVbEIcaC2bsYF65876s4Yg=="
       },
+      "cloudemuera.contracts": {
+        "type": "Project"
+      },
+      "cloudemuera.debugging.contracts": {
+        "type": "Project"
+      },
       "cloudemuera.emueraruntime": {
         "type": "Project",
         "dependencies": {

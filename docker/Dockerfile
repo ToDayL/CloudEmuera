@@ -17,6 +17,7 @@ COPY --from=web-build /src/src/CloudEmuera.Web/dist src/CloudEmuera.Api/wwwroot
 RUN dotnet restore CloudEmuera.slnx --locked-mode
 RUN dotnet publish src/CloudEmuera.Api/CloudEmuera.Api.csproj --no-restore -c Release -o /out/api
 RUN dotnet publish src/CloudEmuera.Worker/CloudEmuera.Worker.csproj --no-restore -c Release -o /out/worker
+RUN dotnet publish src/CloudEmuera.Debugger/CloudEmuera.Debugger.csproj --no-restore -c Release -o /out/debugger
 RUN dotnet publish src/CloudEmuera.Validator/CloudEmuera.Validator.csproj --no-restore -c Release -o /out/validator
 RUN dotnet publish src/CloudEmuera.Migrator/CloudEmuera.Migrator.csproj --no-restore -c Release -o /out/migrator
 
@@ -33,6 +34,7 @@ ENV ASPNETCORE_URLS=http://0.0.0.0:28647 \
     CloudEmuera__RuntimeFontRoot=/app/runtime-fonts
 COPY --from=dotnet-build /out/api /app/api/
 COPY --from=dotnet-build /out/worker /app/worker/
+COPY --from=dotnet-build /out/debugger /app/debugger/
 COPY --from=dotnet-build /out/validator /app/validator/
 COPY --from=dotnet-build /out/migrator /app/migrator/
 COPY --from=dotnet-build /src/assets/runtime-fonts /app/runtime-fonts/

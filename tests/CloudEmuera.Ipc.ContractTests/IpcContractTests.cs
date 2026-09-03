@@ -161,6 +161,32 @@ public sealed class IpcContractTests
     }
 
     [Fact]
+    public void BootstrapV8AcceptsOnlyTheSessionMetadataTracePath()
+    {
+        WorkerBootstrapDocument baseline = CreateBootstrapDocument();
+        string expected = Path.Combine(Directory.GetParent(baseline.SessionRoot)!.FullName, "metadata", "debug-input-trace.jsonl");
+        WorkerBootstrapDocument valid = baseline with
+        {
+            DebugInputTraceEnabled = true,
+            DebugInputTracePath = expected,
+            DebugCaptureId = "cap_contract",
+            RandomSeed = 1234,
+        };
+
+        valid.Validate();
+        Assert.Equal(8, valid.SchemaVersion);
+        Assert.Throws<InvalidDataException>(() => (valid with
+        {
+            DebugInputTracePath = Path.Combine(Path.GetTempPath(), "other-trace.jsonl"),
+        }).Validate());
+        Assert.Throws<InvalidDataException>(() => (baseline with
+        {
+            DebugInputTracePath = expected,
+            DebugCaptureId = "cap_contract",
+        }).Validate());
+    }
+
+    [Fact]
     public void BootstrapFileUsesPrivatePermissionsAndRejectsHardLinks()
     {
         if (!OperatingSystem.IsLinux())
