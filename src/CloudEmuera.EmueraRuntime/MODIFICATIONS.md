@@ -1,5 +1,10 @@
 # CloudEmuera modifications to Emuera.EM+EE
 
+- Added an explicit per-Worker initialization seed for both the pinned SFMT and
+  `System.Random` paths. Production capture records the seed and offline trace
+  replay injects the same value; script `RANDOMIZE`, `INITRAND`, `DUMPRAND`, and
+  saved `RANDDATA` behavior remains unchanged (DBG-005).
+
 - Optimized `MATCH` and `CMATCH` over supported one-dimensional, two-dimensional,
   and character-array shapes by reading typed backing arrays directly in the
   counting loop. Range, duplicate-counting, null/empty-string, scalar fallback,

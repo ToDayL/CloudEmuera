@@ -10,7 +10,7 @@ using CloudEmuera.Api.Realtime;
 using CloudEmuera.Api.Security;
 using CloudEmuera.Domain.Sessions;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V8;
+using CloudEmuera.Ipc.V9;
 using CloudEmuera.Infrastructure.Persistence;
 using CloudEmuera.RuntimeAdapter;
 using Grpc.AspNetCore.Server;
@@ -358,6 +358,9 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
 
         string bootstrapPath = Path.Combine(options.BootstrapDirectory, $"{request.Binding.WorkerId}-{Guid.NewGuid():N}.json");
         session.SetBootstrapPath(bootstrapPath);
+        DebugCaptureMaterial? debugCapture = options.DebugInputTraceEnabled
+            ? DebugCaptureSnapshot.Create(request.SessionRoot, request.SaveLayout)
+            : null;
         WorkerBootstrapDocument bootstrap = new()
         {
             SessionId = request.Binding.SessionId,
@@ -396,6 +399,13 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             },
             CustomWidth = request.CustomWidth,
             ConvertBackslashToYen = request.ConvertBackslashToYen,
+            DebugInputTraceEnabled = debugCapture is not null,
+            DebugInputTracePath = debugCapture?.TracePath ?? string.Empty,
+            DebugTraceMaxBytes = options.DebugTraceMaxBytes,
+            DebugCaptureId = debugCapture?.CaptureId ?? string.Empty,
+            RandomSeed = request.RandomSeed ?? Random.Shared.NextInt64(),
+            DebugReplayMode = request.DebugReplayMode,
+            ReplayStartupUnixMilliseconds = request.ReplayStartupWallClock?.ToUnixTimeMilliseconds() ?? 0,
         };
         session.SetBootstrapToken(bootstrap.BootstrapToken);
         WorkerBootstrapDocument bootstrapToWrite = options.BootstrapTransformForTest?.Invoke(bootstrap) ?? bootstrap;
@@ -958,6 +968,41 @@ public sealed class ApiWorkerSession : IAsyncDisposable
             ExpectedCapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
             DeadlineUnixMilliseconds = deadline.ToUnixTimeMilliseconds(),
         }), cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task AdvanceReplayClockAsync(long milliseconds, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        SendReplayControlAsync(
+            IpcProtocol.NewMessageId("clock"),
+            new AdvanceReplayClock
+            {
+                Milliseconds = milliseconds,
+                DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.Add(timeout).ToUnixTimeMilliseconds(),
+            },
+            timeout,
+            cancellationToken);
+
+    public Task CancelReplayPromptAsync(TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        SendReplayControlAsync(
+            IpcProtocol.NewMessageId("cancel"),
+            new CancelPrompt { DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.Add(timeout).ToUnixTimeMilliseconds() },
+            timeout,
+            cancellationToken);
+
+    private async Task SendReplayControlAsync(string messageId, object payload, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        WorkerCommandEnvelope command = payload switch
+        {
+            AdvanceReplayClock clock => CreateEnvelope(messageId, clock),
+            CancelPrompt cancel => CreateEnvelope(messageId, cancel),
+            _ => throw new ArgumentException("Unsupported replay control payload.", nameof(payload)),
+        };
+        await commands.Writer.WriteAsync(command, cancellationToken).ConfigureAwait(false);
+        WorkerEnvelope result = await WaitForAsync(
+            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.CommandResult &&
+                string.Equals(value.CorrelationId, messageId, StringComparison.Ordinal), timeout, cancellationToken).ConfigureAwait(false);
+        if (!result.CommandResult.Accepted)
+            throw new InvalidOperationException($"Replay control was rejected: {result.CommandResult.ReasonCode}");
     }
 
     public async Task<SessionInputResult> SubmitInputAsync(
@@ -1689,6 +1734,30 @@ public sealed class ApiWorkerSession : IAsyncDisposable
         ControlPlaneInstanceId = ControlPlaneInstanceId,
         CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
         Stop = payload,
+    };
+
+    private WorkerCommandEnvelope CreateEnvelope(string messageId, AdvanceReplayClock payload) => new()
+    {
+        ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+        MessageId = messageId,
+        SessionId = Binding.SessionId,
+        WorkerId = Binding.WorkerId,
+        WorkerEpoch = Binding.WorkerEpoch,
+        ControlPlaneInstanceId = ControlPlaneInstanceId,
+        CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+        AdvanceReplayClock = payload,
+    };
+
+    private WorkerCommandEnvelope CreateEnvelope(string messageId, CancelPrompt payload) => new()
+    {
+        ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+        MessageId = messageId,
+        SessionId = Binding.SessionId,
+        WorkerId = Binding.WorkerId,
+        WorkerEpoch = Binding.WorkerEpoch,
+        ControlPlaneInstanceId = ControlPlaneInstanceId,
+        CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+        CancelPrompt = payload,
     };
 
     private static TaskCompletionSource<bool> NewEventSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);

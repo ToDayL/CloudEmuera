@@ -33,6 +33,7 @@
     <Compile Include="HeadlessDisplayText.cs" />
     <Compile Include="HeadlessFileSystem.cs" />
     <Compile Include="HeadlessStringConverter.cs" />
+    <Compile Include="HeadlessDeterminism.cs" />
     <Compile Include="RuntimeDebugTrace.cs" />
     <Compile Include="HeadlessEmueraConsole.cs" />
     <Compile Include="UpstreamHtmlTranslator.cs" />

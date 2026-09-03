@@ -2,7 +2,7 @@ using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using System.Text;
 using CloudEmuera.Ipc;
-using W = CloudEmuera.Ipc.V8;
+using W = CloudEmuera.Ipc.V9;
 using Xunit;
 
 namespace CloudEmuera.Ipc.ContractTests;
@@ -13,7 +13,7 @@ public sealed class StructuredIpcContractTests
     private static readonly WorkerBinding Binding = new("sess_structured", "wrk_structured", 9);
 
     [Fact]
-    public void V8InputDescriptorReservesPromptFieldAndUsesOptionalResolvedPromptPresence()
+    public void V9InputDescriptorReservesPromptFieldAndUsesOptionalResolvedPromptPresence()
     {
         MessageDescriptor submitInput = W.StructuredWorkerReflection.Descriptor.MessageTypes.Single(message => message.Name == "SubmitInput");
         MessageDescriptor inputResult = W.StructuredWorkerReflection.Descriptor.MessageTypes.Single(message => message.Name == "InputResult");
@@ -38,6 +38,42 @@ public sealed class StructuredIpcContractTests
         Assert.True(parsedWithResolvedPrompt.HasResolvedPromptId);
         Assert.Equal("prompt-1", parsedWithResolvedPrompt.ResolvedPromptId);
     }
+
+    [Fact]
+    public void V9ReplayControlsAreBoundedAndVersioned()
+    {
+        var advance = Command("advance-1");
+        advance.AdvanceReplayClock = new W.AdvanceReplayClock
+        {
+            Milliseconds = 5_000,
+            DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeMilliseconds(),
+        };
+        Assert.True(StructuredIpcValidator.ValidateCommandEnvelope(
+            advance, Binding, "control-plane-1", StructuredIpcProtocol.CapabilitySetDigest).IsValid);
+
+        advance.AdvanceReplayClock.Milliseconds = 86_400_001;
+        Assert.Equal(IpcReasonCodes.InvalidEnvelope, StructuredIpcValidator.ValidateCommandEnvelope(
+            advance, Binding, "control-plane-1", StructuredIpcProtocol.CapabilitySetDigest).ReasonCode);
+
+        var cancel = Command("cancel-1");
+        cancel.CancelPrompt = new W.CancelPrompt
+        {
+            DeadlineUnixMilliseconds = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeMilliseconds(),
+        };
+        Assert.True(StructuredIpcValidator.ValidateCommandEnvelope(
+            cancel, Binding, "control-plane-1", StructuredIpcProtocol.CapabilitySetDigest).IsValid);
+    }
+
+    private static W.WorkerCommandEnvelope Command(string messageId) => new()
+    {
+        ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
+        MessageId = messageId,
+        SessionId = Binding.SessionId,
+        WorkerId = Binding.WorkerId,
+        WorkerEpoch = Binding.WorkerEpoch,
+        ControlPlaneInstanceId = "control-plane-1",
+        CapabilitySetDigest = StructuredIpcProtocol.CapabilitySetDigest,
+    };
 
     private static void AssertReservedField(MessageDescriptor message, int fieldNumber)
     {

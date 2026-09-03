@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using CloudEmuera.EmueraRuntime.Headless;
 using CloudEmuera.Ipc;
-using CloudEmuera.Ipc.V8;
+using CloudEmuera.Ipc.V9;
 using CloudEmuera.Realtime;
 using CloudEmuera.RuntimeAdapter;
 using R = CloudEmuera.RuntimeAdapter;
@@ -44,6 +44,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     private readonly TaskCompletionSource<bool> terminalAcknowledged =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool stoppedMessageSent;
+    private WorkerDebugTraceRecorder? debugTrace;
+    private ReplayRuntimeClock? replayClock;
 
     public WorkerRuntimeController(
         WorkerBootstrapDocument bootstrap,
@@ -109,6 +111,12 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             case WorkerCommandEnvelope.PayloadOneofCase.Stop:
                 await HandleStopAsync(command, cancellationToken).ConfigureAwait(false);
                 break;
+            case WorkerCommandEnvelope.PayloadOneofCase.AdvanceReplayClock:
+                await HandleAdvanceReplayClockAsync(command, cancellationToken).ConfigureAwait(false);
+                break;
+            case WorkerCommandEnvelope.PayloadOneofCase.CancelPrompt:
+                await HandleCancelPromptAsync(command, cancellationToken).ConfigureAwait(false);
+                break;
             case WorkerCommandEnvelope.PayloadOneofCase.RegistrationResult:
                 // RegistrationResult is consumed by WorkerConnectionLoop.
                 break;
@@ -133,6 +141,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
         if (host is not null)
             await host.DisposeAsync().ConfigureAwait(false);
+        debugTrace?.Dispose();
         runtimeCancellation?.Dispose();
     }
 
@@ -309,7 +318,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 Kind = inputResult.Kind,
                 ReasonCode = inputResult.ReasonCode,
                 NormalizedValue = inputResult.Value,
-                HasNormalizedValue = inputResult.Value.Length != 0
+                HasNormalizedValue = inputResult.Kind is InputResultKind.Accepted or InputResultKind.Duplicate
             }
         };
         if (inputResult.ResolvedPromptId is not null)
@@ -358,6 +367,26 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         }
     }
 
+    private async Task HandleAdvanceReplayClockAsync(WorkerCommandEnvelope envelope, CancellationToken cancellationToken)
+    {
+        bool validDeadline = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() <= envelope.AdvanceReplayClock.DeadlineUnixMilliseconds;
+        bool accepted = validDeadline && bootstrap.DebugReplayMode && replayClock is not null;
+        if (accepted)
+            replayClock!.Advance(TimeSpan.FromMilliseconds(envelope.AdvanceReplayClock.Milliseconds));
+        await SendCommandResultAsync(envelope, accepted,
+            accepted ? IpcReasonCodes.Accepted : validDeadline ? IpcReasonCodes.InvalidCommand : IpcReasonCodes.DeadlineExceeded,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleCancelPromptAsync(WorkerCommandEnvelope envelope, CancellationToken cancellationToken)
+    {
+        bool validDeadline = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() <= envelope.CancelPrompt.DeadlineUnixMilliseconds;
+        bool accepted = validDeadline && bootstrap.DebugReplayMode && console?.CancelCurrentPrompt() == true;
+        await SendCommandResultAsync(envelope, accepted,
+            accepted ? IpcReasonCodes.Accepted : validDeadline ? IpcReasonCodes.InvalidCommand : IpcReasonCodes.DeadlineExceeded,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task InitializeAndRunAsync()
     {
         try
@@ -370,7 +399,14 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             RuntimeWidthMode widthMode = Enum.Parse<RuntimeWidthMode>(bootstrap.WidthMode, ignoreCase: true);
             RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = Enum.Parse<RuntimeFontSizeLineHeightMode>(bootstrap.FontSizeLineHeightMode, ignoreCase: true);
             var fileSystem = new LocalRuntimeFileSystem(paths);
-            console = new StructuredGameConsole();
+            debugTrace = bootstrap.DebugInputTraceEnabled ? new WorkerDebugTraceRecorder(bootstrap) : null;
+            IRuntimeClock runtimeClock = bootstrap.DebugReplayMode
+                ? replayClock = new ReplayRuntimeClock(DateTimeOffset.FromUnixTimeMilliseconds(bootstrap.ReplayStartupUnixMilliseconds))
+                : new TimeProviderRuntimeClock();
+            console = new StructuredGameConsole(
+                runtimeClock,
+                ConsoleHistoryOptions.Default,
+                traceObserver: debugTrace);
             host = EmueraRuntimeHost.Create(new EmueraRuntimeOptions(
                 paths,
                 console,
@@ -394,7 +430,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 runtimeFontFamilyName: runtimeFont.RuntimeFamilyName,
                 webFontAssetDigest: runtimeFont.WebWoff2Sha256,
                 convertBackslashToYen: bootstrap.ConvertBackslashToYen,
-                fontSizeLineHeightMode: fontSizeLineHeightMode));
+                fontSizeLineHeightMode: fontSizeLineHeightMode,
+                randomSeed: bootstrap.RandomSeed));
             runtimeCancellation = new CancellationTokenSource();
             console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
 
@@ -407,6 +444,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 Complete(WorkerExitCodes.RuntimeInitializationFailed);
                 return;
             }
+
+            debugTrace?.RuntimeConfigured(console.Snapshot.WindowMetadata, saveLayout, bootstrap.CompatibilityProfile);
 
             lock (sync)
             {
@@ -723,12 +762,12 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         DisplayFrame = frame
     };
 
-    private static CloudEmuera.Ipc.V8.DisplayCommitReason ToProto(R.DisplayCommitReason reason) => reason switch
+    private static CloudEmuera.Ipc.V9.DisplayCommitReason ToProto(R.DisplayCommitReason reason) => reason switch
     {
-        R.DisplayCommitReason.WaitingForInput => CloudEmuera.Ipc.V8.DisplayCommitReason.WaitingForInput,
-        R.DisplayCommitReason.RuntimeCompleted => CloudEmuera.Ipc.V8.DisplayCommitReason.RuntimeCompleted,
-        R.DisplayCommitReason.RuntimeFailed => CloudEmuera.Ipc.V8.DisplayCommitReason.RuntimeFailed,
-        R.DisplayCommitReason.ExplicitRefresh => CloudEmuera.Ipc.V8.DisplayCommitReason.ExplicitRefresh,
+        R.DisplayCommitReason.WaitingForInput => CloudEmuera.Ipc.V9.DisplayCommitReason.WaitingForInput,
+        R.DisplayCommitReason.RuntimeCompleted => CloudEmuera.Ipc.V9.DisplayCommitReason.RuntimeCompleted,
+        R.DisplayCommitReason.RuntimeFailed => CloudEmuera.Ipc.V9.DisplayCommitReason.RuntimeFailed,
+        R.DisplayCommitReason.ExplicitRefresh => CloudEmuera.Ipc.V9.DisplayCommitReason.ExplicitRefresh,
         _ => throw new InvalidDataException("The runtime display commit reason is unknown.")
     };
 
@@ -800,6 +839,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     {
         if (result.Status == EmueraRuntimeStatus.Completed || result.Status == EmueraRuntimeStatus.Cancelled)
         {
+            debugTrace?.Terminal(result.Status.ToString().ToLowerInvariant(), Interlocked.Read(ref lastSentCommittedSequence));
             await connection.SendControlAsync(new WorkerEnvelope
             {
                 ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
@@ -873,6 +913,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             fatal,
             outputSequence,
             exceptionType);
+        debugTrace?.RuntimeFailure(normalizedCode, normalizedPhase, safeMessage, outputSequence);
 
         await connection.SendControlAsync(new WorkerEnvelope
         {
@@ -898,6 +939,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task FinishAfterCancellationAsync()
     {
+        debugTrace?.Terminal("cancelled", Interlocked.Read(ref lastSentCommittedSequence));
         try
         {
             await SendStoppedAsync(
@@ -1002,6 +1044,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                     WorkerCommandEnvelope.PayloadOneofCase.StartRuntime => "start_runtime",
                     WorkerCommandEnvelope.PayloadOneofCase.SubmitInput => "submit_input",
                     WorkerCommandEnvelope.PayloadOneofCase.Stop => "stop_worker",
+                    WorkerCommandEnvelope.PayloadOneofCase.AdvanceReplayClock => "advance_replay_clock",
+                    WorkerCommandEnvelope.PayloadOneofCase.CancelPrompt => "cancel_prompt",
                     _ => "unsupported_command"
                 },
                 Accepted = accepted,

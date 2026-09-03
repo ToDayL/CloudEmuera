@@ -1,5 +1,5 @@
 /** GENERATED CONTRACT SNAPSHOT — source: src/CloudEmuera.Contracts/Realtime/runtime-capabilities.json. */
-export const CAPABILITY_DIGEST = "c847f0edba5379ffc03dbb13311ec5c8cd0d927b0850f5b162050ba64057448b";
+export const CAPABILITY_DIGEST = "185fdb9cc8ea20337820dbe576f4e023fc5bebd25b47573939ce7c899116a3fc";
 export const SUPPORTED_CAPABILITIES = [
   "console.text-lines",
   "console.buttons",

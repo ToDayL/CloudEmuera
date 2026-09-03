@@ -15,7 +15,7 @@ namespace CloudEmuera.Ipc;
 public static class IpcProtocol
 {
     public const uint CurrentVersion = 2;
-    public const int BootstrapSchemaVersion = 7;
+    public const int BootstrapSchemaVersion = 8;
 
     public static string NewMessageId(string prefix = "msg")
     {
@@ -160,6 +160,20 @@ public sealed record WorkerBootstrapDocument
 
     public int RuntimeExecutionTimeoutMilliseconds { get; init; } = -1;
 
+    public bool DebugInputTraceEnabled { get; init; }
+
+    public string DebugInputTracePath { get; init; } = string.Empty;
+
+    public long DebugTraceMaxBytes { get; init; } = 32L * 1024 * 1024;
+
+    public string DebugCaptureId { get; init; } = string.Empty;
+
+    public long RandomSeed { get; init; }
+
+    public bool DebugReplayMode { get; init; }
+
+    public long ReplayStartupUnixMilliseconds { get; init; }
+
     public WorkerBinding Binding => new(SessionId, WorkerId, WorkerEpoch);
 
     public void Validate()
@@ -206,6 +220,24 @@ public sealed record WorkerBootstrapDocument
         {
             throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
         }
+
+        if (DebugInputTraceEnabled)
+        {
+            IpcValidator.ValidateIdentifier(DebugCaptureId, nameof(DebugCaptureId));
+            IpcValidator.ValidateAbsolutePath(DebugInputTracePath, nameof(DebugInputTracePath));
+            string expectedMetadata = Path.Combine(Directory.GetParent(SessionRoot)?.FullName
+                ?? throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid), "metadata");
+            string expectedTrace = Path.Combine(expectedMetadata, "debug-input-trace.jsonl");
+            if (!string.Equals(Path.GetFullPath(DebugInputTracePath), Path.GetFullPath(expectedTrace), StringComparison.Ordinal) ||
+                DebugTraceMaxBytes is < 16_384 or > 33_554_432)
+                throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
+        }
+        else if (DebugInputTracePath.Length != 0 || DebugCaptureId.Length != 0)
+        {
+            throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
+        }
+        if (DebugReplayMode != (ReplayStartupUnixMilliseconds > 0))
+            throw new InvalidDataException(IpcReasonCodes.BootstrapInvalid);
     }
 
     private static void ValidatePositive(int value, string name, int minimum, int maximum)

@@ -8,6 +8,8 @@
     <ProjectReference Include="../../src/CloudEmuera.Realtime/CloudEmuera.Realtime.csproj" />
     <ProjectReference Include="../../src/CloudEmuera.RuntimeAdapter/CloudEmuera.RuntimeAdapter.csproj" />
     <ProjectReference Include="../../src/CloudEmuera.Api/CloudEmuera.Api.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.Debugging.Contracts/CloudEmuera.Debugging.Contracts.csproj" />
+    <ProjectReference Include="../../src/CloudEmuera.Debugger/CloudEmuera.Debugger.csproj" />
     <ProjectReference Include="../../src/CloudEmuera.Worker/CloudEmuera.Worker.csproj" />
   </ItemGroup>
   <ItemGroup>

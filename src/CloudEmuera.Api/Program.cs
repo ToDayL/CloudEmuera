@@ -60,6 +60,9 @@ string workerAssemblyPath = builder.Configuration["CloudEmuera:WorkerAssemblyPat
 string runtimeFontRoot = builder.Configuration["CloudEmuera:RuntimeFontRoot"]
     ?? Environment.GetEnvironmentVariable("CLOUDEMUERA_RUNTIME_FONT_ROOT")
     ?? FileRuntimeFontCatalog.ResolveDefaultRoot();
+string? runtimeDebugTraceSwitch = Environment.GetEnvironmentVariable("CLOUDEMUERA_RUNTIME_DEBUG_TRACE");
+bool runtimeDebugTraceEnabled = string.Equals(runtimeDebugTraceSwitch, "1", StringComparison.Ordinal) ||
+    bool.TryParse(runtimeDebugTraceSwitch, out bool parsedRuntimeDebugTrace) && parsedRuntimeDebugTrace;
 RealtimeOutputOptions realtimeOutputOptions = DeploymentOptionsBinder.BindRealtimeOutput(builder.Configuration);
 RealtimeGatewayOptions realtimeGatewayOptions = DeploymentOptionsBinder.BindRealtimeGateway(builder.Configuration);
 var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath, runtimeFontRoot)
@@ -68,6 +71,8 @@ var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath, runti
     PendingEventMaxMessages = DeploymentOptionsBinder.ReadInt(builder.Configuration, "CloudEmuera:Worker:PendingEventMaxMessages") ?? 256,
     PendingEventMaxBytes = DeploymentOptionsBinder.ReadInt(builder.Configuration, "CloudEmuera:Worker:PendingEventMaxBytes") ?? 1 * 1024 * 1024,
     PendingInputMaxMessages = realtimeGatewayOptions.MaxPendingInputsPerWorker,
+    DebugInputTraceEnabled = runtimeDebugTraceEnabled || builder.Configuration.GetValue<bool>("CloudEmuera:Debugger:TraceEnabled"),
+    DebugTraceMaxBytes = DeploymentOptionsBinder.ReadInt(builder.Configuration, "CloudEmuera:Debugger:TraceMaxBytes") ?? 32 * 1024 * 1024,
 };
 InstanceCapacityOptions capacityOptions = DeploymentOptionsBinder.BindCapacity(
     builder.Configuration,

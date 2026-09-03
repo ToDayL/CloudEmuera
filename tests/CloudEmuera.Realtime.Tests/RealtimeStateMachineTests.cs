@@ -13,7 +13,7 @@ using CloudEmuera.Application.Sessions;
 using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Ipc;
 using CloudEmuera.RuntimeAdapter;
-using W = CloudEmuera.Ipc.V8;
+using W = CloudEmuera.Ipc.V9;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;

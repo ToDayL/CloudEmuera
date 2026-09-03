@@ -1,5 +1,5 @@
 using CloudEmuera.Contracts.Realtime;
-using W = CloudEmuera.Ipc.V8;
+using W = CloudEmuera.Ipc.V9;
 using R = CloudEmuera.RuntimeAdapter;
 
 namespace CloudEmuera.Api.Realtime;
@@ -50,6 +50,8 @@ public sealed record RealtimeHubDiagnostics(
     long SoftOverflowCount,
     long HardOverflowCount,
     long FaultCount);
+
+public sealed record SessionPromptResolution(string PromptId, R.ConsolePromptCloseReason Reason, long Sequence);
 
 public enum RealtimeFrameKind
 {
@@ -102,6 +104,7 @@ public sealed class SessionOutputHub : IAsyncDisposable
     private R.ConsoleSnapshot? workingSnapshot;
     private R.ConsoleSnapshot? latestSnapshot;
     private R.DisplayCommit? committedFrame;
+    private SessionPromptResolution? lastPromptResolution;
     private RealtimeEncodedPayload? latestSnapshotPayload;
     private SnapshotEncodingOperation? snapshotEncoding;
     private SessionOutputHubState state = SessionOutputHubState.AwaitingInitialSnapshot;
@@ -185,6 +188,15 @@ public sealed class SessionOutputHub : IAsyncDisposable
         }
     }
 
+    public long CurrentCommittedFrameId
+    {
+        get
+        {
+            lock (sync)
+                return checked((long)(committedFrame?.FrameId ?? 0));
+        }
+    }
+
     public R.ConsoleSnapshot? CurrentSnapshot
     {
         get
@@ -192,6 +204,11 @@ public sealed class SessionOutputHub : IAsyncDisposable
             lock (sync)
                 return latestSnapshot;
         }
+    }
+
+    public SessionPromptResolution? LastPromptResolution
+    {
+        get { lock (sync) return lastPromptResolution; }
     }
 
     public RealtimeHubStatistics Statistics
@@ -352,6 +369,7 @@ public sealed class SessionOutputHub : IAsyncDisposable
                 }
 
                 latestSnapshot = candidate;
+                RecordPromptResolutionLocked(transactions);
                 // Invalidate the cache while publishing the new mirror. Do
                 // not clear it again after AddTransactions: a reader may
                 // legitimately finish lazy encoding while that work runs.
@@ -506,6 +524,7 @@ public sealed class SessionOutputHub : IAsyncDisposable
                         frame.RequiresSnapshot ? Array.Empty<R.SequencedConsoleTransaction>() : transactions);
                     committedFrame = commit;
                     latestSnapshot = candidate;
+                    RecordPromptResolutionLocked(transactions);
                     latestSnapshotPayload = null;
                     workingSnapshot = null;
                     state = SessionOutputHubState.Live;
@@ -558,6 +577,13 @@ public sealed class SessionOutputHub : IAsyncDisposable
             if (gateEntered)
                 publishGate.Release();
         }
+    }
+
+    private void RecordPromptResolutionLocked(IReadOnlyList<R.SequencedConsoleTransaction> transactions)
+    {
+        foreach (R.SequencedConsoleTransaction transaction in transactions)
+            foreach (R.ClosePromptOperation close in transaction.Transaction.Operations.OfType<R.ClosePromptOperation>())
+                lastPromptResolution = new SessionPromptResolution(close.PromptId, close.Reason, transaction.Sequence);
     }
 
     public void Complete(string reason = "runtime-completed", bool preservePending = true)

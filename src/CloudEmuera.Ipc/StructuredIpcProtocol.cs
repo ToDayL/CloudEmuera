@@ -1,19 +1,19 @@
 using System.Security.Cryptography;
 using System.Text;
-using CloudEmuera.Ipc.V8;
-using ProtoConsoleColor = CloudEmuera.Ipc.V8.ConsoleColor;
+using CloudEmuera.Ipc.V9;
+using ProtoConsoleColor = CloudEmuera.Ipc.V9.ConsoleColor;
 
 namespace CloudEmuera.Ipc;
 
 /// <summary>Versioned constants for the lossless structured Worker protocol.</summary>
 public static class StructuredIpcProtocol
 {
-    public const uint CurrentVersion = 8;
-    public const string CapabilityMatrixVersion = "p1-s10";
+    public const uint CurrentVersion = 9;
+    public const string CapabilityMatrixVersion = "debug-replay-v1";
     public const string UpstreamCommit = "2175f8a629257efb08214e093704b3a3d3d06d05";
 
     public static string CapabilitySetDigest { get; } = Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v8-button-generation")))
+        Encoding.UTF8.GetBytes($"cloudemuera:{CapabilityMatrixVersion}:{UpstreamCommit}:structured-console-v9-replay-control")))
         .ToLowerInvariant();
 }
 
@@ -212,6 +212,8 @@ public static class StructuredIpcValidator
             WorkerCommandEnvelope.PayloadOneofCase.StartRuntime => ValidateStart(envelope.StartRuntime),
             WorkerCommandEnvelope.PayloadOneofCase.SubmitInput => ValidateSubmitInput(envelope.SubmitInput),
             WorkerCommandEnvelope.PayloadOneofCase.Stop => ValidateStop(envelope.Stop),
+            WorkerCommandEnvelope.PayloadOneofCase.AdvanceReplayClock => ValidateAdvanceReplayClock(envelope.AdvanceReplayClock),
+            WorkerCommandEnvelope.PayloadOneofCase.CancelPrompt => ValidateCancelPrompt(envelope.CancelPrompt),
             _ => IpcValidationResult.Invalid(IpcReasonCodes.UnsupportedMessage)
         };
     }
@@ -721,6 +723,15 @@ public static class StructuredIpcValidator
             : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
 
     private static IpcValidationResult ValidateStop(StopWorker value) => value.DeadlineUnixMilliseconds > 0 && IsIdentifier(value.ReasonCode)
+        ? IpcValidationResult.Valid()
+        : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+
+    private static IpcValidationResult ValidateAdvanceReplayClock(AdvanceReplayClock value) =>
+        value.Milliseconds >= 0 && value.Milliseconds <= 86_400_000 && value.DeadlineUnixMilliseconds > 0
+            ? IpcValidationResult.Valid()
+            : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
+
+    private static IpcValidationResult ValidateCancelPrompt(CancelPrompt value) => value.DeadlineUnixMilliseconds > 0
         ? IpcValidationResult.Valid()
         : IpcValidationResult.Invalid(IpcReasonCodes.InvalidEnvelope);
 

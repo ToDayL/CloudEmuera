@@ -195,8 +195,101 @@ public sealed class StructuredGameConsoleInputTests
         Assert.Null(console.CurrentPrompt);
     }
 
+    [Fact]
+    public async Task TraceObserverSeesOneOpenedAndOneAcceptedResolution()
+    {
+        var observer = new RecordingTraceObserver();
+        var console = new StructuredGameConsole(
+            new ManualRuntimeClock(),
+            ConsoleHistoryOptions.Default,
+            new FixedPromptIdGenerator("traced"),
+            observer);
+        Task<GameConsoleInput> runtime = Task.Run(() => console.Read(new ConsolePrompt(ConsoleInputType.Text)));
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
+
+        ConsoleInputResult result = console.SubmitCurrentInput(new ConsoleInputAttempt("accepted", "value"));
+        _ = await runtime;
+
+        Assert.Equal(ConsoleInputResultKind.Accepted, result.Kind);
+        Assert.Single(observer.Opened);
+        (ConsolePrompt Prompt, ConsoleInputResult Result, ConsoleInputAttempt? Attempt) resolution = Assert.Single(observer.Resolved);
+        Assert.Equal("traced", resolution.Prompt.PromptId);
+        Assert.Equal("accepted", resolution.Attempt!.ClientMessageId);
+    }
+
+    [Fact]
+    public void NoActivePromptAttemptDoesNotReachTraceObserver()
+    {
+        var observer = new RecordingTraceObserver();
+        var console = new StructuredGameConsole(
+            new ManualRuntimeClock(),
+            ConsoleHistoryOptions.Default,
+            new FixedPromptIdGenerator("unused"),
+            observer);
+
+        ConsoleInputResult result = console.SubmitCurrentInput(new ConsoleInputAttempt("inactive", "value"));
+
+        Assert.Equal(ConsoleInputResultKind.NoActivePrompt, result.Kind);
+        Assert.Empty(observer.Opened);
+        Assert.Empty(observer.Resolved);
+    }
+
+    [Fact]
+    public async Task TimeoutResolutionReachesObserverWithoutSubmittedInput()
+    {
+        var clock = new ManualRuntimeClock();
+        var observer = new RecordingTraceObserver();
+        var console = new StructuredGameConsole(
+            clock,
+            ConsoleHistoryOptions.Default,
+            new FixedPromptIdGenerator("timeout"),
+            observer);
+        Task<GameConsoleInput> runtime = Task.Run(() => console.Read(new ConsolePrompt(
+            ConsoleInputType.Text,
+            timeout: TimeSpan.FromSeconds(2))));
+        Assert.True(SpinWait.SpinUntil(() => clock.PendingWaiterCount == 1, TimeSpan.FromSeconds(10)));
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAsync<ConsolePromptTimeoutException>(async () => await runtime);
+
+        (ConsolePrompt _, ConsoleInputResult Result, ConsoleInputAttempt? Attempt) resolution = Assert.Single(observer.Resolved);
+        Assert.Equal(ConsoleInputResultKind.TimedOut, resolution.Result.Kind);
+        Assert.Null(resolution.Attempt);
+    }
+
+    [Fact]
+    public async Task FormalPromptCancellationProducesOneCancelledResolution()
+    {
+        var observer = new RecordingTraceObserver();
+        var console = new StructuredGameConsole(
+            new ManualRuntimeClock(), ConsoleHistoryOptions.Default,
+            new FixedPromptIdGenerator("cancelled"), observer);
+        Task<GameConsoleInput> runtime = Task.Run(() => console.Read(new ConsolePrompt(ConsoleInputType.Text)));
+        Assert.True(SpinWait.SpinUntil(() => console.CurrentPrompt is not null, TimeSpan.FromSeconds(10)));
+
+        Assert.True(console.CancelCurrentPrompt());
+        await Assert.ThrowsAsync<ConsolePromptCancelledException>(async () => await runtime);
+
+        Assert.False(console.CancelCurrentPrompt());
+        (ConsolePrompt _, ConsoleInputResult Result, ConsoleInputAttempt? Attempt) resolution = Assert.Single(observer.Resolved);
+        Assert.Equal(ConsoleInputResultKind.Cancelled, resolution.Result.Kind);
+        Assert.Null(resolution.Attempt);
+    }
+
     private sealed class FixedPromptIdGenerator(string id) : IPromptIdGenerator
     {
         public string Next() => id;
+    }
+
+    private sealed class RecordingTraceObserver : IConsoleInputTraceObserver
+    {
+        public List<ConsolePrompt> Opened { get; } = [];
+
+        public List<(ConsolePrompt Prompt, ConsoleInputResult Result, ConsoleInputAttempt? Attempt)> Resolved { get; } = [];
+
+        public void PromptOpened(ConsolePrompt prompt) => Opened.Add(prompt);
+
+        public void PromptResolved(ConsolePrompt prompt, ConsoleInputResult result, ConsoleInputAttempt? attempt) =>
+            Resolved.Add((prompt, result, attempt));
     }
 }

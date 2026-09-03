@@ -67,6 +67,10 @@ public sealed record WorkerManagerOptions
 
     public long PendingInputMaxBytes { get; init; } = 2 * 1024 * 1024;
 
+    public bool DebugInputTraceEnabled { get; init; }
+
+    public long DebugTraceMaxBytes { get; init; } = 32L * 1024 * 1024;
+
     public void Validate()
     {
         IpcValidator.ValidateAbsolutePath(DataRoot, nameof(DataRoot));
@@ -88,6 +92,8 @@ public sealed record WorkerManagerOptions
         if (PendingInputMaxMessages <= 0 || PendingInputMaxMessages > 2048 ||
             PendingInputMaxBytes <= 0 || PendingInputMaxBytes > 16 * 1024 * 1024)
             throw new ArgumentException("Pending Worker input limits are outside their supported bounds.");
+        if (DebugTraceMaxBytes is < 16_384 or > 33_554_432)
+            throw new ArgumentException("The debug trace limit is outside its supported bounds.");
 
         if (!SamePath(RuntimeDirectory, Path.Combine(DataRoot, "runtime", ControlPlaneInstanceId)) ||
             !SamePath(BootstrapDirectory, Path.Combine(RuntimeDirectory, "bootstrap")) ||
@@ -130,7 +136,10 @@ public sealed record WorkerLaunchRequest
         string fontFaceId = RuntimeFontDefaults.DefaultFaceId, string fontCatalogDigest = "",
         SessionWidthMode widthMode = SessionWidthMode.Adaptive, int? customWidth = null,
         bool convertBackslashToYen = true,
-        SessionFontSizeLineHeightMode fontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override)
+        SessionFontSizeLineHeightMode fontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override,
+        long? randomSeed = null,
+        bool debugReplayMode = false,
+        DateTimeOffset? replayStartupWallClock = null)
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));
         SessionRoot = Path.GetFullPath(sessionRoot ?? throw new ArgumentNullException(nameof(sessionRoot)));
@@ -163,6 +172,11 @@ public sealed record WorkerLaunchRequest
         if (!Enum.IsDefined(fontSizeLineHeightMode))
             throw new ArgumentOutOfRangeException(nameof(fontSizeLineHeightMode));
         FontSizeLineHeightMode = fontSizeLineHeightMode;
+        RandomSeed = randomSeed;
+        if (debugReplayMode != replayStartupWallClock.HasValue)
+            throw new ArgumentException("Replay mode and its startup wall clock must be supplied together.");
+        DebugReplayMode = debugReplayMode;
+        ReplayStartupWallClock = replayStartupWallClock;
     }
 
     public WorkerBinding Binding { get; }
@@ -186,4 +200,7 @@ public sealed record WorkerLaunchRequest
     public int? CustomWidth { get; }
     public bool ConvertBackslashToYen { get; }
     public SessionFontSizeLineHeightMode FontSizeLineHeightMode { get; }
+    public long? RandomSeed { get; }
+    public bool DebugReplayMode { get; }
+    public DateTimeOffset? ReplayStartupWallClock { get; }
 }
