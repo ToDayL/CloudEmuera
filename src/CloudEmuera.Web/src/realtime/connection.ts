@@ -16,6 +16,8 @@ interface Subscription {
   retryCount: number;
 }
 
+const resumeSnapshotTimeoutMilliseconds = 5_000;
+
 /** One socket per tab. The manager never closes a Worker when the socket goes away. */
 export class RealtimeConnectionManager {
   private socket: WebSocket | null = null;
@@ -78,7 +80,10 @@ export class RealtimeConnectionManager {
   sendInput(sessionId: string, input: Omit<InputPayload, "clientMessageId"> & { clientMessageId?: string }): string | null {
     const subscription = this.subscriptions.get(sessionId);
     const epoch = subscription?.state.workerEpoch;
-    if (!subscription || epoch === null || epoch === undefined || this.phase !== "ready") return null;
+    if (!subscription || epoch === null || epoch === undefined || this.phase !== "ready" ||
+      subscription.state.phase === "resuming" || subscription.state.phase === "resyncing" ||
+      subscription.state.phase === "ended" || subscription.state.phase === "error" ||
+      subscription.state.phase === "forbidden") return null;
     const clientMessageId = input.clientMessageId ?? newClientMessageId();
     const payload: InputPayload = { ...input, clientMessageId };
     subscription.state = createPendingInput(subscription.state, { workerEpoch: epoch, clientMessageId, value: payload.value, source: payload.source, pointer: payload.pointer ?? null, key: payload.key ?? null });
@@ -179,7 +184,15 @@ export class RealtimeConnectionManager {
     if (message.type === "session.resume.result") {
       if (message.payload.status === "ACCEPTED") {
         subscription.retryCount = 0;
-        if (subscription.resumeTimer !== undefined) { window.clearTimeout(subscription.resumeTimer); subscription.resumeTimer = undefined; }
+        if (subscription.resumeTimer !== undefined) window.clearTimeout(subscription.resumeTimer);
+        // ACCEPTED only acknowledges the subscription. The session remains
+        // non-interactive until its authoritative snapshot/frame arrives.
+        // Keep a bounded watchdog so a lost/delayed first frame cannot leave
+        // the browser stuck in `resuming` forever (notably behind proxies).
+        subscription.resumeTimer = window.setTimeout(() => {
+          subscription.resumeTimer = undefined;
+          if (subscription.state.phase === "resuming") this.resume(subscription);
+        }, resumeSnapshotTimeoutMilliseconds);
       } else if (message.payload.status === "SNAPSHOT_NOT_READY") this.scheduleResume(subscription);
       else if (message.payload.status === "CAPABILITY_MISMATCH") { this.setPhase("incompatible", "客户端与 Session 能力版本不一致。"); subscription.state = { ...subscription.state, phase: "error", fatalRenderError: "能力版本不一致。" }; notify(subscription); }
       else if (message.payload.status === "SESSION_NOT_FOUND" || message.payload.status === "SESSION_NOT_RUNNING") { subscription.state = { ...subscription.state, phase: "ended" }; notify(subscription); }
@@ -206,6 +219,10 @@ export class RealtimeConnectionManager {
     if (message.type === "session.snapshot") {
       subscription.retryCount = 0;
       if (subscription.resumeTimer !== undefined) { window.clearTimeout(subscription.resumeTimer); subscription.resumeTimer = undefined; }
+    }
+    if (message.type === "display.frame" && subscription.resumeTimer !== undefined) {
+      window.clearTimeout(subscription.resumeTimer);
+      subscription.resumeTimer = undefined;
     }
     if (previousPendingStatus === "pending" && message.type === "session.stream.ended") subscription.state = markInputUnknown(subscription.state);
     notify(subscription);

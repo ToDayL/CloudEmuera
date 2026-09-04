@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RealtimeLine, RealtimeNode, RealtimeOperation, RealtimeTransaction } from "./protocol";
 import { applyTransaction, applyTransactions, ConsoleReductionError, createEmptyConsoleState } from "./reducer";
-import { applyBatch, applyInputReceipt, createPendingInput, createSessionStoreState, replaceSnapshot } from "./sessionStore";
+import { applyBatch, applyInputReceipt, beginResume, createPendingInput, createSessionStoreState, markInputUnknown, markResync, replaceSnapshot } from "./sessionStore";
 import reducerFixture from "./fixtures/reducer-v1.json";
 
 const style = { decorations: [], fontFamily: "game-default", fontSize: 16, lineHeight: 20, foreground: null, background: null };
@@ -152,5 +152,39 @@ describe("realtime reducer", () => {
     state = applyInputReceipt(state, { workerEpoch: 4 }, receipt);
     expect(state.pendingInput?.status).toBe("accepted");
     expect(state.pendingInput?.receipt?.resolvedPromptId).toBe("prompt-new");
+  });
+
+  it("finishes recovery when the authoritative snapshot version is unchanged", () => {
+    const initial = createEmptyConsoleState();
+    const snapshot = { workerEpoch: 4, snapshotSequence: 7, committedFrameId: 3, consoleState: initial };
+    let state = replaceSnapshot(createSessionStoreState("s1"), { sessionId: "s1", workerEpoch: 4, sequence: 7 }, snapshot);
+
+    state = beginResume(state);
+    state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 7 }, snapshot);
+    expect(state.phase).toBe("snapshot_ready");
+
+    state = markResync(state);
+    state = replaceSnapshot(state, { sessionId: "s1", workerEpoch: 4, sequence: 7 }, snapshot);
+    expect(state.phase).toBe("snapshot_ready");
+  });
+
+  it("marks only an unresolved input unknown when the transport disconnects", () => {
+    let state = createPendingInput(createSessionStoreState("s1"), {
+      workerEpoch: 4,
+      clientMessageId: "client-1",
+      value: "answer",
+      source: "KEYBOARD",
+    });
+    expect(markInputUnknown(state).pendingInput?.status).toBe("unknown");
+
+    state = applyInputReceipt(state, { workerEpoch: 4 }, {
+      clientMessageId: "client-1",
+      status: "ACCEPTED",
+      reasonCode: "accepted",
+      resolvedPromptId: "prompt-1",
+      normalizedValue: "answer",
+    });
+    expect(markInputUnknown(state)).toBe(state);
+    expect(state.pendingInput?.status).toBe("accepted");
   });
 });

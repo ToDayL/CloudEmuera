@@ -18,6 +18,7 @@ x-web-common: &web-common
     pnpm_config_store_dir: /var/cache/pnpm/store
     CLOUDEMUERA_UID: "${CLOUDEMUERA_UID:-1000}"
     CLOUDEMUERA_GID: "${CLOUDEMUERA_GID:-1000}"
+    CLOUDEMUERA_VITE_HMR: "${CLOUDEMUERA_VITE_HMR:-false}"
   volumes:
     - ..:/workspace
     - pnpm-store-v2:/var/cache/pnpm
@@ -106,7 +107,13 @@ services:
     command:
       - sh
       - -c
-      - pnpm install --frozen-lockfile && pnpm --dir src/CloudEmuera.Web dev --host 0.0.0.0
+      - >-
+        pnpm install --frozen-lockfile &&
+        if [ "$$CLOUDEMUERA_VITE_HMR" = "true" ]; then
+          exec pnpm --dir src/CloudEmuera.Web dev --host 0.0.0.0;
+        else
+          exec pnpm --dir src/CloudEmuera.Web exec vite preview --host 0.0.0.0;
+        fi
     ports:
       - "${CLOUDEMUERA_WEB_PORT:-5173}:5173"
 
