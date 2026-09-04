@@ -41,8 +41,20 @@ export function replaceSnapshot(state: SessionStoreState, envelope: { sessionId?
   if (state.workerEpoch === payload.workerEpoch && payload.snapshotSequence === state.sequence && payload.committedFrameId < state.committedFrameId) return state;
   if (state.workerEpoch === payload.workerEpoch && state.sequence !== null && payload.snapshotSequence > state.sequence && payload.committedFrameId <= state.committedFrameId)
     return { ...state, phase: "resyncing", fatalRenderError: "快照提交帧号没有前进，请重新同步。" };
-  if (state.workerEpoch === payload.workerEpoch && payload.snapshotSequence === state.sequence && payload.committedFrameId === state.committedFrameId)
-    return state;
+  if (state.workerEpoch === payload.workerEpoch && payload.snapshotSequence === state.sequence && payload.committedFrameId === state.committedFrameId) {
+    // Resume always establishes a new authoritative transport baseline, even
+    // when the Worker produced no output while the browser was away. An
+    // equivalent snapshot must finish recovery instead of leaving an
+    // otherwise healthy connection permanently non-interactive.
+    if (state.phase !== "resuming" && state.phase !== "resyncing") return state;
+    return {
+      ...state,
+      consoleState: payload.consoleState,
+      phase: "snapshot_ready",
+      lastReceipt: null,
+      fatalRenderError: null,
+    };
+  }
   const epochChanged = state.workerEpoch !== null && payload.workerEpoch !== state.workerEpoch;
   return {
     ...state,
@@ -150,7 +162,9 @@ export function createPendingInput(state: SessionStoreState, input: Omit<Pending
 }
 
 export function markInputUnknown(state: SessionStoreState): SessionStoreState {
-  return state.pendingInput ? { ...state, pendingInput: { ...state.pendingInput, status: "unknown" } } : state;
+  return state.pendingInput?.status === "pending"
+    ? { ...state, pendingInput: { ...state.pendingInput, status: "unknown" } }
+    : state;
 }
 
 export function applyInputReceipt(state: SessionStoreState, envelope: { workerEpoch?: number }, receipt: InputResultPayload): SessionStoreState {

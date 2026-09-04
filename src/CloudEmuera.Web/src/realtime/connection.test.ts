@@ -76,6 +76,25 @@ describe("RealtimeConnectionManager", () => {
     vi.unstubAllGlobals();
   });
 
+  it("does not turn an acknowledged historical input unknown on a later disconnect", () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    const manager = new RealtimeConnectionManager();
+    manager.subscribe("s1", () => undefined);
+    const socket = FakeWebSocket.instances[0]; socket.open();
+    socket.message({ protocolVersion: 6, type: "server.hello", messageId: "hello", payload: { protocolVersion: 6, payloadSchemaVersion: "p1-s10-button-generation", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 6, type: "session.snapshot", messageId: "snapshot", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, committedFrameId: 0, consoleState: state } });
+    const clientMessageId = manager.sendInput("s1", { source: "KEYBOARD", value: "answer", pointer: null, key: null });
+    expect(clientMessageId).toBeTruthy();
+    socket.message({ protocolVersion: 6, type: "session.input.result", messageId: "receipt", sessionId: "s1", workerEpoch: 3, payload: { clientMessageId, status: "ACCEPTED", reasonCode: "accepted", resolvedPromptId: "prompt-1", normalizedValue: "answer" } });
+    expect(manager.getSessionState("s1")?.pendingInput?.status).toBe("accepted");
+
+    socket.close(1006, "network");
+    expect(manager.getSessionState("s1")?.pendingInput?.status).toBe("accepted");
+    manager.dispose();
+    vi.unstubAllGlobals();
+  });
+
   it("does not burn reconnect attempts while offline and reconnects immediately when online returns", () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     FakeWebSocket.instances = [];
@@ -248,6 +267,35 @@ describe("RealtimeConnectionManager", () => {
 
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(manager.status).toBe("connecting");
+    manager.dispose();
+    vi.mocked(Math.random).mockRestore();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("finishes an in-page reconnect when the server snapshot is unchanged", () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    const manager = new RealtimeConnectionManager();
+    manager.subscribe("s1", () => undefined);
+    const first = FakeWebSocket.instances[0];
+    first.open();
+    first.message({ protocolVersion: 6, type: "server.hello", messageId: "hello-1", payload: { protocolVersion: 6, payloadSchemaVersion: "p1-s10-button-generation", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    first.message({ protocolVersion: 6, type: "session.snapshot", messageId: "snapshot-1", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, committedFrameId: 0, consoleState: state } });
+
+    first.close(1006, "network");
+    vi.advanceTimersByTime(250);
+    const second = FakeWebSocket.instances[1];
+    second.open();
+    second.message({ protocolVersion: 6, type: "server.hello", messageId: "hello-2", payload: { protocolVersion: 6, payloadSchemaVersion: "p1-s10-button-generation", connectionId: "c2", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    expect(manager.getSessionState("s1")?.phase).toBe("resuming");
+    second.message({ protocolVersion: 6, type: "session.resume.result", messageId: "resume-2", sessionId: "s1", payload: { status: "ACCEPTED", workerEpoch: 3, reasonCode: null } });
+    second.message({ protocolVersion: 6, type: "session.snapshot", messageId: "snapshot-2", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, committedFrameId: 0, consoleState: state } });
+
+    expect(manager.status).toBe("ready");
+    expect(manager.getSessionState("s1")?.phase).toBe("snapshot_ready");
     manager.dispose();
     vi.mocked(Math.random).mockRestore();
     vi.useRealTimers();

@@ -195,7 +195,7 @@ export function ConsolePage() {
         </div>
       </main>
       <div className="console-input-dock">
-        <PromptController ref={promptControllerRef} prompt={state?.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>
+        <PromptController ref={promptControllerRef} prompt={state?.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resuming" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>
       </div>
     </div>
   </ConsoleSurface>;
