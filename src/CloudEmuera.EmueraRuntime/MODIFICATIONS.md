@@ -1077,3 +1077,12 @@ requirements/ADR references, and verification commands.
   `HeadlessRuntimeFixtureTests.HtmlPrintResetsFlowCursorAfterExplicitPositionMovesBack`,
   the complete RuntimeCompatibility suite, and the existing layered
   portrait/reflow coverage.
+# 2026-09-04 - Explicit temporary-line display commits
+
+- Added the `IGameConsole.RequestDisplayRefresh` runtime-owned boundary and
+  mapped it to `DisplayCommitReason.ExplicitRefresh`.
+- Headless `PrintTemporaryLine` and TINPUT timeout countdowns now publish the
+  complete temporary/progress state atomically; ordinary output and prompt
+  redraw operations remain working-only until their existing prompt commit.
+- Added RuntimeAdapter regressions for promptless explicit refresh and stable
+  temporary-line replacement.
