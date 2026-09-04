@@ -72,6 +72,9 @@ internal sealed class EmueraConsole
     private string? deferredReplacementLogicalLineId;
     private bool lastLineCanAppend;
     private bool lastLineTemporary;
+    private long lastDisplayRefreshTimestamp;
+    private bool hasDisplayRefreshTimestamp;
+    private const int DisplayRefreshIntervalMilliseconds = 16;
     private string? htmlIslandDrawableId;
     private int redrawIntervalMilliseconds;
     private long canvasDrawableId;
@@ -253,7 +256,15 @@ internal sealed class EmueraConsole
         RecordWarning(FormatDiagnostic(value, position));
     public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) =>
         RecordMessageAndQueue(FormatDiagnostic(value, position));
-    public void PrintTemporaryLine(string value) => EmitLine(value, temporary: true);
+    public void PrintTemporaryLine(string value)
+    {
+        EmitLine(value, temporary: true);
+        // The upstream temporary-line API is an intentional visible refresh
+        // point, typically used for progress/status displays. Ordinary PRINT
+        // and reprint operations remain working-only until a prompt boundary.
+        if (adapter is StructuredGameConsole structured)
+            structured.RequestDisplayRefresh();
+    }
     public void PrintPlain(string value) => Print(value, lineEnd: false);
     public void PrintPlainWithSingleLineFix(string value) => EmitLine(value);
     public void PrintC(string value, bool alignmentRight)
@@ -2404,6 +2415,8 @@ internal sealed class EmueraConsole
             SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction([operation]));
             RuntimeDebugTrace.Current?.RecordTransaction(transaction);
             ProjectTooltipResources();
+            if (IsRefreshEligible(operation))
+                RequestDisplayRefreshIfDue(structured, force: false);
         }
         else
             adapter.Emit(operation);
@@ -2418,6 +2431,8 @@ internal sealed class EmueraConsole
         {
             structured.EmitTransaction(new ConsoleTransaction(copy));
             ProjectTooltipResources();
+            if (copy.Any(IsRefreshEligible))
+                RequestDisplayRefreshIfDue(structured, force: false);
         }
         else
         {
@@ -2425,6 +2440,35 @@ internal sealed class EmueraConsole
                 adapter.Emit(operation);
         }
     }
+
+    private void RequestDisplayRefreshIfDue(StructuredGameConsole structured, bool force)
+    {
+        long now = clock.GetTimestamp();
+        bool due = !hasDisplayRefreshTimestamp ||
+            clock.GetElapsedTime(lastDisplayRefreshTimestamp, now).TotalMilliseconds >= DisplayRefreshIntervalMilliseconds;
+        if (!force && !due)
+            return;
+        if (structured.CurrentDisplayCommit is { } current &&
+            current.CommitSequence >= structured.Snapshot.Sequence)
+        {
+            return;
+        }
+        structured.RequestDisplayRefresh();
+        lastDisplayRefreshTimestamp = now;
+        hasDisplayRefreshTimestamp = true;
+    }
+
+    private static bool IsRefreshEligible(ConsoleOperation operation) => operation switch
+    {
+        AppendLineOperation or AppendInlineOperation or ReplaceLineOperation or AppendNodesOperation => true,
+        SetWindowMetadataOperation or UpsertBackgroundOperation or RemoveBackgroundOperation or
+        ClearBackgroundsOperation or UpsertDrawableOperation or RemoveDrawableOperation or
+        ClearSceneRangeOperation or ClearSceneOperation or UpsertHitRegionOperation or
+        RemoveHitRegionOperation or ClearHitRegionsOperation or SetMediaChannelOperation or
+        StopMediaChannelOperation or StopAllMediaOperation or SetTooltipPresentationOperation or
+        UpsertTooltipResourceOperation or RemoveTooltipResourceOperation or ClearTooltipResourcesOperation => true,
+        _ => false
+    };
 
     private void EmitRasterDrawable(
         byte[] pngData,
@@ -2599,8 +2643,12 @@ internal sealed class EmueraConsole
         }
     }
 
-    private void EmitTimeoutCountdown(TimeSpan timeout) =>
+    private void EmitTimeoutCountdown(TimeSpan timeout)
+    {
         EmitLine($"Time remaining: {timeout.TotalSeconds:0.0}", temporary: true);
+        if (adapter is StructuredGameConsole structured)
+            structured.RequestDisplayRefresh();
+    }
 
     private ConsoleTextStyle ToConsoleTextStyle()
     {

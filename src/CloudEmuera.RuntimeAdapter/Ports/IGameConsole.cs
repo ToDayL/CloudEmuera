@@ -68,5 +68,11 @@ public interface IGameConsole
 {
     void Emit(ConsoleOperation operation);
 
+    /// <summary>
+    /// Promotes the current complete runtime state as an intentional display
+    /// refresh. Runtime code owns this boundary; transport must not infer it.
+    /// </summary>
+    void RequestDisplayRefresh();
+
     GameConsoleInput Read(ConsolePrompt prompt, CancellationToken cancellationToken = default);
 }

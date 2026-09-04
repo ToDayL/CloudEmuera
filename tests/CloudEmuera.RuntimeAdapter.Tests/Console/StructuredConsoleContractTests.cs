@@ -172,6 +172,41 @@ public sealed class StructuredConsoleContractTests
     }
 
     [Fact]
+    public void ExplicitRefreshPublishesTheCompleteWorkingStateWithoutPrompt()
+    {
+        var console = new StructuredGameConsole();
+        console.EmitTransaction(new ConsoleTransaction([ConsoleOperation.AppendLine(new ConsoleLine(
+            "progress",
+            [new TextNode("50%")],
+            temporary: true))]));
+
+        Assert.Null(console.CommittedSnapshot);
+
+        console.RequestDisplayRefresh();
+
+        DisplayCommit commit = console.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected an explicit display commit.");
+        Assert.Equal(DisplayCommitReason.ExplicitRefresh, commit.Reason);
+        Assert.Null(commit.Snapshot.CurrentPrompt);
+        Assert.Equal("50%", Assert.IsType<TextNode>(Assert.Single(commit.Snapshot.Scrollback[0].Nodes)).Text);
+    }
+
+    [Fact]
+    public void ExplicitRefreshReplacesTemporaryProgressWithoutPrompt()
+    {
+        var console = new StructuredGameConsole();
+        console.EmitTransaction(new ConsoleTransaction([ConsoleOperation.AppendLine(new ConsoleLine("progress", [new TextNode("10%")], temporary: true))]));
+        console.RequestDisplayRefresh();
+
+        console.EmitTransaction(new ConsoleTransaction([ConsoleOperation.ReplaceLine(new ConsoleLine("progress", [new TextNode("20%")], temporary: true))]));
+        console.RequestDisplayRefresh();
+
+        DisplayCommit commit = console.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected the updated explicit display commit.");
+        Assert.Equal(DisplayCommitReason.ExplicitRefresh, commit.Reason);
+        Assert.Equal("20%", Assert.IsType<TextNode>(Assert.Single(commit.Snapshot.Scrollback[0].Nodes)).Text);
+        Assert.Single(commit.Snapshot.Scrollback);
+    }
+
+    [Fact]
     public void StructuredResumeCompactsToABaselineWithoutLosingCurrentState()
     {
         var store = new ConsoleStateStore(new ConsoleHistoryOptions { MaxDeltaCount = 2 });

@@ -64,6 +64,14 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
 
     public DisplayCommit CommitDisplayFrame(DisplayCommitReason reason) => StateStore.CommitDisplayFrame(reason);
 
+    public void RequestDisplayRefresh()
+    {
+        lock (sync)
+        {
+            StateStore.CommitDisplayFrame(DisplayCommitReason.ExplicitRefresh);
+        }
+    }
+
     public ConsolePrompt? CurrentPrompt => StateStore.CurrentPrompt;
 
     public SequencedConsoleTransaction EmitTransaction(ConsoleTransaction transaction)
