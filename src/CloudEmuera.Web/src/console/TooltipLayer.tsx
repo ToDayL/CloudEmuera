@@ -45,13 +45,16 @@ interface TooltipContextValue {
   closeFromFocus(id: string, generation: number): void;
   activeIdentity: string | null;
   tooltipId: string;
+  inspectMode: boolean;
+  toggleInspectMode(): void;
 }
 
 const TooltipContext = createContext<TooltipContextValue | null>(null);
 
-export function ConsoleTooltipProvider({ presentation, resources, children }: {
+export function ConsoleTooltipProvider({ presentation, resources, toolbar, children }: {
   presentation: TooltipPresentation;
   resources: TooltipResource[];
+  toolbar?: ReactNode;
   children: ReactNode;
 }) {
   const registry = useRef(new Map<string, TooltipTargetRegistration>());
@@ -80,6 +83,10 @@ export function ConsoleTooltipProvider({ presentation, resources, children }: {
     clearDurationTimer();
     setOpen(null);
   }, [clearDurationTimer, clearHoverTimer]);
+  const toggleInspectMode = useCallback(() => {
+    setInspectMode(value => !value);
+    close();
+  }, [close]);
   const show = useCallback((target: TooltipTargetRegistration, pinned: boolean, pointer?: { x: number; y: number }) => {
     clearHoverTimer();
     clearDurationTimer();
@@ -144,7 +151,9 @@ export function ConsoleTooltipProvider({ presentation, resources, children }: {
     },
     activeIdentity: open ? `${open.target.id}:${open.target.generation}` : null,
     tooltipId,
-  }), [open, register, show, tooltipId]);
+    inspectMode,
+    toggleInspectMode,
+  }), [inspectMode, open, register, show, toggleInspectMode, tooltipId]);
 
   const cancelTouchCandidate = useCallback(() => {
     if (touchCandidate.current) clearTimeout(touchCandidate.current.timer);
@@ -250,11 +259,18 @@ export function ConsoleTooltipProvider({ presentation, resources, children }: {
 
   return <TooltipContext.Provider value={context}>
     <div className="console-tooltip-root" onPointerMoveCapture={onPointerMoveCapture} onPointerLeave={() => { suppressedHover.current = null; if (!open?.pinned) close(); }} onPointerDownCapture={onPointerDownCapture} onPointerUpCapture={onPointerUpCapture} onPointerCancelCapture={onPointerCancelCapture} onClickCapture={onClickCapture}>
-      <button className="tooltip-inspect-toggle" data-tooltip-ui type="button" aria-pressed={inspectMode} onClick={() => { setInspectMode(value => !value); close(); }}>查看提示</button>
+      {toolbar}
       {children}
     </div>
     {open && <TooltipOverlay open={open} presentation={presentation} resources={resources} id={tooltipId} onClose={close} />}
   </TooltipContext.Provider>;
+}
+
+export function ConsoleTooltipToggle() {
+  const context = useContext(TooltipContext);
+  if (!context) return null;
+  const label = context.inspectMode ? "关闭提示查看" : "开启提示查看";
+  return <button className={`console-inspect-toggle ${context.inspectMode ? "is-on" : ""}`} data-tooltip-ui type="button" aria-pressed={context.inspectMode} aria-label={label} title={label} onClick={context.toggleInspectMode}><i aria-hidden="true"/><span>提示</span></button>;
 }
 
 export function useConsoleTooltipTarget(tooltip: string | null | undefined, generation: number, inputTransparent = false): {

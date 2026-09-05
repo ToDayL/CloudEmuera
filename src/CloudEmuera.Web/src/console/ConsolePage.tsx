@@ -11,9 +11,10 @@ import { colorToCss } from "./SafeHtmlRenderer";
 import { consolePointerPayload, ScrollbackRenderer, type ConsoleActivationContext, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { getRealtimeConnectionManager, type ConnectionPhase } from "../realtime/connection";
 import type { RealtimeColor } from "../realtime/protocol";
+import { EMPTY_TOOLTIP_PRESENTATION } from "../realtime/reducer";
 import { createSessionStoreState, type SessionStoreState } from "../realtime/sessionStore";
 import { loadRuntimeFont, runtimeFontCssFamily } from "./RuntimeFontLoader";
-import { ConsoleTooltipProvider } from "./TooltipLayer";
+import { ConsoleTooltipProvider, ConsoleTooltipToggle } from "./TooltipLayer";
 
 function connectionLabel(phase: ConnectionPhase): string {
   return ({ disconnected: "未连接", connecting: "连接中", hello_pending: "校验中", ready: "实时连接", backing_off: "正在重连", auth_required: "需要重新登录", incompatible: "版本不兼容", disposed: "已结束" } as Record<ConnectionPhase, string>)[phase];
@@ -173,12 +174,19 @@ export function ConsolePage() {
     pendingInput: stream.pendingInput?.status === "pending",
   };
   const fatal = stream.fatalRenderError ?? rendererError;
+  const inputStatus = consoleInputStatus(stream);
   return <ConsoleSurface promptControllerRef={promptControllerRef} runtimeViewportHeight={state?.windowMetadata.viewportHeight} className="console-page realtime-console" style={consoleViewportStyle(visualViewport.height, visualViewport.offsetTop)}>
-    <div className="console-overlay-actions">
-      <Link className="console-overlay-back" to="/sessions" aria-label="离开游戏">←</Link>
-      <span className={`connection-chip ${connectionPhase === "ready" && networkOnline ? "is-online" : ""}`} role="status" aria-live="polite"><span className={connectionPhase === "ready" && networkOnline ? "online" : "offline"}/>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</span>
-      <button className="danger-text" aria-label="关闭 Session" onClick={() => void close()} disabled={closing || session.data.state !== "RUNNING"}>{closing ? "正在关闭…" : "关闭"}</button>
-    </div>
+    <ConsoleTooltipProvider
+      presentation={state?.tooltipPresentation ?? EMPTY_TOOLTIP_PRESENTATION}
+      resources={state?.tooltipResources ?? []}
+      toolbar={<div className="console-overlay-actions" data-tooltip-ui>
+        <Link className="console-overlay-back" to="/sessions" aria-label="离开游戏">←</Link>
+        <ConsoleTooltipToggle />
+        {inputStatus && <span className={`console-input-status is-${inputStatus.tone}`} role="status" aria-live="polite" aria-label={`输入：${inputStatus.label}。${inputStatus.detail}`} title={inputStatus.detail}><i aria-hidden="true"/><span>{inputStatus.label}</span></span>}
+        <span className={`connection-chip ${connectionPhase === "ready" && networkOnline ? "is-online" : ""}`} role="status" aria-live="polite"><span className={connectionPhase === "ready" && networkOnline ? "online" : "offline"}/>{networkOnline ? connectionLabel(connectionPhase) : "浏览器离线"}</span>
+        <button className="danger-text" aria-label="关闭 Session" onClick={() => void close()} disabled={closing || session.data.state !== "RUNNING"}>{closing ? "正在关闭…" : "关闭"}</button>
+      </div>}
+    >
     <div className="console-layout">
       <main ref={gameConsoleRef} className="game-console realtime-game-console" aria-label="游戏控制台" style={consoleBackgroundStyle(state?.windowMetadata.defaultBackground)}>
         <div className="realtime-console-stage" style={consoleSurfaceStyle(state?.windowMetadata.defaultBackground, state?.windowMetadata.viewportWidth, undefined, runtimeMetrics.fontSize, runtimeMetrics.lineHeight, runtimeCssFamily)} onClick={handleConsoleSurfaceClick}>
@@ -188,9 +196,8 @@ export function ConsolePage() {
         {stream.phase === "resyncing" && <div className="reconnect-banner resync-banner" role="status" aria-live="polite"><span>↻</span><p><strong>正在重新同步控制台</strong><small>检测到输出间隙或旧 Worker 事件，当前画面暂不继续应用。</small></p></div>}
         {stream.phase === "ended" && <div className="reconnect-banner ended-banner" role="status" aria-live="polite"><span>✓</span><p><strong>{terminalSession ? "Session 实时流已结束" : "Session 实时流暂时中断"}</strong><small>{terminalSession ? "Session 已进入终态，Worker 不再接收输入；SessionRoot 和存档仍会保留。" : "Session 状态仍由服务端维护；Worker 可能仍在运行，页面会以新的完整快照恢复。"}</small></p></div>}
         {(closeError || stream.pendingInput?.status === "unknown") && <div className="error-banner" role="alert"><strong>实时操作提示</strong><small>{closeError ?? "上次输入的结果未知；服务端可能已经处理，请确认当前提示后再决定是否重试。"}</small>{stream.pendingInput?.status === "unknown" && <button className="secondary-button" onClick={() => manager.retryUnknownInput(sessionId)}>重试上次输入</button>}</div>}
-        {stream.lastReceipt && <div className="console-receipt" role="status" aria-live="polite">输入回执：{inputReceiptLabel(stream.lastReceipt.status)}</div>}
         {fatal && <div className="console-fatal" role="alert"><strong>无法安全渲染此 Session</strong><p>{fatal}</p><small>服务端会继续保留 Session；请等待重新同步或返回 Session 列表。</small></div>}
-        {state ? <ConsoleTooltipProvider presentation={state.tooltipPresentation} resources={state.tooltipResources}><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} activation={activation} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} activation={activation} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} defaultLineHeight={runtimeMetrics.lineHeight} viewportHeight={state.windowMetadata.viewportHeight} /></ConsoleTooltipProvider> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
+        {state ? <><CanvasRenderer scene={state.canvasScene} backgroundLayers={state.backgroundLayers} windowMetadata={state.windowMetadata} assets={assets} onInput={input} onRenderError={reportRendererError} activation={activation} interactive /><ScrollbackRenderer lines={state.scrollback} assets={assets} onInput={input} activation={activation} onRenderError={reportRendererError} scrollContainerRef={gameConsoleRef} scrollVersion={`${connectionPhase}:${stream.phase}:${stream.workerEpoch ?? "none"}:${stream.sequence}:${stream.committedFrameId}`} forceScrollVersion={inputScrollVersion} defaultLineHeight={runtimeMetrics.lineHeight} viewportHeight={state.windowMetadata.viewportHeight} /></> : <div className="console-empty" aria-busy={stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden"}>{stream.phase !== "ended" && stream.phase !== "error" && stream.phase !== "forbidden" && <span className="mini-spinner"/>}<p>{emptyConsoleLabel(stream.phase)}</p></div>}
         {state && state.mediaState.channels.length > 0 && <button className="sound-toggle" type="button" onClick={() => void media.current?.enable().then(() => setSoundEnabled(true))}>{soundEnabled ? "声音已启用" : "启用声音"}</button>}
         </div>
       </main>
@@ -198,6 +205,7 @@ export function ConsolePage() {
         <PromptController ref={promptControllerRef} prompt={state?.currentPrompt} disabled={connectionPhase !== "ready" || stream.phase === "resuming" || stream.phase === "resyncing" || (stream.phase === "ended" && terminalSession)} pending={stream.pendingInput?.status === "pending"} serverTimeOffsetMilliseconds={manager.serverTimeOffset} onInput={input}/>
       </div>
     </div>
+    </ConsoleTooltipProvider>
   </ConsoleSurface>;
 }
 
@@ -437,6 +445,53 @@ function currentVisualViewport(): { height: number; offsetTop: number } {
     height: viewport?.height ?? window.innerHeight,
     offsetTop: viewport?.offsetTop ?? 0,
   };
+}
+
+export type ConsoleInputStatusTone = "waiting" | "pending" | "success" | "notice";
+export interface ConsoleInputStatus {
+  label: string;
+  tone: ConsoleInputStatusTone;
+  detail: string;
+}
+
+export function consoleInputStatus(stream: Pick<SessionStoreState, "consoleState" | "pendingInput" | "lastReceipt">): ConsoleInputStatus | null {
+  const pending = stream.pendingInput;
+  if (pending?.status === "pending") return { label: "发送中", tone: "pending", detail: "输入已发送，正在等待服务端回执。" };
+  if (pending?.status === "unknown") return { label: "待确认", tone: "notice", detail: "输入结果未知；服务端可能已经处理。" };
+
+  const receipt = stream.lastReceipt;
+  const receiptIsPositive = receipt?.status === "ACCEPTED" || receipt?.status === "DUPLICATE";
+  if (stream.consoleState?.currentPrompt) {
+    return {
+      label: "等待输入",
+      tone: "waiting",
+      detail: receipt && !receiptIsPositive ? `游戏正在等待你的输入；上次输入：${inputReceiptLabel(receipt.status)}。` : "游戏正在等待你的输入。",
+    };
+  }
+  return receipt ? inputReceiptPresentation(receipt.status) : null;
+}
+
+export function inputReceiptPresentation(status: string): ConsoleInputStatus {
+  const label = ({
+    ACCEPTED: "已接受",
+    DUPLICATE: "已处理",
+    CONFLICT: "冲突",
+    NO_ACTIVE_PROMPT: "已失效",
+    INVALID_FORMAT: "格式错误",
+    INVALID_COMMAND: "命令错误",
+    CANCELLED: "已取消",
+    TIMED_OUT: "已超时",
+    SESSION_NOT_ACCEPTING_INPUT: "未接受",
+    STALE_EPOCH: "已失效",
+    SESSION_NOT_RUNNING: "未运行",
+    INPUT_BACKPRESSURE: "待重试",
+    WORKER_UNAVAILABLE: "待重试",
+    FORBIDDEN: "无权限",
+  } as Record<string, string>)[status] ?? "未确认";
+  const tone: ConsoleInputStatusTone = status === "ACCEPTED" || status === "DUPLICATE"
+      ? "success"
+      : "notice";
+  return { label, tone, detail: inputReceiptLabel(status) };
 }
 
 function inputReceiptLabel(status: string): string {
