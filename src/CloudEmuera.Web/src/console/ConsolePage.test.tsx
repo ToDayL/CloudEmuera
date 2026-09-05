@@ -1,6 +1,7 @@
 import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { consoleBackgroundStyle, consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleFontMetrics, effectiveConsoleWidth, isBlankConsoleSurfaceTarget, submitConsoleSurfacePointer } from "./ConsolePage";
+import { consoleBackgroundStyle, consoleInputStatus, consoleSurfaceStyle, consoleViewportStyle, ConsoleSurface, effectiveConsoleFontMetrics, effectiveConsoleWidth, inputReceiptPresentation, isBlankConsoleSurfaceTarget, submitConsoleSurfacePointer } from "./ConsolePage";
+import { createEmptyConsoleState } from "../realtime/reducer";
 
 describe("console surface click filtering", () => {
   it("accepts non-control output areas and ignores buttons and form controls", () => {
@@ -216,6 +217,41 @@ describe("console surface click filtering", () => {
 
     expect(contextMenu.defaultPrevented).toBe(true);
     expect(submitRightClick).not.toHaveBeenCalled();
+  });
+});
+
+describe("console input status", () => {
+  it("shows a compact waiting state while the runtime is waiting for input", () => {
+    const consoleState = createEmptyConsoleState();
+    consoleState.currentPrompt = {
+      promptId: "prompt-1",
+      inputType: "text",
+      promptText: "请输入",
+      defaultValue: null,
+      constraints: { type: "text", maxLength: null, minimum: null, maximum: null, allowSign: null, allowControlCharacters: null },
+      timeoutBehavior: "wait",
+      timeoutAction: "close",
+      allowedSources: ["keyboard"],
+      oneInput: false,
+      systemInput: false,
+      stopMessageSkip: false,
+      displayTime: false,
+      timeoutMessage: null,
+      openedAtUnixMilliseconds: 0,
+      deadlineUnixMilliseconds: 0,
+      timeoutMilliseconds: null,
+      buttonGeneration: 1,
+    };
+
+    expect(consoleInputStatus({ consoleState, pendingInput: null, lastReceipt: null })).toEqual({ label: "等待输入", tone: "waiting", detail: "游戏正在等待你的输入。" });
+    expect(consoleInputStatus({ consoleState, pendingInput: null, lastReceipt: { clientMessageId: "client-1", status: "INVALID_FORMAT", reasonCode: "invalid_format", resolvedPromptId: "prompt-1", normalizedValue: null } })).toMatchObject({ label: "等待输入", tone: "waiting" });
+    expect(consoleInputStatus({ consoleState, pendingInput: { workerEpoch: 1, clientMessageId: "client-1", value: "", source: "KEYBOARD", fingerprint: "", status: "pending" }, lastReceipt: null })).toMatchObject({ label: "发送中", tone: "pending" });
+    expect(consoleInputStatus({ consoleState, pendingInput: { workerEpoch: 1, clientMessageId: "client-1", value: "", source: "KEYBOARD", fingerprint: "", status: "unknown" }, lastReceipt: null })).toMatchObject({ label: "待确认", tone: "notice" });
+  });
+
+  it("uses a neutral notice tone for an input receipt that was not accepted", () => {
+    expect(inputReceiptPresentation("INVALID_FORMAT")).toMatchObject({ label: "格式错误", tone: "notice" });
+    expect(inputReceiptPresentation("ACCEPTED")).toMatchObject({ label: "已接受", tone: "success" });
   });
 });
 

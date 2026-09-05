@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { AuthProvider, CurrentUser } from "./auth";
+import { SessionsPage } from "./sessions/pages";
 
 const digest = "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
 const runtimeFontDigest = "01799063a83f8af346c5e02f1a46c3adcd8b81a189abda60a6903075aea7bb25";
@@ -190,6 +192,46 @@ describe("App", () => {
         .toBeInTheDocument();
       const putCall = fetchMock.mock.calls.find(([url, init]) => String(url) === "/api/v1/preferences/session-startup-defaults" && init?.method === "PUT");
       expect(JSON.parse(String(putCall?.[1]?.body))).toEqual(savedDefaults);
+    } finally {
+      vi.unstubAllGlobals();
+      if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+      else Reflect.deleteProperty(document, "fonts");
+    }
+  });
+
+  it("keeps the full game name in the adaptive cover title", async () => {
+    mockFetch((url) => {
+      if (url === "/api/v1/games") return jsonResponse({ items: [game({ name: "eraBlueResort" })] });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games");
+
+    const title = await screen.findByRole("heading", { name: "eraBlueResort" });
+    expect(title).toHaveClass("cover-title");
+    expect(screen.getAllByText("eraBlueResort")).toHaveLength(1);
+  });
+
+  it("keeps the compatibility note inside its checkbox option", async () => {
+    const savedDefaults = { fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19, fontSizeLineHeightMode: "OVERRIDE", widthMode: "ADAPTIVE", customWidth: null, convertBackslashToYen: true };
+    mockFetch((url) => {
+      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse(savedDefaults);
+      if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
+      if (url === `/api/v1/runtime-fonts/assets/${runtimeFontDigest}.woff2`) return new Response(new TextEncoder().encode("font-test"), { headers: { "Content-Type": "font/woff2", "Content-Length": "9" } });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: { add: vi.fn(), load: vi.fn().mockResolvedValue([]), ready: Promise.resolve([]) } });
+    class TestFontFace {
+      constructor(readonly family: string, readonly source: ArrayBuffer, readonly descriptors: FontFaceDescriptors) {}
+      load(): Promise<FontFace> { return Promise.resolve(this as unknown as FontFace); }
+    }
+    vi.stubGlobal("FontFace", TestFontFace);
+    try {
+      renderAt("/settings");
+      const checkbox = await screen.findByRole("checkbox");
+      const option = checkbox.closest("label");
+      expect(option).toHaveClass("checkbox-option");
+      expect(option).toContainElement(screen.getByText("只影响显示和排版；输入、按钮值、脚本字符串与文件路径不会改变。"));
     } finally {
       vi.unstubAllGlobals();
       if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
@@ -425,6 +467,23 @@ describe("App", () => {
       if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
       else Reflect.deleteProperty(document, "fonts");
     }
+  });
+
+  it("keeps multiple Session status badges in one consistent badge group", async () => {
+    const waitingSession = session({ waitingForInput: true });
+    mockFetch((url) => {
+      if (url === "/api/v1/sessions?limit=50") return jsonResponse({ items: [waitingSession], nextCursor: null });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={["/sessions"]}><SessionsPage/></MemoryRouter></QueryClientProvider>);
+
+    expect(await screen.findByRole("heading", { name: "港口旅程" })).toBeInTheDocument();
+    const badges = document.querySelectorAll(".session-badges .status-pill");
+    expect(badges).toHaveLength(2);
+    expect([...badges].every(badge => badge.classList.contains("status-pill"))).toBe(true);
+    expect(badges[1]).toHaveTextContent("等待输入");
+    vi.unstubAllGlobals();
   });
 
   it("deletes a closed Session from the Session list", async () => {

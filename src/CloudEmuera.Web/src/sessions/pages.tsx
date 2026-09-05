@@ -81,7 +81,7 @@ function SessionRow({ session, busy, onLifecycle, onDelete }: { session: Session
   const canOpen = session.state === "CLOSED" || session.state === "CRASHED";
   return <article className="session-row">
     <span className={`session-art ${color}`}>{session.name.slice(0, 1)}</span>
-    <div className="session-main"><div><h2>{session.name}</h2><p>{session.game.name} <span>·</span> {shortDigest(session.sourceContentDigest)}</p></div><div className="session-badges"><span className={`status-pill ${session.state.toLowerCase()}`}><i/>{stateLabel(session.state)}</span>{session.waitingForInput && session.state === "RUNNING" && <span className="tag waiting">◷ 等待输入</span>}</div></div>
+    <div className="session-main"><div><h2>{session.name}</h2><p>{session.game.name} <span>·</span> {shortDigest(session.sourceContentDigest)}</p></div><div className="session-badges"><span className={`status-pill ${session.state.toLowerCase()}`}><i/>{stateLabel(session.state)}</span>{session.waitingForInput && session.state === "RUNNING" && <span className="status-pill waiting"><i/>等待输入</span>}</div></div>
     <div className="session-meta"><span>最后活动</span><strong>{formatDateTime(session.lastActivityAt)}</strong></div>
     <div className="session-meta"><span>创建时间</span><strong>{formatDateTime(session.createdAt)}</strong></div>
     <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? "启动中…" : "继续游戏"}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>继续游戏</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>关闭</button>}{canOpen && <button className="text-button danger" onClick={onDelete} disabled={busy}>删除</button>}<Link className="text-button" to={`/sessions/${session.id}/configuration`}>配置</Link><Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>存档</Link></div>
@@ -182,7 +182,13 @@ export function SessionWidthFields({ widthMode, customWidth, setWidthMode, setCu
 }
 
 export function SessionYenCompatibilityField({ value, onChange, disabled = false }: { value: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
-  return <label><span>Era 日元符号兼容</span><span><input type="checkbox" checked={value} onChange={event => onChange(event.target.checked)} disabled={disabled}/> 将游戏显示文本中的反斜杠（\）转换为半角日元符号（¥）</span><small>只影响显示和排版；输入、按钮值、脚本字符串与文件路径不会改变。</small></label>;
+  return <fieldset className="checkbox-field">
+    <legend>Era 日元符号兼容</legend>
+    <label className="checkbox-option">
+      <input type="checkbox" checked={value} onChange={event => onChange(event.target.checked)} disabled={disabled}/>
+      <span className="checkbox-copy"><span className="checkbox-title">将游戏显示文本中的反斜杠（\）转换为半角日元符号（¥）</span><small>只影响显示和排版；输入、按钮值、脚本字符串与文件路径不会改变。</small></span>
+    </label>
+  </fieldset>;
 }
 
 export function SessionConfigurationPage() {

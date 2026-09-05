@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TooltipPresentation } from "../realtime/protocol";
-import { ConsoleTooltipProvider, useConsoleTooltipTarget } from "./TooltipLayer";
+import { ConsoleTooltipProvider, ConsoleTooltipToggle, useConsoleTooltipTarget } from "./TooltipLayer";
 
 const presentation: TooltipPresentation = {
   customEnabled: true,
@@ -19,6 +19,19 @@ const presentation: TooltipPresentation = {
 afterEach(() => vi.useRealTimers());
 
 describe("ConsoleTooltipProvider", () => {
+  it("toggles inspect mode from the compact toolbar control", () => {
+    render(<Fixture tooltip="toolbar" />);
+    const toggle = screen.getByRole("button", { name: "开启提示查看" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(toggle).not.toHaveClass("is-on");
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveClass("is-on");
+    expect(toggle).toHaveTextContent("提示");
+  });
+
   it("uses a zero-layout badge and opens pure text immediately on keyboard focus", () => {
     render(<Fixture tooltip={'line 1<br><img src="x">'} />);
     const target = screen.getByRole("button", { name: /choice/i });
@@ -118,7 +131,7 @@ describe("ConsoleTooltipProvider", () => {
     render(<Fixture tooltip="under toolbar" />);
     const target = screen.getByRole("button", { name: /choice/i });
     target.getBoundingClientRect = () => rect(0, 0, 300, 100);
-    const inspect = screen.getByRole("button", { name: "查看提示" });
+    const inspect = screen.getByRole("button", { name: "开启提示查看" });
 
     fireEvent.pointerDown(inspect, { pointerType: "touch", pointerId: 8, clientX: 20, clientY: 20 });
     fireEvent.pointerUp(inspect, { pointerType: "touch", pointerId: 8, clientX: 20, clientY: 20 });
@@ -133,7 +146,7 @@ describe("ConsoleTooltipProvider", () => {
     render(<Fixture tooltip="hybrid" onInput={onInput} />);
     const target = screen.getByRole("button", { name: /choice/i });
     target.getBoundingClientRect = () => rect(10, 10, 80, 30);
-    fireEvent.click(screen.getByRole("button", { name: "查看提示" }), { detail: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "开启提示查看" }), { detail: 1 });
 
     fireEvent.click(target, { detail: 1, clientX: 30, clientY: 20 });
 
@@ -156,7 +169,7 @@ describe("ConsoleTooltipProvider", () => {
 });
 
 function Fixture({ tooltip, onInput = () => undefined }: { tooltip: string; onInput?: () => void }) {
-  return <ConsoleTooltipProvider presentation={presentation} resources={[]}><Target tooltip={tooltip} onInput={onInput} /></ConsoleTooltipProvider>;
+  return <ConsoleTooltipProvider presentation={presentation} resources={[]} toolbar={<ConsoleTooltipToggle />}><Target tooltip={tooltip} onInput={onInput} /></ConsoleTooltipProvider>;
 }
 
 function Target({ tooltip, onInput }: { tooltip: string; onInput: () => void }) {
