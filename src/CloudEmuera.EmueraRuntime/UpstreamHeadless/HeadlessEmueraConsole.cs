@@ -1769,7 +1769,11 @@ internal sealed class EmueraConsole
         PositionedInlineSegmentNode segment => segment.MeasuredWidth,
         ImageNode image => image.Destination?.Width ?? image.Width ?? (image.AltText is null ? 0 : Measure(image.AltText)),
         SpriteNode sprite => sprite.Destination.Width,
-        ShapeNode shape => shape.Bounds.Width,
+        // Rectangle shapes carry their painted x offset inside the inline
+        // part. The upstream ConsoleRectangleShapePart advances by
+        // `rect.X + rect.Width`, so using only the painted width causes the
+        // next positioned shape to be laid out before the preceding one.
+        ShapeNode shape => checked(Math.Max(0, shape.Bounds.X) + shape.Bounds.Width),
         // ConsoleDivPart keeps its rectangle width for painting but does not
         // contribute that width to ConsoleButtonString's inline cursor. HTML
         // divs therefore form positioned overlay layers; counting Bounds.Width

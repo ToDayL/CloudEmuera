@@ -2188,6 +2188,57 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "FontLayout")]
+    public async Task HtmlPrintAdvancesPastOffsetRectangleBeforeNextShape()
+    {
+        // PLAY-002/COMP-007: a shape's inline advance includes its local x
+        // offset. BGPRINTL emits successive background rectangles this way;
+        // measuring only Bounds.Width places the next rectangle before the
+        // text it is meant to cover.
+        string html = "<p align='left'><nobr>" +
+            "<shape type='rect' param='198px,0,18px,18px'>" +
+            "<shape type='rect' param='72px,0,18px,18px'>" +
+            "</nobr></p>";
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nHTML_PRINT \"" + html + "\"\nQUIT\n",
+            configuration: "Use sav folder:NO\n窗口宽度:800\n字体大小:18\n每行高度:18\n");
+        string repositoryRoot = RuntimeCompatibilityCli.FindRepositoryRoot();
+        string fontRoot = Path.Combine(repositoryRoot, "assets", "runtime-fonts");
+        string catalogPath = Path.Combine(fontRoot, "catalog.json");
+        string catalogDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
+        await using EmueraRuntimeHost host = fixture.CreateHost(
+            runDeadline: TimeSpan.FromSeconds(8),
+            fontFaceId: "sarasa-fixed-sc-1.0.40-regular",
+            fontCatalogDigest: catalogDigest,
+            runtimeFontPath: Path.Combine(fontRoot, "runtime-ttf", "sarasa-fixed-sc-1.0.40-regular.ttf"),
+            runtimeFontFamilyName: "Sarasa Fixed SC",
+            webFontAssetDigest: "e1f5a8837b6dd9cc1fdd11684c55f4f46bbcf879b7f0f64a48e4db3f3009a0c3");
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        ShapeNode[] shapes = fixture.Console.Snapshot.Scrollback
+            .Single()
+            .Nodes
+            .OfType<PositionedInlineSegmentNode>()
+            .SelectMany(segment => segment.Children.OfType<ShapeNode>())
+            .ToArray();
+        PositionedInlineSegmentNode[] segments = fixture.Console.Snapshot.Scrollback
+            .Single()
+            .Nodes
+            .OfType<PositionedInlineSegmentNode>()
+            .ToArray();
+
+        Assert.True(shapes.Length == 2);
+        Assert.Equal(2, segments.Length);
+        Assert.Equal(0, segments[0].PositionX);
+        Assert.Equal(216, segments[0].MeasuredWidth);
+        Assert.Equal(216, segments[1].PositionX);
+        Assert.Equal(72, shapes[1].Bounds.X);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HtmlPrintRetainsTheSpecificTranslationFailureReason()
     {
         // PLAY-002: a semantically non-positive div remains fail-closed, but
