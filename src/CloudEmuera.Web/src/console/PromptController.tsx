@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
 import type { Prompt } from "../realtime/protocol";
 import { DeadlineClock } from "./DeadlineClock";
+import i18n from "../i18n";
 import type { ConsoleInputEvent } from "./ScrollbackRenderer";
 
 export interface PromptControllerHandle {
@@ -72,7 +73,7 @@ export const PromptController = forwardRef<PromptControllerHandle, PromptControl
     submitPointer({ x: position.x, y: position.y, button: 2, pressed: true });
   useImperativeHandle(ref, () => ({ submitBlankEnter, submitRightClick, submitPointer }), [submitBlankEnter, submitPointer]);
 
-  const promptLabel = prompt?.systemInput ? "游戏运行时输入" : "游戏输入提示";
+  const promptLabel = i18n.t(prompt?.systemInput ? "runtimeUi.systemInput" : "runtimeUi.prompt");
   const enterButtonDisabled = controlsDisabled;
   const enterButtonClass = `prompt-enter-button ${controlsDisabled ? (pending ? "is-pending" : "is-waiting") : "is-ready"}`;
   const submitWithEnter = () => {
@@ -85,11 +86,11 @@ export const PromptController = forwardRef<PromptControllerHandle, PromptControl
     {deadline}
     {visiblePromptText && <div className="prompt-heading"><p>{visiblePromptText}</p></div>}
     {showInputForm && <form onSubmit={event => { event.preventDefault(); submitWithEnter(); }}>
-      <input autoFocus={prompt?.inputType !== "waitOnly"} type={integerInput ? "number" : "text"} value={value} onChange={event => setValue(constrainValue(event.target.value))} onKeyDown={onKeyDown} disabled={controlsDisabled} maxLength={prompt?.constraints.maxLength ?? undefined} min={integerInput ? prompt?.constraints.minimum ?? undefined : undefined} max={integerInput ? prompt?.constraints.maximum ?? undefined : undefined} step={integerInput ? 1 : undefined} inputMode={integerInput ? "numeric" : "text"} aria-label="游戏输入" />
-      <button className={enterButtonClass} type="submit" aria-label={enterOnly ? "按回车继续" : "发送"} title={enterOnly ? "按回车继续" : "按回车提交"} disabled={enterButtonDisabled}>↵</button>
+      <input autoFocus={prompt?.inputType !== "waitOnly"} type={integerInput ? "number" : "text"} value={value} onChange={event => setValue(constrainValue(event.target.value))} onKeyDown={onKeyDown} disabled={controlsDisabled} maxLength={prompt?.constraints.maxLength ?? undefined} min={integerInput ? prompt?.constraints.minimum ?? undefined : undefined} max={integerInput ? prompt?.constraints.maximum ?? undefined : undefined} step={integerInput ? 1 : undefined} inputMode={integerInput ? "numeric" : "text"} aria-label={i18n.t("runtimeUi.input")} />
+      <button className={enterButtonClass} type="submit" aria-label={i18n.t(enterOnly ? "runtimeUi.enter" : "runtimeUi.send")} title={i18n.t(enterOnly ? "runtimeUi.enter" : "runtimeUi.enterSubmit")} disabled={enterButtonDisabled}>↵</button>
     </form>}
-    {prompt?.inputType === "anyKey" && <button className="secondary-button prompt-any-key" type="button" autoFocus onKeyDown={onAnyKeyDown} onClick={event => event.preventDefault()} disabled={controlsDisabled}>按任意键继续</button>}
-    {prompt?.inputType === "primitivePointerKey" && <button className="secondary-button prompt-any-key" type="button" autoFocus onKeyDown={onAnyKeyDown} onClick={event => event.preventDefault()} disabled={controlsDisabled}>按键或触摸画布交互区域</button>}
+    {prompt?.inputType === "anyKey" && <button className="secondary-button prompt-any-key" type="button" autoFocus onKeyDown={onAnyKeyDown} onClick={event => event.preventDefault()} disabled={controlsDisabled}>{i18n.t("runtimeUi.anyKey")}</button>}
+    {prompt?.inputType === "primitivePointerKey" && <button className="secondary-button prompt-any-key" type="button" autoFocus onKeyDown={onAnyKeyDown} onClick={event => event.preventDefault()} disabled={controlsDisabled}>{i18n.t("runtimeUi.pointer")}</button>}
     {prompt?.timeoutMessage && <small className="prompt-timeout-message">{prompt.timeoutMessage}</small>}
   </section>;
 });

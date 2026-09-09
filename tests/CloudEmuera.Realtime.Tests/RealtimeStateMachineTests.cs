@@ -474,6 +474,7 @@ public sealed class RealtimeStateMachineTests
 
         public Task<SessionStartupDefaults> GetSessionStartupDefaultsAsync(CurrentActor actor, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SessionStartupDefaults> UpdateSessionStartupDefaultsAsync(CurrentActor actor, SessionStartupDefaultsCommand command, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<UiLocalePreference> UpdateUiLocaleAsync(CurrentActor actor, string locale, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<LoginResult?> LoginAsync(LoginCommand command, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task LogoutAsync(string sessionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<LoginResult?> ChangePasswordAsync(CurrentActor actor, string currentPassword, string newPassword, CancellationToken cancellationToken = default) => throw new NotSupportedException();

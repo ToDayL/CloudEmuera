@@ -2,6 +2,7 @@ import { Fragment, useEffect } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { AssetResolver } from "./AssetResolver";
 import type { RealtimeColor, RealtimeHtmlNode, RealtimeTextStyle } from "../realtime/protocol";
+import i18n from "../i18n";
 
 const safeTags = new Set(["span", "div", "p", "b", "strong", "i", "em", "u", "s", "strike", "img"]);
 
@@ -51,6 +52,6 @@ function renderHtmlNode(node: RealtimeHtmlNode, assets: AssetResolver, onRenderE
 }
 
 function MissingAssetReporter({ onRenderError }: { onRenderError?: (message: string) => void }) {
-  useEffect(() => { onRenderError?.("HTML Island 引用了未授权的 Session 资源。"); }, [onRenderError]);
-  return <span className="console-missing-asset" role="img" aria-label="资源不可用">[资源不可用]</span>;
+  useEffect(() => { onRenderError?.(i18n.t("renderer.htmlAsset")); }, [onRenderError]);
+  return <span className="console-missing-asset" role="img" aria-label={i18n.t("renderer.unavailable")}>[{i18n.t("renderer.unavailable")}]</span>;
 }

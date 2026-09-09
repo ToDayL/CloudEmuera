@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiRequest, apiRequestWithMeta, getCsrfToken, newIdempotencyKey } from "../api";
 import type { RuntimeWidthModeDto, SessionFontSizeLineHeightModeDto, SessionGameSummaryDto, SessionListResponseDto, SessionResponseDto, SessionStateDto } from "../api/generated";
+import i18n from "../i18n";
 
 export type SessionState = SessionStateDto;
 export type SessionGameSummary = SessionGameSummaryDto;
@@ -116,7 +117,7 @@ export async function waitForSessionDeletion(
       delayMilliseconds = Math.min(1_000, Math.round(delayMilliseconds * 1.35));
     }
   }
-  throw new Error("Session 删除在限定时间内没有完成。");
+  throw new Error(i18n.t("runtimeUi.deleteTimeout"));
 }
 
 async function lifecycleRequest(sessionId: string, operation: "open" | "close", browserWidth: number, idempotencyKey: string): Promise<SessionView> {
@@ -144,19 +145,19 @@ export async function waitForSession(
       delayMilliseconds = Math.min(1_000, Math.round(delayMilliseconds * 1.35));
     }
   }
-  throw new Error("Session 状态在限定时间内没有完成变更。");
+  throw new Error(i18n.t("runtimeUi.transitionTimeout"));
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(signal.reason ?? new DOMException("操作已取消。", "AbortError"));
+      reject(signal.reason ?? new DOMException(i18n.t("runtimeUi.operationCancelled"), "AbortError"));
       return;
     }
     const timer = window.setTimeout(resolve, milliseconds);
     signal?.addEventListener("abort", () => {
       window.clearTimeout(timer);
-      reject(signal.reason ?? new DOMException("操作已取消。", "AbortError"));
+      reject(signal.reason ?? new DOMException(i18n.t("runtimeUi.operationCancelled"), "AbortError"));
     }, { once: true });
   });
 }

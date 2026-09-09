@@ -538,6 +538,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .login-page { display: block; }.login-story { min-height: 260px; padding: 28px 24px; }.login-story h1 { margin-top: 8px; font-size: 30px; }.login-story div > p:last-child, .login-story > small { display: none; }.login-form-wrap { padding: 38px 24px; }
 }
 
+.language-select { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.language-select select { min-width: 148px; }
+.login-form > .language-select { margin: 0 0 18px; }
+
 @media (max-width: 760px) {
   .session-row-actions { grid-column: 1 / -1; justify-content: stretch; }.session-row-actions > * { flex: 1; }.session-row-actions .text-button { min-height: 34px; }
   .realtime-game-console { padding-right: 9px; padding-left: 9px; }.scrollback { padding: 15px 12px; }.prompt-controller { padding: 12px; }.prompt-heading { align-items: flex-start; flex-direction: column; }.prompt-controller form { align-items: stretch; flex-direction: column; }.prompt-controller .primary-button { width: 100%; }

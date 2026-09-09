@@ -1,4 +1,5 @@
 import type { RuntimeFontFace } from "../sessions/api";
+import i18n from "../i18n";
 
 const loadedByDigest = new Map<string, Promise<FontFace>>();
 
@@ -25,22 +26,22 @@ export function loadRuntimeFont(face: RuntimeFontFace, cssFamily: string): Promi
 
 async function loadAndVerify(face: RuntimeFontFace, cssFamily: string): Promise<FontFace> {
   if (typeof FontFace === "undefined" || typeof document === "undefined" || !document.fonts)
-    throw new Error("当前浏览器不支持受控运行时字体。");
+    throw new Error(i18n.t("runtimeUi.fontUnsupported"));
   if (!/^[0-9a-f]{64}$/.test(face.webAssetDigest) || !Number.isSafeInteger(face.webAssetByteLength) || face.webAssetByteLength <= 0)
-    throw new Error("运行时字体目录摘要或长度无效。");
+    throw new Error(i18n.t("runtimeUi.fontCatalog"));
 
   const response = await fetch(face.webAssetUrl, { credentials: "same-origin", cache: "force-cache" });
-  if (!response.ok) throw new Error(`运行时字体请求失败（HTTP ${response.status}）。`);
+  if (!response.ok) throw new Error(i18n.t("runtimeUi.fontHttp", { status: response.status }));
   const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
-  if (contentType !== "font/woff2") throw new Error("运行时字体 MIME 类型不受支持。");
+  if (contentType !== "font/woff2") throw new Error(i18n.t("runtimeUi.fontMime"));
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null && declaredLength !== String(face.webAssetByteLength))
-    throw new Error("运行时字体长度与目录不一致。");
+    throw new Error(i18n.t("runtimeUi.fontCatalogLength"));
 
   const bytes = await response.arrayBuffer();
-  if (bytes.byteLength !== face.webAssetByteLength) throw new Error("运行时字体长度校验失败。");
+  if (bytes.byteLength !== face.webAssetByteLength) throw new Error(i18n.t("runtimeUi.fontLength"));
   const digest = await sha256(bytes);
-  if (digest !== face.webAssetDigest) throw new Error("运行时字体摘要校验失败。");
+  if (digest !== face.webAssetDigest) throw new Error(i18n.t("runtimeUi.fontDigest"));
 
   const loaded = await new FontFace(cssFamily, bytes, {
     display: "block",

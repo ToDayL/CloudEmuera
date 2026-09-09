@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import i18n from "../i18n";
 
 export function DeadlineClock({ deadlineUnixMilliseconds, serverTimeOffsetMilliseconds, onExpired }: { deadlineUnixMilliseconds: number; serverTimeOffsetMilliseconds: number; onExpired?: () => void }) {
   const [remaining, setRemaining] = useState(() => deadlineUnixMilliseconds > 0 ? deadlineUnixMilliseconds - (Date.now() + serverTimeOffsetMilliseconds) : Number.POSITIVE_INFINITY);
@@ -24,7 +25,7 @@ export function DeadlineClock({ deadlineUnixMilliseconds, serverTimeOffsetMillis
     return () => window.clearInterval(timer);
   }, [deadlineUnixMilliseconds, onExpired, serverTimeOffsetMilliseconds]);
   if (deadlineUnixMilliseconds <= 0) return null;
-  if (remaining <= 0) return <span className="deadline-clock expired" role="status">时间已到，等待游戏确认</span>;
+  if (remaining <= 0) return <span className="deadline-clock expired" role="status">{i18n.t("renderer.expired")}</span>;
   const seconds = Math.ceil(remaining / 1_000);
-  return <span className="deadline-clock" role="timer" aria-label={`剩余 ${seconds} 秒`}>{Math.floor(seconds / 60).toString().padStart(2, "0")}:{(seconds % 60).toString().padStart(2, "0")}</span>;
+  return <span className="deadline-clock" role="timer" aria-label={i18n.t("renderer.remaining", { seconds })}>{Math.floor(seconds / 60).toString().padStart(2, "0")}:{(seconds % 60).toString().padStart(2, "0")}</span>;
 }

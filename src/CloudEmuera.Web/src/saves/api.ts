@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiRequest, getCsrfToken, newIdempotencyKey } from "../api";
 import type { SessionState } from "../sessions/api";
 import type { SaveItemResponseDto, SaveLayoutDto, SaveListResponseDto } from "../api/generated";
+import i18n from "../i18n";
 
 export type SaveLayout = SaveLayoutDto;
 export type SaveItem = SaveItemResponseDto;
@@ -50,7 +51,7 @@ export async function importSave(
       callback();
     };
     if (options.signal?.aborted) {
-      reject(options.signal.reason ?? new DOMException("操作已取消。", "AbortError"));
+      reject(options.signal.reason ?? new DOMException(i18n.t("runtimeUi.operationCancelled"), "AbortError"));
       return;
     }
 
@@ -68,7 +69,7 @@ export async function importSave(
         try {
           body = request.responseText ? JSON.parse(request.responseText) as SaveItem | null | { message?: string; code?: string; requestId?: string } : null;
         } catch {
-          reject(new ApiError("服务器返回了无法识别的响应。", "INVALID_RESPONSE", request.status));
+          reject(new ApiError(i18n.t("runtimeUi.invalidResponse"), "INVALID_RESPONSE", request.status));
           return;
         }
         if (request.status >= 200 && request.status < 300) {
@@ -76,11 +77,11 @@ export async function importSave(
           return;
         }
         const error = body as { message?: string; code?: string; requestId?: string } | null;
-        reject(new ApiError(error?.message ?? "请求失败。", error?.code ?? "REQUEST_FAILED", request.status, error?.requestId));
+        reject(new ApiError(error?.message ?? i18n.t("runtimeUi.requestFailed"), error?.code ?? "REQUEST_FAILED", request.status, error?.requestId));
       });
     });
-    request.addEventListener("error", () => finish(() => reject(new Error("网络错误，上传未能完成。"))));
-    request.addEventListener("abort", () => finish(() => reject(new DOMException("上传等待已取消。", "AbortError"))));
+    request.addEventListener("error", () => finish(() => reject(new Error(i18n.t("runtimeUi.uploadNetwork")))));
+    request.addEventListener("abort", () => finish(() => reject(new DOMException(i18n.t("runtimeUi.uploadCancelled"), "AbortError"))));
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) {
       request.abort();
@@ -136,9 +137,9 @@ export function canMutateSaves(state: SessionState | undefined): boolean {
 
 export function saveKindLabel(kind: string): string {
   switch (kind) {
-    case "GLOBAL": return "全局数据";
-    case "AUXILIARY_TEXT": return "辅助文本";
-    case "AUXILIARY_IMAGE": return "辅助图片";
-    default: return "原生存档";
+    case "GLOBAL": return i18n.t("runtimeUi.kindGlobal");
+    case "AUXILIARY_TEXT": return i18n.t("runtimeUi.kindText");
+    case "AUXILIARY_IMAGE": return i18n.t("runtimeUi.kindImage");
+    default: return i18n.t("runtimeUi.kindNative");
   }
 }

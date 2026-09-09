@@ -3,6 +3,15 @@
 CloudEmuera's original code is licensed under Apache-2.0. That license does
 not replace or relicense the third-party works listed below.
 
+## i18next and react-i18next
+
+- Packages: `i18next` 25.8.18 and `react-i18next` 16.5.8
+- Sources: <https://github.com/i18next/i18next> and <https://github.com/i18next/react-i18next>
+- License: MIT
+
+These packages provide CloudEmuera interface localization and React bindings. They are not used to translate,
+rewrite, or interpret game/runtime content.
+
 ## Emuera.EM+EE
 
 - Upstream: <https://gitlab.com/EvilMask/emuera.em>

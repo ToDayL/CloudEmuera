@@ -5,6 +5,7 @@ import { SafeHtmlRenderer } from "./SafeHtmlRenderer";
 import type { BackgroundLayer, CanvasScene, HitRegion, RealtimeDrawable, WindowMetadata } from "../realtime/protocol";
 import { NodeRenderer, type ConsoleActivationContext, type ConsoleInputEvent } from "./ScrollbackRenderer";
 import { SpriteCanvas } from "./SpriteRenderer";
+import i18n from "../i18n";
 import { useConsoleTooltipTarget } from "./TooltipLayer";
 
 const pngSignature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -42,7 +43,7 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
     </div>
     {ordered.map((drawable, index) => {
       const layer = 100 + index;
-      if (drawable.type === "sprite") return <div key={drawable.drawableId} className="canvas-sprite-drawable" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }} aria-hidden="true"><SpriteCanvas sprite={drawable} assets={assets} alt="游戏精灵" width={drawable.bounds.width} height={drawable.bounds.height} style={{ width: "100%", height: "100%" }} onRenderError={onRenderError} /></div>;
+      if (drawable.type === "sprite") return <div key={drawable.drawableId} className="canvas-sprite-drawable" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }} aria-hidden="true"><SpriteCanvas sprite={drawable} assets={assets} alt={i18n.t("renderer.sprite")} width={drawable.bounds.width} height={drawable.bounds.height} style={{ width: "100%", height: "100%" }} onRenderError={onRenderError} /></div>;
       if (drawable.type === "htmlIsland") {
         const islandNodes = drawable.nodes;
         return <div key={drawable.drawableId} className="canvas-html-island" style={{ ...drawableStyle(drawable.bounds, drawable.opacity, windowMetadata), zIndex: layer }}>
@@ -51,7 +52,7 @@ export function CanvasRenderer({ scene, backgroundLayers, windowMetadata, assets
       }
       return <DrawableCanvas key={drawable.drawableId} drawable={drawable} layer={layer} windowMetadata={windowMetadata} hoveredRasterId={hoveredRasterId} onRenderError={onRenderError} />;
     })}
-    <div className="canvas-hit-layer" aria-label="游戏交互区域" style={{ zIndex: 10_000 }}>
+    <div className="canvas-hit-layer" aria-label={i18n.t("renderer.interaction")} style={{ zIndex: 10_000 }}>
       {interactive && orderHitRegions(scene.hitRegions).map(region => <CanvasHitTarget key={region.regionId} region={region} windowMetadata={windowMetadata} onInput={onInput} />)}
     </div>
   </div>;
@@ -65,7 +66,7 @@ function CanvasHitTarget({ region, windowMetadata, onInput }: { region: HitRegio
     const x = clamp((event.clientX - root.left) * windowMetadata.viewportWidth / root.width, 0, windowMetadata.viewportWidth);
     const y = clamp((event.clientY - root.top) * windowMetadata.viewportHeight / root.height, 0, windowMetadata.viewportHeight);
     onInput({ value: region.inputValue, source: "POINTER", pointer: { x, y, button: 0, pressed: true } });
-  }}><span className="sr-only">{region.tooltip ?? "交互区域"}</span>{target.badge}</button>;
+  }}><span className="sr-only">{region.tooltip ?? i18n.t("renderer.interactionItem")}</span>{target.badge}</button>;
 }
 
 export function hasCanvasContent(scene: CanvasScene, backgroundLayers: readonly BackgroundLayer[]): boolean {
@@ -123,15 +124,15 @@ function drawDrawable(context: CanvasRenderingContext2D, drawable: Extract<Realt
   }
   if (drawable.type === "raster") {
     const url = createPngBlobUrl(hoveredRasterId === drawable.drawableId && drawable.hoverPngData ? drawable.hoverPngData : drawable.pngData);
-    if (!url) { onRenderError?.("Raster 不是有效的 PNG，已停止渲染该画布。"); return; }
+    if (!url) { onRenderError?.(i18n.t("renderer.rasterInvalid")); return; }
     objectUrls.add(url);
     const image = new Image();
     image.onload = () => {
       objectUrls.delete(url); URL.revokeObjectURL(url);
-      if (isDisposed() || image.naturalWidth > 8192 || image.naturalHeight > 8192) { onRenderError?.("Raster 尺寸超过浏览器安全上限。"); return; }
+      if (isDisposed() || image.naturalWidth > 8192 || image.naturalHeight > 8192) { onRenderError?.(i18n.t("renderer.rasterLarge")); return; }
       context.save(); context.globalAlpha = drawable.opacity; context.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height); context.restore();
     };
-    image.onerror = () => { objectUrls.delete(url); URL.revokeObjectURL(url); onRenderError?.("Raster 解码失败，已停止渲染该画布。"); };
+    image.onerror = () => { objectUrls.delete(url); URL.revokeObjectURL(url); onRenderError?.(i18n.t("renderer.rasterDecode")); };
     image.src = url;
     return;
   }

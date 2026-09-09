@@ -41,6 +41,8 @@ import { SavesPage as NativeSavesPage } from "./saves/SavesPage";
 import { NewSessionPage as RealNewSessionPage, SessionConfigurationPage as RealSessionConfigurationPage, SessionDisplayFields, SessionFontField, SessionWidthFields, SessionYenCompatibilityField, SessionsPage as RealSessionsPage } from "./sessions/pages";
 import { updateSessionStartupDefaults, useSessionStartupDefaults, sessionStartupDefaultsQueryKey, DEFAULT_SESSION_STARTUP_DEFAULTS } from "./settings/api";
 import { useRuntimeFontCatalog, type RuntimeWidthMode, type SessionFontSizeLineHeightMode } from "./sessions/api";
+import { useTranslation } from "react-i18next";
+import i18n, { changeUiLocale, normalizeUiLocale, persistDeviceLocale, setLoginLocaleOverride, UI_LOCALES, type UiLocale } from "./i18n";
 
 type IconName =
   | "archive"
@@ -100,38 +102,46 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
 }
 
 function Logo() {
-  return <Link className="brand" to="/games" aria-label="CloudEmuera 首页"><span className="brand-mark">C</span><span>CloudEmuera</span></Link>;
+  return <Link className="brand" to="/games" aria-label="CloudEmuera"><span className="brand-mark">C</span><span>CloudEmuera</span></Link>;
+}
+
+const localeNames: Record<UiLocale, string> = { "zh-CN": "简体中文", "en-US": "English", "ja-JP": "日本語" };
+function LanguageSelect({ login = false, disabled = false, onChange }: { login?: boolean; disabled?: boolean; onChange?: (locale: UiLocale, previous: UiLocale) => void }) {
+  const { i18n, t } = useTranslation();
+  const current = normalizeUiLocale(i18n.language) ?? "zh-CN";
+  return <label className="language-select"><span>{t("common.language")}</span><select aria-label={t("common.language")} value={current} disabled={disabled} onChange={event => { const locale = event.target.value as UiLocale; const previous = current; if (login) setLoginLocaleOverride(locale); else persistDeviceLocale(locale); void changeUiLocale(locale); onChange?.(locale, previous); }}>{UI_LOCALES.map(locale => <option key={locale} value={locale}>{localeNames[locale]}</option>)}</select></label>;
 }
 
 function AppShell({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   useEffect(() => setMobileOpen(false), [location.pathname]);
   const nav = [
-    { to: "/games", label: "游戏库", icon: "grid" as const },
-    { to: "/sessions", label: "Session", icon: "gamepad" as const },
-    { to: "/saves", label: "存档", icon: "save" as const },
+    { to: "/games", label: t("common.games"), icon: "grid" as const },
+    { to: "/sessions", label: t("common.sessions"), icon: "gamepad" as const },
+    { to: "/saves", label: t("common.saves"), icon: "save" as const },
   ];
   return <div className="app-shell">
-    <header className="mobile-header"><Logo/><button className="icon-button" onClick={() => setMobileOpen(!mobileOpen)} aria-label="打开导航"><Icon name="menu"/></button></header>
+    <header className="mobile-header"><Logo/><button className="icon-button" onClick={() => setMobileOpen(!mobileOpen)} aria-label={t("common.openNavigation")}><Icon name="menu"/></button></header>
     <aside className={`sidebar ${mobileOpen ? "is-open" : ""}`}>
       <Logo/>
-      <nav className="main-nav" aria-label="主导航">
-        <p className="nav-caption">PLAY</p>
+      <nav className="main-nav" aria-label={t("common.mainNavigation")}>
+        <p className="nav-caption">{t("chrome.play")}</p>
         {nav.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => isActive ? "active" : ""}><Icon name={item.icon}/><span>{item.label}</span></NavLink>)}
-        {user?.role === "ADMIN" && <><p className="nav-caption second">SYSTEM</p>
-        <NavLink to="/admin" className={({ isActive }) => isActive ? "active" : ""}><Icon name="server"/><span>运行状态</span></NavLink>
-        <NavLink to="/admin/users" className={({ isActive }) => isActive ? "active" : ""}><Icon name="user"/><span>用户管理</span></NavLink></>}
-        <NavLink to="/settings" className={({ isActive }) => isActive ? "active" : ""}><Icon name="settings"/><span>设置</span></NavLink>
+        {user?.role === "ADMIN" && <><p className="nav-caption second">{t("chrome.system")}</p>
+        <NavLink to="/admin" className={({ isActive }) => isActive ? "active" : ""}><Icon name="server"/><span>{t("common.runtime")}</span></NavLink>
+        <NavLink to="/admin/users" className={({ isActive }) => isActive ? "active" : ""}><Icon name="user"/><span>{t("common.users")}</span></NavLink></>}
+        <NavLink to="/settings" className={({ isActive }) => isActive ? "active" : ""}><Icon name="settings"/><span>{t("common.settings")}</span></NavLink>
       </nav>
       <div className="sidebar-foot">
-        <div className="instance-label"><span className="pulse-dot"/>单机实例运行中</div>
-        <button className="profile-button" onClick={() => void logout().finally(() => navigate("/login", { replace: true }))}><span className="avatar">{user?.username.slice(0, 1) ?? "?"}</span><span><strong>{user?.username}</strong><small>{user?.role === "ADMIN" ? "管理员" : "玩家账户"} · 注销</small></span><Icon name="more"/></button>
+        <div className="instance-label"><span className="pulse-dot"/>{t("common.instanceRunning")}</div>
+        <button className="profile-button" onClick={() => void logout().finally(() => navigate("/login", { replace: true }))}><span className="avatar">{user?.username.slice(0, 1) ?? "?"}</span><span><strong>{user?.username}</strong><small>{user?.role === "ADMIN" ? t("common.admin") : t("common.playerAccount")} · {t("common.logout")}</small></span><Icon name="more"/></button>
       </div>
     </aside>
-    {mobileOpen && <button className="sidebar-scrim" aria-label="关闭导航" onClick={() => setMobileOpen(false)}/>}
+    {mobileOpen && <button className="sidebar-scrim" aria-label={t("common.closeNavigation")} onClick={() => setMobileOpen(false)}/>}
     <main className="main-content">{children}</main>
   </div>;
 }
@@ -149,18 +159,17 @@ function coverColor(name: string): string {
 
 function actionErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === "ACTIVATION_VALIDATION_FAILED") return "验证未通过：工作区存在阻断启用的诊断。";
-    if (err.code === "GAME_VALIDATION_FAILED") return "验证失败，无法完成启用。";
-    if (err.code === "VALIDATION_IN_PROGRESS") return "验证正在进行中，请稍后刷新查看结果。";
-    if (err.code === "ACTIVATION_IN_PROGRESS") return "启用正在进行中，请稍后刷新查看结果。";
-    if (err.code === "GAME_STATE_CONFLICT") return "游戏状态已变化（可能是验证/启用刚完成），已刷新，请重试。";
+    const keys = { ACTIVATION_VALIDATION_FAILED: "gameDetail.validationBlocked", GAME_VALIDATION_FAILED: "gameDetail.validationFailed", VALIDATION_IN_PROGRESS: "gameDetail.validating", ACTIVATION_IN_PROGRESS: "gameDetail.activating", GAME_STATE_CONFLICT: "gameDetail.conflict" } as const;
+    const key = keys[err.code as keyof typeof keys];
+    if (key) return i18n.t(key);
   }
-  return err instanceof Error ? err.message : "操作失败。";
+  return err instanceof Error ? err.message : i18n.t("errors.generic");
 }
 
 function GamesPage() {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
-  const [visibility, setVisibility] = useState("全部");
+  const [visibility, setVisibility] = useState<"ALL" | "MINE" | "SHARED">("ALL");
   const [items, setItems] = useState<GameLibraryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -172,7 +181,7 @@ function GamesPage() {
       setItems(await listGames());
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "无法加载游戏库。");
+      setError(err instanceof Error ? err.message : t("games.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -181,7 +190,7 @@ function GamesPage() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   const filtered = items.filter(game => {
-    const matchesVisibility = visibility === "全部" || (visibility === "我的游戏" ? game.visibility === "PRIVATE" : game.visibility === "SERVER_SHARED");
+    const matchesVisibility = visibility === "ALL" || (visibility === "MINE" ? game.visibility === "PRIVATE" : game.visibility === "SERVER_SHARED");
     const q = query.trim().toLowerCase();
     return matchesVisibility && (!q || game.name.toLowerCase().includes(q));
   });
@@ -189,41 +198,41 @@ function GamesPage() {
   const sharedCount = items.filter(game => game.visibility === "SERVER_SHARED").length;
 
   return <>
-    <PageHeader eyebrow="LIBRARY" title="游戏库" description="管理游戏包、内容与兼容性，然后开启一段新的旅程。"
-      actions={<button className="primary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>上传游戏</button>}/>
-    <section className="summary-strip" aria-label="游戏库概览">
-      <div><span className="summary-icon peach"><Icon name="book"/></span><p><strong>{items.length}</strong><small>游戏</small></p></div>
-      <div><span className="summary-icon mint"><Icon name="archive"/></span><p><strong>{currentCount}</strong><small>份当前内容</small></p></div>
-      <div><span className="summary-icon blue"><Icon name="grid"/></span><p><strong>{sharedCount}</strong><small>服务器共享</small></p></div>
-      <div className="tip"><Icon name="spark"/><p><strong>上传后自动加载并启用</strong><small>每个 ZIP 创建一个独立游戏，通过真实加载测试后即可游玩</small></p></div>
+    <PageHeader eyebrow="LIBRARY" title={t("games.title")} description={t("games.description")}
+      actions={<button className="primary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>{t("games.upload")}</button>}/>
+    <section className="summary-strip" aria-label={t("games.overview")}>
+      <div><span className="summary-icon peach"><Icon name="book"/></span><p><strong>{items.length}</strong><small>{t("games.gameCount")}</small></p></div>
+      <div><span className="summary-icon mint"><Icon name="archive"/></span><p><strong>{currentCount}</strong><small>{t("games.currentCount")}</small></p></div>
+      <div><span className="summary-icon blue"><Icon name="grid"/></span><p><strong>{sharedCount}</strong><small>{t("games.sharedCount")}</small></p></div>
+      <div className="tip"><Icon name="spark"/><p><strong>{t("games.uploadTip")}</strong><small>{t("games.uploadTipDetail")}</small></p></div>
     </section>
     <div className="toolbar">
-      <label className="search-box"><Icon name="search"/><span className="sr-only">搜索游戏</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索游戏…"/></label>
-      <div className="segment-control" aria-label="游戏筛选">{["全部", "我的游戏", "服务器共享"].map(item => <button className={visibility === item ? "selected" : ""} onClick={() => setVisibility(item)} key={item}>{item}</button>)}</div>
+      <label className="search-box"><Icon name="search"/><span className="sr-only">{t("games.search")}</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`${t("games.search")}…`}/></label>
+      <div className="segment-control" aria-label={t("games.filter")}>{(["ALL", "MINE", "SHARED"] as const).map(item => <button className={visibility === item ? "selected" : ""} onClick={() => setVisibility(item)} key={item}>{t(item === "ALL" ? "games.all" : item === "MINE" ? "games.mine" : "games.shared")}</button>)}</div>
     </div>
-    {loading ? <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/><p>正在加载游戏库…</p></div>
-      : error ? <div className="panel error-panel" role="alert"><Icon name="warning"/><div><strong>无法加载游戏库</strong><p>{error}</p></div><button className="secondary-button" onClick={() => void refresh()}>重试</button></div>
-      : filtered.length === 0 ? <section className="empty-state"><span className="empty-icon"><Icon name="book" size={26}/></span><h2>{items.length === 0 ? "还没有游戏" : "没有匹配的游戏"}</h2><p>{items.length === 0 ? "上传 ZIP 游戏包；加载测试通过后会自动启用。" : "试试其他关键词或筛选条件。"}</p><div className="empty-actions">{items.length === 0 && <button className="primary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>上传游戏</button>}</div></section>
-      : <section className="game-grid" aria-label="游戏列表">
+    {loading ? <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/><p>{t("games.loading")}</p></div>
+      : error ? <div className="panel error-panel" role="alert"><Icon name="warning"/><div><strong>{t("games.loadFailed")}</strong><p>{error}</p></div><button className="secondary-button" onClick={() => void refresh()}>{t("common.retry")}</button></div>
+      : filtered.length === 0 ? <section className="empty-state"><span className="empty-icon"><Icon name="book" size={26}/></span><h2>{items.length === 0 ? t("games.empty") : t("games.noMatch")}</h2><p>{items.length === 0 ? t("games.emptyDescription") : t("games.noMatchDescription")}</p><div className="empty-actions">{items.length === 0 && <button className="primary-button" onClick={() => setUploadOpen(true)}><Icon name="upload"/>{t("games.upload")}</button>}</div></section>
+      : <section className="game-grid" aria-label={t("games.list")}>
           {filtered.map((game) => <article className="game-card" key={game.id}>
-            <div className={`game-cover ${coverColor(game.name)}`}><span className="cover-grid"/><h2 className="cover-title" title={game.name}>{game.name}</h2><span className="cover-digest">{game.hasCurrentContent ? shortDigest(game.contentDigest) : "无当前内容"}</span></div>
+            <div className={`game-cover ${coverColor(game.name)}`}><span className="cover-grid"/><h2 className="cover-title" title={game.name}>{game.name}</h2><span className="cover-digest">{game.hasCurrentContent ? shortDigest(game.contentDigest) : t("games.noCurrent")}</span></div>
             <div className="game-card-body">
-              <div className="card-title-row"><p className="card-visibility">{game.visibility === "SERVER_SHARED" ? "服务器共享" : "私有游戏"}</p><button className="icon-button subtle" aria-label={`${game.name} 更多操作`}><Icon name="more"/></button></div>
+              <div className="card-title-row"><p className="card-visibility">{game.visibility === "SERVER_SHARED" ? t("games.shared") : t("games.private")}</p><button className="icon-button subtle" aria-label={game.name}><Icon name="more"/></button></div>
               <div className="tag-row">
-                {game.hasCurrentContent ? <span className="tag success"><Icon name="check" size={13}/>当前内容</span> : <span className="tag">无当前内容</span>}
-                {game.workspaceStatus === "DRAFT" && <span className="tag waiting">工作区草稿</span>}
-                {game.status === "BLOCKED" && <span className="tag warning"><Icon name="warning" size={13}/>已禁用</span>}
+                {game.hasCurrentContent ? <span className="tag success"><Icon name="check" size={13}/>{t("games.current")}</span> : <span className="tag">{t("games.noCurrent")}</span>}
+                {game.workspaceStatus === "DRAFT" && <span className="tag waiting">{t("games.draft")}</span>}
+                {game.status === "BLOCKED" && <span className="tag warning"><Icon name="warning" size={13}/>{t("games.blocked")}</span>}
               </div>
-              <div className="card-meta"><span>更新于 {formatDateTime(game.updatedAt)}</span><span>{game.contentRevision} 次启用</span></div>
+              <div className="card-meta"><span>{t("games.updated", { date: formatDateTime(game.updatedAt) })}</span><span>{t("games.activations", { count: game.contentRevision })}</span></div>
               <div className="card-actions">
-                <Link className="secondary-button" to={`/games/${game.id}`}>管理内容</Link>
+                <Link className="secondary-button" to={`/games/${game.id}`}>{t("games.manage")}</Link>
                 {game.hasCurrentContent && game.status === "ACTIVE"
-                  ? <Link className="play-button" to={`/sessions/new?game=${game.id}`}><Icon name="play" size={17}/>开始游戏</Link>
-                  : <button className="play-button" disabled title="需要已启用且未禁用的当前内容">开始游戏</button>}
+                  ? <Link className="play-button" to={`/sessions/new?game=${game.id}`}><Icon name="play" size={17}/>{t("games.start")}</Link>
+                  : <button className="play-button" disabled title={t("games.unavailable")}>{t("games.start")}</button>}
               </div>
             </div>
           </article>)}
-          <button className="game-card add-card" onClick={() => setUploadOpen(true)}><span><Icon name="upload" size={24}/></span><strong>上传新的游戏包</strong><small>加载通过后自动启用</small></button>
+          <button className="game-card add-card" onClick={() => setUploadOpen(true)}><span><Icon name="upload" size={24}/></span><strong>{t("games.uploadNew")}</strong><small>{t("games.enabledHint")}</small></button>
         </section>}
     {uploadOpen && (
       <UploadDialog onClose={() => {
@@ -235,6 +244,7 @@ function GamesPage() {
 }
 
 function UploadDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const [step, setStep] = useState<"choose" | "uploading" | "done" | "error">("choose");
   const [file, setFile] = useState<File | null>(null);
   const [gameName, setGameName] = useState("");
@@ -291,50 +301,41 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
     } catch (err) {
       setUploadFailed(true);
       setErrorCode(err instanceof ApiError ? err.code : null);
-      setError(err instanceof ApiError ? err.message : "网络错误：上传未能完成。请确认文件未超过容量限制，并检查网络后重试。");
+      setError(err instanceof ApiError ? err.message : t("gameDetail.uploadNetwork"));
       setStep("error");
     } finally { setUploadController(null); }
   };
 
   return <div className="modal-layer" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
-    <button className="icon-button modal-close" onClick={() => { uploadController?.abort(); onClose(); }} aria-label="关闭"><Icon name="close"/></button>
-    <p className="eyebrow">NEW GAME</p><h2 id="upload-title">上传游戏</h2><p className="modal-intro">每个 ZIP 都会创建独立游戏；服务端只做容量与安全暂存处理，并用真实运行时加载测试后自动启用。</p>
+    <button className="icon-button modal-close" onClick={() => { uploadController?.abort(); onClose(); }} aria-label={t("common.close")}><Icon name="close"/></button>
+    <p className="eyebrow">{t("chrome.newGame")}</p><h2 id="upload-title">{t("upload.title")}</h2><p className="modal-intro">{t("upload.intro")}</p>
     {step === "choose" && <form className="form-panel modal-form" onSubmit={submit}>
-      <label><span>ZIP 游戏包</span><input type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); if (selected && !gameName) setGameName(selected.name.replace(/\.zip$/i, "")); }} required/></label>
-      <label><span>游戏名称</span><input value={gameName} onChange={(event) => setGameName(event.target.value)} placeholder="例如：ERA: The World" required/></label>
-      <label><span>可见性</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as GameVisibility)}><option value="PRIVATE">私有（仅自己可见）</option><option value="SERVER_SHARED">服务器共享（所有玩家可见）</option></select></label>
-      <div className="modal-note"><Icon name="warning"/><p><strong>请确认你拥有游戏内容的使用权</strong><small>CloudEmuera 不提供或分发游戏资源。</small></p></div>
-      <div className="form-actions"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={!file || !gameName.trim()}>上传、加载并启用</button></div>
+      <label><span>{t("upload.zip")}</span><input type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); if (selected && !gameName) setGameName(selected.name.replace(/\.zip$/i, "")); }} required/></label>
+      <label><span>{t("upload.name")}</span><input value={gameName} onChange={(event) => setGameName(event.target.value)} placeholder={t("chrome.nameExample")} required/></label>
+      <label><span>{t("upload.visibility")}</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as GameVisibility)}><option value="PRIVATE">{t("upload.private")}</option><option value="SERVER_SHARED">{t("upload.shared")}</option></select></label>
+      <div className="modal-note"><Icon name="warning"/><p><strong>{t("upload.rights")}</strong><small>{t("upload.rightsDetail")}</small></p></div>
+      <div className="form-actions"><button className="secondary-button" type="button" onClick={onClose}>{t("common.cancel")}</button><button className="primary-button" disabled={!file || !gameName.trim()}>{t("upload.submit")}</button></div>
     </form>}
-    {step === "uploading" && <div className="scan-state upload-scan-state"><span className="spinner"/><h3>正在处理 {file?.name}</h3><p>{uploadProgress ? uploadStageDescription(uploadProgress.stage, uploadProgress.currentItem) : uploadPercent !== null && uploadPercent < 100 ? "正在上传 ZIP…" : "上传完成，等待服务端接收…"}</p><div className="upload-progress-meter">{uploadPercent !== null && uploadPercent < 100 ? <><div className="upload-progress-heading"><span>上传进度</span><strong>{uploadPercent}%</strong></div><progress max={100} value={uploadPercent} aria-label="ZIP 上传进度"/></> : <><div className="upload-progress-heading"><span>服务端处理进度</span><small>当前阶段无统一百分比</small></div><div className="progress indeterminate"><span/></div></>}</div><UploadTaskList fileName={file?.name ?? null} progress={uploadProgress} uploadPercent={uploadPercent} failed={false}/></div>}
-    {step === "done" && createdGame && <div className="scan-state done"><span className="success-ring"><Icon name="check" size={30}/></span><h3>游戏已加载并启用</h3><p>现在可以直接创建 Session。</p><Link className="primary-button" to={`/games/${createdGame.id}`} onClick={onClose}>查看游戏<Icon name="arrow"/></Link></div>}
-    {step === "error" && <div className="scan-state error upload-error-state"><span className="error-ring"><Icon name="warning" size={30}/></span><h3>游戏未能启用</h3><p>{error}</p>{errorCode && <code className="error-code">{errorCode}</code>}<UploadTaskList fileName={file?.name ?? null} progress={uploadProgress} uploadPercent={uploadPercent} failed={uploadFailed}/><button className="secondary-button" onClick={() => { setError(""); setErrorCode(null); setUploadProgress(null); setUploadPercent(null); setUploadRequestId(null); setUploadFailed(false); setStep("choose"); }}>返回修改</button></div>}
+    {step === "uploading" && <div className="scan-state upload-scan-state"><span className="spinner"/><h3>{t("upload.processing", { name: file?.name ?? "ZIP" })}</h3><p>{uploadProgress ? uploadStageDescription(uploadProgress.stage, uploadProgress.currentItem) : uploadPercent !== null && uploadPercent < 100 ? t("upload.uploading") : t("upload.received")}</p><div className="upload-progress-meter">{uploadPercent !== null && uploadPercent < 100 ? <><div className="upload-progress-heading"><span>{t("upload.progress")}</span><strong>{uploadPercent}%</strong></div><progress max={100} value={uploadPercent} aria-label={t("upload.progress")}/></> : <><div className="upload-progress-heading"><span>{t("upload.serverProgress")}</span><small>{t("upload.noPercent")}</small></div><div className="progress indeterminate"><span/></div></>}</div><UploadTaskList fileName={file?.name ?? null} progress={uploadProgress} uploadPercent={uploadPercent} failed={false}/></div>}
+    {step === "done" && createdGame && <div className="scan-state done"><span className="success-ring"><Icon name="check" size={30}/></span><h3>{t("upload.done")}</h3><p>{t("upload.doneDetail")}</p><Link className="primary-button" to={`/games/${createdGame.id}`} onClick={onClose}>{t("upload.view")}<Icon name="arrow"/></Link></div>}
+    {step === "error" && <div className="scan-state error upload-error-state"><span className="error-ring"><Icon name="warning" size={30}/></span><h3>{t("upload.failed")}</h3><p>{error}</p>{errorCode && <code className="error-code">{errorCode}</code>}<UploadTaskList fileName={file?.name ?? null} progress={uploadProgress} uploadPercent={uploadPercent} failed={uploadFailed}/><button className="secondary-button" onClick={() => { setError(""); setErrorCode(null); setUploadProgress(null); setUploadPercent(null); setUploadRequestId(null); setUploadFailed(false); setStep("choose"); }}>{t("upload.modify")}</button></div>}
   </section></div>;
 }
 
-const uploadTaskDefinitions = [
-  ["RECEIVING", "上传并接收 ZIP"],
-  ["INSPECTING_ARCHIVE", "检查 ZIP 结构"],
-  ["EXTRACTING", "解包游戏文件"],
-  ["NORMALIZING_ENCODING", "整理文本编码"],
-  ["ANALYZING", "分析摄取内容"],
-  ["CONSUMING_STAGING", "准备暂存内容"],
-  ["COPYING_CONTENT", "复制到 Game 内容目录"],
-  ["VALIDATING_CONTENT", "检查候选内容结构"],
-  ["RUNNING_VALIDATOR", "运行时加载校验"],
-  ["PUBLISHING_CONTENT", "发布当前内容"],
-] as const;
+const uploadTaskDefinitions = ["RECEIVING", "INSPECTING_ARCHIVE", "EXTRACTING", "NORMALIZING_ENCODING", "ANALYZING", "CONSUMING_STAGING", "COPYING_CONTENT", "VALIDATING_CONTENT", "RUNNING_VALIDATOR", "PUBLISHING_CONTENT"] as const;
 
 function uploadStageDescription(stage: string, currentItem: string | null): string {
-  const label = uploadTaskDefinitions.find(([key]) => key === stage)?.[1] ?? "处理游戏内容";
+  const label = uploadTaskDefinitions.includes(stage as typeof uploadTaskDefinitions[number]) ? i18n.t(`upload.stage.${stage as typeof uploadTaskDefinitions[number]}`) : i18n.t("upload.stage.fallback");
   return currentItem ? `${label}：${currentItem}` : `${label}…`;
 }
 
 function UploadTaskList({ fileName, progress, uploadPercent, failed }: { fileName: string | null; progress: GameUploadProgress | null; uploadPercent: number | null; failed: boolean }) {
-  const currentIndex = progress?.stage === "COMPLETED" ? uploadTaskDefinitions.length : Math.max(0, uploadTaskDefinitions.findIndex(([key]) => key === progress?.stage));
+  const { t } = useTranslation();
+  const currentIndex = progress?.stage === "COMPLETED" ? uploadTaskDefinitions.length : Math.max(0, uploadTaskDefinitions.findIndex(key => key === progress?.stage));
   const serverFailed = progress?.status === "FAILED";
-  return <ol className="upload-task-list" aria-label="上传处理步骤">
-    {uploadTaskDefinitions.map(([key, label], index) => {
+  return <ol className="upload-task-list" aria-label={t("upload.steps")}>
+    {uploadTaskDefinitions.map((key, index) => {
+      const label = t(`upload.stage.${key}`);
       const isFailed = (serverFailed && index === currentIndex) || (failed && progress?.status !== "COMMITTED" && index === currentIndex);
       const isComplete = !isFailed && (progress?.status === "COMMITTED" || index < currentIndex || (index === 0 && uploadPercent === 100 && currentIndex > 0));
       const state = isFailed ? "failed" : isComplete ? "complete" : index === currentIndex ? "active" : "pending";
@@ -345,6 +346,7 @@ function UploadTaskList({ fileName, progress, uploadPercent, failed }: { fileNam
 }
 
 function EditGameDialog({ game, onClose, onSaved }: { game: GameLibraryItem; onClose: () => void; onSaved: () => void }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(game.name);
   const [visibility, setVisibility] = useState<GameVisibility>(game.visibility);
   const [error, setError] = useState("");
@@ -352,31 +354,32 @@ function EditGameDialog({ game, onClose, onSaved }: { game: GameLibraryItem; onC
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) { setError("游戏名称不能为空。"); return; }
+    if (!trimmed) { setError(t("gameDetail.nameRequired")); return; }
     setError(""); setPending(true);
     try { await updateGame(game.id, game.stateVersion, { name: trimmed, visibility }); onSaved(); }
-    catch (err) { setError(err instanceof Error ? err.message : "保存失败。"); setPending(false); }
+    catch (err) { setError(err instanceof Error ? err.message : t("gameDetail.saveFailed")); setPending(false); }
   };
   return <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-game-title">
-    <button className="icon-button modal-close" onClick={onClose} aria-label="关闭"><Icon name="close"/></button>
-    <p className="eyebrow">EDIT GAME</p><h2 id="edit-game-title">编辑游戏资料</h2><p className="modal-intro">名称与可见性变更立即生效，不影响已启用的当前内容。</p>
+    <button className="icon-button modal-close" onClick={onClose} aria-label={t("common.close")}><Icon name="close"/></button>
+    <p className="eyebrow">{t("chrome.editGame")}</p><h2 id="edit-game-title">{t("gameDetail.editTitle")}</h2><p className="modal-intro">{t("gameDetail.editIntro")}</p>
     <form className="form-panel modal-form" onSubmit={submit}>
-      <label><span>游戏名称</span><input value={name} onChange={(e) => setName(e.target.value)} required/></label>
-      <label><span>可见性</span><select value={visibility} onChange={(e) => setVisibility(e.target.value as GameVisibility)}><option value="PRIVATE">私有（仅自己可见）</option><option value="SERVER_SHARED">服务器共享（所有玩家可见）</option></select></label>
+      <label><span>{t("upload.name")}</span><input value={name} onChange={(e) => setName(e.target.value)} required/></label>
+      <label><span>{t("upload.visibility")}</span><select value={visibility} onChange={(e) => setVisibility(e.target.value as GameVisibility)}><option value="PRIVATE">{t("upload.private")}</option><option value="SERVER_SHARED">{t("upload.shared")}</option></select></label>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="form-actions"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={pending}>{pending ? "正在保存…" : "保存"}</button></div>
+      <div className="form-actions"><button className="secondary-button" type="button" onClick={onClose}>{t("common.cancel")}</button><button className="primary-button" disabled={pending}>{pending ? t("common.saving") : t("common.save")}</button></div>
     </form>
   </section></div>;
 }
 
 function GameDetailPage() {
+  const { t } = useTranslation();
   const { gameId = "" } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [game, setGame] = useState<GameLibraryItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"内容" | "文件" | "兼容性">("内容");
+  const [tab, setTab] = useState<"content" | "files" | "compatibility">("content");
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<GameDiagnosticItem[]>([]);
@@ -385,9 +388,9 @@ function GameDetailPage() {
 
   const refresh = useCallback(async () => {
     try { setGame(await getGame(gameId)); setLoadError(null); }
-    catch (err) { setLoadError(err instanceof Error ? err.message : "无法加载游戏。"); }
+    catch (err) { setLoadError(err instanceof Error ? err.message : t("gameDetail.loadFailed")); }
     finally { setLoading(false); }
-  }, [gameId]);
+  }, [gameId, t]);
 
   const loadDiagnostics = useCallback(async () => {
     try { setDiagnostics(await listDiagnostics(gameId)); }
@@ -416,18 +419,18 @@ function GameDetailPage() {
 
   const deleteGameAction = async () => {
     if (!game) return;
-    setBusy("正在删除"); setActionError(null);
+    setBusy(t("gameDetail.deleting")); setActionError(null);
     try { await deleteGame(game.id, game.stateVersion); navigate("/games", { replace: true }); }
     catch (err) { setActionError(actionErrorMessage(err)); setBusy(""); }
   };
 
   if (loading || (!game && !loadError)) return <>
-    <div className="backline"><Link to="/games">← 返回游戏库</Link></div>
-    <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/><p>正在加载游戏…</p></div>
+    <div className="backline"><Link to="/games">← {t("gameDetail.back")}</Link></div>
+    <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/><p>{t("gameDetail.loading")}</p></div>
   </>;
   if (loadError || !game) return <>
-    <div className="backline"><Link to="/games">← 返回游戏库</Link></div>
-    <div className="panel error-panel" role="alert"><Icon name="warning"/><div><strong>无法加载游戏</strong><p>{loadError ?? "游戏不存在。"}</p></div><button className="secondary-button" onClick={() => { setLoading(true); void refresh(); }}>重试</button></div>
+    <div className="backline"><Link to="/games">← {t("gameDetail.back")}</Link></div>
+    <div className="panel error-panel" role="alert"><Icon name="warning"/><div><strong>{t("gameDetail.loadFailed")}</strong><p>{loadError ?? t("gameDetail.notFound")}</p></div><button className="secondary-button" onClick={() => { setLoading(true); void refresh(); }}>{t("common.retry")}</button></div>
   </>;
 
   const hasDraft = game.workspaceStatus === "DRAFT";
@@ -437,73 +440,74 @@ function GameDetailPage() {
   const blockingCount = displayDiagnostics.filter(diagnostic => diagnostic.activationBlocking).length;
 
   return <>
-    <div className="backline"><Link to="/games">← 返回游戏库</Link></div>
+    <div className="backline"><Link to="/games">← {t("gameDetail.back")}</Link></div>
     <section className="game-detail-hero">
       <div className={`game-cover compact ${coverColor(game.name)}`}><span className="cover-grid"/><span className="cover-glyph">{game.name.slice(0, 1).toUpperCase()}</span></div>
       <div>
         <p className="eyebrow">{game.visibility === "PRIVATE" ? "PRIVATE GAME" : "SERVER SHARED GAME"}</p>
         <h1>{game.name}</h1>
-        <p>{game.status === "BLOCKED" ? "已被管理员禁用，无法创建新 Session；既有 Session 不受影响。" : "上传时已完成真实运行时加载测试并自动启用；当前内容对既有 Session 不可变。"}</p>
+        <p>{t(game.status === "BLOCKED" ? "gameDetail.blockedDescription" : "gameDetail.activeDescription")}</p>
         <div className="tag-row">
-          {game.status === "BLOCKED" && <span className="tag warning"><Icon name="warning" size={13}/>已禁用</span>}
-          {game.hasCurrentContent ? <span className="tag success"><Icon name="check" size={13}/>当前内容可运行</span> : <span className="tag">无当前内容</span>}
-          {hasDraft && <span className="tag waiting">待验证工作区</span>}
+          {game.status === "BLOCKED" && <span className="tag warning"><Icon name="warning" size={13}/>{t("games.blocked")}</span>}
+          {game.hasCurrentContent ? <span className="tag success"><Icon name="check" size={13}/>{t("gameDetail.runnable")}</span> : <span className="tag">{t("games.noCurrent")}</span>}
+          {hasDraft && <span className="tag waiting">{t("gameDetail.workspace")}</span>}
           {game.contentDigest && <span className="tag">sha256:{shortDigest(game.contentDigest)}</span>}
         </div>
       </div>
       <div className="hero-actions">
-        {canPlay ? <Link className="play-button" to={`/sessions/new?game=${game.id}`}><Icon name="play"/>创建 Session</Link> : <button className="play-button" disabled title="需要已启用且未禁用的当前内容"><Icon name="play"/>创建 Session</button>}
-        <button className="secondary-button" onClick={() => setEditOpen(true)} disabled={busy !== ""}><Icon name="settings"/>编辑资料</button>
-        {user?.role === "ADMIN" && <button className="secondary-button" onClick={() => void run(game.status === "BLOCKED" ? "取消禁用" : "禁用游戏", () => setGameBlocked(game.id, game.stateVersion, game.status !== "BLOCKED"))} disabled={busy !== ""}>{game.status === "BLOCKED" ? "取消禁用" : "禁用"}</button>}
-        <button className="danger-button" onClick={() => setConfirmDelete(true)} disabled={busy !== ""}>删除游戏</button>
+        {canPlay ? <Link className="play-button" to={`/sessions/new?game=${game.id}`}><Icon name="play"/>{t("gameDetail.createSession")}</Link> : <button className="play-button" disabled title={t("games.unavailable")}><Icon name="play"/>{t("gameDetail.createSession")}</button>}
+        <button className="secondary-button" onClick={() => setEditOpen(true)} disabled={busy !== ""}><Icon name="settings"/>{t("gameDetail.edit")}</button>
+        {user?.role === "ADMIN" && <button className="secondary-button" onClick={() => void run(t(game.status === "BLOCKED" ? "gameDetail.unblock" : "gameDetail.block"), () => setGameBlocked(game.id, game.stateVersion, game.status !== "BLOCKED"))} disabled={busy !== ""}>{t(game.status === "BLOCKED" ? "gameDetail.unblock" : "gameDetail.block")}</button>}
+        <button className="danger-button" onClick={() => setConfirmDelete(true)} disabled={busy !== ""}>{t("gameDetail.delete")}</button>
       </div>
     </section>
-    <div className="detail-tabs">{(["内容", "文件", "兼容性"] as const).map(item => <button className={tab === item ? "active" : ""} onClick={() => setTab(item)} key={item}>{item}</button>)}</div>
-    {actionError && <div className="error-banner" role="alert"><Icon name="warning"/><span>{actionError}{blockingCount > 0 && <small> · {blockingCount} 条阻断诊断，详见「兼容性」</small>}</span></div>}
+    <div className="detail-tabs">{(["content", "files", "compatibility"] as const).map(item => <button className={tab === item ? "active" : ""} onClick={() => setTab(item)} key={item}>{t(`gameDetail.tabs.${item}`)}</button>)}</div>
+    {actionError && <div className="error-banner" role="alert"><Icon name="warning"/><span>{actionError}{blockingCount > 0 && <small> · {t("gameDetail.blockingCount", { count: blockingCount })}</small>}</span></div>}
     {busy && <div className="busy-banner" role="status"><span className="mini-spinner"/><span>{busy}…</span></div>}
 
-    {tab === "内容" && <section className="panel">
+    {tab === "content" && <section className="panel">
       <div className="panel-heading">
-        <div><h2>当前内容</h2><p>当前可运行内容是上传后通过加载测试并自动启用的只读快照。</p></div>
+        <div><h2>{t("gameDetail.current")}</h2><p>{t("gameDetail.currentIntro")}</p></div>
       </div>
       <div className="content-list">
         <article><span className="timeline-dot live"/><div>
-          <h3>{game.hasCurrentContent ? `sha256:${shortDigest(game.contentDigest)}` : "尚未启用当前内容"}{game.hasCurrentContent && <span className="tag success">当前内容</span>}</h3>
-          <p>内容修订 #{game.contentRevision} · {formatDateTime(game.updatedAt)} 更新</p>
-          <small>{game.hasCurrentContent ? "Session 创建时完整复制此快照；其它上传始终创建独立游戏。" : "此条目来自旧流程且没有已启用内容；请回到游戏库重新上传为独立游戏。"}</small>
-        </div><button className="text-button" onClick={() => setTab("文件")}>查看文件 <Icon name="arrow"/></button></article>
+          <h3>{game.hasCurrentContent ? `sha256:${shortDigest(game.contentDigest)}` : t("gameDetail.noEnabled")}{game.hasCurrentContent && <span className="tag success">{t("gameDetail.current")}</span>}</h3>
+          <p>{t("gameDetail.revision", { revision: game.contentRevision, date: formatDateTime(game.updatedAt) })}</p>
+          <small>{t(game.hasCurrentContent ? "gameDetail.snapshot" : "gameDetail.legacyNoContent")}</small>
+        </div><button className="text-button" onClick={() => setTab("files")}>{t("gameDetail.viewFiles")} <Icon name="arrow"/></button></article>
       </div>
       {hasDraft && <div className="content-list">
         <article><span className="timeline-dot"/><div>
-          <h3>工作区草稿 <span className="tag waiting">待验证</span></h3>
-          <p>这是旧版多阶段流程留下的工作区，不再提供手动绑定或启用操作。</p>
-          <small>请回到游戏库，把游戏包重新上传为新的独立游戏。</small>
+          <h3>{t("gameDetail.draft")} <span className="tag waiting">{t("gameDetail.pending")}</span></h3>
+          <p>{t("gameDetail.legacyDraft")}</p>
+          <small>{t("gameDetail.reupload")}</small>
         </div></article>
       </div>}
-      {!game.hasCurrentContent && !hasDraft && <div className="content-list empty-list"><article><span className="timeline-dot"/><div><h3>这个游戏没有内容</h3><p>请回到游戏库重新上传为独立游戏。</p></div></article></div>}
-      {displayDiagnostics.length > 0 && <div className={`validation-banner ${blockingCount === 0 ? "ok" : "bad"}`}><Icon name={blockingCount === 0 ? "check" : "warning"}/><p><strong>{blockingCount === 0 ? "加载测试已完成" : "存在加载诊断"}</strong><small>{displayDiagnostics.length} 条运行时诊断</small></p><button className="text-button" onClick={() => setTab("兼容性")}>查看详情 <Icon name="arrow"/></button></div>}
+      {!game.hasCurrentContent && !hasDraft && <div className="content-list empty-list"><article><span className="timeline-dot"/><div><h3>{t("gameDetail.noContent")}</h3><p>{t("gameDetail.reupload")}</p></div></article></div>}
+      {displayDiagnostics.length > 0 && <div className={`validation-banner ${blockingCount === 0 ? "ok" : "bad"}`}><Icon name={blockingCount === 0 ? "check" : "warning"}/><p><strong>{t(blockingCount === 0 ? "gameDetail.loadComplete" : "gameDetail.diagnosticsExist")}</strong><small>{t("gameDetail.runtimeDiagnostics", { count: displayDiagnostics.length })}</small></p><button className="text-button" onClick={() => setTab("compatibility")}>{t("gameDetail.details")} <Icon name="arrow"/></button></div>}
     </section>}
 
-    {tab === "文件" && <GameFilesPanel game={game}/>}
+    {tab === "files" && <GameFilesPanel game={game}/>}
 
-    {tab === "兼容性" && <section className="panel diagnostics">
-      {displayDiagnostics.length === 0 ? <div className="diagnostic-empty"><Icon name="spark" size={26}/><h2>加载测试已通过</h2><p>没有运行时加载诊断；系统未执行额外的全树编码或内容规则检查。</p></div>
+    {tab === "compatibility" && <section className="panel diagnostics">
+      {displayDiagnostics.length === 0 ? <div className="diagnostic-empty"><Icon name="spark" size={26}/><h2>{t("gameDetail.loadPassed")}</h2><p>{t("gameDetail.noDiagnosticsDetail")}</p></div>
         : <>
           <div className="diagnostic-summary">
             <span className={`score ${blockingCount === 0 ? "ok" : "bad"}`}>{blockingCount === 0 ? "✓" : "!"}</span>
-            <div><h2>{blockingCount === 0 ? "加载测试通过" : "存在运行时加载诊断"}</h2><p>{displayDiagnostics.length} 条诊断</p></div>
+            <div><h2>{t(blockingCount === 0 ? "gameDetail.loadPassed" : "gameDetail.diagnosticsExist")}</h2><p>{t("gameDetail.diagnostics", { count: displayDiagnostics.length })}</p></div>
           </div>
-          {displayDiagnostics.length === 0 ? <p className="diagnostic-none">没有诊断。</p>
+          {displayDiagnostics.length === 0 ? <p className="diagnostic-none">{t("gameDetail.none")}</p>
             : displayDiagnostics.map(diagnostic => <div className={`diagnostic-row ${diagnostic.activationBlocking ? "blocking" : ""}`} key={diagnostic.id}><Icon name={diagnostic.activationBlocking ? "warning" : "check"}/><span><strong>{diagnostic.code}</strong>{diagnostic.path && <small> · {diagnostic.path}</small>}<p>{diagnostic.message}</p></span><small>{diagnostic.severity}</small></div>)}
         </>}
     </section>}
 
     {editOpen && <EditGameDialog game={game} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); void refresh(); }}/>}
-    {confirmDelete && <ConfirmDialog title="删除这个游戏？" body="未被 Session 引用的游戏会先执行可恢复的逻辑删除；被引用的游戏会被拒绝删除。" confirm="确认删除" onCancel={() => setConfirmDelete(false)} onConfirm={() => void deleteGameAction()} pending={busy === "正在删除"}/>}
+    {confirmDelete && <ConfirmDialog title={t("gameDetail.deleteTitle")} body={t("gameDetail.deleteBody")} confirm={t("gameDetail.confirmDelete")} onCancel={() => setConfirmDelete(false)} onConfirm={() => void deleteGameAction()} pending={busy === t("gameDetail.deleting")}/>}
   </>;
 }
 
 function GameFilesPanel({ game }: { game: GameLibraryItem }) {
+  const { t } = useTranslation();
   const [scope, setScope] = useState<ContentScope>(game.workspaceStatus === "DRAFT" ? "WORKSPACE" : "CURRENT");
   const [path, setPath] = useState("");
   const [files, setFiles] = useState<GameFileItem[] | null>(null);
@@ -517,8 +521,8 @@ function GameFilesPanel({ game }: { game: GameLibraryItem }) {
   const loadFiles = useCallback(async (targetScope: ContentScope, targetPath: string) => {
     setFilesError(null);
     try { setFiles(await listFiles(game.id, targetScope, targetPath)); }
-    catch (err) { setFilesError(err instanceof Error ? err.message : "无法读取文件列表。"); setFiles([]); }
-  }, [game.id]);
+    catch (err) { setFilesError(err instanceof Error ? err.message : t("gameDetail.fileListFailed")); setFiles([]); }
+  }, [game.id, t]);
 
   useEffect(() => {
     setPath(""); setSelected(null); setSelectedPath(null); setReadError(null);
@@ -529,7 +533,7 @@ function GameFilesPanel({ game }: { game: GameLibraryItem }) {
   const openFile = async (filePath: string) => {
     setSelectedPath(filePath); setSelected(null); setReadError(null);
     try { setSelected(await readTextFile(game.id, scope, filePath)); }
-    catch (err) { setReadError(err instanceof Error ? err.message : "无法读取文件。"); }
+    catch (err) { setReadError(err instanceof Error ? err.message : t("gameDetail.fileFailed")); }
   };
 
   const segments = path ? path.split("/") : [];
@@ -544,34 +548,34 @@ function GameFilesPanel({ game }: { game: GameLibraryItem }) {
 
   return <div className="file-workspace">
     <div className="file-toolbar">
-      <div className="segment-control" aria-label="文件范围">
-        <button className={scope === "WORKSPACE" ? "selected" : ""} disabled={!workspaceAvailable} onClick={() => setScope("WORKSPACE")}>待验证工作区</button>
-        <button className={scope === "CURRENT" ? "selected" : ""} disabled={!currentAvailable} onClick={() => setScope("CURRENT")}>当前内容</button>
+      <div className="segment-control" aria-label={t("gameDetail.fileScope")}>
+        <button className={scope === "WORKSPACE" ? "selected" : ""} disabled={!workspaceAvailable} onClick={() => setScope("WORKSPACE")}>{t("gameDetail.workspace")}</button>
+        <button className={scope === "CURRENT" ? "selected" : ""} disabled={!currentAvailable} onClick={() => setScope("CURRENT")}>{t("gameDetail.current")}</button>
       </div>
-      <span className="readonly-note">文件仅供查看和下载</span>
+      <span className="readonly-note">{t("gameDetail.readonly")}</span>
     </div>
     {!workspaceAvailable && !currentAvailable
-      ? <div className="panel empty-list-panel"><Icon name="folder" size={26}/><p>这个旧条目没有可浏览内容；请回到游戏库重新上传为独立游戏。</p></div>
+      ? <div className="panel empty-list-panel"><Icon name="folder" size={26}/><p>{t("gameDetail.noBrowsable")}</p></div>
       : <section className="panel file-panel">
         <div className="file-tree">
-          <h3>{scope === "WORKSPACE" ? "待验证工作区" : "当前内容"}{path ? ` / ${path}` : ""}</h3>
+          <h3>{t(scope === "WORKSPACE" ? "gameDetail.workspace" : "gameDetail.current")}{path ? ` / ${path}` : ""}</h3>
           <div className="file-breadcrumb">
-            <button className={path === "" ? "current" : ""} onClick={() => { setPath(""); void loadFiles(scope, ""); }}>根目录</button>
+            <button className={path === "" ? "current" : ""} onClick={() => { setPath(""); void loadFiles(scope, ""); }}>{t("gameDetail.root")}</button>
             {segments.map((segment, index) => <button key={index} onClick={() => goTo(index)}>{segment}</button>)}
           </div>
-          {path !== "" && <button className="file-row up" onClick={goUp}><Icon name="arrow" size={15}/>上一级</button>}
+          {path !== "" && <button className="file-row up" onClick={goUp}><Icon name="arrow" size={15}/>{t("gameDetail.up")}</button>}
           {filesError && <p className="file-error" role="alert">{filesError}</p>}
           {files?.map(item => item.isDirectory
-            ? <button className="file-row" key={item.path} onClick={() => { setPath(item.path); void loadFiles(scope, item.path); }}><Icon name="folder"/><span>{item.path.split("/").pop()}</span><span className="file-meta">目录</span></button>
-            : <div className="file-row-wrap" key={item.path}><button className={`file-row ${selectedPath === item.path ? "selected" : ""}`} onClick={() => void openFile(item.path)}><Icon name="book"/><span>{item.path.split("/").pop()}</span><span className="file-meta">{formatBytes(item.bytes)}</span></button><a className="file-download" href={downloadFileUrl(game.id, scope, item.path)} download aria-label={`下载 ${item.path}`}><Icon name="download" size={15}/></a></div>)}
-          {files && files.length === 0 && !filesError && <p className="file-empty">此目录为空。</p>}
+            ? <button className="file-row" key={item.path} onClick={() => { setPath(item.path); void loadFiles(scope, item.path); }}><Icon name="folder"/><span>{item.path.split("/").pop()}</span><span className="file-meta">{t("gameDetail.directory")}</span></button>
+            : <div className="file-row-wrap" key={item.path}><button className={`file-row ${selectedPath === item.path ? "selected" : ""}`} onClick={() => void openFile(item.path)}><Icon name="book"/><span>{item.path.split("/").pop()}</span><span className="file-meta">{formatBytes(item.bytes)}</span></button><a className="file-download" href={downloadFileUrl(game.id, scope, item.path)} download aria-label={t("gameDetail.download", { path: item.path })}><Icon name="download" size={15}/></a></div>)}
+          {files && files.length === 0 && !filesError && <p className="file-empty">{t("gameDetail.emptyDirectory")}</p>}
         </div>
         <div className="file-viewer">
-          {selected ? <div className="file-viewer-bar"><span>{selected.path}</span><span>{selected.encoding}{selected.hasBom ? " BOM" : ""} · {formatBytes(selected.bytes)} · 只读</span></div>
+          {selected ? <div className="file-viewer-bar"><span>{selected.path}</span><span>{selected.encoding}{selected.hasBom ? " BOM" : ""} · {formatBytes(selected.bytes)} · {t("gameDetail.readOnly")}</span></div>
             : readError ? <div className="file-viewer-error" role="alert"><Icon name="warning"/><p>{readError}</p></div>
-            : <div className="file-viewer-empty"><Icon name="book" size={26}/><p>选择左侧文件查看内容</p><small>文件内容不可在浏览器中修改。</small></div>}
+            : <div className="file-viewer-empty"><Icon name="book" size={26}/><p>{t("gameDetail.selectFile")}</p><small>{t("gameDetail.immutableFile")}</small></div>}
           {selected && (
-            <textarea className="file-viewer-content" value={selected.content} readOnly spellCheck={false} aria-label={`查看 ${selected.path}`}/>
+            <textarea className="file-viewer-content" value={selected.content} readOnly spellCheck={false} aria-label={t("gameDetail.view", { path: selected.path })}/>
           )}
           {readError && selected && <p className="file-error" role="alert">{readError}</p>}
         </div>
@@ -580,11 +584,13 @@ function GameFilesPanel({ game }: { game: GameLibraryItem }) {
 }
 
 function Status({ state }: { state: string }) {
-  const label = state === "RUNNING" ? "运行中" : state === "STARTING" ? "启动中" : state === "STOPPING" ? "停止中" : state === "CRASHED" ? "已崩溃" : "已关闭";
+  const normalized = state === "RUNNING" || state === "STARTING" || state === "STOPPING" || state === "CRASHED" ? state : "CLOSED";
+  const label = i18n.t(`sessions.state.${normalized}`);
   return <span className={`status-pill ${state.toLowerCase()}`}><i/>{label}</span>;
 }
 
 function AdminPage() {
+  const { t } = useTranslation();
   const [runtime, setRuntime] = useState<AdminRuntimeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -597,11 +603,11 @@ function AdminPage() {
       setRuntime(await getAdminRuntime());
       setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "无法读取运行时诊断。");
+      setError(cause instanceof Error ? cause.message : t("adminRuntime.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
   useEffect(() => {
     let timer: number | undefined;
     const stopPolling = () => {
@@ -638,32 +644,33 @@ function AdminPage() {
       setSelected(null); setReason("");
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "强制停止失败。");
+      setError(cause instanceof Error ? cause.message : t("adminRuntime.stopFailed"));
     } finally { setBusy(false); }
   };
 
   const state = runtime?.instance.controlPlaneState ?? (loading ? "STARTING" : "NOT_READY");
   return <>
-    <PageHeader eyebrow="SYSTEM" title="运行状态" description="查看 API、Worker、Realtime 和持久 Session 的当前诊断。" actions={<span className="updated"><i/>{runtime ? "采样于 " + formatDateTime(runtime.observedAt) : "等待采样"}</span>}/>
+    <PageHeader eyebrow="SYSTEM" title={t("adminRuntime.title")} description={t("adminRuntime.description")} actions={<span className="updated"><i/>{runtime ? t("adminRuntime.sampled", { date: formatDateTime(runtime.observedAt) }) : t("adminRuntime.waiting")}</span>}/>
     {error && <p className="form-error" role="alert">{error}</p>}
     <section className="health-grid">
-      <article><span className="summary-icon mint"><Icon name="server"/></span><div><p>控制面</p><strong>{state}</strong><small>健康端点与 Worker 对账状态</small></div></article>
-      <article><span className="summary-icon mint"><Icon name="settings"/></span><div><p>活动 Worker</p><strong>{runtime?.instance.activeWorkerCount ?? "—"}</strong><small>{runtime?.instance.subscriptionCount ?? 0} 个 Realtime 订阅</small></div></article>
-      <article><span className="summary-icon blue"><Icon name="gamepad"/></span><div><p>WebSocket</p><strong>{runtime?.instance.webSocketConnectionCount ?? "—"}</strong><small>当前连接数</small></div></article>
-      <article><span className="summary-icon peach"><Icon name="archive"/></span><div><p>失败记录</p><strong>{runtime?.recentFailures.length ?? "—"}</strong><small>最近持久化 CRASHED Session</small></div></article>
+      <article><span className="summary-icon mint"><Icon name="server"/></span><div><p>{t("adminRuntime.control")}</p><strong>{state}</strong><small>{t("adminRuntime.controlDetail")}</small></div></article>
+      <article><span className="summary-icon mint"><Icon name="settings"/></span><div><p>{t("adminRuntime.activeWorkers")}</p><strong>{runtime?.instance.activeWorkerCount ?? "—"}</strong><small>{t("adminRuntime.subscriptions", { count: runtime?.instance.subscriptionCount ?? 0 })}</small></div></article>
+      <article><span className="summary-icon blue"><Icon name="gamepad"/></span><div><p>WebSocket</p><strong>{runtime?.instance.webSocketConnectionCount ?? "—"}</strong><small>{t("adminRuntime.connections")}</small></div></article>
+      <article><span className="summary-icon peach"><Icon name="archive"/></span><div><p>{t("adminRuntime.failures")}</p><strong>{runtime?.recentFailures.length ?? "—"}</strong><small>{t("adminRuntime.failuresDetail")}</small></div></article>
     </section>
     <section className="panel">
-      <div className="panel-heading"><div><h2>活动 Worker</h2><p>诊断数据来自 API 内存快照与 SQLite 持久绑定的合并结果。</p></div></div>
-      {loading && !runtime ? <p className="admin-empty" aria-busy="true">正在读取运行时…</p> : <div className="worker-table"><div className="worker-head"><span>Session / Worker</span><span>状态</span><span>epoch</span><span>Realtime</span><span>操作</span></div>{runtime?.workers.map(worker => <div className="worker-row" key={worker.session.id}><span><strong>{worker.session.name}</strong><small>{worker.session.id} · {worker.session.ownerUsername} · {worker.worker.workerId ?? "未注册"} · PID {worker.worker.pid ?? "—"} · 心跳 {worker.worker.heartbeatAgeMilliseconds === null ? "—" : `${Math.round(worker.worker.heartbeatAgeMilliseconds / 1000)} 秒前`}</small></span><span><Status state={worker.session.state}/><small className="worker-consistency">{worker.runtimeConsistency}</small></span><span>{worker.worker.workerEpoch}</span><span><strong>{worker.realtime.hubState}</strong><small>{worker.realtime.subscriptionCount} 订阅 · snapshot {worker.realtime.snapshotBytes === null ? worker.realtime.snapshotSizeStatus : formatBytes(worker.realtime.snapshotBytes)}</small></span><span>{["STARTING", "RUNNING", "STOPPING"].includes(worker.session.state) ? <button className="text-button danger-text" onClick={() => { setSelected(worker); setReason(""); }}>强制停止</button> : <small>不可操作</small>}</span></div>)}{runtime?.workers.length === 0 && <p className="admin-empty">当前没有活动 Worker。</p>}</div>}
+      <div className="panel-heading"><div><h2>{t("adminRuntime.activeWorkers")}</h2><p>{t("adminRuntime.workerIntro")}</p></div></div>
+      {loading && !runtime ? <p className="admin-empty" aria-busy="true">{t("adminRuntime.loading")}</p> : <div className="worker-table"><div className="worker-head"><span>{t("chrome.sessionWorker")}</span><span>{t("adminRuntime.state")}</span><span>epoch</span><span>Realtime</span><span>{t("adminRuntime.action")}</span></div>{runtime?.workers.map(worker => <div className="worker-row" key={worker.session.id}><span><strong>{worker.session.name}</strong><small>{worker.session.id} · {worker.session.ownerUsername} · {worker.worker.workerId ?? t("adminRuntime.unregistered")} · PID {worker.worker.pid ?? "—"} · {worker.worker.heartbeatAgeMilliseconds === null ? "—" : t("adminRuntime.heartbeat", { seconds: Math.round(worker.worker.heartbeatAgeMilliseconds / 1000) })}</small></span><span><Status state={worker.session.state}/><small className="worker-consistency">{worker.runtimeConsistency}</small></span><span>{worker.worker.workerEpoch}</span><span><strong>{worker.realtime.hubState}</strong><small>{t("adminRuntime.subscribed", { count: worker.realtime.subscriptionCount })} · {t("chrome.snapshot")} {worker.realtime.snapshotBytes === null ? worker.realtime.snapshotSizeStatus : formatBytes(worker.realtime.snapshotBytes)}</small></span><span>{["STARTING", "RUNNING", "STOPPING"].includes(worker.session.state) ? <button className="text-button danger-text" onClick={() => { setSelected(worker); setReason(""); }}>{t("adminRuntime.forceStop")}</button> : <small>{t("adminRuntime.unavailable")}</small>}</span></div>)}{runtime?.workers.length === 0 && <p className="admin-empty">{t("adminRuntime.noWorkers")}</p>}</div>}
     </section>
-    {runtime && runtime.recentFailures.length > 0 && <section className="panel"><div className="panel-heading"><div><h2>最近失败</h2><p>保留 SessionRoot 与存档；重新打开会使用更高 Worker epoch。</p></div></div><div className="worker-table"><div className="worker-head"><span>Session</span><span>游戏</span><span>epoch</span><span>原因</span><span>时间</span></div>{runtime.recentFailures.map(failure => <div className="worker-row" key={failure.sessionId + "-" + failure.failedAt}><span><strong>{failure.sessionName}</strong><small>{failure.sessionId} · {failure.ownerUsername}</small></span><span>{failure.gameName}</span><span>{failure.workerEpoch}</span><span>{failure.reasonCode}</span><span>{failure.failedAt ? formatDateTime(failure.failedAt) : "—"}</span></div>)}</div></section>}
-    {selected && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="force-stop-title"><button className="icon-button modal-close" aria-label="关闭" onClick={() => setSelected(null)} disabled={busy}><Icon name="close"/></button><h2 id="force-stop-title">强制停止 {selected.session.name}</h2><p className="modal-intro">Worker 会被有界停止或终止；Session 将标记为 CRASHED，SessionRoot 和存档会保留。</p><form className="form-panel modal-form" onSubmit={submitForceStop}><label><span>操作原因（必填）</span><textarea value={reason} onChange={event => setReason(event.target.value)} maxLength={500} rows={4} required placeholder="例如：处理异常 Worker"/></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setSelected(null)} disabled={busy}>取消</button><button className="danger-button" disabled={busy || reason.trim().length === 0}>{busy ? "处理中…" : "确认强制停止"}</button></div></form></section></div>}
+    {runtime && runtime.recentFailures.length > 0 && <section className="panel"><div className="panel-heading"><div><h2>{t("adminRuntime.recentFailures")}</h2><p>{t("adminRuntime.recentIntro")}</p></div></div><div className="worker-table"><div className="worker-head"><span>{t("chrome.session")}</span><span>{t("sessions.game")}</span><span>epoch</span><span>{t("adminRuntime.reason")}</span><span>{t("adminRuntime.time")}</span></div>{runtime.recentFailures.map(failure => <div className="worker-row" key={failure.sessionId + "-" + failure.failedAt}><span><strong>{failure.sessionName}</strong><small>{failure.sessionId} · {failure.ownerUsername}</small></span><span>{failure.gameName}</span><span>{failure.workerEpoch}</span><span>{failure.reasonCode}</span><span>{failure.failedAt ? formatDateTime(failure.failedAt) : "—"}</span></div>)}</div></section>}
+    {selected && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="force-stop-title"><button className="icon-button modal-close" aria-label={t("common.close")} onClick={() => setSelected(null)} disabled={busy}><Icon name="close"/></button><h2 id="force-stop-title">{t("adminRuntime.stopTitle", { name: selected.session.name })}</h2><p className="modal-intro">{t("adminRuntime.stopIntro")}</p><form className="form-panel modal-form" onSubmit={submitForceStop}><label><span>{t("adminRuntime.reasonLabel")}</span><textarea value={reason} onChange={event => setReason(event.target.value)} maxLength={500} rows={4} required placeholder={t("adminRuntime.reasonPlaceholder")}/></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setSelected(null)} disabled={busy}>{t("common.cancel")}</button><button className="danger-button" disabled={busy || reason.trim().length === 0}>{busy ? t("adminRuntime.processing") : t("adminRuntime.confirmStop")}</button></div></form></section></div>}
   </>;
 }
 
 const defaultUserInput: CreateUserInput = { username: "", email: "", temporaryPassword: "", role: "PLAYER" };
 
 function AdminUsersPage() {
+  const { t } = useTranslation();
   const { listUsers, createUser, updateUser, resetUserPassword, user: actor } = useAuth();
   const [users, setUsers] = useState<CurrentUser[]>([]);
   const [form, setForm] = useState<CreateUserInput>(defaultUserInput);
@@ -680,7 +687,7 @@ function AdminUsersPage() {
     try {
       const loaded = await listUsers();
       setUsers(loaded);
-    } catch { setError("无法加载用户列表。请确认当前账户仍有管理员权限。"); }
+    } catch { setError(t("adminUsers.loadFailed")); }
     finally { setLoading(false); }
   };
   useEffect(() => { void refresh(); }, []);
@@ -690,7 +697,7 @@ function AdminUsersPage() {
       const created = await createUser(form);
       setUsers(current => [...current, created]);
       setForm(defaultUserInput);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法创建用户。"); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("adminUsers.createFailed")); }
     finally { setCreating(false); }
   };
   const changeStatus = async (target: CurrentUser) => {
@@ -698,19 +705,19 @@ function AdminUsersPage() {
     try {
       const updated = await updateUser(target.id, target.stateVersion, { status: target.status === "ACTIVE" ? "DISABLED" : "ACTIVE" });
       setUsers(current => current.map(item => item.id === updated.id ? updated : item));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法更新用户状态。"); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("adminUsers.statusFailed")); }
   };
   const toggleRole = async (target: CurrentUser) => {
     setError("");
     try {
       const updated = await updateUser(target.id, target.stateVersion, { role: target.role === "ADMIN" ? "PLAYER" : "ADMIN" });
       setUsers(current => current.map(item => item.id === updated.id ? updated : item));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法更新用户角色。"); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("adminUsers.roleFailed")); }
   };
   const submitReset = async (event: FormEvent) => {
     event.preventDefault(); if (!resetting) return; setError("");
     try { await resetUserPassword(resetting.id, resetting.stateVersion, temporaryPassword); setResetting(null); setTemporaryPassword(""); await refresh(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "无法重置密码。"); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : t("adminUsers.resetFailed")); }
   };
   const submitProfile = async (event: FormEvent) => {
     event.preventDefault(); if (!editing) return; setError("");
@@ -718,22 +725,23 @@ function AdminUsersPage() {
       const updated = await updateUser(editing.id, editing.stateVersion, profile);
       setUsers(current => current.map(item => item.id === updated.id ? updated : item));
       setEditing(null);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "无法更新用户资料。"); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("adminUsers.profileFailed")); }
   };
   return <>
-    <PageHeader eyebrow="IDENTITY" title="用户管理" description="创建本地账户，并管理账号状态、角色与临时密码。所有更改立即撤销该用户的现有登录会话。" />
+    <PageHeader eyebrow="IDENTITY" title={t("adminUsers.title")} description={t("adminUsers.description")} />
     {error && <p className="form-error" role="alert">{error}</p>}
-    <section className="panel admin-users-panel"><div className="panel-heading"><div><h2>本地账户</h2><p>用户必须使用邮箱登录；新建与重置账户均需首次修改临时密码。</p></div><span className="tag">{users.length} 个账户</span></div>
-      {loading ? <p className="admin-empty" aria-busy="true">正在加载用户…</p> : <div className="admin-user-table"><div className="admin-user-head"><span>用户</span><span>角色</span><span>状态</span><span>状态版本</span><span>操作</span></div>{users.map(target => <div className="admin-user-row" key={target.id}><span><strong>{target.username}</strong><small>{target.email}</small></span><span><span className={`tag ${target.role === "ADMIN" ? "warning" : "success"}`}>{target.role === "ADMIN" ? "管理员" : "玩家"}</span></span><span>{target.status === "ACTIVE" ? (target.mustChangePassword ? "需改密" : "启用") : "已禁用"}</span><span>#{target.stateVersion}</span><span className="admin-row-actions"><button className="text-button" onClick={() => { setEditing(target); setProfile({ username: target.username, email: target.email }); }}>编辑</button><button className="text-button" onClick={() => void toggleRole(target)} disabled={target.id === actor?.id}>{target.role === "ADMIN" ? "降为玩家" : "设为管理员"}</button><button className="text-button" onClick={() => void changeStatus(target)} disabled={target.id === actor?.id}>{target.status === "ACTIVE" ? "禁用" : "启用"}</button><button className="text-button" onClick={() => { setResetting(target); setTemporaryPassword(""); }} disabled={target.id === actor?.id}>重置密码</button></span></div>)}</div>}
+    <section className="panel admin-users-panel"><div className="panel-heading"><div><h2>{t("adminUsers.accounts")}</h2><p>{t("adminUsers.intro")}</p></div><span className="tag">{t("adminUsers.count", { count: users.length })}</span></div>
+      {loading ? <p className="admin-empty" aria-busy="true">{t("adminUsers.loading")}</p> : <div className="admin-user-table"><div className="admin-user-head"><span>{t("adminUsers.user")}</span><span>{t("adminUsers.role")}</span><span>{t("adminUsers.state")}</span><span>{t("adminUsers.version")}</span><span>{t("adminUsers.action")}</span></div>{users.map(target => <div className="admin-user-row" key={target.id}><span><strong>{target.username}</strong><small>{target.email}</small></span><span><span className={`tag ${target.role === "ADMIN" ? "warning" : "success"}`}>{target.role === "ADMIN" ? t("common.admin") : t("adminUsers.player")}</span></span><span>{target.status === "ACTIVE" ? (target.mustChangePassword ? t("adminUsers.mustChange") : t("adminUsers.enabled")) : t("adminUsers.disabled")}</span><span>#{target.stateVersion}</span><span className="admin-row-actions"><button className="text-button" onClick={() => { setEditing(target); setProfile({ username: target.username, email: target.email }); }}>{t("adminUsers.edit")}</button><button className="text-button" onClick={() => void toggleRole(target)} disabled={target.id === actor?.id}>{t(target.role === "ADMIN" ? "adminUsers.demote" : "adminUsers.promote")}</button><button className="text-button" onClick={() => void changeStatus(target)} disabled={target.id === actor?.id}>{t(target.status === "ACTIVE" ? "adminUsers.disable" : "adminUsers.enable")}</button><button className="text-button" onClick={() => { setResetting(target); setTemporaryPassword(""); }} disabled={target.id === actor?.id}>{t("adminUsers.reset")}</button></span></div>)}</div>}
     </section>
-    <section className="form-panel admin-create-form"><div><p className="eyebrow">NEW ACCOUNT</p><h2>创建用户</h2><p>临时密码需至少 8 位；它仅用于本次安全传递，服务端不会在响应中返回。</p></div><form onSubmit={submit}><label><span>用户名</span><input value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} autoComplete="off" required /></label><label><span>登录邮箱</span><input value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} type="email" autoComplete="off" required /></label><label><span>临时密码</span><input value={form.temporaryPassword} onChange={event => setForm({ ...form, temporaryPassword: event.target.value })} type="password" autoComplete="new-password" minLength={8} required /></label><label><span>角色</span><select value={form.role} onChange={event => setForm({ ...form, role: event.target.value as CurrentUser["role"] })}><option value="PLAYER">玩家</option><option value="ADMIN">管理员</option></select></label><div className="form-actions"><button className="primary-button" disabled={creating}>{creating ? "正在创建…" : "创建用户"}</button></div></form></section>
-    {resetting && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="reset-password-title"><button className="icon-button modal-close" aria-label="关闭" onClick={() => setResetting(null)}><Icon name="close"/></button><h2 id="reset-password-title">重置 {resetting.username} 的密码</h2><p className="modal-intro">此操作会立即注销该用户，并要求其在下次登录后修改临时密码。临时密码需至少 8 位。</p><form className="form-panel modal-form" onSubmit={submitReset}><label><span>新临时密码</span><input type="password" value={temporaryPassword} onChange={event => setTemporaryPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setResetting(null)}>取消</button><button className="danger-button">确认重置</button></div></form></section></div>}
-    {editing && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title"><button className="icon-button modal-close" aria-label="关闭" onClick={() => setEditing(null)}><Icon name="close"/></button><h2 id="edit-user-title">编辑 {editing.username}</h2><p className="modal-intro">更改用户名或登录邮箱会立即撤销该账户的现有登录会话。</p><form className="form-panel modal-form" onSubmit={submitProfile}><label><span>用户名</span><input value={profile.username ?? ""} onChange={event => setProfile({ ...profile, username: event.target.value })} required /></label><label><span>登录邮箱</span><input value={profile.email ?? ""} onChange={event => setProfile({ ...profile, email: event.target.value })} type="email" required /></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setEditing(null)}>取消</button><button className="primary-button">保存资料</button></div></form></section></div>}
+    <section className="form-panel admin-create-form"><div><p className="eyebrow">{t("chrome.newAccount")}</p><h2>{t("adminUsers.createTitle")}</h2><p>{t("adminUsers.createIntro")}</p></div><form onSubmit={submit}><label><span>{t("adminUsers.username")}</span><input value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} autoComplete="off" required /></label><label><span>{t("adminUsers.email")}</span><input value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} type="email" autoComplete="off" required /></label><label><span>{t("adminUsers.temporaryPassword")}</span><input value={form.temporaryPassword} onChange={event => setForm({ ...form, temporaryPassword: event.target.value })} type="password" autoComplete="new-password" minLength={8} required /></label><label><span>{t("adminUsers.role")}</span><select value={form.role} onChange={event => setForm({ ...form, role: event.target.value as CurrentUser["role"] })}><option value="PLAYER">{t("adminUsers.player")}</option><option value="ADMIN">{t("common.admin")}</option></select></label><div className="form-actions"><button className="primary-button" disabled={creating}>{creating ? t("adminUsers.creating") : t("adminUsers.create")}</button></div></form></section>
+    {resetting && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="reset-password-title"><button className="icon-button modal-close" aria-label={t("common.close")} onClick={() => setResetting(null)}><Icon name="close"/></button><h2 id="reset-password-title">{t("adminUsers.resetTitle", { name: resetting.username })}</h2><p className="modal-intro">{t("adminUsers.resetIntro")}</p><form className="form-panel modal-form" onSubmit={submitReset}><label><span>{t("adminUsers.newTemporaryPassword")}</span><input type="password" value={temporaryPassword} onChange={event => setTemporaryPassword(event.target.value)} autoComplete="new-password" minLength={8} required /></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setResetting(null)}>{t("common.cancel")}</button><button className="danger-button">{t("adminUsers.confirmReset")}</button></div></form></section></div>}
+    {editing && <div className="modal-layer"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title"><button className="icon-button modal-close" aria-label={t("common.close")} onClick={() => setEditing(null)}><Icon name="close"/></button><h2 id="edit-user-title">{t("adminUsers.editTitle", { name: editing.username })}</h2><p className="modal-intro">{t("adminUsers.editIntro")}</p><form className="form-panel modal-form" onSubmit={submitProfile}><label><span>{t("adminUsers.username")}</span><input value={profile.username ?? ""} onChange={event => setProfile({ ...profile, username: event.target.value })} required /></label><label><span>{t("adminUsers.email")}</span><input value={profile.email ?? ""} onChange={event => setProfile({ ...profile, email: event.target.value })} type="email" required /></label><div className="form-actions"><button className="secondary-button" type="button" onClick={() => setEditing(null)}>{t("common.cancel")}</button><button className="primary-button">{t("adminUsers.saveProfile")}</button></div></form></section></div>}
   </>;
 }
 
 function SettingsPage() {
-  const { user } = useAuth();
+  const { user, updateUiLocale } = useAuth();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const fonts = useRuntimeFontCatalog();
   const startupDefaults = useSessionStartupDefaults(user?.id);
@@ -748,6 +756,15 @@ function SettingsPage() {
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [languagePending, setLanguagePending] = useState(false);
+  const [languageMessage, setLanguageMessage] = useState<string | null>(null);
+
+  const saveLanguage = async (locale: UiLocale, previous: UiLocale) => {
+    setLanguagePending(true); setLanguageMessage(null);
+    try { await updateUiLocale(locale); persistDeviceLocale(locale); setLanguageMessage(i18n.t("settings.languageSaved", { lng: locale })); }
+    catch { await changeUiLocale(previous); persistDeviceLocale(previous); setLanguageMessage(i18n.t("settings.languageSaveFailed", { lng: previous })); }
+    finally { setLanguagePending(false); }
+  };
 
   useEffect(() => {
     if (!startupDefaults.data) return;
@@ -768,7 +785,7 @@ function SettingsPage() {
     setMessage(null);
     setError(null);
     if (fontSize < 8 || fontSize > 72 || lineHeight < fontSize || lineHeight > 128) {
-      setError("字号必须为 8～72px，行高必须不小于字号且不超过 128px。");
+      setError(t("settingsExtra.invalidMetrics"));
       return;
     }
     setPending(true);
@@ -782,22 +799,24 @@ function SettingsPage() {
       setWidthMode(saved.widthMode);
       setCustomWidth(saved.customWidth ?? 800);
       setConvertBackslashToYen(saved.convertBackslashToYen);
-      setMessage("已保存。之后创建的 Session 将使用这些默认值。");
+      setMessage(t("settingsExtra.saved"));
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "无法保存 Session 启动默认值。");
+      setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : t("settingsExtra.saveFailed"));
     } finally {
       setPending(false);
     }
   };
 
-  return <><PageHeader eyebrow="SESSION DEFAULTS" title="设置" description="配置新建 Session 的启动默认值；只影响之后创建的 Session，不会覆盖已经创建的 Session。"/><form className="form-panel settings-panel" onSubmit={submit}><h2>Session 启动默认值</h2><p className="settings-description">Session 创建后会保存自己的字体、字号、行高、字号/行高模式、宽度模式和 Era 显示兼容选项。关闭后重新启动时，仍使用该 Session 自身的配置。</p><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} fontSizeLineHeightMode={fontSizeLineHeightMode} setFontSize={setFontSize} setLineHeight={setLineHeight} setFontSizeLineHeightMode={setFontSizeLineHeightMode} disabled={pending}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending}/><SessionYenCompatibilityField value={convertBackslashToYen} onChange={setConvertBackslashToYen} disabled={pending}/>{startupDefaults.isError && <p className="settings-warning" role="status">无法读取账户默认值，当前显示内置默认值；保存后会重新写入。</p>}{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="settings-success" role="status">{message}</p>}<div className="form-actions"><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady}>{pending ? "保存中…" : "保存默认值"}</button></div></form></>;
+  return <><PageHeader eyebrow={t("settings.eyebrow")} title={t("settings.title")} description={t("settings.description")}/><section className="form-panel settings-panel"><h2>{t("settings.languageTitle")}</h2><p className="settings-description">{t("settings.languageDescription")}</p><LanguageSelect disabled={languagePending} onChange={(locale, previous) => void saveLanguage(locale, previous)}/>{languageMessage && <p className="settings-success" role="status">{languageMessage}</p>}</section><form className="form-panel settings-panel" onSubmit={submit}><h2>{t("settings.sessionTitle")}</h2><p className="settings-description">{t("settingsExtra.description")}</p><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} fontSizeLineHeightMode={fontSizeLineHeightMode} setFontSize={setFontSize} setLineHeight={setLineHeight} setFontSizeLineHeightMode={setFontSizeLineHeightMode} disabled={pending}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending}/><SessionYenCompatibilityField value={convertBackslashToYen} onChange={setConvertBackslashToYen} disabled={pending}/>{startupDefaults.isError && <p className="settings-warning" role="status">{t("settingsExtra.defaultsFailed")}</p>}{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="settings-success" role="status">{message}</p>}<div className="form-actions"><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady}>{pending ? t("common.saving") : t("settingsExtra.saveDefaults")}</button></div></form></>;
 }
 
 function ConfirmDialog({ title, body, confirm, onCancel, onConfirm, pending = false }: { title: string; body: string; confirm: string; onCancel: () => void; onConfirm?: () => void; pending?: boolean }) {
-  return <div className="modal-layer"><section className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title"><span className="confirm-icon"><Icon name="warning"/></span><h2 id="confirm-title">{title}</h2><p>{body}</p><div className="form-actions"><button className="secondary-button" onClick={onCancel} disabled={pending}>取消</button><button className="danger-button" onClick={onConfirm ?? onCancel} disabled={pending}>{pending ? "处理中…" : confirm}</button></div></section></div>;
+  const { t } = useTranslation();
+  return <div className="modal-layer"><section className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title"><span className="confirm-icon"><Icon name="warning"/></span><h2 id="confirm-title">{title}</h2><p>{body}</p><div className="form-actions"><button className="secondary-button" onClick={onCancel} disabled={pending}>{t("common.cancel")}</button><button className="danger-button" onClick={onConfirm ?? onCancel} disabled={pending}>{pending ? t("adminRuntime.processing") : confirm}</button></div></section></div>;
 }
 
 function LoginPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { user, login } = useAuth();
@@ -805,21 +824,22 @@ function LoginPage() {
   if (user) return <Navigate to={user.mustChangePassword ? "/change-password" : "/games"} replace/>;
   const returnTo = new URLSearchParams(location.search).get("returnTo");
   const safeReturnTo = returnTo && /^\/(?!\/)/.test(returnTo) && !returnTo.includes("\\") ? returnTo : "/games";
-  const submit = async (event: FormEvent) => { event.preventDefault(); setError(""); setPending(true); try { const current = await login(email, password, rememberMe); navigate(current.mustChangePassword ? "/change-password" : safeReturnTo, { replace: true }); } catch (failure) { const error = failure as { code?: string; status?: number }; setError(error.code === "SERVICE_NOT_READY" ? "服务尚未完成数据库迁移或首次初始化。" : error.code === "TOO_MANY_ATTEMPTS" ? "登录尝试过于频繁，请稍后重试。" : error.status && error.status >= 500 ? "登录服务暂时不可用。" : "邮箱或密码不正确。"); } finally { setPending(false); } };
-  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">YOUR ERA, ANYWHERE</p><h1>故事不会因为<br/>离开浏览器而暂停。</h1><p>在桌面或手机上继续你的 Emuera 游戏。每段旅程独立运行，安全保存，随时重连。</p></div><small>CloudEmuera · Self-hosted runtime</small></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><p className="eyebrow">WELCOME BACK</p><h2>登录 CloudEmuera</h2><p>使用登录邮箱访问你的游戏库与正在运行的 Session。</p><label><span>登录邮箱</span><input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" required/></label><label><span>密码</span><input value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" required/></label><div className="login-options"><label className="login-checkbox"><input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}/><span>保持登录</span></label></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? "正在登录…" : <>登录 <Icon name="arrow"/></>}</button></form></section></main>;
+  const submit = async (event: FormEvent) => { event.preventDefault(); setError(""); setPending(true); try { const current = await login(email, password, rememberMe); navigate(current.mustChangePassword ? "/change-password" : safeReturnTo, { replace: true }); } catch (failure) { const error = failure as { code?: string; status?: number }; setError(error.code === "SERVICE_NOT_READY" ? t("auth.serviceNotReady") : error.code === "TOO_MANY_ATTEMPTS" ? t("auth.tooMany") : error.status && error.status >= 500 ? t("auth.unavailable") : t("auth.invalid")); } finally { setPending(false); } };
+  const storyTitle = t("auth.storyTitle").split("\n");
+  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">{t("auth.storyEyebrow")}</p><h1>{storyTitle.map((line, index) => <span key={line}>{index > 0 && <br/>}{line}</span>)}</h1><p>{t("auth.storyBody")}</p></div><small>CloudEmuera · {t("chrome.selfHostedRuntime")}</small></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><LanguageSelect login disabled={pending}/><p className="eyebrow">{t("auth.welcome")}</p><h2>{t("auth.title")}</h2><p>{t("auth.intro")}</p><label><span>{t("auth.email")}</span><input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" required/></label><label><span>{t("auth.password")}</span><input value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" required/></label><div className="login-options"><label className="login-checkbox"><input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}/><span>{t("auth.remember")}</span></label></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? t("auth.submitting") : <>{t("auth.submit")} <Icon name="arrow"/></>}</button></form></section></main>;
 }
 
 function ChangePasswordPage() {
-  const { user, changePassword } = useAuth(); const navigate = useNavigate(); const [currentPassword, setCurrentPassword] = useState(""); const [newPassword, setNewPassword] = useState(""); const [confirmation, setConfirmation] = useState(""); const [error, setError] = useState(""); const [pending, setPending] = useState(false);
+  const { t } = useTranslation(); const { user, changePassword } = useAuth(); const navigate = useNavigate(); const [currentPassword, setCurrentPassword] = useState(""); const [newPassword, setNewPassword] = useState(""); const [confirmation, setConfirmation] = useState(""); const [error, setError] = useState(""); const [pending, setPending] = useState(false);
   if (!user) return <Navigate to="/login" replace/>;
   if (!user.mustChangePassword) return <Navigate to="/games" replace/>;
-  const submit = async (event: FormEvent) => { event.preventDefault(); setError(""); if (newPassword !== confirmation) { setError("两次输入的新密码不一致。"); return; } setPending(true); try { await changePassword(currentPassword, newPassword); navigate("/games", { replace: true }); } catch { setError("无法修改密码，请检查新密码是否至少 8 位。"); } finally { setPending(false); } };
-  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">SECURITY REQUIRED</p><h1>先更新临时密码。</h1><p>这是首次登录或管理员重置密码后的必要步骤。</p></div></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><h2>修改密码</h2><p>新密码至少 8 位。</p><label><span>当前密码</span><input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} autoComplete="current-password" required/></label><label><span>新密码</span><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" minLength={8} required/></label><label><span>确认新密码</span><input type="password" value={confirmation} onChange={e => setConfirmation(e.target.value)} autoComplete="new-password" minLength={8} required/></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? "正在保存…" : "保存新密码"}</button></form></section></main>;
+  const submit = async (event: FormEvent) => { event.preventDefault(); setError(""); if (newPassword !== confirmation) { setError(t("passwordChange.mismatch")); return; } setPending(true); try { await changePassword(currentPassword, newPassword); navigate("/games", { replace: true }); } catch { setError(t("passwordChange.failed")); } finally { setPending(false); } };
+  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">{t("passwordChange.eyebrow")}</p><h1>{t("passwordChange.storyTitle")}</h1><p>{t("passwordChange.storyBody")}</p></div></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><h2>{t("passwordChange.title")}</h2><p>{t("passwordChange.intro")}</p><label><span>{t("passwordChange.current")}</span><input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} autoComplete="current-password" required/></label><label><span>{t("passwordChange.next")}</span><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" minLength={8} required/></label><label><span>{t("passwordChange.confirm")}</span><input type="password" value={confirmation} onChange={e => setConfirmation(e.target.value)} autoComplete="new-password" minLength={8} required/></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? t("passwordChange.saving") : t("passwordChange.save")}</button></form></section></main>;
 }
 
 function RequireAuthenticated({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth(); const location = useLocation();
-  if (loading) return <main className="auth-loading" aria-busy="true">正在检查登录状态…</main>;
+  const { t } = useTranslation(); const { user, loading } = useAuth(); const location = useLocation();
+  if (loading) return <main className="auth-loading" aria-busy="true">{t("auth.checking")}</main>;
   if (!user) return <Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname)}`} replace/>;
   if (user.mustChangePassword) return <Navigate to="/change-password" replace/>;
   return <>{children}</>;

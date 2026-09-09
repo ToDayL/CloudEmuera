@@ -9,12 +9,14 @@ public sealed class CurrentActor(string userId, string role, string authSessionI
     public bool IsAdmin => string.Equals(Role, "ADMIN", StringComparison.Ordinal);
 }
 
-public sealed class CurrentUser(string id, string username, string email, string role, string status, bool mustChangePassword, int stateVersion)
+public sealed class CurrentUser(string id, string username, string email, string role, string status, bool mustChangePassword, int stateVersion, string? uiLocale = null)
 {
-    public string Id { get; } = id; public string Username { get; } = username; public string Email { get; } = email; public string Role { get; } = role; public string Status { get; } = status; public bool MustChangePassword { get; } = mustChangePassword; public int StateVersion { get; } = stateVersion;
+    public string Id { get; } = id; public string Username { get; } = username; public string Email { get; } = email; public string Role { get; } = role; public string Status { get; } = status; public bool MustChangePassword { get; } = mustChangePassword; public int StateVersion { get; } = stateVersion; public string? UiLocale { get; } = uiLocale;
 }
 
-public sealed class LoginCommand(string email, string password, bool rememberMe) { public string Email { get; } = email; public string Password { get; } = password; public bool RememberMe { get; } = rememberMe; }
+public sealed class LoginCommand(string email, string password, bool rememberMe, string? uiLocale = null) { public string Email { get; } = email; public string Password { get; } = password; public bool RememberMe { get; } = rememberMe; public string? UiLocale { get; } = uiLocale; }
+
+public sealed record UiLocalePreference(string Locale, int StateVersion);
 
 public sealed class LoginResult(CurrentUser user, string authSessionId, DateTimeOffset expiresAt) { public CurrentUser User { get; } = user; public string AuthSessionId { get; } = authSessionId; public DateTimeOffset ExpiresAt { get; } = expiresAt; }
 

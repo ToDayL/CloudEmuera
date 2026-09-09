@@ -5,6 +5,7 @@ import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
 import type { Prompt, RealtimeBoxModel, RealtimeColor, RealtimeInsets, RealtimeLine, RealtimeNode, RealtimeRect } from "../realtime/protocol";
 import { useConsoleTooltipTarget } from "./TooltipLayer";
+import i18n from "../i18n";
 
 export interface ConsoleInputEvent {
   value: string;
@@ -283,7 +284,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
         })}
       </div>
     </div>
-    <button className={`scrollback-latest ${atLatest ? "is-hidden" : ""}`} type="button" aria-hidden={atLatest} tabIndex={atLatest ? -1 : 0} onClick={scrollToLatest}>↓ 回到最新</button>
+    <button className={`scrollback-latest ${atLatest ? "is-hidden" : ""}`} type="button" aria-hidden={atLatest} tabIndex={atLatest ? -1 : 0} onClick={scrollToLatest}>↓ {i18n.t("renderer.latest")}</button>
   </div>;
 }
 
@@ -422,10 +423,10 @@ export const NodeRenderer = memo(function NodeRendererImpl({ node, assets, onInp
     }
     case "image": {
       const destination = node.destination ?? node.sourceRect;
-      if (node.sourceRect && destination) return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(destination)}><SpriteCanvas sprite={{ assetId: node.assetId, sourceRect: node.sourceRect, frame: 0, animationFrames: [], opacity: 1 }} assets={assets} alt={node.decorative ? "" : node.altText ?? "游戏图片"} className="console-image" width={destination.width} height={destination.height} style={inlineSpriteStyle(destination)} onRenderError={onRenderError} /></span>;
-      return <AssetImage assetId={node.assetId} alt={node.decorative ? "" : node.altText ?? "游戏图片"} assets={assets} className="console-image" width={node.destination?.width} height={node.destination?.height} />;
+      if (node.sourceRect && destination) return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(destination)}><SpriteCanvas sprite={{ assetId: node.assetId, sourceRect: node.sourceRect, frame: 0, animationFrames: [], opacity: 1 }} assets={assets} alt={node.decorative ? "" : node.altText ?? i18n.t("renderer.image")} className="console-image" width={destination.width} height={destination.height} style={inlineSpriteStyle(destination)} onRenderError={onRenderError} /></span>;
+      return <AssetImage assetId={node.assetId} alt={node.decorative ? "" : node.altText ?? i18n.t("renderer.image")} assets={assets} className="console-image" width={node.destination?.width} height={node.destination?.height} />;
     }
-    case "sprite": return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(node.destination)}><SpriteCanvas sprite={node} assets={assets} alt={node.altText ?? "游戏精灵"} className="console-sprite" width={node.destination.width} height={node.destination.height} style={inlineSpriteStyle(node.destination)} onRenderError={onRenderError} /></span>;
+    case "sprite": return <span className="console-sprite-slot" style={inlineSpriteSlotStyle(node.destination)}><SpriteCanvas sprite={node} assets={assets} alt={node.altText ?? i18n.t("renderer.sprite")} className="console-sprite" width={node.destination.width} height={node.destination.height} style={inlineSpriteStyle(node.destination)} onRenderError={onRenderError} /></span>;
     case "shape": return <ShapeSvg shape={node.shape} bounds={node.bounds} points={node.points} fill={node.fill} stroke={node.stroke} buttonColor={node.buttonColor} />;
     case "div": return <div className="console-emuera-div" style={divStyle(node.bounds, node.zIndex, node.background, node.isRelative, node.box)}>{node.children.map((child, index) => <NodeRenderer key={`div-${index}`} node={child} assets={assets} onInput={onInput} activation={activation} onRenderError={onRenderError} viewportHeight={viewportHeight} />)}</div>;
     case "htmlIsland": return node.nodes
@@ -637,7 +638,7 @@ function interactivePositionStyle(positionX: number | null | undefined): CSSProp
 
 function AssetImage({ assetId, alt, assets, className, width, height }: { assetId: string; alt: string; assets: AssetResolver; className: string; width?: number; height?: number }) {
   const url = assets.url(assetId);
-  if (!url) return <span className="console-missing-asset" role="img" aria-label={alt}>[资源不可用]</span>;
+  if (!url) return <span className="console-missing-asset" role="img" aria-label={alt}>[{i18n.t("renderer.unavailable")}]</span>;
   return <img className={className} src={url} alt={alt} width={width} height={height} loading="lazy" decoding="async" />;
 }
 
@@ -650,11 +651,11 @@ export function ShapeSvg({ shape, bounds, points, fill, stroke, buttonColor }: {
   if (shape === "line") {
     const first = localPoints[0] ?? { x: 0, y: 0 };
     const second = localPoints[1] ?? { x: bounds.width, y: bounds.height };
-    return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><line x1={first.x} y1={first.y} x2={second.x} y2={second.y} stroke={strokeValue === "none" ? fillValue : strokeValue} /></svg>;
+    return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label={i18n.t("renderer.shape")}><line x1={first.x} y1={first.y} x2={second.x} y2={second.y} stroke={strokeValue === "none" ? fillValue : strokeValue} /></svg>;
   }
-  if (shape === "ellipse") return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><ellipse cx={bounds.width / 2} cy={bounds.height / 2} rx={bounds.width / 2} ry={bounds.height / 2} fill={fillValue} stroke={strokeValue} /></svg>;
-  if (shape === "polygon") return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><polygon points={localPoints.map(point => `${point.x},${point.y}`).join(" ")} fill={fillValue} stroke={strokeValue} /></svg>;
-  return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label="游戏图形"><rect width={bounds.width} height={bounds.height} fill={shape === "space" ? "none" : fillValue} stroke={strokeValue} /></svg>;
+  if (shape === "ellipse") return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label={i18n.t("renderer.shape")}><ellipse cx={bounds.width / 2} cy={bounds.height / 2} rx={bounds.width / 2} ry={bounds.height / 2} fill={fillValue} stroke={strokeValue} /></svg>;
+  if (shape === "polygon") return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label={i18n.t("renderer.shape")}><polygon points={localPoints.map(point => `${point.x},${point.y}`).join(" ")} fill={fillValue} stroke={strokeValue} /></svg>;
+  return <svg className={shapeClassName} style={shapeStyle} viewBox={`0 0 ${Math.max(1, bounds.width)} ${Math.max(1, bounds.height)}`} role="img" aria-label={i18n.t("renderer.shape")}><rect width={bounds.width} height={bounds.height} fill={shape === "space" ? "none" : fillValue} stroke={strokeValue} /></svg>;
 }
 
 function divStyle(bounds: { x: number; y: number; width: number; height: number }, zIndex: number, background: RealtimeColor | null | undefined, isRelative: boolean, box: RealtimeBoxModel | null | undefined): CSSProperties {

@@ -264,7 +264,7 @@ describe("App", () => {
 
     expect(await screen.findByText("Session One")).toBeInTheDocument();
     expect(screen.getByText(/worker-1/)).toBeInTheDocument();
-    expect(screen.getByText(/snapshot 4\.0 KB/)).toBeInTheDocument();
+    expect(screen.getByText(/快照 4\.0 KB/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "强制停止" }));
     const dialog = await screen.findByRole("dialog", { name: "强制停止 Session One" });
     fireEvent.change(within(dialog).getByLabelText("操作原因（必填）"), { target: { value: "管理员处理异常 Worker" } });
@@ -563,6 +563,27 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /登录/ }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("服务尚未完成数据库迁移或首次初始化。");
+    vi.unstubAllGlobals();
+  });
+
+  it("sends only an explicitly selected login locale and applies it before navigation", async () => {
+    const current: CurrentUser = { id: "usr_admin", username: "admin", email: "admin@example.test", role: "ADMIN", status: "ACTIVE", mustChangePassword: true, stateVersion: 2, uiLocale: "ja-JP" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: "csrf-token" }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(current), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<MemoryRouter initialEntries={["/login"]}><AuthProvider initialUser={null}><App /></AuthProvider></MemoryRouter>);
+
+    fireEvent.change(screen.getByLabelText("界面语言"), { target: { value: "ja-JP" } });
+    fireEvent.change(await screen.findByLabelText("メールアドレス"), { target: { value: "admin@example.test" } });
+    fireEvent.change(screen.getByLabelText("パスワード"), { target: { value: "temporary-password" } });
+    fireEvent.click(screen.getByRole("button", { name: /ログイン/ }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const request = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({ uiLocale: "ja-JP" });
+    await waitFor(() => expect(document.documentElement.lang).toBe("ja-JP"));
+    expect(sessionStorage.getItem("cloudemuera.loginLocaleOverride")).toBeNull();
     vi.unstubAllGlobals();
   });
 });
