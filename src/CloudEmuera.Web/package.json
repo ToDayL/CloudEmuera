@@ -12,8 +12,10 @@
   "dependencies": {
     "@tanstack/react-query": "5.101.4",
     "@tanstack/react-virtual": "3.14.10",
+    "i18next": "25.8.18",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-i18next": "16.5.8",
     "react-router-dom": "7.18.2"
   },
   "devDependencies": {

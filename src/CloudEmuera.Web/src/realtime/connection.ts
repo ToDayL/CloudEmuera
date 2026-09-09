@@ -1,7 +1,8 @@
 import { CAPABILITY_DIGEST, SUPPORTED_CAPABILITIES } from "./capabilities";
-import { decodeRealtimeMessage } from "./codec";
+import { decodeRealtimeMessage, RealtimeDecodeError } from "./codec";
 import { InputPayload, REALTIME_SUBPROTOCOL, RealtimeServerMessage } from "./protocol";
 import { beginResume, createPendingInput, createSessionStoreState, handleServerMessage, markInputUnknown, SessionStoreState } from "./sessionStore";
+import i18n from "../i18n";
 
 export type ConnectionPhase = "disconnected" | "connecting" | "hello_pending" | "ready" | "backing_off" | "auth_required" | "incompatible" | "disposed";
 export type ConnectionListener = (phase: ConnectionPhase, detail?: string) => void;
@@ -105,7 +106,7 @@ export class RealtimeConnectionManager {
   connect(): void {
     if (this.disposed || this.socket) return;
     if (!this.networkOnline) { this.setPhase("disconnected"); return; }
-    if (typeof WebSocket === "undefined") { this.setPhase("disconnected", "浏览器不支持 WebSocket。"); return; }
+    if (typeof WebSocket === "undefined") { this.setPhase("disconnected", i18n.t("protocolUi.websocketUnsupported")); return; }
     this.setPhase("connecting");
     const url = realtimeUrl();
     try { this.socket = new WebSocket(url, REALTIME_SUBPROTOCOL); }
@@ -153,9 +154,9 @@ export class RealtimeConnectionManager {
   private handleMessage(raw: unknown): void {
     let message: RealtimeServerMessage;
     try { if (typeof raw !== "string" && !(raw instanceof ArrayBuffer)) throw new Error("binary"); message = decodeRealtimeMessage(raw); }
-    catch (error) { this.setPhase("incompatible", error instanceof Error ? error.message : "实时消息无法解析。"); this.socket?.close(1002, "invalid_message"); return; }
+    catch (error) { this.setPhase("incompatible", error instanceof RealtimeDecodeError ? i18n.t("protocolUi.invalid", { code: error.reasonCode }) : i18n.t("protocolUi.parseFailed")); this.socket?.close(1002, "invalid_message"); return; }
     if (message.type === "server.hello") {
-      if (message.payload.capabilityDigest !== CAPABILITY_DIGEST) { this.setPhase("incompatible", "客户端与服务端能力版本不一致。"); this.socket?.close(1002, "capability_mismatch"); return; }
+      if (message.payload.capabilityDigest !== CAPABILITY_DIGEST) { this.setPhase("incompatible", i18n.t("protocolUi.capabilityMismatch")); this.socket?.close(1002, "capability_mismatch"); return; }
       this.serverHello = message.payload;
       this.serverTimeOffsetMilliseconds = message.payload.serverNowUnixMilliseconds - Date.now();
       this.reconnectAttempt = 0;
@@ -194,7 +195,7 @@ export class RealtimeConnectionManager {
           if (subscription.state.phase === "resuming") this.resume(subscription);
         }, resumeSnapshotTimeoutMilliseconds);
       } else if (message.payload.status === "SNAPSHOT_NOT_READY") this.scheduleResume(subscription);
-      else if (message.payload.status === "CAPABILITY_MISMATCH") { this.setPhase("incompatible", "客户端与 Session 能力版本不一致。"); subscription.state = { ...subscription.state, phase: "error", fatalRenderError: "能力版本不一致。" }; notify(subscription); }
+      else if (message.payload.status === "CAPABILITY_MISMATCH") { const mismatch = i18n.t("protocolUi.sessionCapabilityMismatch"); this.setPhase("incompatible", mismatch); subscription.state = { ...subscription.state, phase: "error", fatalRenderError: mismatch }; notify(subscription); }
       else if (message.payload.status === "SESSION_NOT_FOUND" || message.payload.status === "SESSION_NOT_RUNNING") { subscription.state = { ...subscription.state, phase: "ended" }; notify(subscription); }
       return;
     }

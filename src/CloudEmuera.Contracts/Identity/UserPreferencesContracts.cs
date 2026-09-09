@@ -1,5 +1,9 @@
 namespace CloudEmuera.Contracts.Identity;
 
+public sealed record UpdateUiLocaleRequest(string Locale);
+
+public sealed record UiLocalePreferenceResponse(string Locale, int StateVersion);
+
 public sealed record SessionStartupDefaultsResponse(
     string FontFaceId,
     int FontSize,

@@ -1,9 +1,9 @@
 namespace CloudEmuera.Contracts.Identity;
 
 public sealed record CsrfResponse(string Token);
-public sealed record LoginRequest(string Email, string Password, bool RememberMe);
+public sealed record LoginRequest(string Email, string Password, bool RememberMe, string? UiLocale = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
-public sealed record CurrentUserResponse(string Id, string Username, string Email, string Role, string Status, bool MustChangePassword, int StateVersion);
+public sealed record CurrentUserResponse(string Id, string Username, string Email, string Role, string Status, bool MustChangePassword, int StateVersion, string? UiLocale = null);
 public sealed record CreateUserRequest(string Username, string Email, string TemporaryPassword, string Role);
 public sealed record UpdateUserRequest(string? Username, string? Email, string? Role, string? Status);
 public sealed record ResetPasswordRequest(string TemporaryPassword);

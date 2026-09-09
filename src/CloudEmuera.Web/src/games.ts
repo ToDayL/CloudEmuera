@@ -1,4 +1,5 @@
 import { ApiError, apiRequest, getCsrfToken, newIdempotencyKey } from "./api";
+import i18n from "./i18n";
 
 export type GameVisibility = "PRIVATE" | "SERVER_SHARED";
 export type GameStatus = "ACTIVE" | "BLOCKED" | "DELETED";
@@ -127,7 +128,7 @@ export async function uploadGame(name: string, visibility: GameVisibility, file:
   options.onRequestId?.(idempotencyKey);
   const token = await getCsrfToken();
   const query = new URLSearchParams({ name, visibility });
-  if (options.signal?.aborted) throw options.signal.reason ?? new DOMException("上传已取消。", "AbortError");
+  if (options.signal?.aborted) throw options.signal.reason ?? new DOMException(i18n.t("runtimeUi.uploadCancelled"), "AbortError");
 
   return new Promise<GameLibraryItem>((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -155,7 +156,7 @@ export async function uploadGame(name: string, visibility: GameVisibility, file:
       try {
         body = request.responseText ? JSON.parse(request.responseText) as GameLibraryItem | { message?: string; code?: string; requestId?: string } : null;
       } catch {
-        reject(new ApiError("服务器返回了无法识别的响应。", "INVALID_RESPONSE", request.status));
+        reject(new ApiError(i18n.t("runtimeUi.invalidResponse"), "INVALID_RESPONSE", request.status));
         return;
       }
       if (request.status >= 200 && request.status < 300) {
@@ -163,10 +164,10 @@ export async function uploadGame(name: string, visibility: GameVisibility, file:
         return;
       }
       const error = body as { message?: string; code?: string; requestId?: string } | null;
-      reject(new ApiError(error?.message ?? "上传失败。", error?.code ?? "REQUEST_FAILED", request.status, error?.requestId));
+      reject(new ApiError(error?.message ?? i18n.t("runtimeUi.requestFailed"), error?.code ?? "REQUEST_FAILED", request.status, error?.requestId));
     }));
-    request.addEventListener("error", () => finish(() => reject(new Error("网络错误，上传未能完成。"))));
-    request.addEventListener("abort", () => finish(() => reject(options.signal?.reason ?? new DOMException("上传已取消。", "AbortError"))));
+    request.addEventListener("error", () => finish(() => reject(new Error(i18n.t("runtimeUi.uploadNetwork")))));
+    request.addEventListener("abort", () => finish(() => reject(options.signal?.reason ?? new DOMException(i18n.t("runtimeUi.uploadCancelled"), "AbortError"))));
     options.signal?.addEventListener("abort", abort, { once: true });
     request.send(file);
   });
@@ -203,13 +204,14 @@ export function shortDigest(digest: string | null | undefined): string {
 }
 
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const locale = document.documentElement.lang || "zh-CN";
+  if (bytes < 1024) return `${new Intl.NumberFormat(locale).format(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(bytes / 1024)} KB`;
+  return `${new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(bytes / (1024 * 1024))} MB`;
 }
 
 export function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleString(document.documentElement.lang || "zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

@@ -95,7 +95,6 @@ public sealed class IdentityApiContractTests : IDisposable
         using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
         _factory = new IdentityFactory(_dataRoot);
         using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
-
         string csrf = await GetCsrfAsync(client);
         Assert.True((await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf)).IsSuccessStatusCode);
         csrf = await GetCsrfAsync(client);
@@ -152,6 +151,61 @@ public sealed class IdentityApiContractTests : IDisposable
         HttpResponseMessage invalidWidth = await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/session-startup-defaults",
             new UpdateSessionStartupDefaultsRequest("lxgw-bright-code-2.922-regular", 24, 28, "MAX", 1200), csrf);
         Assert.Equal(HttpStatusCode.BadRequest, invalidWidth.StatusCode);
+    }
+
+    [Fact]
+    [Trait("Category", "Internationalization")]
+    [Trait("Category", "IdentityApi")]
+    public async Task UiLocaleIsValidatedAfterCredentialsAndPersistsAcrossLoginAndSettings()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
+        _factory = new IdentityFactory(_dataRoot);
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+        await ExecuteSqlAsync("UPDATE users SET preferences_json = '{\"futurePreference\":7}' WHERE normalized_email = 'ADMIN@EXAMPLE.TEST';");
+
+        string csrf = await GetCsrfAsync(client);
+        HttpResponseMessage wrongPassword = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "wrong-password", false, "invalid"), csrf);
+        Assert.Equal(HttpStatusCode.Unauthorized, wrongPassword.StatusCode);
+        Assert.Equal("INVALID_CREDENTIALS", (await wrongPassword.Content.ReadFromJsonAsync<ApiError>())?.Code);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage invalidLocale = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false, "invalid"), csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidLocale.StatusCode);
+        Assert.Equal("INVALID_UI_LOCALE", (await invalidLocale.Content.ReadFromJsonAsync<ApiError>())?.Code);
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage login = await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false, "ja-JP"), csrf);
+        CurrentUserResponse loggedIn = await login.Content.ReadFromJsonAsync<CurrentUserResponse>() ?? throw new Xunit.Sdk.XunitException("Localized login response was missing.");
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.Equal("ja-JP", loggedIn.UiLocale);
+        int loginVersion = loggedIn.StateVersion;
+        await using (var afterLogin = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = Path.Combine(_dataRoot, SqliteStorageConventions.DatabaseFileName) }.ToString()))
+        {
+            await afterLogin.OpenAsync();
+            Assert.Equal(7L, await ScalarLongAsync(afterLogin, "SELECT json_extract(preferences_json, '$.futurePreference') FROM users WHERE normalized_email = 'ADMIN@EXAMPLE.TEST';"));
+        }
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage updated = await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/ui-locale", new UpdateUiLocaleRequest("en-US"), csrf);
+        UiLocalePreferenceResponse preference = await updated.Content.ReadFromJsonAsync<UiLocalePreferenceResponse>() ?? throw new Xunit.Sdk.XunitException("UI locale response was missing.");
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        Assert.Equal("en-US", preference.Locale);
+        Assert.Equal(loginVersion + 1, preference.StateVersion);
+
+        CurrentUserResponse current = await (await client.GetAsync("/api/v1/auth/me")).Content.ReadFromJsonAsync<CurrentUserResponse>() ?? throw new Xunit.Sdk.XunitException("Current user response was missing.");
+        Assert.Equal("en-US", current.UiLocale);
+        Assert.Equal(preference.StateVersion, current.StateVersion);
+        await using (var afterUpdate = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = Path.Combine(_dataRoot, SqliteStorageConventions.DatabaseFileName) }.ToString()))
+        {
+            await afterUpdate.OpenAsync();
+            Assert.Equal(7L, await ScalarLongAsync(afterUpdate, "SELECT json_extract(preferences_json, '$.futurePreference') FROM users WHERE normalized_email = 'ADMIN@EXAMPLE.TEST';"));
+        }
+
+        csrf = await GetCsrfAsync(client);
+        HttpResponseMessage rejected = await SendJsonAsync(client, HttpMethod.Put, "/api/v1/preferences/ui-locale", new UpdateUiLocaleRequest("fr-FR"), csrf);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.Equal("INVALID_UI_LOCALE", (await rejected.Content.ReadFromJsonAsync<ApiError>())?.Code);
     }
 
     [Fact]

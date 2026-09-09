@@ -20,5 +20,6 @@ compose+=(--file "$repo_root/docker/compose.dev.yml")
 ./scripts/test-identity.sh --suite application
 ./scripts/test-identity.sh --suite api
 "${compose[@]}" run --rm api dotnet test CloudEmuera.slnx --no-build --configuration Release
+"$repo_root/scripts/check-web-i18n.sh"
 "${compose[@]}" run --rm web sh -c \
   "pnpm install --frozen-lockfile && CLOUDEMUERA_OPENAPI_URL=http://api:28647/openapi/v1.json pnpm verify:contracts && pnpm typecheck:web && pnpm test:web && pnpm build:web"

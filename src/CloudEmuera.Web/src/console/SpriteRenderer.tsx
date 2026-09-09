@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { AssetResolver } from "./AssetResolver";
+import i18n from "../i18n";
 import type { RealtimeRect, SpriteAnimationFrame } from "../realtime/protocol";
 
 export interface SpriteVisual {
@@ -112,7 +113,7 @@ export function SpriteCanvas({ sprite, assets, width, height, alt, className, st
         setImageRevision(revision => revision + 1);
       };
       image.onload = publishLoadedImage;
-      image.onerror = () => { if (!cancelled) onRenderError?.("Sprite 资源加载失败，已停止渲染该节点。"); };
+      image.onerror = () => { if (!cancelled) onRenderError?.(i18n.t("renderer.spriteLoad")); };
       image.src = url;
       // Check the completed image explicitly so a cached path reference cannot
       // remain a blank canvas waiting for an onload notification.
@@ -159,7 +160,7 @@ export function SpriteCanvas({ sprite, assets, width, height, alt, className, st
     const assetId = hovered && sprite.hoverAssetId ? sprite.hoverAssetId : animation?.assetId ?? sprite.assetId;
     const url = assets.url(assetId);
     const image = url ? images.current.get(url) : undefined;
-    if (!url) { onRenderError?.("Sprite 资源路径引用无效。"); return; }
+    if (!url) { onRenderError?.(i18n.t("renderer.spritePath")); return; }
     // Keep the last complete frame visible while a replacement asset is
     // loading. Clearing before this check produces a visible flash on every
     // realtime snapshot that changes the sprite object identity.

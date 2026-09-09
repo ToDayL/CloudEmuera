@@ -1,0 +1,5 @@
+export const chromeResources = {
+  "zh-CN": { chrome: { play: "游玩", system: "系统", sessions: "SESSION", newSession: "新建 SESSION", sessionSettings: "SESSION 设置", nativeSaves: "原生存档", newGame: "新游戏", editGame: "编辑游戏", newAccount: "新账户", selfHostedRuntime: "自托管运行时", sessionWorker: "Session / Worker", snapshot: "快照", session: "Session", nameExample: "例如：ERA 世界" } },
+  "en-US": { chrome: { play: "Play", system: "System", sessions: "Sessions", newSession: "New session", sessionSettings: "Session settings", nativeSaves: "Native saves", newGame: "New game", editGame: "Edit game", newAccount: "New account", selfHostedRuntime: "Self-hosted runtime", sessionWorker: "Session / Worker", snapshot: "snapshot", session: "Session", nameExample: "For example: ERA World" } },
+  "ja-JP": { chrome: { play: "プレイ", system: "システム", sessions: "セッション", newSession: "新しいセッション", sessionSettings: "セッション設定", nativeSaves: "ネイティブセーブ", newGame: "新しいゲーム", editGame: "ゲームを編集", newAccount: "新しいアカウント", selfHostedRuntime: "セルフホスト型ランタイム", sessionWorker: "セッション / Worker", snapshot: "スナップショット", session: "セッション", nameExample: "例：ERA ワールド" } },
+} as const;

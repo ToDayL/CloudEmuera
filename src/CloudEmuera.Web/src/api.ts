@@ -1,15 +1,32 @@
+import i18n from "./i18n";
+
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
   readonly requestId?: string;
 
+  readonly serverMessage: string;
+
   constructor(message: string, code: string, status: number, requestId?: string) {
-    super(message);
+    const key = apiErrorKeyForCode(code);
+    const localized = i18n.t(key);
+    const reference = requestId ? i18n.t("errors.requestSuffix", { code, requestId }) : code;
+    super(`${localized} ${reference}`);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
     this.requestId = requestId;
+    this.serverMessage = message;
   }
+}
+
+export function apiErrorKey(error: ApiError): string {
+  return apiErrorKeyForCode(error.code);
+}
+
+function apiErrorKeyForCode(code: string): "errors.invalidUiLocale" | "errors.unauthenticated" | "errors.csrf" | "errors.generic" {
+  const keys: Record<string, "errors.invalidUiLocale" | "errors.unauthenticated" | "errors.csrf"> = { INVALID_UI_LOCALE: "errors.invalidUiLocale", UNAUTHENTICATED: "errors.unauthenticated", CSRF_VALIDATION_FAILED: "errors.csrf" };
+  return keys[code] ?? "errors.generic";
 }
 
 export interface ApiResponse<T> {
@@ -20,7 +37,7 @@ export interface ApiResponse<T> {
 async function readApiError(response: Response): Promise<never> {
   const body = await response.json().catch(() => ({})) as { message?: string; code?: string; requestId?: string };
   throw new ApiError(
-    body.message ?? "请求失败。",
+    body.message ?? i18n.t("errors.generic"),
     body.code ?? "REQUEST_FAILED",
     response.status,
     body.requestId,

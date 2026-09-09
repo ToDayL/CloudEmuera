@@ -7,9 +7,11 @@ import { formatDateTime, listGames, shortDigest } from "../games";
 import { DEFAULT_SESSION_STARTUP_DEFAULTS, useSessionStartupDefaults } from "../settings/api";
 import { closeSession, createSession, deleteSession, openSession, updateSessionConfiguration, useRuntimeFontCatalog, useSession, useSessionList, waitForSession, waitForSessionDeletion, type RuntimeFontFace, type RuntimeWidthMode, type SessionFontSizeLineHeightMode, type SessionState, type SessionView } from "./api";
 import { loadRuntimeFont, runtimeFontCssFamily } from "../console/RuntimeFontLoader";
+import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 
 function stateLabel(state: SessionState): string {
-  return ({ CREATING: "创建中", STARTING: "启动中", RUNNING: "运行中", STOPPING: "停止中", CLOSED: "已关闭", CRASHED: "已崩溃" } as Record<SessionState, string>)[state];
+  return i18n.t(`sessions.state.${state}`);
 }
 
 function isActive(state: SessionState): boolean {
@@ -18,17 +20,15 @@ function isActive(state: SessionState): boolean {
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.code === "GAME_HAS_NO_CURRENT_CONTENT") return "这个游戏还没有可运行的当前内容。";
-    if (error.code === "GAME_BLOCKED") return "这个游戏当前已被禁用。";
-    if (error.code === "SESSION_TRANSITION_IN_PROGRESS") return "Session 正在进行另一个生命周期操作，请稍后刷新。";
-    if (error.code === "ACTIVE_WORKER_LIMIT_EXCEEDED") return "活动 Worker 名额已满，请先关闭其他 Session。";
-    if (error.code === "INACTIVE_SESSION_LIMIT_EXCEEDED") return "未启动 Session 已达到实例上限，请先删除不再需要的 Session。";
-    if (error.code === "SESSION_NOT_DELETABLE") return "只有已关闭或已崩溃的 Session 可以删除。";
+    const keys = { GAME_HAS_NO_CURRENT_CONTENT: "sessionExtra.noCurrent", GAME_BLOCKED: "sessionExtra.gameBlocked", SESSION_TRANSITION_IN_PROGRESS: "sessionExtra.transition", ACTIVE_WORKER_LIMIT_EXCEEDED: "sessionExtra.workerLimit", INACTIVE_SESSION_LIMIT_EXCEEDED: "sessionExtra.inactiveLimit", SESSION_NOT_DELETABLE: "sessionExtra.notDeletable" } as const;
+    const key = keys[error.code as keyof typeof keys];
+    if (key) return i18n.t(key);
   }
-  return error instanceof Error ? error.message : "操作失败。";
+  return error instanceof Error ? error.message : i18n.t("errors.generic");
 }
 
 export function SessionsPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [filter, setFilter] = useState<"ALL" | "ACTIVE" | "CLOSED" | "CRASHED">("ALL");
   const [cursor, setCursor] = useState<string | undefined>();
@@ -40,7 +40,7 @@ export function SessionsPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   const lifecycle = async (session: SessionView, operation: "open" | "close") => {
-    if (operation === "close" && !window.confirm(`关闭「${session.name}」？Worker 会停止，但 SessionRoot 和存档会保留。`)) return;
+    if (operation === "close" && !window.confirm(t("sessionExtra.closeConfirm", { name: session.name }))) return;
     setActionId(session.id); setMessage(null);
     try {
       const result = operation === "open" ? await openSession(session.id) : await closeSession(session.id);
@@ -53,7 +53,7 @@ export function SessionsPage() {
 
   const remove = async (session: SessionView) => {
     if (session.state !== "CLOSED" && session.state !== "CRASHED") return;
-    if (!window.confirm(`删除「${session.name}」？此操作会永久删除 SessionRoot 和存档，不能撤销。`)) return;
+    if (!window.confirm(t("sessionExtra.deleteConfirm", { name: session.name }))) return;
     setActionId(session.id); setMessage(null);
     try {
       const result = await deleteSession(session.id);
@@ -64,31 +64,33 @@ export function SessionsPage() {
   };
 
   return <>
-    <header className="page-header"><div><p className="eyebrow">SESSIONS</p><h1>游戏 Session</h1><p>浏览器离开后，活动 Session 仍会继续运行并等待你回来。</p></div><div className="page-actions"><Link className="primary-button" to="/sessions/new">＋ 创建 Session</Link></div></header>
-    <div className="session-stats"><article><span className="pulse-dot"/><div><strong>{activeCount}</strong><small>活动 Worker</small></div></article><article><span aria-hidden="true">◷</span><div><strong>{waitingCount}</strong><small>等待输入</small></div></article><article><span aria-hidden="true">▦</span><div><strong>{items.length}</strong><small>当前列表 Session</small></div></article></div>
-    <div className="toolbar"><div className="segment-control" aria-label="Session 筛选"><button className={filter === "ALL" ? "selected" : ""} onClick={() => { setFilter("ALL"); setCursor(undefined); }}>全部</button><button className={filter === "ACTIVE" ? "selected" : ""} onClick={() => { setFilter("ACTIVE"); setCursor(undefined); }}>活动中</button><button className={filter === "CLOSED" ? "selected" : ""} onClick={() => { setFilter("CLOSED"); setCursor(undefined); }}>已关闭</button><button className={filter === "CRASHED" ? "selected" : ""} onClick={() => { setFilter("CRASHED"); setCursor(undefined); }}>已崩溃</button></div></div>
-    {message && <div className="error-banner" role="alert"><strong>操作未完成</strong><small>{message}</small></div>}
-    {query.isPending ? <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/>正在读取 Session…</div>
-      : query.isError ? <div className="panel error-panel" role="alert"><strong>无法读取 Session</strong><p>{errorMessage(query.error)}</p><button className="secondary-button" onClick={() => void query.refetch()}>重试</button></div>
-      : items.length === 0 ? <div className="empty-state"><span className="empty-icon">◌</span><h2>还没有 Session</h2><p>从已启用当前内容的游戏创建一个独立、可重连的 Session。</p><Link className="primary-button" to="/sessions/new">创建 Session</Link></div>
-      : <section className="session-list" aria-label="Session 列表">{items.map(session => <SessionRow key={session.id} session={session} busy={actionId === session.id} onLifecycle={operation => void lifecycle(session, operation)} onDelete={() => void remove(session)} />)}</section>}
-    {query.data?.nextCursor && <div className="pagination-actions"><button className="secondary-button" onClick={() => setCursor(query.data?.nextCursor ?? undefined)} disabled={query.isFetching}>加载更多</button></div>}
+    <header className="page-header"><div><p className="eyebrow">{t("chrome.sessions")}</p><h1>{t("sessions.title")}</h1><p>{t("sessions.description")}</p></div><div className="page-actions"><Link className="primary-button" to="/sessions/new">＋ {t("sessions.create")}</Link></div></header>
+    <div className="session-stats"><article><span className="pulse-dot"/><div><strong>{activeCount}</strong><small>{t("sessions.activeWorkers")}</small></div></article><article><span aria-hidden="true">◷</span><div><strong>{waitingCount}</strong><small>{t("sessions.waitingInput")}</small></div></article><article><span aria-hidden="true">▦</span><div><strong>{items.length}</strong><small>{t("sessions.listed")}</small></div></article></div>
+    <div className="toolbar"><div className="segment-control" aria-label={t("sessions.filter")}><button className={filter === "ALL" ? "selected" : ""} onClick={() => { setFilter("ALL"); setCursor(undefined); }}>{t("sessions.all")}</button><button className={filter === "ACTIVE" ? "selected" : ""} onClick={() => { setFilter("ACTIVE"); setCursor(undefined); }}>{t("sessions.active")}</button><button className={filter === "CLOSED" ? "selected" : ""} onClick={() => { setFilter("CLOSED"); setCursor(undefined); }}>{t("sessions.closed")}</button><button className={filter === "CRASHED" ? "selected" : ""} onClick={() => { setFilter("CRASHED"); setCursor(undefined); }}>{t("sessions.crashed")}</button></div></div>
+    {message && <div className="error-banner" role="alert"><strong>{t("sessions.operationFailed")}</strong><small>{message}</small></div>}
+    {query.isPending ? <div className="panel loading-panel" aria-busy="true"><span className="mini-spinner"/>{t("sessions.loading")}</div>
+      : query.isError ? <div className="panel error-panel" role="alert"><strong>{t("sessions.loadFailed")}</strong><p>{errorMessage(query.error)}</p><button className="secondary-button" onClick={() => void query.refetch()}>{t("common.retry")}</button></div>
+      : items.length === 0 ? <div className="empty-state"><span className="empty-icon">◌</span><h2>{t("sessions.empty")}</h2><p>{t("sessions.emptyDescription")}</p><Link className="primary-button" to="/sessions/new">{t("sessions.create")}</Link></div>
+      : <section className="session-list" aria-label={t("sessions.list")}>{items.map(session => <SessionRow key={session.id} session={session} busy={actionId === session.id} onLifecycle={operation => void lifecycle(session, operation)} onDelete={() => void remove(session)} />)}</section>}
+    {query.data?.nextCursor && <div className="pagination-actions"><button className="secondary-button" onClick={() => setCursor(query.data?.nextCursor ?? undefined)} disabled={query.isFetching}>{t("sessions.loadMore")}</button></div>}
   </>;
 }
 
 function SessionRow({ session, busy, onLifecycle, onDelete }: { session: SessionView; busy: boolean; onLifecycle: (operation: "open" | "close") => void; onDelete: () => void }) {
+  const { t } = useTranslation();
   const color = ["coral", "violet", "amber", "blue", "green"][session.id.charCodeAt(0) % 5];
   const canOpen = session.state === "CLOSED" || session.state === "CRASHED";
   return <article className="session-row">
     <span className={`session-art ${color}`}>{session.name.slice(0, 1)}</span>
-    <div className="session-main"><div><h2>{session.name}</h2><p>{session.game.name} <span>·</span> {shortDigest(session.sourceContentDigest)}</p></div><div className="session-badges"><span className={`status-pill ${session.state.toLowerCase()}`}><i/>{stateLabel(session.state)}</span>{session.waitingForInput && session.state === "RUNNING" && <span className="status-pill waiting"><i/>等待输入</span>}</div></div>
-    <div className="session-meta"><span>最后活动</span><strong>{formatDateTime(session.lastActivityAt)}</strong></div>
-    <div className="session-meta"><span>创建时间</span><strong>{formatDateTime(session.createdAt)}</strong></div>
-    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? "启动中…" : "继续游戏"}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>继续游戏</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>关闭</button>}{canOpen && <button className="text-button danger" onClick={onDelete} disabled={busy}>删除</button>}<Link className="text-button" to={`/sessions/${session.id}/configuration`}>配置</Link><Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>存档</Link></div>
+    <div className="session-main"><div><h2>{session.name}</h2><p>{session.game.name} <span>·</span> {shortDigest(session.sourceContentDigest)}</p></div><div className="session-badges"><span className={`status-pill ${session.state.toLowerCase()}`}><i/>{stateLabel(session.state)}</span>{session.waitingForInput && session.state === "RUNNING" && <span className="status-pill waiting"><i/>{t("sessions.waitingInput")}</span>}</div></div>
+    <div className="session-meta"><span>{t("sessions.lastActive")}</span><strong>{formatDateTime(session.lastActivityAt)}</strong></div>
+    <div className="session-meta"><span>{t("sessions.createdAt")}</span><strong>{formatDateTime(session.createdAt)}</strong></div>
+    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? t("sessions.starting") : t("sessions.continue")}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>{t("sessions.continue")}</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>{t("sessions.close")}</button>}{canOpen && <button className="text-button danger" onClick={onDelete} disabled={busy}>{t("sessions.delete")}</button>}<Link className="text-button" to={`/sessions/${session.id}/configuration`}>{t("sessions.configure")}</Link><Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>{t("sessions.saves")}</Link></div>
   </article>;
 }
 
 export function NewSessionPage() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -130,10 +132,10 @@ export function NewSessionPage() {
   const selected = availableGames.find(game => game.id === gameId);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selected) { setError("请选择一个有当前内容的可运行游戏。"); return; }
+    if (!selected) { setError(t("sessionExtra.selectRunnable")); return; }
     setPending(true); setError(null);
     try {
-      const created = await createSession(selected.id, name.trim() || `${selected.name} · 新旅程`, fontSize, lineHeight, undefined, fontFaceId, widthMode, widthMode === "CUSTOM" ? customWidth : null, convertBackslashToYen, fontSizeLineHeightMode);
+      const created = await createSession(selected.id, name.trim() || t("sessionExtra.defaultName", { name: selected.name }), fontSize, lineHeight, undefined, fontFaceId, widthMode, widthMode === "CUSTOM" ? customWidth : null, convertBackslashToYen, fontSizeLineHeightMode);
       const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]));
       const opened = await openSession(ready.id);
       const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING"]));
@@ -142,18 +144,20 @@ export function NewSessionPage() {
     finally { setPending(false); }
   };
 
-  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">NEW SESSION</p><h1>创建 Session</h1><p>每个 Session 都拥有独立、持久的游戏目录与原生存档。</p></div></header>
-    {games.isError && <div className="error-banner" role="alert"><strong>无法读取游戏库</strong><small>{errorMessage(games.error)}</small></div>}
-    <form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：周目三 · 新旅程" maxLength={120} required /></label><label><span>游戏</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">请选择游戏</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? "（已禁用）" : !game.hasCurrentContent ? "（无当前内容）" : ""}</option>)}</select></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} fontSizeLineHeightMode={fontSizeLineHeightMode} setFontSize={setFontSize} setLineHeight={setLineHeight} setFontSizeLineHeightMode={setFontSizeLineHeightMode} disabled={pending}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending}/><SessionYenCompatibilityField value={convertBackslashToYen} onChange={setConvertBackslashToYen} disabled={pending}/><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>将创建私有 SessionRoot</strong><small>创建时完整复制游戏当时的当前内容；游戏后续编辑不会改变这个 Session。</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || startupDefaults.isPending || games.isPending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady || !selected}>{pending ? <><span className="mini-spinner"/>正在创建并启动…</> : "创建并开始"}</button></div></form>
+  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← {t("sessions.back")}</Link></div><header className="page-header"><div><p className="eyebrow">{t("chrome.newSession")}</p><h1>{t("sessions.newTitle")}</h1><p>{t("sessions.newDescription")}</p></div></header>
+    {games.isError && <div className="error-banner" role="alert"><strong>{t("sessionExtra.gamesFailed")}</strong><small>{errorMessage(games.error)}</small></div>}
+    <form className="form-panel" onSubmit={submit}><label><span>{t("sessions.name")}</span><input value={name} onChange={event => setName(event.target.value)} placeholder={t("sessionExtra.placeholder")} maxLength={120} required /></label><label><span>{t("sessions.game")}</span><select value={gameId} onChange={event => setGameId(event.target.value)} disabled={games.isPending || pending} required><option value="">{t("sessions.selectGame")}</option>{(games.data ?? []).map(game => <option value={game.id} key={game.id} disabled={game.status !== "ACTIVE" || !game.hasCurrentContent}>{game.name}{game.status !== "ACTIVE" ? t("sessionExtra.disabled") : !game.hasCurrentContent ? t("sessionExtra.noContent") : ""}</option>)}</select></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} fontSizeLineHeightMode={fontSizeLineHeightMode} setFontSize={setFontSize} setLineHeight={setLineHeight} setFontSizeLineHeightMode={setFontSizeLineHeightMode} disabled={pending}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending}/><SessionYenCompatibilityField value={convertBackslashToYen} onChange={setConvertBackslashToYen} disabled={pending}/><div className="form-explain"><span aria-hidden="true">▣</span><p><strong>{t("sessions.privateRoot")}</strong><small>{t("sessions.privateRootDescription")}</small></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">{t("common.cancel")}</Link><button className="primary-button" disabled={pending || startupDefaults.isPending || games.isPending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady || !selected}>{pending ? <><span className="mini-spinner"/>{t("sessions.creatingAndStarting")}</> : t("sessions.createAndStart")}</button></div></form>
   </div>;
 }
 
 export function SessionFontField({ value, fonts, disabled, onChange, onReadinessChange }: { value: string; fonts: RuntimeFontFace[]; disabled: boolean; onChange: (value: string) => void; onReadinessChange?: (ready: boolean) => void }) {
+  const { t } = useTranslation();
   const selected = fonts.find(font => font.faceId === value);
-  return <><label><span>运行时字体</span><select value={value} onChange={event => onChange(event.target.value)} disabled={disabled} required>{!selected && <option value={value} disabled>当前字体不可用，请选择现有字体</option>}{fonts.map(font => <option value={font.faceId} key={font.faceId}>{font.displayName} · {font.family} {font.weight}</option>)}</select></label><RuntimeFontPreview face={selected} onReadinessChange={onReadinessChange}/></>;
+  return <><label><span>{t("sessions.runtimeFont")}</span><select value={value} onChange={event => onChange(event.target.value)} disabled={disabled} required>{!selected && <option value={value} disabled>{t("sessions.fontUnavailable")}</option>}{fonts.map(font => <option value={font.faceId} key={font.faceId}>{font.displayName} · {font.family} {font.weight}</option>)}</select></label><RuntimeFontPreview face={selected} onReadinessChange={onReadinessChange}/></>;
 }
 
 function RuntimeFontPreview({ face, onReadinessChange }: { face?: RuntimeFontFace; onReadinessChange?: (ready: boolean) => void }) {
+  const { t } = useTranslation();
   const [state, setState] = useState<"loading" | "ready" | "error">(face ? "loading" : "error");
   useEffect(() => {
     let cancelled = false;
@@ -164,34 +168,38 @@ function RuntimeFontPreview({ face, onReadinessChange }: { face?: RuntimeFontFac
     void loadRuntimeFont(face, family).then(() => { if (!cancelled) { setState("ready"); onReadinessChange?.(true); } }).catch(() => { if (!cancelled) { setState("error"); onReadinessChange?.(false); } });
     return () => { cancelled = true; };
   }, [face, onReadinessChange]);
-  if (!face) return <p className="runtime-font-preview is-error" role="status">字体目录中没有当前字体，请选择一个可用 face。</p>;
+  if (!face) return <p className="runtime-font-preview is-error" role="status">{t("sessions.fontUnavailable")}</p>;
   return <div className={`runtime-font-preview ${state === "error" ? "is-error" : ""}`} role="status" aria-live="polite">
     <span className="runtime-font-preview-text" style={state === "ready" ? { fontFamily: `"${runtimeFontCssFamily(face)}"` } : undefined}>ABC 123　中文 日本語</span>
-    {state !== "ready" && <small>{state === "loading" ? "正在加载所选字体预览…" : "字体预览加载失败；创建/保存已禁用。"}</small>}
+    {state !== "ready" && <small>{state === "loading" ? t("sessions.fontLoading") : t("sessions.fontFailed")}</small>}
   </div>;
 }
 
 export function SessionDisplayFields({ fontSize, lineHeight, fontSizeLineHeightMode, setFontSize, setLineHeight, setFontSizeLineHeightMode, disabled = false }: { fontSize: number; lineHeight: number; fontSizeLineHeightMode: SessionFontSizeLineHeightMode; setFontSize: (value: number) => void; setLineHeight: (value: number) => void; setFontSizeLineHeightMode: (value: SessionFontSizeLineHeightMode) => void; disabled?: boolean }) {
+  const { t } = useTranslation();
   const metricsDisabled = disabled || fontSizeLineHeightMode === "CONFIG";
-  return <><label><span>字号/行高模式</span><select value={fontSizeLineHeightMode} onChange={event => setFontSizeLineHeightMode(event.target.value as SessionFontSizeLineHeightMode)} disabled={disabled}><option value="OVERRIDE">覆盖游戏 config</option><option value="CONFIG">使用游戏 config</option></select></label><div className="form-grid"><label><span>字号（px）</span><input type="number" min={8} max={72} value={fontSize} onChange={event => setFontSize(Number(event.target.value))} disabled={metricsDisabled}/></label><label><span>行高（px）</span><input type="number" min={Math.max(8, fontSize)} max={128} value={lineHeight} onChange={event => setLineHeight(Number(event.target.value))} disabled={metricsDisabled}/></label></div><p className="settings-description">{fontSizeLineHeightMode === "CONFIG" ? "运行时保留游戏 emuera.config 的字号和行高；当前字号、行高仅作为切回覆盖模式时的值。" : "运行时使用这里保存的字号和行高，覆盖游戏 config 中的对应设置。"}</p></>;
+  return <><label><span>{t("sessions.metricsMode")}</span><select value={fontSizeLineHeightMode} onChange={event => setFontSizeLineHeightMode(event.target.value as SessionFontSizeLineHeightMode)} disabled={disabled}><option value="OVERRIDE">{t("sessions.overrideConfig")}</option><option value="CONFIG">{t("sessions.useConfig")}</option></select></label><div className="form-grid"><label><span>{t("sessions.fontSize")}</span><input type="number" min={8} max={72} value={fontSize} onChange={event => setFontSize(Number(event.target.value))} disabled={metricsDisabled}/></label><label><span>{t("sessions.lineHeight")}</span><input type="number" min={Math.max(8, fontSize)} max={128} value={lineHeight} onChange={event => setLineHeight(Number(event.target.value))} disabled={metricsDisabled}/></label></div></>;
 }
 
 export function SessionWidthFields({ widthMode, customWidth, setWidthMode, setCustomWidth, disabled = false }: { widthMode: RuntimeWidthMode; customWidth: number; setWidthMode: (value: RuntimeWidthMode) => void; setCustomWidth: (value: number) => void; disabled?: boolean }) {
+  const { t } = useTranslation();
   const browserBounded = widthMode === "MAX" || widthMode === "ADAPTIVE";
-  return <><label><span>运行宽度</span><select value={widthMode} onChange={event => setWidthMode(event.target.value as RuntimeWidthMode)} disabled={disabled}><option value="ORIGINAL">游戏原始宽度 · 完全按照 config</option><option value="MAX">最大可用 · 尽量铺满，最高 2000px</option><option value="ADAPTIVE">自适应 · 不超过游戏配置与浏览器宽度</option><option value="CUSTOM">自定义 · 使用配置宽度</option></select></label>{widthMode === "CUSTOM" && <label><span>自定义宽度（CSS px）</span><input type="number" min={240} max={16384} value={customWidth} onChange={event => setCustomWidth(Number(event.target.value))} disabled={disabled} required/></label>}<p className="settings-description">{browserBounded ? "最大可用和自适应会受每次开启时的浏览器 CSS 宽度限制；运行中改变视口不会重新排版。" : "游戏原始宽度和自定义宽度不受浏览器 CSS 宽度限制，较窄视口可横向滚动；运行中改变视口不会重新排版。"}</p></>;
+  return <><label><span>{t("sessions.width")}</span><select value={widthMode} onChange={event => setWidthMode(event.target.value as RuntimeWidthMode)} disabled={disabled}><option value="ORIGINAL">{t("sessions.originalWidth")}</option><option value="MAX">{t("sessions.maxWidth")}</option><option value="ADAPTIVE">{t("sessions.adaptiveWidth")}</option><option value="CUSTOM">{t("sessions.customWidthMode")}</option></select></label>{widthMode === "CUSTOM" && <label><span>{t("sessions.customWidth")}</span><input type="number" min={240} max={16384} value={customWidth} onChange={event => setCustomWidth(Number(event.target.value))} disabled={disabled} required/></label>}</>;
 }
 
 export function SessionYenCompatibilityField({ value, onChange, disabled = false }: { value: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
+  const { t } = useTranslation();
   return <fieldset className="checkbox-field">
-    <legend>Era 日元符号兼容</legend>
+    <legend>{t("sessions.yen")}</legend>
     <label className="checkbox-option">
       <input type="checkbox" checked={value} onChange={event => onChange(event.target.checked)} disabled={disabled}/>
-      <span className="checkbox-copy"><span className="checkbox-title">将游戏显示文本中的反斜杠（\）转换为半角日元符号（¥）</span><small>只影响显示和排版；输入、按钮值、脚本字符串与文件路径不会改变。</small></span>
+      <span className="checkbox-copy"><span className="checkbox-title">{t("sessions.yenTitle")}</span><small>{t("sessions.yenDescription")}</small></span>
     </label>
   </fieldset>;
 }
 
 export function SessionConfigurationPage() {
+  const { t } = useTranslation();
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const session = useSession(sessionId);
@@ -199,9 +207,9 @@ export function SessionConfigurationPage() {
   const [name, setName] = useState(""); const [fontFaceId, setFontFaceId] = useState("sarasa-fixed-sc-1.0.40-regular"); const [fontPreviewReady, setFontPreviewReady] = useState(false); const [fontSize, setFontSize] = useState(18); const [lineHeight, setLineHeight] = useState(19); const [fontSizeLineHeightMode, setFontSizeLineHeightMode] = useState<SessionFontSizeLineHeightMode>("OVERRIDE"); const [widthMode, setWidthMode] = useState<RuntimeWidthMode>("ADAPTIVE"); const [customWidth, setCustomWidth] = useState(800); const [convertBackslashToYen, setConvertBackslashToYen] = useState(true); const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
   useEffect(() => { if (session.data) { setName(session.data.name); setFontFaceId(session.data.fontFaceId); setFontSize(session.data.fontSize); setLineHeight(session.data.lineHeight); setFontSizeLineHeightMode(session.data.fontSizeLineHeightMode); setWidthMode(session.data.widthMode); setCustomWidth(session.data.customWidth ?? 800); setConvertBackslashToYen(session.data.convertBackslashToYen); } }, [session.data]);
   const submit = async (event: FormEvent) => { event.preventDefault(); if (!sessionId) return; setPending(true); setError(null); try { await updateSessionConfiguration(sessionId, name, fontSize, lineHeight, undefined, fontFaceId, widthMode, widthMode === "CUSTOM" ? customWidth : null, convertBackslashToYen, fontSizeLineHeightMode); navigate("/sessions"); } catch (cause) { setError(errorMessage(cause)); } finally { setPending(false); } };
-  if (session.isPending || !session.data) return <div className="narrow-page">正在读取 Session…</div>;
+  if (session.isPending || !session.data) return <div className="narrow-page">{t("sessions.loading")}</div>;
   const selectedFontExists = fonts.data?.items.some(font => font.faceId === fontFaceId) === true;
-  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← 返回 Session</Link></div><header className="page-header"><div><p className="eyebrow">SESSION SETTINGS</p><h1>Session 配置</h1><p>游戏固定为 {session.data.game.name}；运行中的 Session 需要先关闭才能修改。</p></div></header><form className="form-panel" onSubmit={submit}><label><span>Session 名称</span><input value={name} onChange={event => setName(event.target.value)} required/></label><label><span>游戏</span><input value={session.data.game.name} disabled/></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} fontSizeLineHeightMode={fontSizeLineHeightMode} setFontSize={setFontSize} setLineHeight={setLineHeight} setFontSizeLineHeightMode={setFontSizeLineHeightMode} disabled={pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}/><SessionYenCompatibilityField value={convertBackslashToYen} onChange={setConvertBackslashToYen} disabled={pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}/>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">取消</Link><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !selectedFontExists || !fontPreviewReady || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}>{pending ? "保存中…" : "保存配置"}</button></div></form></div>;
+  return <div className="narrow-page"><div className="backline"><Link to="/sessions">← {t("sessions.back")}</Link></div><header className="page-header"><div><p className="eyebrow">{t("chrome.sessionSettings")}</p><h1>{t("sessionExtra.configTitle")}</h1><p>{t("sessionExtra.configDescription", { name: session.data.game.name })}</p></div></header><form className="form-panel" onSubmit={submit}><label><span>{t("sessions.name")}</span><input value={name} onChange={event => setName(event.target.value)} required/></label><label><span>{t("sessions.game")}</span><input value={session.data.game.name} disabled/></label><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} fontSizeLineHeightMode={fontSizeLineHeightMode} setFontSize={setFontSize} setLineHeight={setLineHeight} setFontSizeLineHeightMode={setFontSizeLineHeightMode} disabled={pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}/><SessionYenCompatibilityField value={convertBackslashToYen} onChange={setConvertBackslashToYen} disabled={pending || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}/>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><Link className="secondary-button" to="/sessions">{t("common.cancel")}</Link><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !selectedFontExists || !fontPreviewReady || session.data.state === "RUNNING" || session.data.state === "STARTING" || session.data.state === "STOPPING"}>{pending ? t("common.saving") : t("sessionExtra.saveConfig")}</button></div></form></div>;
 }
 
 export function sessionGameGlyph(session: SessionView): string { return session.game.name.slice(0, 1); }

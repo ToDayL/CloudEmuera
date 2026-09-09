@@ -1,5 +1,6 @@
 import { InputResultPayload, RealtimeDisplayFramePayload, RealtimeServerMessage, RealtimeSnapshotPayload, RealtimeTransaction } from "./protocol";
 import { applyTransactions, ConsoleReductionError, createEmptyConsoleState } from "./reducer";
+import i18n from "../i18n";
 
 export type SessionPhase = "idle" | "resuming" | "snapshot_ready" | "live" | "resyncing" | "ended" | "forbidden" | "error";
 export type PendingInputStatus = "pending" | "unknown" | "accepted" | "duplicate" | "rejected" | "stale";
@@ -33,14 +34,14 @@ export function createSessionStoreState(sessionId: string): SessionStoreState {
 
 export function replaceSnapshot(state: SessionStoreState, envelope: { sessionId?: string; workerEpoch?: number; sequence?: number }, payload: RealtimeSnapshotPayload): SessionStoreState {
   assertSession(state, envelope.sessionId);
-  if (envelope.workerEpoch !== payload.workerEpoch || envelope.sequence !== payload.snapshotSequence) return { ...state, phase: "resyncing", fatalRenderError: "快照元数据与内容不一致，请重新同步。" };
+  if (envelope.workerEpoch !== payload.workerEpoch || envelope.sequence !== payload.snapshotSequence) return { ...state, phase: "resyncing", fatalRenderError: i18n.t("protocolUi.snapshotMismatch") };
   // A snapshot from an old subscription can still be in flight when a replacement
   // subscription is installed. It is stale data, not a reason to resync again.
   if (state.workerEpoch !== null && payload.workerEpoch < state.workerEpoch) return state;
   if (state.workerEpoch === payload.workerEpoch && state.sequence !== null && payload.snapshotSequence < state.sequence) return state;
   if (state.workerEpoch === payload.workerEpoch && payload.snapshotSequence === state.sequence && payload.committedFrameId < state.committedFrameId) return state;
   if (state.workerEpoch === payload.workerEpoch && state.sequence !== null && payload.snapshotSequence > state.sequence && payload.committedFrameId <= state.committedFrameId)
-    return { ...state, phase: "resyncing", fatalRenderError: "快照提交帧号没有前进，请重新同步。" };
+    return { ...state, phase: "resyncing", fatalRenderError: i18n.t("protocolUi.snapshotStalled") };
   if (state.workerEpoch === payload.workerEpoch && payload.snapshotSequence === state.sequence && payload.committedFrameId === state.committedFrameId) {
     // Resume always establishes a new authoritative transport baseline, even
     // when the Worker produced no output while the browser was away. An
@@ -185,7 +186,7 @@ export function handleServerMessage(state: SessionStoreState, message: RealtimeS
     case "session.input.result": return applyInputReceipt(state, message, message.payload);
     case "resync.required": return markResync(state);
     case "session.stream.ended": return markEnded(state);
-    case "protocol.error": return message.payload.code === "AUTHENTICATION_EXPIRED" ? markForbidden(state) : { ...state, phase: "error", fatalRenderError: message.payload.message };
+    case "protocol.error": return message.payload.code === "AUTHENTICATION_EXPIRED" ? markForbidden(state) : { ...state, phase: "error", fatalRenderError: i18n.t("protocolUi.invalid", { code: message.payload.code }) };
     default: return state;
   }
 }

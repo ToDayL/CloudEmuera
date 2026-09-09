@@ -1,4 +1,5 @@
 import type { AssetResolver } from "./AssetResolver";
+import i18n from "../i18n";
 import type { MediaChannel } from "../realtime/protocol";
 
 /** Browser media is best-effort; revision ordering prevents stale stop/play races. */
@@ -31,7 +32,7 @@ export class MediaController {
     if (!element) {
       element = new Audio();
       element.preload = "none";
-      element.onerror = () => this.onError?.("音频资源加载或解码失败，已停止该媒体频道。");
+      element.onerror = () => this.onError?.(i18n.t("runtimeUi.audioFailed"));
       this.elements.set(channel.channel, element);
     }
     element.loop = channel.loop;
@@ -40,14 +41,14 @@ export class MediaController {
       element.pause();
       element.currentTime = 0;
       element.removeAttribute("src");
-      if (channel.playbackState !== "stopped") this.onError?.("音频频道缺少已授权资源，已停止该媒体频道。");
+      if (channel.playbackState !== "stopped") this.onError?.(i18n.t("runtimeUi.audioMissing"));
       return;
     }
     const url = assets.url(channel.assetId);
     if (!url) {
       element.pause();
       element.removeAttribute("src");
-      this.onError?.("音频资源路径引用无效，已停止该媒体频道。");
+      this.onError?.(i18n.t("runtimeUi.audioPath"));
       return;
     }
     if (element.src !== new URL(url, window.location.origin).href) element.src = url;

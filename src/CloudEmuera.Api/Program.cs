@@ -471,7 +471,9 @@ app.MapPost("/api/v1/auth/login", async (HttpContext context, LoginRequest reque
 {
     if (!readiness.IsReady) return ApiIdentity.Error("SERVICE_NOT_READY", "服务尚未完成初始化。", StatusCodes.Status503ServiceUnavailable);
     if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", StatusCodes.Status400BadRequest);
-    LoginResult? result = await identities.LoginAsync(new LoginCommand(request.Email, request.Password, request.RememberMe), context.RequestAborted).ConfigureAwait(false);
+    LoginResult? result;
+    try { result = await identities.LoginAsync(new LoginCommand(request.Email, request.Password, request.RememberMe, request.UiLocale), context.RequestAborted).ConfigureAwait(false); }
+    catch (IdentityValidationException exception) when (exception.Code is "INVALID_UI_LOCALE" or "PREFERENCES_TOO_LARGE") { return ApiIdentity.Error(exception.Code, "界面语言无效。", StatusCodes.Status400BadRequest); }
     if (result is null) return ApiIdentity.Error("INVALID_CREDENTIALS", "邮箱或密码不正确。", StatusCodes.Status401Unauthorized);
     await ApiIdentity.SignInAsync(context, result).ConfigureAwait(false);
     context.Response.Headers.CacheControl = "no-store";
@@ -508,6 +510,20 @@ preferences.MapPut("/session-startup-defaults", async (HttpContext context, Upda
         return Results.Ok(ApiIdentity.ToResponse(defaults));
     }
     catch (IdentityValidationException exception) { return ApiIdentity.Error(exception.Code, "Session 启动默认值无效。", 400); }
+    catch (KeyNotFoundException) { return ApiIdentity.Error("UNAUTHENTICATED", "需要登录。", 401); }
+}).RequireRateLimiting("session-write");
+preferences.MapPut("/ui-locale", async (HttpContext context, UpdateUiLocaleRequest? request, IAntiforgery antiforgery, ILocalIdentityService identities) =>
+{
+    if (ApiIdentity.Actor(context) is not CurrentActor actor) return ApiIdentity.Error("UNAUTHENTICATED", "需要登录。", 401);
+    if (request is null) return ApiIdentity.Error("INVALID_UI_LOCALE", "界面语言无效。", 400);
+    if (!await ApiIdentity.ValidateCsrfAsync(context, antiforgery).ConfigureAwait(false)) return ApiIdentity.Error("CSRF_VALIDATION_FAILED", "请求验证失败。", 400);
+    try
+    {
+        UiLocalePreference preference = await identities.UpdateUiLocaleAsync(actor, request.Locale, context.RequestAborted).ConfigureAwait(false);
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(new UiLocalePreferenceResponse(preference.Locale, preference.StateVersion));
+    }
+    catch (IdentityValidationException exception) { return ApiIdentity.Error(exception.Code, "界面语言无效。", 400); }
     catch (KeyNotFoundException) { return ApiIdentity.Error("UNAUTHENTICATED", "需要登录。", 401); }
 }).RequireRateLimiting("session-write");
 
@@ -1087,7 +1103,7 @@ internal static class ApiIdentity
         context.Response.ContentType = "application/json";
         return context.Response.WriteAsJsonAsync(new ApiError(code, message, RequestCorrelation.Current ?? context.TraceIdentifier));
     }
-    public static CurrentUserResponse ToResponse(CurrentUser value) => new(value.Id, value.Username, value.Email, value.Role, value.Status, value.MustChangePassword, value.StateVersion);
+    public static CurrentUserResponse ToResponse(CurrentUser value) => new(value.Id, value.Username, value.Email, value.Role, value.Status, value.MustChangePassword, value.StateVersion, value.UiLocale);
     public static SessionStartupDefaultsResponse ToResponse(SessionStartupDefaults value) => new(value.FontFaceId, value.FontSize, value.LineHeight, WidthModeName(value.WidthMode), value.CustomWidth, value.ConvertBackslashToYen, FontSizeLineHeightModeName(value.FontSizeLineHeightMode));
     public static bool TryFontSizeLineHeightMode(string? value, out SessionFontSizeLineHeightMode mode)
     {

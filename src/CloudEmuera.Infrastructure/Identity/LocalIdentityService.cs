@@ -33,6 +33,8 @@ public sealed class LocalIdentityService(
 {
     private const int LockoutThreshold = 5;
     private const string SessionStartupDefaultsKey = "sessionStartupDefaults";
+    private const string UiLocaleKey = "uiLocale";
+    private static readonly HashSet<string> SupportedUiLocales = new(StringComparer.Ordinal) { "zh-CN", "en-US", "ja-JP" };
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
     private static readonly JsonSerializerOptions PreferencesJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -74,6 +76,15 @@ public sealed class LocalIdentityService(
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return null;
+        }
+        if (command.UiLocale is not null)
+        {
+            string locale = ValidateUiLocale(command.UiLocale);
+            JsonObject preferences = ReadPreferencesObject(user.PreferencesJson);
+            preferences[UiLocaleKey] = locale;
+            user.PreferencesJson = SerializePreferences(preferences);
+            user.StateVersion = checked(user.StateVersion + 1);
+            AddAudit(AuditActions.UserPreferencesUpdated, "USER", user.Id, "SUCCEEDED", user.Role == UserRole.Admin ? "ADMIN" : "USER", user.Id);
         }
         user.AccessFailedCount = 0;
         user.LockoutEnd = null;
@@ -127,6 +138,24 @@ public sealed class LocalIdentityService(
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return defaults;
+    }
+
+    public async Task<UiLocalePreference> UpdateUiLocaleAsync(CurrentActor actor, string locale, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        string validated = ValidateUiLocale(locale);
+        await using SqliteImmediateTransaction transaction = await SqliteImmediateTransaction.BeginAsync(db, cancellationToken).ConfigureAwait(false);
+        CloudEmueraUser? user = await db.Users.SingleOrDefaultAsync(value => value.Id == actor.UserId && value.Status == UserStatus.Active, cancellationToken).ConfigureAwait(false);
+        if (user is null) throw new KeyNotFoundException();
+        JsonObject preferences = ReadPreferencesObject(user.PreferencesJson);
+        preferences[UiLocaleKey] = validated;
+        user.PreferencesJson = SerializePreferences(preferences);
+        user.UpdatedAt = timeProvider.GetUtcNow();
+        user.StateVersion = checked(user.StateVersion + 1);
+        AddAudit(AuditActions.UserPreferencesUpdated, "USER", user.Id, "SUCCEEDED", "USER", user.Id);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new UiLocalePreference(validated, user.StateVersion);
     }
 
     public async Task<bool> ValidateSessionAsync(string userId, string sessionId, string securityStamp, CancellationToken cancellationToken = default)
@@ -303,7 +332,7 @@ public sealed class LocalIdentityService(
     {
         if (!await db.Users.AnyAsync(user => user.Id != currentId && user.Role == UserRole.Admin && user.Status == UserStatus.Active, cancellationToken).ConfigureAwait(false)) throw new IdentityConflictException("LAST_ACTIVE_ADMIN");
     }
-    private static CurrentUser ToCurrent(CloudEmueraUser user) => new(user.Id, user.LoginName, user.Email ?? string.Empty, user.Role == UserRole.Admin ? "ADMIN" : "PLAYER", user.Status == UserStatus.Active ? "ACTIVE" : "DISABLED", user.MustChangePassword, user.StateVersion);
+    private static CurrentUser ToCurrent(CloudEmueraUser user) => new(user.Id, user.LoginName, user.Email ?? string.Empty, user.Role == UserRole.Admin ? "ADMIN" : "PLAYER", user.Status == UserStatus.Active ? "ACTIVE" : "DISABLED", user.MustChangePassword, user.StateVersion, ReadUiLocale(user.PreferencesJson));
     private SessionStartupDefaults ValidateSessionStartupDefaults(SessionStartupDefaultsCommand command)
     {
         if (command.FontSize is < 8 or > 72 || command.LineHeight < command.FontSize || command.LineHeight > 128)
@@ -365,6 +394,24 @@ public sealed class LocalIdentityService(
         {
             return [];
         }
+    }
+    private static string? ReadUiLocale(string preferencesJson)
+    {
+        try
+        {
+            string? locale = (JsonNode.Parse(preferencesJson) as JsonObject)?[UiLocaleKey]?.GetValue<string>();
+            return locale is not null && SupportedUiLocales.Contains(locale) ? locale : null;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+    }
+    private static string ValidateUiLocale(string locale) => SupportedUiLocales.Contains(locale) ? locale : throw new IdentityValidationException("INVALID_UI_LOCALE");
+    private static string SerializePreferences(JsonObject preferences)
+    {
+        string serialized = preferences.ToJsonString(PreferencesJsonOptions);
+        return Encoding.UTF8.GetByteCount(serialized) <= PersistenceLimits.JsonMaxLength ? serialized : throw new IdentityValidationException("PREFERENCES_TOO_LARGE");
     }
     private static UserRole ParseRole(string role) => role == "ADMIN" ? UserRole.Admin : role == "PLAYER" ? UserRole.Player : throw new IdentityValidationException("INVALID_ROLE");
     private static UserStatus ParseStatus(string status) => status == "ACTIVE" ? UserStatus.Active : status == "DISABLED" ? UserStatus.Disabled : throw new IdentityValidationException("INVALID_STATUS");

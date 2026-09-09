@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type HTMLAttributes, type ReactNode, type RefCallback } from "react";
 import { createPortal } from "react-dom";
 import type { TooltipPresentation, TooltipResource } from "../realtime/protocol";
+import i18n from "../i18n";
 
 const TOUCH_HOLD_MS = 500;
 const TOUCH_MOVE_PX = 10;
@@ -269,8 +270,8 @@ export function ConsoleTooltipProvider({ presentation, resources, toolbar, child
 export function ConsoleTooltipToggle() {
   const context = useContext(TooltipContext);
   if (!context) return null;
-  const label = context.inspectMode ? "关闭提示查看" : "开启提示查看";
-  return <button className={`console-inspect-toggle ${context.inspectMode ? "is-on" : ""}`} data-tooltip-ui type="button" aria-pressed={context.inspectMode} aria-label={label} title={label} onClick={context.toggleInspectMode}><i aria-hidden="true"/><span>提示</span></button>;
+  const label = i18n.t(context.inspectMode ? "runtimeUi.tooltipOff" : "runtimeUi.tooltipOn");
+  return <button className={`console-inspect-toggle ${context.inspectMode ? "is-on" : ""}`} data-tooltip-ui type="button" aria-pressed={context.inspectMode} aria-label={label} title={label} onClick={context.toggleInspectMode}><i aria-hidden="true"/><span>{i18n.t("runtimeUi.tooltip")}</span></button>;
 }
 
 export function useConsoleTooltipTarget(tooltip: string | null | undefined, generation: number, inputTransparent = false): {
@@ -359,7 +360,7 @@ function TooltipOverlay({ open, presentation, resources, id, onClose }: { open: 
   const pathTrimming = format.trimming === "pathEllipsis";
   return createPortal(<div ref={overlayRef} id={id} className={`console-tooltip ${open.pinned ? "is-pinned" : ""}`} role="tooltip" style={style}>
     {imageUrl ? <img src={imageUrl} width={resource!.width} height={resource!.height} alt={`Graphics ${resource!.graphicsId}`} /> : <span className={pathTrimming ? "console-tooltip-path-ellipsis" : undefined}>{tooltipText(open.target.tooltip)}</span>}
-    {open.pinned && <button data-tooltip-ui type="button" className="console-tooltip-close" aria-label="关闭提示" onClick={onClose}>×</button>}
+    {open.pinned && <button data-tooltip-ui type="button" className="console-tooltip-close" aria-label={i18n.t("runtimeUi.closeTooltip")} onClick={onClose}>×</button>}
   </div>, document.body);
 }
 
