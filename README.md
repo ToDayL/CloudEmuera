@@ -1,5 +1,7 @@
 # CloudEmuera
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 CloudEmuera is a self-hosted browser platform for managing and playing Era games. Deploy it once, access it from any device, and continue your game with the same saves wherever you play.
 
 ## What is CloudEmuera?
@@ -63,6 +65,9 @@ CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL=you@example.com
 CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 ```
 
+For bind mounts, network exposure, HTTPS, backups, updates, and the production `.env` reference, see
+the [production deployment guide](docs/deployment.md).
+
 Start CloudEmuera:
 
 ```bash
@@ -70,28 +75,7 @@ docker compose up -d --build
 ```
 
 Open `http://127.0.0.1:28647` on the server and log in with the account configured above. The default data is kept in the managed Docker volume `cloudemuera-data`.
-
-### Access from other devices
-
-For devices on the same network, edit `.env`:
-
-```dotenv
-CLOUDEMUERA_HTTP_BIND_ADDRESS=0.0.0.0
-```
-
-Apply the change and open `http://<server-address>:28647` from another device:
-
-```bash
-docker compose up -d
-```
-
-For an internet-facing deployment, keep `CLOUDEMUERA_HTTP_BIND_ADDRESS=127.0.0.1`, put an HTTPS reverse proxy in front of CloudEmuera, and set:
-
-```dotenv
-CLOUDEMUERA_SECURITY_SECURE_COOKIES=true
-```
-
-After the first login, change the temporary password. To update the deployment later, run `docker compose up -d --build` from the `docker/` directory again.
+Change the temporary password after the first login.
 
 ## Project status
 
