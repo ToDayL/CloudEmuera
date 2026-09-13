@@ -54,6 +54,7 @@ type IconName =
   | "close"
   | "download"
   | "folder"
+  | "globe"
   | "gamepad"
   | "grid"
   | "menu"
@@ -80,6 +81,7 @@ const paths: Record<IconName, ReactNode> = {
   close: <><path d="m6 6 12 12M18 6 6 18"/></>,
   download: <><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M5 20h14"/></>,
   folder: <path d="M3 6.5h7l2 2h9v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>,
+  globe: <><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9s-1.1 6.5-3.3 9M12 3c-2.2 2.5-3.3 5.5-3.3 9s1.1 6.5 3.3 9"/></>,
   gamepad: <><path d="M7 7h10a5 5 0 0 1 4.6 6.9l-1.2 3A2.7 2.7 0 0 1 16 18l-2-2h-4l-2 2a2.7 2.7 0 0 1-4.4-1.1l-1.2-3A5 5 0 0 1 7 7Z"/><path d="M8 10v4m-2-2h4m6-1h.01M18 13h.01"/></>,
   grid: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
   menu: <path d="M4 7h16M4 12h16M4 17h16"/>,
@@ -106,10 +108,34 @@ function Logo() {
 }
 
 const localeNames: Record<UiLocale, string> = { "zh-CN": "简体中文", "en-US": "English", "ja-JP": "日本語" };
-function LanguageSelect({ login = false, disabled = false, onChange }: { login?: boolean; disabled?: boolean; onChange?: (locale: UiLocale, previous: UiLocale) => void }) {
+function LanguageSelect({ login = false, disabled = false, onChange }: { login?: boolean; disabled?: boolean; onChange?: (locale: UiLocale, previous: UiLocale) => void | Promise<void> }) {
   const { i18n, t } = useTranslation();
   const current = normalizeUiLocale(i18n.language) ?? "zh-CN";
-  return <label className="language-select"><span>{t("common.language")}</span><select aria-label={t("common.language")} value={current} disabled={disabled} onChange={event => { const locale = event.target.value as UiLocale; const previous = current; if (login) setLoginLocaleOverride(locale); else persistDeviceLocale(locale); void changeUiLocale(locale); onChange?.(locale, previous); }}>{UI_LOCALES.map(locale => <option key={locale} value={locale}>{localeNames[locale]}</option>)}</select></label>;
+  return <label className="language-select"><Icon name="globe" size={14}/><span>{t("common.language")}</span><select aria-label={t("common.language")} value={current} disabled={disabled} onChange={async event => { const locale = event.target.value as UiLocale; const previous = current; if (login) setLoginLocaleOverride(locale); await changeUiLocale(locale); await onChange?.(locale, previous); }}>{UI_LOCALES.map(locale => <option key={locale} value={locale}>{localeNames[locale]}</option>)}</select></label>;
+}
+
+function GlobalLanguageControl({ login = false, compact = false, disabled = false }: { login?: boolean; compact?: boolean; disabled?: boolean }) {
+  const { i18n } = useTranslation();
+  const { updateUiLocale } = useAuth();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const saveLanguage = async (locale: UiLocale, previous: UiLocale) => {
+    setPending(true); setError(null);
+    try { await updateUiLocale(locale); await changeUiLocale(locale); persistDeviceLocale(locale); }
+    catch { await changeUiLocale(previous); persistDeviceLocale(previous); setError(i18n.t("common.languageSaveFailed", { lng: previous })); }
+    finally { setPending(false); }
+  };
+
+  return <div className={`global-language-control${compact ? " compact" : ""}`}>
+    <LanguageSelect login={login} disabled={disabled || pending} onChange={login ? undefined : (locale, previous) => void saveLanguage(locale, previous)}/>
+    {error && <span className="global-language-error" role="status" aria-live="polite">{error}</span>}
+  </div>;
+}
+
+function isGameConsolePath(pathname: string): boolean {
+  const segments = pathname.split("/").filter(Boolean);
+  return segments.length === 2 && segments[0] === "sessions" && segments[1] !== "new";
 }
 
 function AppShell({ children }: { children: ReactNode }) {
@@ -118,6 +144,7 @@ function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
+  const isConsoleRoute = isGameConsolePath(location.pathname);
   useEffect(() => setMobileOpen(false), [location.pathname]);
   const nav = [
     { to: "/games", label: t("common.games"), icon: "grid" as const },
@@ -142,6 +169,7 @@ function AppShell({ children }: { children: ReactNode }) {
       </div>
     </aside>
     {mobileOpen && <button className="sidebar-scrim" aria-label={t("common.closeNavigation")} onClick={() => setMobileOpen(false)}/>}
+    {!isConsoleRoute && <div className="app-topbar"><GlobalLanguageControl compact/></div>}
     <main className="main-content">{children}</main>
   </div>;
 }
@@ -310,7 +338,7 @@ function UploadDialog({ onClose }: { onClose: () => void }) {
     <button className="icon-button modal-close" onClick={() => { uploadController?.abort(); onClose(); }} aria-label={t("common.close")}><Icon name="close"/></button>
     <p className="eyebrow">{t("chrome.newGame")}</p><h2 id="upload-title">{t("upload.title")}</h2><p className="modal-intro">{t("upload.intro")}</p>
     {step === "choose" && <form className="form-panel modal-form" onSubmit={submit}>
-      <label><span>{t("upload.zip")}</span><input type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); if (selected && !gameName) setGameName(selected.name.replace(/\.zip$/i, "")); }} required/></label>
+      <label><span>{t("upload.zip")}</span><input className="file-input" type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); if (selected && !gameName) setGameName(selected.name.replace(/\.zip$/i, "")); }} required/></label>
       <label><span>{t("upload.name")}</span><input value={gameName} onChange={(event) => setGameName(event.target.value)} placeholder={t("chrome.nameExample")} required/></label>
       <label><span>{t("upload.visibility")}</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as GameVisibility)}><option value="PRIVATE">{t("upload.private")}</option><option value="SERVER_SHARED">{t("upload.shared")}</option></select></label>
       <div className="modal-note"><Icon name="warning"/><p><strong>{t("upload.rights")}</strong><small>{t("upload.rightsDetail")}</small></p></div>
@@ -740,8 +768,8 @@ function AdminUsersPage() {
 }
 
 function SettingsPage() {
-  const { user, updateUiLocale } = useAuth();
-  const { t, i18n } = useTranslation();
+  const { user } = useAuth();
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const fonts = useRuntimeFontCatalog();
   const startupDefaults = useSessionStartupDefaults(user?.id);
@@ -756,15 +784,6 @@ function SettingsPage() {
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [languagePending, setLanguagePending] = useState(false);
-  const [languageMessage, setLanguageMessage] = useState<string | null>(null);
-
-  const saveLanguage = async (locale: UiLocale, previous: UiLocale) => {
-    setLanguagePending(true); setLanguageMessage(null);
-    try { await updateUiLocale(locale); persistDeviceLocale(locale); setLanguageMessage(i18n.t("settings.languageSaved", { lng: locale })); }
-    catch { await changeUiLocale(previous); persistDeviceLocale(previous); setLanguageMessage(i18n.t("settings.languageSaveFailed", { lng: previous })); }
-    finally { setLanguagePending(false); }
-  };
 
   useEffect(() => {
     if (!startupDefaults.data) return;
@@ -807,7 +826,7 @@ function SettingsPage() {
     }
   };
 
-  return <><PageHeader eyebrow={t("settings.eyebrow")} title={t("settings.title")} description={t("settings.description")}/><section className="form-panel settings-panel"><h2>{t("settings.languageTitle")}</h2><p className="settings-description">{t("settings.languageDescription")}</p><LanguageSelect disabled={languagePending} onChange={(locale, previous) => void saveLanguage(locale, previous)}/>{languageMessage && <p className="settings-success" role="status">{languageMessage}</p>}</section><form className="form-panel settings-panel" onSubmit={submit}><h2>{t("settings.sessionTitle")}</h2><p className="settings-description">{t("settingsExtra.description")}</p><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} fontSizeLineHeightMode={fontSizeLineHeightMode} setFontSize={setFontSize} setLineHeight={setLineHeight} setFontSizeLineHeightMode={setFontSizeLineHeightMode} disabled={pending}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending}/><SessionYenCompatibilityField value={convertBackslashToYen} onChange={setConvertBackslashToYen} disabled={pending}/>{startupDefaults.isError && <p className="settings-warning" role="status">{t("settingsExtra.defaultsFailed")}</p>}{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="settings-success" role="status">{message}</p>}<div className="form-actions"><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady}>{pending ? t("common.saving") : t("settingsExtra.saveDefaults")}</button></div></form></>;
+  return <><PageHeader eyebrow={t("settings.eyebrow")} title={t("settings.title")} description={t("settings.description")}/><form className="form-panel settings-panel" onSubmit={submit}><h2>{t("settings.sessionTitle")}</h2><p className="settings-description">{t("settingsExtra.description")}</p><SessionFontField value={fontFaceId} fonts={fonts.data?.items ?? []} disabled={fonts.isPending || pending} onChange={setFontFaceId} onReadinessChange={setFontPreviewReady}/><SessionDisplayFields fontSize={fontSize} lineHeight={lineHeight} fontSizeLineHeightMode={fontSizeLineHeightMode} setFontSize={setFontSize} setLineHeight={setLineHeight} setFontSizeLineHeightMode={setFontSizeLineHeightMode} disabled={pending}/><SessionWidthFields widthMode={widthMode} customWidth={customWidth} setWidthMode={setWidthMode} setCustomWidth={setCustomWidth} disabled={pending}/><SessionYenCompatibilityField value={convertBackslashToYen} onChange={setConvertBackslashToYen} disabled={pending}/>{startupDefaults.isError && <p className="settings-warning" role="status">{t("settingsExtra.defaultsFailed")}</p>}{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="settings-success" role="status">{message}</p>}<div className="form-actions"><button className="primary-button" disabled={pending || fonts.isPending || fonts.isError || !fonts.data || !fontPreviewReady}>{pending ? t("common.saving") : t("settingsExtra.saveDefaults")}</button></div></form></>;
 }
 
 function ConfirmDialog({ title, body, confirm, onCancel, onConfirm, pending = false }: { title: string; body: string; confirm: string; onCancel: () => void; onConfirm?: () => void; pending?: boolean }) {
@@ -826,7 +845,7 @@ function LoginPage() {
   const safeReturnTo = returnTo && /^\/(?!\/)/.test(returnTo) && !returnTo.includes("\\") ? returnTo : "/games";
   const submit = async (event: FormEvent) => { event.preventDefault(); setError(""); setPending(true); try { const current = await login(email, password, rememberMe); navigate(current.mustChangePassword ? "/change-password" : safeReturnTo, { replace: true }); } catch (failure) { const error = failure as { code?: string; status?: number }; setError(error.code === "SERVICE_NOT_READY" ? t("auth.serviceNotReady") : error.code === "TOO_MANY_ATTEMPTS" ? t("auth.tooMany") : error.status && error.status >= 500 ? t("auth.unavailable") : t("auth.invalid")); } finally { setPending(false); } };
   const storyTitle = t("auth.storyTitle").split("\n");
-  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">{t("auth.storyEyebrow")}</p><h1>{storyTitle.map((line, index) => <span key={line}>{index > 0 && <br/>}{line}</span>)}</h1><p>{t("auth.storyBody")}</p></div><small>CloudEmuera · {t("chrome.selfHostedRuntime")}</small></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><LanguageSelect login disabled={pending}/><p className="eyebrow">{t("auth.welcome")}</p><h2>{t("auth.title")}</h2><p>{t("auth.intro")}</p><label><span>{t("auth.email")}</span><input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" required/></label><label><span>{t("auth.password")}</span><input value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" required/></label><div className="login-options"><label className="login-checkbox"><input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}/><span>{t("auth.remember")}</span></label></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? t("auth.submitting") : <>{t("auth.submit")} <Icon name="arrow"/></>}</button></form></section></main>;
+  return <main className="login-page"><GlobalLanguageControl login compact disabled={pending}/><section className="login-story"><Logo/><div><p className="eyebrow">{t("auth.storyEyebrow")}</p><h1>{storyTitle.map((line, index) => <span key={line}>{index > 0 && <br/>}{line}</span>)}</h1><p>{t("auth.storyBody")}</p></div><small>CloudEmuera · {t("chrome.selfHostedRuntime")}</small></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><p className="eyebrow">{t("auth.welcome")}</p><h2>{t("auth.title")}</h2><p>{t("auth.intro")}</p><label><span>{t("auth.email")}</span><input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" required/></label><label><span>{t("auth.password")}</span><input value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" required/></label><div className="login-options"><label className="login-checkbox"><input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)}/><span>{t("auth.remember")}</span></label></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? t("auth.submitting") : <>{t("auth.submit")} <Icon name="arrow"/></>}</button></form></section></main>;
 }
 
 function ChangePasswordPage() {
@@ -834,7 +853,7 @@ function ChangePasswordPage() {
   if (!user) return <Navigate to="/login" replace/>;
   if (!user.mustChangePassword) return <Navigate to="/games" replace/>;
   const submit = async (event: FormEvent) => { event.preventDefault(); setError(""); if (newPassword !== confirmation) { setError(t("passwordChange.mismatch")); return; } setPending(true); try { await changePassword(currentPassword, newPassword); navigate("/games", { replace: true }); } catch { setError(t("passwordChange.failed")); } finally { setPending(false); } };
-  return <main className="login-page"><section className="login-story"><Logo/><div><p className="eyebrow">{t("passwordChange.eyebrow")}</p><h1>{t("passwordChange.storyTitle")}</h1><p>{t("passwordChange.storyBody")}</p></div></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><h2>{t("passwordChange.title")}</h2><p>{t("passwordChange.intro")}</p><label><span>{t("passwordChange.current")}</span><input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} autoComplete="current-password" required/></label><label><span>{t("passwordChange.next")}</span><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" minLength={8} required/></label><label><span>{t("passwordChange.confirm")}</span><input type="password" value={confirmation} onChange={e => setConfirmation(e.target.value)} autoComplete="new-password" minLength={8} required/></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? t("passwordChange.saving") : t("passwordChange.save")}</button></form></section></main>;
+  return <main className="login-page"><GlobalLanguageControl compact/><section className="login-story"><Logo/><div><p className="eyebrow">{t("passwordChange.eyebrow")}</p><h1>{t("passwordChange.storyTitle")}</h1><p>{t("passwordChange.storyBody")}</p></div></section><section className="login-form-wrap"><form className="login-form" onSubmit={submit}><h2>{t("passwordChange.title")}</h2><p>{t("passwordChange.intro")}</p><label><span>{t("passwordChange.current")}</span><input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} autoComplete="current-password" required/></label><label><span>{t("passwordChange.next")}</span><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" minLength={8} required/></label><label><span>{t("passwordChange.confirm")}</span><input type="password" value={confirmation} onChange={e => setConfirmation(e.target.value)} autoComplete="new-password" minLength={8} required/></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary-button wide" disabled={pending}>{pending ? t("passwordChange.saving") : t("passwordChange.save")}</button></form></section></main>;
 }
 
 function RequireAuthenticated({ children }: { children: ReactNode }) {

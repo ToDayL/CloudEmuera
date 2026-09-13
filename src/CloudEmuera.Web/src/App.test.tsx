@@ -169,6 +169,10 @@ describe("App", () => {
     try {
       renderAt("/settings");
       expect(await screen.findByRole("heading", { name: "设置" })).toBeInTheDocument();
+      expect(screen.getAllByLabelText("界面语言")).toHaveLength(1);
+      expect(document.querySelector(".app-topbar .global-language-control")).toHaveClass("compact");
+      expect(document.querySelector(".app-topbar .global-language-control .icon")).toBeInTheDocument();
+      expect(screen.queryByText("此选择会保存到当前账户，并在其他设备登录后使用。")).not.toBeInTheDocument();
       await waitFor(() => expect(screen.getByRole("button", { name: "保存默认值" })).toBeEnabled());
       expect(screen.getByLabelText("字号（px）")).toHaveValue(18);
       expect(screen.getByLabelText("行高（px）")).toHaveValue(19);
@@ -301,6 +305,49 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
+  it("saves the global locale selection outside the settings page", async () => {
+    const fetchMock = mockFetch((url, init) => {
+      if (url === "/api/v1/games") return jsonResponse({ items: [] });
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/preferences/ui-locale" && init?.method === "PUT") return jsonResponse({ locale: "en-US", stateVersion: 1 });
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games");
+
+    expect(await screen.findByRole("heading", { name: "还没有游戏" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("界面语言"), { target: { value: "en-US" } });
+
+    await waitFor(() => expect(document.documentElement.lang).toBe("en-US"));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => String(url) === "/api/v1/preferences/ui-locale" && init?.method === "PUT")).toBe(true));
+    expect(JSON.parse(String(fetchMock.mock.calls.find(([url]) => String(url) === "/api/v1/preferences/ui-locale")?.[1]?.body))).toEqual({ locale: "en-US" });
+    expect(localStorage.getItem("cloudemuera.uiLocale")).toBe("en-US");
+    expect(await screen.findByRole("heading", { name: "No games yet" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Interface language"), { target: { value: "zh-CN" } });
+    await waitFor(() => expect(document.documentElement.lang).toBe("zh-CN"));
+    expect(await screen.findByRole("heading", { name: "还没有游戏" })).toBeInTheDocument();
+    expect(localStorage.getItem("cloudemuera.uiLocale")).toBe("zh-CN");
+    vi.unstubAllGlobals();
+  });
+
+  it("rolls back the global locale selection when account saving fails", async () => {
+    mockFetch((url, init) => {
+      if (url === "/api/v1/games") return jsonResponse({ items: [] });
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/preferences/ui-locale" && init?.method === "PUT") return jsonResponse({ code: "REQUEST_FAILED", message: "unexpected", requestId: "req" }, 500);
+      return jsonResponse({ code: "NOT_FOUND", message: "unexpected", requestId: "req" }, 404);
+    });
+    renderAt("/games");
+
+    expect(await screen.findByRole("heading", { name: "还没有游戏" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("界面语言"), { target: { value: "en-US" } });
+
+    expect(await screen.findByRole("status")).toHaveTextContent("界面语言保存失败，已恢复原设置。");
+    expect(screen.getByLabelText("界面语言")).toHaveValue("zh-CN");
+    expect(document.documentElement.lang).toBe("zh-CN");
+    expect(localStorage.getItem("cloudemuera.uiLocale")).toBe("zh-CN");
+    vi.unstubAllGlobals();
+  });
+
   it("uploads, load-tests, and activates a new game through one API call", async () => {
     const created = game({ id: "g-new", name: "My Era Game" });
     let gamesList: unknown[] = [];
@@ -320,7 +367,9 @@ describe("App", () => {
     expect(await screen.findByText("还没有游戏")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "上传游戏" })[0]);
     const dialog = await screen.findByRole("dialog", { name: "上传游戏" });
-    fireEvent.change(within(dialog).getByLabelText("ZIP 游戏包"), { target: { files: [new File(["zip"], "My Era Game.zip", { type: "application/zip" })] } });
+    const fileInput = within(dialog).getByLabelText("ZIP 游戏包");
+    expect(fileInput).toHaveClass("file-input");
+    fireEvent.change(fileInput, { target: { files: [new File(["zip"], "My Era Game.zip", { type: "application/zip" })] } });
     const uploadButton = within(dialog).getByRole("button", { name: "上传、加载并启用" });
     await waitFor(() => expect(uploadButton).toBeEnabled());
     fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
@@ -459,6 +508,7 @@ describe("App", () => {
       renderAt("/sessions/sess-world");
 
       expect(await screen.findByRole("heading", { name: "港口旅程" })).toBeInTheDocument();
+      expect(screen.queryByLabelText("界面语言")).not.toBeInTheDocument();
       expect(screen.getAllByText("连接中").length).toBeGreaterThan(0);
       expect(screen.getByText("等待 Worker 快照…")).toBeInTheDocument();
       expect(screen.getAllByText("运行中").length).toBeGreaterThan(0);
@@ -525,6 +575,7 @@ describe("App", () => {
     renderAt("/saves");
 
     expect(await screen.findByText("周目二")).toBeInTheDocument();
+    expect(screen.getByLabelText("导入文件")).toHaveClass("file-input");
     expect(screen.getByText("Session 运行时存档由 Worker 独占")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "删除 save01.sav" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "重命名 save01.sav" })).toBeDisabled();
