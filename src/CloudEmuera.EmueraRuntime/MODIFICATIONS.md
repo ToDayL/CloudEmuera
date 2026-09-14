@@ -40,6 +40,12 @@
 - Added a persisted Session font-size/line-height mode. `OVERRIDE` keeps the existing host-controlled metrics;
   `CONFIG` leaves the copied game's `emuera.config` values intact while retaining the Session values for a later
   switch back to `OVERRIDE` (SESS-013/PLAY-014).
+- Extended the opt-in runtime trace with physical-layout results and non-fit
+  decisions. `layout_result` records the effective line width, physical rows,
+  segment positions, measured widths and overflow; `layout_decision` records
+  `noWrap`, `CanDivide`, button-wrap, split, flush and accept-overflow choices.
+  Batched structured-console transactions are now traced as well, so layout
+  evidence can be correlated with the emitted physical rows.
 This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
