@@ -65,6 +65,7 @@ describe("ScrollbackRenderer", () => {
     const { ref, element } = scrollContainer(false);
     const view = render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
     element.scrollTop = 10;
+    fireEvent.wheel(element);
     fireEvent.scroll(element);
     vi.mocked(element.scrollTo).mockClear();
     view.rerender(<ScrollbackRenderer lines={[line("one", "one"), line("two", "two")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
@@ -75,6 +76,7 @@ describe("ScrollbackRenderer", () => {
     const { ref, element } = scrollContainer(false);
     const view = render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} scrollVersion="ready:live:1:12" />);
     element.scrollTop = 10;
+    fireEvent.wheel(element);
     fireEvent.scroll(element);
     vi.mocked(element.scrollTo).mockClear();
     view.rerender(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} scrollVersion="ready:resuming:1:12" />);
@@ -85,6 +87,7 @@ describe("ScrollbackRenderer", () => {
     const { ref, element } = scrollContainer(false);
     const view = render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} forceScrollVersion={0} />);
     element.scrollTop = 10;
+    fireEvent.wheel(element);
     fireEvent.scroll(element);
     vi.mocked(element.scrollTo).mockClear();
 
@@ -173,6 +176,7 @@ describe("ScrollbackRenderer", () => {
       const { ref, element } = scrollContainer(false);
       render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
       element.scrollTop = 10;
+      fireEvent.wheel(element);
       fireEvent.scroll(element);
       vi.mocked(element.scrollTo).mockClear();
       (element as HTMLElement & { scrollHeight: number }).scrollHeight = 500;
@@ -187,6 +191,7 @@ describe("ScrollbackRenderer", () => {
     const { ref, element } = scrollContainer(true);
     render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
     element.scrollTop = 10;
+    fireEvent.wheel(element);
     fireEvent.scroll(element);
     const button = screen.getByRole("button", { name: "↓ 回到最新" });
     fireEvent.click(button);
@@ -202,6 +207,7 @@ describe("ScrollbackRenderer", () => {
     expect(button).toHaveClass("is-hidden");
 
     element.scrollTop = 10;
+    fireEvent.wheel(element);
     fireEvent.scroll(element);
     expect(document.querySelector(".scrollback-latest")).toBe(button);
     expect(button).not.toHaveClass("is-hidden");
@@ -212,6 +218,7 @@ describe("ScrollbackRenderer", () => {
     expect(button).toHaveClass("is-hidden");
 
     element.scrollTop = 76;
+    fireEvent.wheel(element);
     fireEvent.scroll(element);
     expect(button).not.toHaveClass("is-hidden");
 
@@ -252,6 +259,70 @@ describe("ScrollbackRenderer", () => {
 
       expect(element.scrollTop).toBe(200);
       view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps following when an old automatic scroll event arrives after content grows", () => {
+    let notifyResize: (() => void) | undefined;
+    class ResizeObserverStub {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = () => callback([], this as unknown as ResizeObserver);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    try {
+      const { ref, element } = scrollContainer(true);
+      render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+      vi.mocked(element.scrollTo).mockClear();
+
+      // The browser can dispatch the scroll event from the initial jump only
+      // after the next committed frame has increased the scroll extent. A
+      // pointer press inside game content is activation, not scroll intent.
+      fireEvent.pointerDown(document.querySelector(".console-line")!);
+      (element as HTMLElement & { scrollHeight: number }).scrollHeight = 500;
+      element.scrollTop = 140;
+      fireEvent.scroll(element);
+      expect(document.querySelector<HTMLButtonElement>(".scrollback-latest")).toHaveClass("is-hidden");
+
+      notifyResize?.();
+      expect(element.scrollTop).toBe(400);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("stops following when the reader moves away from the automatic position", () => {
+    let notifyResize: (() => void) | undefined;
+    class ResizeObserverStub {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = () => callback([], this as unknown as ResizeObserver);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    try {
+      const { ref, element } = scrollContainer(true);
+      render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+      vi.mocked(element.scrollTo).mockClear();
+
+      (element as HTMLElement & { scrollHeight: number }).scrollHeight = 500;
+      element.scrollTop = 90;
+      fireEvent.wheel(element);
+      fireEvent.scroll(element);
+      expect(document.querySelector<HTMLButtonElement>(".scrollback-latest")).not.toHaveClass("is-hidden");
+
+      notifyResize?.();
+      expect(element.scrollTop).toBe(90);
+      expect(element.scrollTo).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -300,6 +371,7 @@ describe("ScrollbackRenderer", () => {
       const initial = render(<ScrollbackRenderer lines={[]} assets={clockAssets} onInput={() => undefined} scrollContainerRef={ref} defaultLineHeight={20} />);
       (element as HTMLElement & { scrollHeight: number }).scrollHeight = 2_000;
       element.scrollTop = 0;
+      fireEvent.wheel(element);
       fireEvent.scroll(element);
       initial.rerender(<ScrollbackRenderer lines={[...lines.slice(0, 20), portraitLine, ...lines.slice(21)]} assets={clockAssets} onInput={() => undefined} scrollContainerRef={ref} defaultLineHeight={20} />);
 
