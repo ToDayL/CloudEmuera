@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AssetResolver } from "./AssetResolver";
@@ -258,6 +258,33 @@ describe("ScrollbackRenderer", () => {
       callbacks.shift()?.(0);
 
       expect(element.scrollTop).toBe(200);
+      view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("recommits the initial bottom row window before browser interaction", () => {
+    const callbacks: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+    try {
+      const { ref } = scrollContainer(true);
+      const view = render(<ScrollbackRenderer lines={[line("one", "one")]} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+      const initialContent = document.querySelector(".console-virtual-content");
+      expect(initialContent).not.toBeNull();
+
+      const firstPaintCallbacks = callbacks.splice(0);
+      act(() => firstPaintCallbacks.forEach(callback => callback(0)));
+      const settledPaintCallbacks = callbacks.splice(0);
+      act(() => settledPaintCallbacks.forEach(callback => callback(16)));
+
+      expect(document.querySelector(".console-virtual-content")).not.toBe(initialContent);
+      expect(screen.getByText("one")).toBeInTheDocument();
       view.unmount();
     } finally {
       vi.unstubAllGlobals();
