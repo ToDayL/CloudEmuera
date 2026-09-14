@@ -137,6 +137,7 @@ export interface ScrollbackRendererProps {
 export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion, defaultLineHeight, viewportHeight, activation = inactiveConsoleActivation }: ScrollbackRendererProps) {
   const [atLatest, setAtLatest] = useState(true);
   const atLatestRef = useRef(true);
+  const userScrollIntentRef = useRef(false);
   const scrollbackShellRef = useRef<HTMLDivElement>(null);
   const virtualContentRef = useRef<HTMLDivElement>(null);
   const displayLines = useMemo(() => trimTrailingEmptyLines(lines), [lines]);
@@ -238,14 +239,48 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   useEffect(() => {
     const container = scrollContainerRef?.current;
     if (!container) return;
+    const markUserScrollIntent = () => {
+      userScrollIntentRef.current = true;
+    };
+    const markScrollbarIntent = (event: globalThis.PointerEvent) => {
+      if (event.target !== container) return;
+      const bounds = container.getBoundingClientRect();
+      const verticalScrollbarWidth = Math.max(0, container.offsetWidth - container.clientWidth);
+      const horizontalScrollbarHeight = Math.max(0, container.offsetHeight - container.clientHeight);
+      if ((verticalScrollbarWidth > 0 && event.clientX >= bounds.right - verticalScrollbarWidth) ||
+          (horizontalScrollbarHeight > 0 && event.clientY >= bounds.bottom - horizontalScrollbarHeight)) {
+        markUserScrollIntent();
+      }
+    };
+    const markKeyboardIntent = (event: globalThis.KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+        markUserScrollIntent();
+      }
+    };
     const updatePosition = () => {
       const next = isScrollAtBottom(container);
+      const userScrollIntent = userScrollIntentRef.current;
+      userScrollIntentRef.current = false;
+      if (!next && atLatestRef.current && !userScrollIntent) {
+        // Content growth, scroll anchoring, focus restoration and an earlier
+        // automatic jump can all emit scroll after the extent has changed.
+        // Only an explicit reader gesture may disengage follow-latest mode.
+        return;
+      }
       atLatestRef.current = next;
       setAtLatest(previous => previous === next ? previous : next);
     };
     updatePosition();
+    container.addEventListener("wheel", markUserScrollIntent, { passive: true });
+    container.addEventListener("touchmove", markUserScrollIntent, { passive: true });
+    container.addEventListener("pointerdown", markScrollbarIntent, { passive: true });
+    container.addEventListener("keydown", markKeyboardIntent);
     container.addEventListener("scroll", updatePosition, { passive: true });
     return () => {
+      container.removeEventListener("wheel", markUserScrollIntent);
+      container.removeEventListener("touchmove", markUserScrollIntent);
+      container.removeEventListener("pointerdown", markScrollbarIntent);
+      container.removeEventListener("keydown", markKeyboardIntent);
       container.removeEventListener("scroll", updatePosition);
     };
   }, [scrollContainerRef]);
