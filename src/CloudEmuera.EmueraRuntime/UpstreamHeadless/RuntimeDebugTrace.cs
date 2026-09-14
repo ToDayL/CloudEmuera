@@ -2,6 +2,7 @@
 // file enumeration and native save behavior are unaffected.
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using CloudEmuera.RuntimeAdapter;
 using MinorShift.Emuera.Runtime.Script.Statements;
@@ -100,6 +101,85 @@ internal sealed class RuntimeDebugTrace : IDisposable
         }
     }
 
+    internal void RecordLayoutDecision(
+        string logicalLineId,
+        string decision,
+        int atomIndex,
+        string atomKind,
+        string? text,
+        int width,
+        bool canDivide,
+        bool hasAction,
+        int? lockedX,
+        bool lockedXIsRelative,
+        int position,
+        int availableWidth,
+        int fittingCharacters,
+        int currentSegmentCount,
+        int currentContentWidth,
+        int layoutWidth,
+        bool noWrap,
+        bool buttonWrap,
+        bool truncate)
+    {
+        Write(new
+        {
+            eventType = "layout_decision",
+            logicalLineId,
+            decision,
+            atomIndex,
+            atomKind,
+            text = text is null ? null : Truncate(text),
+            width,
+            canDivide,
+            hasAction,
+            lockedX,
+            lockedXIsRelative,
+            position,
+            availableWidth,
+            fittingCharacters,
+            currentSegmentCount,
+            currentContentWidth,
+            layoutWidth,
+            noWrap,
+            buttonWrap,
+            truncate
+        });
+    }
+
+    internal void RecordLayoutResult(
+        string logicalLineId,
+        int layoutWidth,
+        int lineHeight,
+        ConsoleLineAlignment alignment,
+        bool temporary,
+        bool requestedNoWrap,
+        bool effectiveNoWrap,
+        bool buttonWrap,
+        bool truncate,
+        int atomCount,
+        IReadOnlyList<ConsoleLine> physicalLines)
+    {
+        ArgumentNullException.ThrowIfNull(physicalLines);
+        Write(new
+        {
+            eventType = "layout_result",
+            logicalLineId,
+            layoutWidth,
+            lineHeight,
+            alignment = alignment.ToString(),
+            temporary,
+            requestedNoWrap,
+            effectiveNoWrap,
+            noWrap = effectiveNoWrap,
+            buttonWrap,
+            truncate,
+            atomCount,
+            physicalLineCount = physicalLines.Count,
+            physicalLines = physicalLines.Select(DescribeLineOperation).ToArray()
+        });
+    }
+
     public void Dispose()
     {
         lock (sync)
@@ -125,13 +205,29 @@ internal sealed class RuntimeDebugTrace : IDisposable
     private static object Describe(ConsoleOperation operation) => operation switch
     {
         AppendNodesOperation value => new { nodes = DescribeNodes(value.Nodes) },
-        AppendLineOperation value => new { lineId = value.Line.LineId, nodes = DescribeNodes(value.Line.Nodes) },
+        AppendLineOperation value => DescribeLineOperation(value.Line),
         AppendInlineOperation value => new { lineId = value.LineId, nodes = DescribeNodes(value.Nodes) },
-        ReplaceLineOperation value => new { lineId = value.Line.LineId, nodes = DescribeNodes(value.Line.Nodes) },
+        ReplaceLineOperation value => DescribeLineOperation(value.Line),
         OpenPromptOperation value => new { promptId = value.Prompt.PromptId, inputType = value.Prompt.InputType.ToString(), stopMessageSkip = value.Prompt.StopMessageSkip },
         ClosePromptOperation value => new { promptId = value.PromptId, reason = value.Reason.ToString() },
         DeleteLinesOperation value => new { lineIds = value.LineIds },
         _ => new { }
+    };
+
+    private static object DescribeLineOperation(ConsoleLine line) => new
+    {
+        lineId = line.LineId,
+        logicalLineId = line.LogicalLineId,
+        physicalIndex = line.PhysicalIndex,
+        isLogicalStart = line.IsLogicalStart,
+        alignment = line.Alignment.ToString(),
+        temporary = line.Temporary,
+        noWrap = line.NoWrap,
+        layoutWidth = line.LayoutWidth,
+        lineHeight = line.LineHeight,
+        contentWidth = GetLineContentWidth(line),
+        overflow = line.LayoutWidth > 0 && GetLineContentWidth(line) > line.LayoutWidth,
+        nodes = DescribeNodes(line.Nodes)
     };
 
     private static IReadOnlyList<object> DescribeNodes(IReadOnlyList<ConsoleNode> nodes)
@@ -143,10 +239,27 @@ internal sealed class RuntimeDebugTrace : IDisposable
             {
                 TextNode value => new { kind = node.Kind.ToString(), text = Truncate(value.Text) },
                 ButtonNode value => new { kind = node.Kind.ToString(), value = Truncate(value.Value), children = DescribeNodes(value.Children) },
+                PositionedInlineSegmentNode value => new
+                {
+                    kind = node.Kind.ToString(),
+                    positionX = value.PositionX,
+                    measuredWidth = value.MeasuredWidth,
+                    endX = checked(value.PositionX + value.MeasuredWidth),
+                    hasAction = value.Action is not null,
+                    children = DescribeNodes(value.Children)
+                },
                 _ => new { kind = node.Kind.ToString() }
             });
         }
         return result;
+    }
+
+    private static int GetLineContentWidth(ConsoleLine line)
+    {
+        int contentWidth = 0;
+        foreach (PositionedInlineSegmentNode segment in line.Nodes.OfType<PositionedInlineSegmentNode>())
+            contentWidth = Math.Max(contentWidth, checked(segment.PositionX + segment.MeasuredWidth));
+        return contentWidth;
     }
 
     private static string Truncate(string value) => value.Length <= MaxTextLength ? value : value[..MaxTextLength] + "...<truncated>";

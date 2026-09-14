@@ -463,10 +463,11 @@ public sealed class GamePackageIngestionService(
     }
 
     /// <summary>
-    /// Normalizes UTF-16/UTF-32 text files (with BOM) to UTF-8 inside the private
-    /// staging copy so validation, the file viewer, the runtime and the content digest
-    /// all agree on a canonical encoding (ADR-0014). Shift-JIS and UTF-8 files are
-    /// left untouched because the upstream runtime auto-detects them.
+    /// Normalizes text files to UTF-8 inside the private staging copy so
+    /// validation, the file viewer, the runtime and the content identity all
+    /// agree on the bytes that will be published. UTF-16/UTF-32 BOMs are
+    /// unambiguous; GB18030 is only considered after strict UTF-8 and CP932
+    /// decoding both fail (ADR-0014 and GAME-003).
     /// </summary>
     private static async Task<ExtractionResult> ConvertTextEncodingsAsync(
         SafeFileHandle contentRoot,
@@ -479,17 +480,19 @@ public sealed class GamePackageIngestionService(
         bool convertedAny = false;
         var files = new List<ExtractedFile>(extraction.Files.Count);
         long total = 0;
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         foreach (ExtractedFile file in extraction.Files)
         {
             await ReportProgressAsync(progress, GamePackageProgressStage.NormalizingEncoding, file.Path, token).ConfigureAwait(false);
             if (IsText(file.Path)
-                && TryConvertUtf16Or32ToUtf8(contentRoot, file.Path, limits, out long rewrittenBytes))
+                && TryNormalizeTextToUtf8(contentRoot, file.Path, limits, out long rewrittenBytes, out string sourceEncoding))
             {
                 files.Add(file with { Bytes = rewrittenBytes });
                 total = checked(total + rewrittenBytes);
                 convertedAny = true;
                 diagnostics.Add("TEXT_ENCODING_CONVERTED", GamePackageDiagnosticSeverity.Info, "ENCODING", file.Path,
-                    "gamePackage.diagnostic.textEncodingConverted", publishBlocking: false);
+                    "gamePackage.diagnostic.textEncodingConverted", publishBlocking: false,
+                    new Dictionary<string, string> { ["sourceEncoding"] = sourceEncoding });
             }
             else
             {
@@ -502,24 +505,55 @@ public sealed class GamePackageIngestionService(
             : extraction;
     }
 
-    private static bool TryConvertUtf16Or32ToUtf8(
+    private static bool TryNormalizeTextToUtf8(
         SafeFileHandle contentRoot,
         string logicalPath,
         GamePackageIngestionLimits limits,
-        out long rewrittenBytes)
+        out long rewrittenBytes,
+        out string sourceEncoding)
     {
         rewrittenBytes = 0;
+        sourceEncoding = string.Empty;
         byte[] source = ReadAll(contentRoot, logicalPath);
-        Encoding? sourceEncoding = DetectUtf16Or32(source);
-        if (sourceEncoding is null) return false;
+        Encoding? bomEncoding = DetectUtf16Or32(source);
+        string text;
+        if (bomEncoding is not null)
+        {
+            try
+            {
+                text = bomEncoding.GetString(source);
+            }
+            catch (DecoderFallbackException)
+            {
+                return false;
+            }
+            if (text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
+            sourceEncoding = GetBomEncodingName(source);
+        }
+        else
+        {
+            // Preserve the existing runtime precedence. An unknown file is a
+            // GB18030 candidate only when strict UTF-8 and strict CP932 both
+            // reject it; this prevents ordinary UTF-8/CP932 content from being
+            // rewritten merely because GB18030 can also decode it.
+            if (CanDecode(source, new UTF8Encoding(false, true), out _)
+                || CanDecode(source, Encoding.GetEncoding(932, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback), out _))
+            {
+                return false;
+            }
+
+            Encoding gb18030 = Encoding.GetEncoding(54936, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+            if (!CanDecode(source, gb18030, out text))
+                return false;
+            sourceEncoding = "GB18030";
+        }
+
         byte[] utf8;
         try
         {
-            string text = sourceEncoding.GetString(source);
-            if (text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
             utf8 = new UTF8Encoding(false, true).GetBytes(text);
         }
-        catch (Exception exception) when (exception is DecoderFallbackException or EncoderFallbackException)
+        catch (EncoderFallbackException)
         {
             return false;
         }
@@ -528,6 +562,29 @@ public sealed class GamePackageIngestionService(
         rewrittenBytes = utf8.Length;
         return true;
     }
+
+    private static bool CanDecode(byte[] source, Encoding encoding, out string text)
+    {
+        try
+        {
+            text = encoding.GetString(source);
+            return true;
+        }
+        catch (DecoderFallbackException)
+        {
+            text = string.Empty;
+            return false;
+        }
+    }
+
+    private static string GetBomEncodingName(byte[] source) => source switch
+    {
+        [0x00, 0x00, 0xFE, 0xFF, ..] => "UTF-32BE",
+        [0xFF, 0xFE, 0x00, 0x00, ..] => "UTF-32LE",
+        [0xFF, 0xFE, ..] => "UTF-16LE",
+        [0xFE, 0xFF, ..] => "UTF-16BE",
+        _ => "UTF-16/32",
+    };
 
     private static Encoding? DetectUtf16Or32(byte[] source)
     {

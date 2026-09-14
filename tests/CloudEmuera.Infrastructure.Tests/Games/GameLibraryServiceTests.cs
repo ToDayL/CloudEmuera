@@ -693,18 +693,27 @@ public sealed class GameLibraryServiceTests
 
     private sealed class ThrowingValidator : IGameContentValidator
     {
+        public Task<GameContentPreparationResult> PrepareAsync(string snapshotRoot, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new GameContentPreparationResult(true, []));
+
         public Task<GameParserValidationResult> ValidateAsync(string snapshotRoot, CancellationToken cancellationToken = default) =>
             throw new GameLibraryException(GameLibraryErrorCodes.ValidationFailed, "simulated validator failure");
     }
 
     private sealed class CrashReportingValidator : IGameContentValidator
     {
+        public Task<GameContentPreparationResult> PrepareAsync(string snapshotRoot, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new GameContentPreparationResult(true, []));
+
         public Task<GameParserValidationResult> ValidateAsync(string snapshotRoot, CancellationToken cancellationToken = default) =>
             Task.FromResult(new GameParserValidationResult(false, [new GameValidationDiagnostic("VALIDATOR_CRASHED", "ERROR", null, "The parser process was terminated.", true)]));
     }
 
     private sealed class AcceptingValidator : IGameContentValidator
     {
+        public Task<GameContentPreparationResult> PrepareAsync(string snapshotRoot, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new GameContentPreparationResult(true, []));
+
         public Task<GameParserValidationResult> ValidateAsync(string snapshotRoot, CancellationToken cancellationToken = default)
         {
             Assert.True(Directory.Exists(snapshotRoot));

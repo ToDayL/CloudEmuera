@@ -7,6 +7,41 @@ public sealed class GameValidatorProcessIntegrationTests
 {
     [Fact]
     [Trait("Category", "GameLibrary")]
+    public async Task ValidatorPreparationUsesUpstreamLoadAndSaveToMaterializeMissingConfig()
+    {
+        string root = Directory.CreateTempSubdirectory("cloudemuera-real-validator-config-").FullName;
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "CSV"));
+            Directory.CreateDirectory(Path.Combine(root, "ERB"));
+            await File.WriteAllTextAsync(Path.Combine(root, "CSV", "_default.config"), "Use sav folder:YES\n");
+            await File.WriteAllTextAsync(Path.Combine(root, "ERB", "START.ERB"), "@SYSTEM_TITLE\nQUIT\n");
+
+            GameContentPreparationResult preparation = await CreateClient().PrepareAsync(root);
+
+            Assert.True(preparation.Succeeded, string.Join(" | ", preparation.Diagnostics.Select(item => $"{item.Code}: {item.Message}")));
+            Assert.Contains(preparation.Diagnostics, item =>
+                item.Code == "RUNTIME_CONFIG_GENERATED" &&
+                item.Severity == "WARNING" &&
+                !item.ActivationBlocking);
+            string configPath = Path.Combine(root, "emuera.config");
+            Assert.True(File.Exists(configPath));
+            byte[] config = await File.ReadAllBytesAsync(configPath);
+            Assert.True(config.Length > 3);
+            Assert.Equal([0xEF, 0xBB, 0xBF], config[..3]);
+
+            GameParserValidationResult validation = await CreateClient().ValidateAsync(root);
+            Assert.True(validation.CanActivate, string.Join(" | ", validation.Diagnostics.Select(item => $"{item.Code}: {item.Message}")));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "GameLibrary")]
     public async Task OneShotValidatorLoadsPinnedEmueraParserWithoutRunningGameLoop()
     {
         string root = Directory.CreateTempSubdirectory("cloudemuera-real-validator-").FullName;

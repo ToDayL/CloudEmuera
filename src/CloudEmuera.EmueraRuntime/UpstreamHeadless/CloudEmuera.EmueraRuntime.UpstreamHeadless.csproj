@@ -35,6 +35,7 @@
     <Compile Include="HeadlessStringConverter.cs" />
     <Compile Include="HeadlessDeterminism.cs" />
     <Compile Include="RuntimeDebugTrace.cs" />
+    <Compile Include="RuntimeConfigMaterializer.cs" />
     <Compile Include="HeadlessEmueraConsole.cs" />
     <Compile Include="UpstreamHtmlTranslator.cs" />
     <Compile Include="UpstreamRuntimeSession.cs" />

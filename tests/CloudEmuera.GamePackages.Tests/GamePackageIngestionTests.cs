@@ -145,6 +145,34 @@ public sealed class GamePackageIngestionTests : IAsyncLifetime, IDisposable
 
     [Fact]
     [Trait("Category", "Encoding")]
+    public async Task ConvertsUnambiguouslyGb18030TextFilesToUtf8OnIngestion()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        Encoding gb18030 = Encoding.GetEncoding(54936, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+        Encoding shiftJis = Encoding.GetEncoding(932, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+        byte[] gb18030Bytes = gb18030.GetBytes("@SYSTEM_TITLE\n打印中文𠀀\nQUIT\n");
+        Assert.Throws<DecoderFallbackException>(() => shiftJis.GetString(gb18030Bytes));
+        byte[] zip = CreateZip(
+            ("ERB/START.ERB", gb18030Bytes, null),
+            ("CSV/GAMEBASE.CSV", Encoding.UTF8.GetBytes("title,test\n"), null),
+            ("emuera.config", Encoding.UTF8.GetBytes("Use sav folder:NO\n"), null));
+
+        IngestedGamePackage result = await Service().IngestAsync(new(userId, new MemoryStream(zip)), Limits());
+
+        string staged = Path.Combine(root, "games", "staging", result.IngestionId, "ready", "content", "ERB", "START.ERB");
+        Assert.Contains(result.Manifest.Diagnostics, item =>
+            item.Code == "TEXT_ENCODING_CONVERTED" && item.LogicalPath == "ERB/START.ERB");
+        Assert.Equal("@SYSTEM_TITLE\n打印中文𠀀\nQUIT\n", new UTF8Encoding(false, true).GetString(await File.ReadAllBytesAsync(staged)));
+        GamePackageFileManifest erb = result.Manifest.Files.Single(file => file.Path == "ERB/START.ERB");
+        Assert.Equal(GamePackageTextEncoding.Utf8, erb.Encoding);
+        GamePackageDiagnostic diagnostic = Assert.Single(result.Manifest.Diagnostics, item =>
+            item.Code == "TEXT_ENCODING_CONVERTED" && item.LogicalPath == "ERB/START.ERB");
+        Assert.Equal("GB18030", diagnostic.Arguments["sourceEncoding"]);
+        Assert.False(diagnostic.PublishBlocking);
+    }
+
+    [Fact]
+    [Trait("Category", "Encoding")]
     public async Task ShiftJisAndUtf8FilesAreNotConverted()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);

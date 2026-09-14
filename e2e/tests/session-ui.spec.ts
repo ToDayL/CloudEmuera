@@ -326,6 +326,39 @@ test("P1-11 real Session create, console input, close, save, and reopen", async 
   await leaveSessionPage(page);
 });
 
+test("P1-S04 mobile adaptive console does not overflow its viewport", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(!["mobile-chrome", "mobile-safari"].includes(testInfo.project.name), "The viewport-width regression runs on mobile browser projects.");
+  await login(page);
+  const game = preparedGame(testInfo.project.name);
+  await createSession(page, game, `adaptive-width-${testInfo.project.name}`);
+  await expect(page.getByRole("main", { name: "游戏控制台" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".scrollback")).toContainText("SESSION-READY", { timeout: 30_000 });
+
+  const geometry = await page.evaluate(() => {
+    const gameConsole = document.querySelector<HTMLElement>(".realtime-game-console");
+    const stage = document.querySelector<HTMLElement>(".realtime-console-stage");
+    if (!gameConsole || !stage) throw new Error("The realtime console layout is missing.");
+    const gameRect = gameConsole.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    return {
+      viewportWidth: document.documentElement.clientWidth,
+      gameClientWidth: gameConsole.clientWidth,
+      gameScrollWidth: gameConsole.scrollWidth,
+      gameLeft: gameRect.left,
+      gameRight: gameRect.right,
+      stageLeft: stageRect.left,
+      stageRight: stageRect.right,
+    };
+  });
+
+  expect(geometry.stageLeft).toBeGreaterThanOrEqual(geometry.gameLeft - 1);
+  expect(geometry.stageRight).toBeLessThanOrEqual(geometry.gameRight + 1);
+  expect(geometry.gameScrollWidth).toBeLessThanOrEqual(geometry.gameClientWidth + 1);
+  expect(geometry.stageRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+  await leaveSessionPage(page);
+});
+
 test("@tooltip P1-S09 hover, focus, Escape, and badge preserve target geometry", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   test.skip(testInfo.project.name.startsWith("mobile-"), "Desktop hover/focus runs in Chromium, Firefox, and WebKit.");

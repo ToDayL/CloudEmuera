@@ -46,6 +46,16 @@ public sealed class GameValidatorProcessClientTests : IDisposable
         Assert.Contains(result.Diagnostics, item => item.Code == expectedCode && item.ActivationBlocking);
     }
 
+    [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task ConvertsConfigurationPreparationFailureToBlockingDiagnostic()
+    {
+        GameContentPreparationResult result = await RunPreparationAsync("exit 7");
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, item => item.Code == "CONFIG_GENERATOR_CRASHED" && item.ActivationBlocking);
+    }
+
     private async Task<GameParserValidationResult> RunAsync(string command, TimeSpan? timeout = null, int maximum = 64 * 1024)
     {
         Directory.CreateDirectory(root);
@@ -59,6 +69,21 @@ public sealed class GameValidatorProcessClientTests : IDisposable
             MaxOutputBytes = maximum,
         });
         return await client.ValidateAsync(root);
+    }
+
+    private async Task<GameContentPreparationResult> RunPreparationAsync(string command)
+    {
+        Directory.CreateDirectory(root);
+        string script = Path.Combine(root, $"config-generator-{Guid.NewGuid():N}.sh");
+        await File.WriteAllTextAsync(script, $"#!/bin/sh\n{command}\n");
+        var client = new GameValidatorProcessClient(new GameValidatorProcessOptions
+        {
+            ExecutablePath = "/bin/sh",
+            AssemblyPath = script,
+            Timeout = TimeSpan.FromSeconds(2),
+            MaxOutputBytes = 64 * 1024,
+        });
+        return await client.PrepareAsync(root);
     }
 
     public void Dispose()

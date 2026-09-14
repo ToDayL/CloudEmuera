@@ -12,6 +12,13 @@ internal static class GameDiagnosticMessages
     {
         ["ERB_ENTRYPOINT_MISSING"] = "ERB directory must contain at least one .ERB file at the package root.",
         ["TEXT_ENCODING_UNSUPPORTED"] = "Text must be valid UTF-8 or CP932.",
+        ["RUNTIME_CONFIG_GENERATED"] = "The pinned Emuera runtime generated the missing emuera.config file.",
+        ["RUNTIME_CONFIG_UPDATED"] = "The pinned Emuera runtime updated emuera.config using its normal versioning rules.",
+        ["CONFIG_GENERATOR_START_FAILED"] = "The runtime configuration normalizer could not be started.",
+        ["CONFIG_GENERATOR_CRASHED"] = "The runtime configuration normalizer terminated unexpectedly.",
+        ["CONFIG_GENERATOR_TIMEOUT"] = "The runtime configuration normalizer exceeded its deadline.",
+        ["CONFIG_GENERATOR_OUTPUT_LIMIT"] = "The runtime configuration normalizer exceeded its output limit.",
+        ["CONFIG_GENERATOR_PROTOCOL_ERROR"] = "The runtime configuration normalizer returned an invalid result.",
         ["CALLSHARP_FORBIDDEN"] = "CALLSHARP is not allowed in server games.",
         ["GAME_CONTENT_ENTRY_LIMIT"] = "The game content exceeds the entry limit.",
         ["GAME_CONTENT_DEPTH_LIMIT"] = "The game content exceeds the directory depth limit.",

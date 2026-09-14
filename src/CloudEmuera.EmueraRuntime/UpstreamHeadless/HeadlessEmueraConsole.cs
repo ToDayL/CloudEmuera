@@ -119,6 +119,7 @@ internal sealed class EmueraConsole
         bool LineEnd);
 
     private sealed record LayoutAtom(
+        string Kind,
         IReadOnlyList<ConsoleNode> Children,
         int Width,
         bool CanDivide,
@@ -1570,6 +1571,7 @@ internal sealed class EmueraConsole
     {
         int layoutWidth = Config.DrawableWidth > 0 ? Config.DrawableWidth : viewportWidth;
         int lineHeight = Math.Max(Config.FontSize, Config.LineHeight);
+        bool requestedNoWrap = noWrap;
         var atoms = CreateLayoutAtoms(nodes, physicalPositionButtons);
         var drafts = new List<PhysicalLineDraft>();
         var current = new List<PositionedInlineSegmentNode>();
@@ -1578,6 +1580,36 @@ internal sealed class EmueraConsole
         // maximum painted extent used for line alignment.
         int cursor = 0;
         int contentWidth = 0;
+
+        void TraceDecision(
+            string decision,
+            int atomIndex,
+            LayoutAtom atom,
+            int position,
+            int availableWidth = 0,
+            int fittingCharacters = 0)
+        {
+            RuntimeDebugTrace.Current?.RecordLayoutDecision(
+                logicalLineId,
+                decision,
+                atomIndex,
+                atom.Kind,
+                atom.Text,
+                atom.Width,
+                atom.CanDivide,
+                atom.Action is not null,
+                atom.LockedX,
+                atom.LockedXIsRelative,
+                position,
+                availableWidth,
+                fittingCharacters,
+                current.Count,
+                contentWidth,
+                layoutWidth,
+                noWrap,
+                Config.ButtonWrap,
+                truncate);
+        }
 
         void FlushDraft()
         {
@@ -1594,8 +1626,9 @@ internal sealed class EmueraConsole
         if (truncate)
         {
             noWrap = true;
-            foreach (LayoutAtom atom in atoms)
+            for (int atomIndex = 0; atomIndex < atoms.Count; atomIndex++)
             {
+                LayoutAtom atom = atoms[atomIndex];
                 int position = ResolveAtomPosition(cursor, atom);
                 bool fits = layoutWidth <= 0 || position + atom.Width <= layoutWidth;
                 if (fits)
@@ -1612,25 +1645,34 @@ internal sealed class EmueraConsole
                     int fittingCharacters = FindFittingCharacters(atom, available);
                     if (fittingCharacters > 0 && TrySplitAtom(atom, fittingCharacters, out LayoutAtom? prefix, out _))
                     {
+                        TraceDecision("truncate_prefix", atomIndex, atom, position, available, fittingCharacters);
                         current.Add(new PositionedInlineSegmentNode(position, prefix.Width, prefix.Children, prefix.Action));
                         cursor = checked(position + prefix.Width);
                         contentWidth = Math.Max(contentWidth, cursor);
                     }
+                    else
+                        TraceDecision("truncate_stop_unsplittable", atomIndex, atom, position, available);
                 }
+                else
+                    TraceDecision("truncate_stop_unsplittable", atomIndex, atom, position, layoutWidth - position);
                 break;
             }
         }
         else
         {
-            foreach (LayoutAtom original in atoms)
+            for (int atomIndex = 0; atomIndex < atoms.Count; atomIndex++)
             {
+                LayoutAtom original = atoms[atomIndex];
                 LayoutAtom remaining = original;
                 while (true)
                 {
                     int position = ResolveAtomPosition(cursor, remaining);
-                    bool fits = noWrap || layoutWidth <= 0 || position + remaining.Width <= layoutWidth;
+                    bool exceedsLayout = layoutWidth > 0 && position + remaining.Width > layoutWidth;
+                    bool fits = noWrap || layoutWidth <= 0 || !exceedsLayout;
                     if (fits)
                     {
+                        if (exceedsLayout && noWrap)
+                            TraceDecision("accept_no_wrap_overflow", atomIndex, remaining, position, Math.Max(0, layoutWidth - position));
                         current.Add(new PositionedInlineSegmentNode(position, remaining.Width, remaining.Children, remaining.Action));
                         cursor = checked(position + remaining.Width);
                         contentWidth = Math.Max(contentWidth, cursor);
@@ -1639,6 +1681,7 @@ internal sealed class EmueraConsole
 
                     if (current.Count > 0 && remaining.Action is not null && Config.ButtonWrap)
                     {
+                        TraceDecision("move_button_to_next_line", atomIndex, remaining, position, Math.Max(0, layoutWidth - position));
                         FlushDraft();
                         continue;
                     }
@@ -1649,6 +1692,7 @@ internal sealed class EmueraConsole
                         int fittingCharacters = FindFittingCharacters(remaining, available);
                         if (fittingCharacters > 0 && TrySplitAtom(remaining, fittingCharacters, out LayoutAtom? prefix, out LayoutAtom? suffix))
                         {
+                            TraceDecision("split_atom", atomIndex, remaining, position, available, fittingCharacters);
                             current.Add(new PositionedInlineSegmentNode(position, prefix.Width, prefix.Children, prefix.Action));
                             cursor = checked(position + prefix.Width);
                             contentWidth = Math.Max(contentWidth, cursor);
@@ -1656,10 +1700,13 @@ internal sealed class EmueraConsole
                             remaining = suffix;
                             continue;
                         }
+
+                        TraceDecision("cannot_split_atom", atomIndex, remaining, position, available);
                     }
 
                     if (current.Count > 0)
                     {
+                        TraceDecision("flush_before_unsplittable", atomIndex, remaining, position, Math.Max(0, layoutWidth - position));
                         FlushDraft();
                         continue;
                     }
@@ -1667,6 +1714,7 @@ internal sealed class EmueraConsole
                     // A non-dividable image/shape or a single glyph wider than the
                     // drawable area remains on its own physical line, matching the
                     // upstream overflow rule instead of looping forever.
+                    TraceDecision("accept_overflow", atomIndex, remaining, position, Math.Max(0, layoutWidth - position));
                     current.Add(new PositionedInlineSegmentNode(0, remaining.Width, remaining.Children, remaining.Action));
                     cursor = remaining.Width;
                     contentWidth = Math.Max(contentWidth, cursor);
@@ -1708,6 +1756,18 @@ internal sealed class EmueraConsole
                 index,
                 index == 0));
         }
+        RuntimeDebugTrace.Current?.RecordLayoutResult(
+            logicalLineId,
+            layoutWidth,
+            lineHeight,
+            alignment,
+            temporary,
+            requestedNoWrap,
+            noWrap,
+            Config.ButtonWrap,
+            truncate,
+            atoms.Count,
+            result);
         return result;
     }
 
@@ -1736,10 +1796,11 @@ internal sealed class EmueraConsole
             switch (node)
             {
                 case TextNode text:
-                    atoms.Add(new LayoutAtom([text], MeasureWithStyle(text.Text, text.Style), true, text.Text, text.Style, null, null, false));
+                    atoms.Add(new LayoutAtom("Text", [text], MeasureWithStyle(text.Text, text.Style), true, text.Text, text.Style, null, null, false));
                     break;
                 case ButtonNode button:
                     atoms.Add(new LayoutAtom(
+                        "Button",
                         button.Children,
                         MeasureInlineNodes(button.Children),
                         button.Children.All(child => child is TextNode),
@@ -1750,10 +1811,10 @@ internal sealed class EmueraConsole
                         physicalPositionButtons is null || !physicalPositionButtons.Contains(button)));
                     break;
                 case PositionedInlineSegmentNode segment:
-                    atoms.Add(new LayoutAtom(segment.Children, segment.MeasuredWidth, false, null, null, segment.Action, segment.PositionX, false));
+                    atoms.Add(new LayoutAtom("PositionedInlineSegment", segment.Children, segment.MeasuredWidth, false, null, null, segment.Action, segment.PositionX, false));
                     break;
                 default:
-                    atoms.Add(new LayoutAtom([node], MeasureInlineNode(node), false, null, null, null, null, false));
+                    atoms.Add(new LayoutAtom(node.Kind.ToString(), [node], MeasureInlineNode(node), false, null, null, null, null, false));
                     break;
             }
         }
@@ -2433,7 +2494,8 @@ internal sealed class EmueraConsole
             return;
         if (adapter is StructuredGameConsole structured)
         {
-            structured.EmitTransaction(new ConsoleTransaction(copy));
+            SequencedConsoleTransaction transaction = structured.EmitTransaction(new ConsoleTransaction(copy));
+            RuntimeDebugTrace.Current?.RecordTransaction(transaction);
             ProjectTooltipResources();
             if (copy.Any(IsRefreshEligible))
                 RequestDisplayRefreshIfDue(structured, force: false);
