@@ -16,7 +16,19 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
 {
     private static readonly JsonSerializerOptions ProtocolJson = new(JsonSerializerDefaults.Web);
 
-    public async Task<GameParserValidationResult> ValidateAsync(string snapshotRoot, CancellationToken cancellationToken = default)
+    public async Task<GameContentPreparationResult> PrepareAsync(string snapshotRoot, CancellationToken cancellationToken = default)
+    {
+        GameParserValidationResult result = await ExecuteAsync(snapshotRoot, "--prepare-config", cancellationToken).ConfigureAwait(false);
+        return new(result.CanActivate, result.Diagnostics);
+    }
+
+    public Task<GameParserValidationResult> ValidateAsync(string snapshotRoot, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(snapshotRoot, command: null, cancellationToken);
+
+    private async Task<GameParserValidationResult> ExecuteAsync(
+        string snapshotRoot,
+        string? command,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(snapshotRoot);
         var start = new ProcessStartInfo
@@ -30,15 +42,17 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
         if (options.AssemblyPath is not null) start.ArgumentList.Add(options.AssemblyPath);
         start.ArgumentList.Add("--root");
         start.ArgumentList.Add(snapshotRoot);
+        if (command is not null) start.ArgumentList.Add(command);
 
         using var process = new Process { StartInfo = start };
+        string failurePrefix = command is null ? "VALIDATOR" : "CONFIG_GENERATOR";
         try
         {
-            if (!process.Start()) return Failure("VALIDATOR_START_FAILED");
+            if (!process.Start()) return Failure($"{failurePrefix}_START_FAILED", failurePrefix);
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            return Failure("VALIDATOR_START_FAILED");
+            return Failure($"{failurePrefix}_START_FAILED", failurePrefix);
         }
 
         Task<byte[]> stdout = ReadBoundedAsync(process.StandardOutput.BaseStream, options.MaxOutputBytes, cancellationToken);
@@ -48,20 +62,20 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
             await process.WaitForExitAsync(cancellationToken).WaitAsync(options.Timeout, cancellationToken).ConfigureAwait(false);
             byte[] payload = await stdout.ConfigureAwait(false);
             _ = await stderr.ConfigureAwait(false);
-            if (process.ExitCode != 0) return Failure("VALIDATOR_CRASHED");
-            return Parse(payload);
+            if (process.ExitCode != 0) return Failure($"{failurePrefix}_CRASHED", failurePrefix);
+            return Parse(payload, failurePrefix);
         }
         catch (TimeoutException)
         {
             Kill(process);
             await ObserveAsync(stdout, stderr).ConfigureAwait(false);
-            return Failure("VALIDATOR_TIMEOUT");
+            return Failure($"{failurePrefix}_TIMEOUT", failurePrefix);
         }
         catch (ValidatorOutputLimitException)
         {
             Kill(process);
             await ObserveAsync(stdout, stderr).ConfigureAwait(false);
-            return Failure("VALIDATOR_OUTPUT_LIMIT");
+            return Failure($"{failurePrefix}_OUTPUT_LIMIT", failurePrefix);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -73,17 +87,17 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
         {
             Kill(process);
             await ObserveAsync(stdout, stderr).ConfigureAwait(false);
-            return Failure("VALIDATOR_PROTOCOL_ERROR");
+            return Failure($"{failurePrefix}_PROTOCOL_ERROR", failurePrefix);
         }
     }
 
-    private static GameParserValidationResult Parse(byte[] payload)
+    private static GameParserValidationResult Parse(byte[] payload, string operation)
     {
         ValidatorResponse? response = JsonSerializer.Deserialize<ValidatorResponse>(payload, ProtocolJson);
         if (response is null || response.SchemaVersion != 1 || response.Diagnostics is null || response.Diagnostics.Count > 256)
-            return Failure("VALIDATOR_PROTOCOL_ERROR");
+            return Failure($"{operation}_PROTOCOL_ERROR", operation);
         if (response.Diagnostics.Any(item => string.IsNullOrWhiteSpace(item.Code) || item.Code.Length > 100 || item.Message.Length > 500))
-            return Failure("VALIDATOR_PROTOCOL_ERROR");
+            return Failure($"{operation}_PROTOCOL_ERROR", operation);
         IReadOnlyList<GameValidationDiagnostic> diagnostics = response.Diagnostics.Select(item =>
             // The blocking flag is the protocol's authoritative severity bit.
             // Normalize the display severity at this boundary so a malformed or
@@ -125,8 +139,10 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception) { }
     }
 
-    private static GameParserValidationResult Failure(string code) => new(false,
-        [new GameValidationDiagnostic(code, "ERROR", null, "The parser-only validator did not return a valid result.", true)]);
+    private static GameParserValidationResult Failure(string code, string operation) => new(false,
+        [new GameValidationDiagnostic(code, "ERROR", null, operation == "VALIDATOR"
+            ? "The parser-only validator did not return a valid result."
+            : "The pinned runtime configuration normalizer did not return a valid result.", true)]);
 
     private sealed record ValidatorResponse(int SchemaVersion, bool CanActivate, IReadOnlyList<ValidatorDiagnostic>? Diagnostics);
     private sealed record ValidatorDiagnostic(string Code, string Severity, string? Path, string Message, bool ActivationBlocking);

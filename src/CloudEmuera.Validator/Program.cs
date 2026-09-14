@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CloudEmuera.EmueraRuntime.Headless;
+using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
 
 return await ValidatorProcess.RunAsync(args).ConfigureAwait(false);
@@ -10,12 +11,39 @@ internal static class ValidatorProcess
 
     public static async Task<int> RunAsync(string[] args)
     {
-        if (args.Length != 2 || args[0] != "--root" || !Path.IsPathFullyQualified(args[1])) return 10;
+        bool prepareOnly = args.Length == 3 && args[0] == "--root" && args[2] == "--prepare-config";
+        if ((args.Length != 2 && !prepareOnly) || args[0] != "--root" || !Path.IsPathFullyQualified(args[1])) return 10;
         string root = Path.GetFullPath(args[1]);
         if (!Directory.Exists(root)) return 10;
         string temporary = Path.Combine(Path.GetTempPath(), "cloudemuera-validator", Guid.NewGuid().ToString("N"));
         try
         {
+            RuntimeConfigMaterializationResult config = RuntimeConfigMaterializer.Materialize(root);
+            if (prepareOnly)
+            {
+                Write(new
+                {
+                    schemaVersion = 1,
+                    canActivate = true,
+                    diagnostics = config.Changed
+                        ? new[]
+                        {
+                            new
+                            {
+                                code = config.Created ? "RUNTIME_CONFIG_GENERATED" : "RUNTIME_CONFIG_UPDATED",
+                                severity = "WARNING",
+                                path = "emuera.config",
+                                message = config.Created
+                                    ? "The pinned upstream runtime generated emuera.config from the game defaults."
+                                    : "The pinned upstream runtime updated emuera.config using its normal versioning rules.",
+                                activationBlocking = false,
+                            },
+                        }
+                        : Array.Empty<object>(),
+                });
+                return 0;
+            }
+
             Directory.CreateDirectory(temporary);
             // Validation only needs a private runtime root. Use the root-only
             // materializer so the validator does not build the legacy

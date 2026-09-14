@@ -181,8 +181,8 @@ public sealed class GameLibraryService(
             await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
 
             await progress.ReportAsync(GameContentOperationStage.ValidatingContent, null, cancellationToken).ConfigureAwait(false);
-            MakeReadOnly(staging);
             WorkspaceInspection inspection = await InspectWithParserAsync(staging, progress, cancellationToken).ConfigureAwait(false);
+            MakeReadOnly(staging);
             await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
             if (!inspection.CanActivate)
             {
@@ -543,8 +543,8 @@ public sealed class GameLibraryService(
         await SaveAsync(cancellationToken).ConfigureAwait(false);
         CopyTree(workspace, staging);
         await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
-        MakeReadOnly(staging);
         WorkspaceInspection inspection = await InspectWithParserAsync(staging, cancellationToken).ConfigureAwait(false);
+        MakeReadOnly(staging);
         await RenewOperationAsync(operation.Id, cancellationToken).ConfigureAwait(false);
         inspection = await ApplyDiagnosticOverridesAsync(operation, inspection, cancellationToken).ConfigureAwait(false);
         if (!inspection.CanActivate)
@@ -593,6 +593,10 @@ public sealed class GameLibraryService(
 
     private async Task<WorkspaceInspection> InspectWithParserAsync(string snapshot, OperationProgressReporter? progress, CancellationToken token)
     {
+        if (progress is not null)
+            await progress.ReportAsync(GameContentOperationStage.RunningValidator, null, token).ConfigureAwait(false);
+        GameContentPreparationResult preparation = await validator.PrepareAsync(snapshot, token).ConfigureAwait(false);
+
         WorkspaceInspection inspection;
         try
         {
@@ -607,10 +611,22 @@ public sealed class GameLibraryService(
                 0,
                 [new GameValidationDiagnostic(exception.Code, "ERROR", null, "The game content exceeds a configured safety limit.", true)]);
         }
-        if (progress is not null)
-            await progress.ReportAsync(GameContentOperationStage.RunningValidator, null, token).ConfigureAwait(false);
+        IReadOnlyList<GameValidationDiagnostic> preparationDiagnostics = preparation.Diagnostics;
+        if (!preparation.Succeeded)
+        {
+            IReadOnlyList<GameValidationDiagnostic> failedPreparationDiagnostics = inspection.Diagnostics.Concat(preparationDiagnostics).ToArray();
+            return inspection with
+            {
+                CanActivate = false,
+                Diagnostics = failedPreparationDiagnostics,
+            };
+        }
+
         GameParserValidationResult parsed = await validator.ValidateAsync(snapshot, token).ConfigureAwait(false);
-        IReadOnlyList<GameValidationDiagnostic> diagnostics = inspection.Diagnostics.Concat(parsed.Diagnostics).ToArray();
+        IReadOnlyList<GameValidationDiagnostic> diagnostics = inspection.Diagnostics
+            .Concat(preparationDiagnostics)
+            .Concat(parsed.Diagnostics)
+            .ToArray();
         // The structural scan only enforces storage limits. The parser remains
         // the authority for game compatibility diagnostics.
         return inspection with { CanActivate = inspection.CanActivate && parsed.CanActivate, Diagnostics = diagnostics };
@@ -858,7 +874,7 @@ public sealed class GameLibraryService(
 
     private static string DiagnosticStage(string code) => code.StartsWith("TEXT_", StringComparison.Ordinal) ? "ENCODING"
         : code.StartsWith("CALLSHARP", StringComparison.Ordinal) ? "CAPABILITY"
-        : code.StartsWith("RUNTIME_", StringComparison.Ordinal) ? "RUNTIME" : "STRUCTURE";
+        : code.StartsWith("RUNTIME_", StringComparison.Ordinal) || code.StartsWith("CONFIG_GENERATOR_", StringComparison.Ordinal) ? "RUNTIME" : "STRUCTURE";
 
     private void AddAudit(CurrentActor actor, string action, string gameId, DateTimeOffset now, string metadata = "{}") => db.AuditEvents.Add(new AuditEventRow
     {

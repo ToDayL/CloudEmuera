@@ -104,6 +104,34 @@ public sealed class GameLibraryApiContractTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task ValidatorGeneratedConfigIsPublishedWithCurrentContent()
+    {
+        await CreateDatabaseAsync();
+        using TestConfigurationOverride configuration = new(_dataRoot, includeBootstrap: true);
+        _factory = new IdentityFactory(_dataRoot);
+        using HttpClient client = _factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
+
+        string csrf = await GetCsrfAsync(client);
+        Assert.True((await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/login", new LoginRequest("admin@example.test", "temporary-password", false), csrf)).IsSuccessStatusCode);
+        csrf = await GetCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SendJsonAsync(client, HttpMethod.Post, "/api/v1/auth/change-password", new ChangePasswordRequest("temporary-password", "administrator-password"), csrf)).StatusCode);
+
+        csrf = await GetCsrfAsync(client);
+        using MemoryStream archive = CreateArchiveWithoutRootConfig();
+        HttpResponseMessage uploaded = await UploadAsync(client, "Generated Config Fixture", archive, csrf);
+        Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
+        GameLibraryItem game = await uploaded.Content.ReadFromJsonAsync<GameLibraryItem>() ?? throw new Xunit.Sdk.XunitException("Upload response was missing.");
+
+        HttpResponseMessage configResponse = await client.GetAsync($"/api/v1/games/{game.Id}/file?scope=CURRENT&path=emuera.config");
+        GameTextFile configFile = await configResponse.Content.ReadFromJsonAsync<GameTextFile>() ?? throw new Xunit.Sdk.XunitException("Generated config was not published.");
+        Assert.Equal(HttpStatusCode.OK, configResponse.StatusCode);
+        Assert.Equal("UTF8_BOM", configFile.Encoding);
+        Assert.True(configFile.HasBom);
+        Assert.NotEmpty(configFile.Content);
+    }
+
+    [Fact]
     [Trait("Category", "SessionLifecycle")]
     public async Task SessionCreateOpenCloseAndReopenUseDurableHttpLifecycle()
     {
@@ -525,6 +553,28 @@ public sealed class GameLibraryApiContractTests : IDisposable
             using (Stream writer = entry.Open())
             using (var text = new StreamWriter(writer))
                 text.Write("Use sav folder:NO\n");
+        }
+        stream.Position = 0;
+        return stream;
+    }
+
+    private static MemoryStream CreateArchiveWithoutRootConfig()
+    {
+        var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            ZipArchiveEntry entry = archive.CreateEntry("CSV/_default.config");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("Use sav folder:NO\n");
+            entry = archive.CreateEntry("CSV/GAMEBASE.CSV");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("title,generated-config-test\n");
+            entry = archive.CreateEntry("ERB/START.ERB");
+            using (Stream writer = entry.Open())
+            using (var text = new StreamWriter(writer))
+                text.Write("@SYSTEM_TITLE\nINPUT\nQUIT\n");
         }
         stream.Position = 0;
         return stream;

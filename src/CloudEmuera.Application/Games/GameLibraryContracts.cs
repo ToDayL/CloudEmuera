@@ -41,12 +41,17 @@ public sealed record GameParserValidationResult(
     bool CanActivate,
     IReadOnlyList<GameValidationDiagnostic> Diagnostics);
 
+public sealed record GameContentPreparationResult(
+    bool Succeeded,
+    IReadOnlyList<GameValidationDiagnostic> Diagnostics);
+
 /// <summary>
 /// Runs the pinned Emuera parser in an isolated, one-shot process. Implementations
 /// must bound execution time and protocol output and must never execute the game loop.
 /// </summary>
 public interface IGameContentValidator
 {
+    Task<GameContentPreparationResult> PrepareAsync(string snapshotRoot, CancellationToken cancellationToken = default);
     Task<GameParserValidationResult> ValidateAsync(string snapshotRoot, CancellationToken cancellationToken = default);
 }
 
