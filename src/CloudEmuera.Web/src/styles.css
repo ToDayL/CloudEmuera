@@ -971,7 +971,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .realtime-console .console-overlay-actions { top: 8px; right: 8px; left: 8px; gap: 5px; }
   .realtime-console .console-overlay-back { width: 26px; height: 26px; }
   .realtime-console .connection-chip { max-width: 30vw; }
-  .realtime-console .realtime-game-console { padding: calc(var(--console-topbar-height) + 10px) 8px 20px; }
+  /* The adaptive runtime width is measured against the layout viewport.
+     Horizontal padding here would make the fixed-width stage overflow its
+     scrollport by twice the padding amount. Keep the mobile gutter in the
+     input dock instead. */
+  .realtime-console .realtime-game-console { padding: calc(var(--console-topbar-height) + 10px) 0 20px; }
   .realtime-console .console-input-dock { padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); }
   .realtime-console .scrollback { padding: 6px 1px; }
   .realtime-console .console-line { font-size: var(--runtime-font-size, 16px); }

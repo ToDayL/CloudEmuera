@@ -72,7 +72,21 @@ export async function createSession(gameId: string, name: string, fontSize = 18,
   })).value;
 }
 
-export async function openSession(sessionId: string, browserWidth = typeof window === "undefined" ? 0 : Math.round(window.innerWidth), idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
+export function browserLayoutWidth(): number {
+  if (typeof window === "undefined") return 0;
+  const innerWidth = Number.isFinite(window.innerWidth) && window.innerWidth > 0 ? Math.round(window.innerWidth) : 0;
+  const documentWidth = typeof document !== "undefined" && Number.isFinite(document.documentElement?.clientWidth) && document.documentElement.clientWidth > 0
+    ? document.documentElement.clientWidth
+    : 0;
+  if (innerWidth === 0) return documentWidth;
+  if (documentWidth === 0) return innerWidth;
+  // window.innerWidth includes a classic scrollbar, while the console's
+  // fixed layout is constrained by the document content box. Never ask an
+  // adaptive Worker to render wider than that box.
+  return Math.min(innerWidth, documentWidth);
+}
+
+export async function openSession(sessionId: string, browserWidth = browserLayoutWidth(), idempotencyKey = newIdempotencyKey()): Promise<SessionView> {
   return lifecycleRequest(sessionId, "open", browserWidth, idempotencyKey);
 }
 
