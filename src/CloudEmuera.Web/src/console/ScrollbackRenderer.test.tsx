@@ -269,6 +269,22 @@ describe("ScrollbackRenderer", () => {
     expect(document.querySelector<HTMLElement>(".console-virtual-content")).toHaveStyle({ height: "4000px" });
   });
 
+  it("keeps the first snapshot visible when the scrollport initially reports zero height", () => {
+    const { ref, element } = scrollContainer(true);
+    Object.defineProperty(element, "clientHeight", { configurable: true, value: 0 });
+    Object.defineProperty(element, "offsetHeight", { configurable: true, value: 0 });
+    const lines = [line("one", "one"), line("two", "two")];
+    const view = render(<ScrollbackRenderer lines={lines} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+
+    expect(document.querySelectorAll(".console-line").length).toBeGreaterThan(0);
+
+    Object.defineProperty(element, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(element, "offsetHeight", { configurable: true, value: 100 });
+    view.rerender(<ScrollbackRenderer lines={lines} assets={assets} onInput={() => undefined} scrollContainerRef={ref} />);
+
+    expect(document.querySelectorAll(".console-line").length).toBeGreaterThan(0);
+  });
+
   it("keeps a portrait mounted when its visual overflow enters the viewport", () => {
     vi.stubGlobal("requestAnimationFrame", undefined);
     try {
