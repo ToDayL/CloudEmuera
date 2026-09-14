@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent, type ReactNode, type RefObject } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { observeElementRect as observeVirtualElementRect, useVirtualizer, type Rect, type Virtualizer } from "@tanstack/react-virtual";
 import type { AssetResolver } from "./AssetResolver";
 import { SafeHtmlRenderer, textStyleToCss } from "./SafeHtmlRenderer";
 import { inlineSpriteSlotStyle, inlineSpriteStyle, SpriteCanvas } from "./SpriteRenderer";
@@ -159,9 +159,30 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     const index = Number(element.dataset.index);
     return getLineFlowHeight(Number.isInteger(index) && index >= 0 ? index : -1);
   }, [getLineFlowHeight]);
+  const observeScrollportRect = useCallback((instance: Virtualizer<HTMLElement, HTMLDivElement>, callback: (rect: Rect) => void) => {
+    return observeVirtualElementRect(instance, rect => {
+      if (rect.height > 0) {
+        callback(rect);
+        return;
+      }
+
+      // A fixed console can be observed during the short interval in which
+      // its visual viewport/flex parent still reports zero height. Letting
+      // Virtualizer commit that zero would produce an empty range and it does
+      // not necessarily get another notification when the parent settles.
+      // Keep a conservative range mounted until the real scrollport rect
+      // arrives; this makes the first committed snapshot visible without
+      // changing the authoritative scroll geometry.
+      const viewportHeight = typeof window !== "undefined"
+        ? Math.max(window.visualViewport?.height ?? 0, window.innerHeight, DEFAULT_VIRTUAL_VIEWPORT_HEIGHT)
+        : DEFAULT_VIRTUAL_VIEWPORT_HEIGHT;
+      callback({ ...rect, height: viewportHeight });
+    });
+  }, []);
   const virtualizer = useVirtualizer<HTMLElement, HTMLDivElement>({
     count: displayLines.length,
     getScrollElement: () => scrollContainerRef?.current ?? null,
+    observeElementRect: observeScrollportRect,
     estimateSize: getLineFlowHeight,
     getItemKey,
     measureElement,
