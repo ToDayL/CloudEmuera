@@ -38,4 +38,28 @@ test("persists an explicit login locale and account setting across reloads", asy
   await chineseLocaleSave;
   await expect.poll(() => page.evaluate(() => localStorage.getItem("cloudemuera.uiLocale"))).toBe("zh-CN");
   await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fixedChromeBeforeScroll = await page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>(".mobile-header");
+    const locale = document.querySelector<HTMLElement>(".app-topbar");
+    if (!header || !locale) throw new Error("The authenticated mobile chrome is missing.");
+    return {
+      headerPosition: getComputedStyle(header).position,
+      localePosition: getComputedStyle(locale).position,
+      headerTop: header.getBoundingClientRect().top,
+      localeTop: locale.getBoundingClientRect().top,
+    };
+  });
+  expect(fixedChromeBeforeScroll.headerPosition).toBe("fixed");
+  expect(fixedChromeBeforeScroll.localePosition).toBe("fixed");
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  const fixedChromeAfterScroll = await page.evaluate(() => ({
+    headerTop: document.querySelector<HTMLElement>(".mobile-header")!.getBoundingClientRect().top,
+    localeTop: document.querySelector<HTMLElement>(".app-topbar")!.getBoundingClientRect().top,
+  }));
+  expect(fixedChromeAfterScroll.headerTop).toBeCloseTo(fixedChromeBeforeScroll.headerTop, 0);
+  expect(fixedChromeAfterScroll.localeTop).toBeCloseTo(fixedChromeBeforeScroll.localeTop, 0);
 });
