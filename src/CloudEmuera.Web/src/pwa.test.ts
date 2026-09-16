@@ -8,6 +8,12 @@ describe("Home Screen web app manifest", () => {
       start_url: "/games",
       scope: "/",
       display: "standalone",
+      icons: [{
+        src: "/cloudemuera-icon.png",
+        sizes: "1254x1254",
+        type: "image/png",
+        purpose: "any",
+      }],
     });
   });
 });

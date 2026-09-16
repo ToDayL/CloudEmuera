@@ -2,6 +2,8 @@
 
 [English](README.md) | 中文
 
+<p align="center"><img src="src/CloudEmuera.Web/public/cloudemuera-icon.png" alt="CloudEmuera 图标" width="180"></p>
+
 CloudEmuera 是一个用于管理和游玩 Era 游戏的自托管浏览器平台。部署一次后，即可从任意设备访问，并使用相同的存档继续游戏。
 
 ## CloudEmuera 是什么？
