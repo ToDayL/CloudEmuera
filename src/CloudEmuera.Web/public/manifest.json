@@ -1,0 +1,10 @@
+{
+  "id": "/",
+  "name": "CloudEmuera",
+  "short_name": "CloudEmuera",
+  "start_url": "/games",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f6f0",
+  "theme_color": "#f7f6f0"
+}
