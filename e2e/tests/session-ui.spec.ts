@@ -237,6 +237,8 @@ async function login(page: import("@playwright/test").Page): Promise<void> {
   }
   for (const password of [administratorPassword, temporaryPassword]) {
     await page.goto("/login");
+    const language = page.getByRole("combobox", { name: /界面语言|Interface language/ });
+    if (await language.isVisible()) await language.selectOption("zh-CN");
     await page.getByLabel("登录邮箱").fill(adminEmail);
     await page.getByLabel("密码").fill(password);
     await page.getByRole("button", { name: "登录" }).click();
@@ -356,6 +358,33 @@ test("P1-S04 mobile adaptive console does not overflow its viewport", async ({ p
   expect(geometry.stageRight).toBeLessThanOrEqual(geometry.gameRight + 1);
   expect(geometry.gameScrollWidth).toBeLessThanOrEqual(geometry.gameClientWidth + 1);
   expect(geometry.stageRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+  await leaveSessionPage(page);
+});
+
+test("P1-S04 mobile bottom snapshot paints without page interaction", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(!["mobile-chrome", "mobile-safari"].includes(testInfo.project.name), "The mobile first-paint regression runs on mobile browser projects.");
+  await login(page);
+  const outputReady = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("The committed console frame was not observed.")), 60_000);
+    page.on("websocket", socket => socket.on("framereceived", event => {
+      const payload = typeof event.payload === "string" ? event.payload : event.payload.toString("utf8");
+      if (!payload.includes("SESSION-READY")) return;
+      clearTimeout(timeout);
+      resolve();
+    }));
+  });
+  const game = preparedGame(testInfo.project.name);
+  await createSession(page, game, `mobile-first-paint-${testInfo.project.name}`);
+  await outputReady;
+  await page.waitForTimeout(100);
+
+  // Capture before querying console layout, clicking, or scrolling: each can
+  // mask the initial bottom-position paint invalidation being exercised.
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error("The mobile browser has no fixed viewport.");
+  const screenshot = await page.screenshot();
+  expect(countBrightPngPixels(screenshot, { x: 0, y: 60, width: viewport.width, height: viewport.height - 160 }, viewport.width)).toBeGreaterThan(50);
   await leaveSessionPage(page);
 });
 

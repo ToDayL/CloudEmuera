@@ -136,7 +136,9 @@ export interface ScrollbackRendererProps {
 
 export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scrollContainerRef, scrollVersion, forceScrollVersion, defaultLineHeight, viewportHeight, activation = inactiveConsoleActivation }: ScrollbackRendererProps) {
   const [atLatest, setAtLatest] = useState(true);
+  const [firstFrameCommitKey, setFirstFrameCommitKey] = useState(0);
   const atLatestRef = useRef(true);
+  const firstFrameCommittedRef = useRef(false);
   const userScrollIntentRef = useRef(false);
   const scrollbackShellRef = useRef<HTMLDivElement>(null);
   const virtualContentRef = useRef<HTMLDivElement>(null);
@@ -297,6 +299,35 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     if (!atLatestRef.current) return;
     return settleScrollToBottom(false);
   }, [lines, scrollVersion, settleScrollToBottom]);
+  useLayoutEffect(() => {
+    if (displayLines.length === 0 || firstFrameCommittedRef.current) return;
+
+    // Assigning the initial bottom scroll position can update the scrollbar
+    // extent before the corresponding absolutely positioned row layer is
+    // committed. A real upward scroll or any later DOM mutation then makes
+    // the already-available rows appear. Let the two existing bottom-settling
+    // frames finish, then remount the virtual content once so its size and row
+    // positions are committed together before interaction.
+    if (typeof requestAnimationFrame !== "function") {
+      firstFrameCommittedRef.current = true;
+      return;
+    }
+
+    let firstFrame: number | null = null;
+    let secondFrame: number | null = null;
+    firstFrame = requestAnimationFrame(() => {
+      firstFrame = null;
+      secondFrame = requestAnimationFrame(() => {
+        secondFrame = null;
+        firstFrameCommittedRef.current = true;
+        setFirstFrameCommitKey(key => key + 1);
+      });
+    });
+    return () => {
+      if (firstFrame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(secondFrame);
+    };
+  }, [displayLines.length]);
   useEffect(() => {
     const shell = scrollbackShellRef.current;
     const virtualContent = virtualContentRef.current;
@@ -310,7 +341,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
     if (shell) observer.observe(shell);
     if (virtualContent && virtualContent !== shell) observer.observe(virtualContent);
     return () => observer.disconnect();
-  }, [settleScrollToBottom]);
+  }, [firstFrameCommitKey, settleScrollToBottom]);
   const scrollToLatest = useCallback(() => {
     const container = scrollContainerRef?.current;
     if (!container) return;
@@ -324,7 +355,7 @@ export function ScrollbackRenderer({ lines, assets, onInput, onRenderError, scro
   }, [scrollContainerRef]);
   return <div ref={scrollbackShellRef} className="scrollback-shell">
     <div className="scrollback" aria-live="polite">
-      <div ref={setVirtualContentRef} className="console-virtual-content" data-runtime-output-origin-y={runtimeOutputOriginY}>
+      <div key={firstFrameCommitKey} ref={setVirtualContentRef} className="console-virtual-content" data-runtime-output-origin-y={runtimeOutputOriginY}>
         {virtualItems.map(virtualItem => {
           const line = displayLines[virtualItem.index];
           if (!line) return null;
