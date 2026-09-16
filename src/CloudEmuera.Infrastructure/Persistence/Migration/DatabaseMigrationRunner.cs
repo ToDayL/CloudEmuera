@@ -45,6 +45,7 @@ public sealed class DatabaseMigrationRunner
 
             using (migrationLock)
             {
+                LogPhase(operation, "migration_lock_acquired", stopwatch);
                 cancellationToken.ThrowIfCancellationRequested();
                 bool existedBeforeOpen = File.Exists(paths.DatabasePath);
                 MigrationState state = await ReadMigrationStateAsync(paths, existedBeforeOpen, readOnly: false, cancellationToken).ConfigureAwait(false);
@@ -241,6 +242,7 @@ public sealed class DatabaseMigrationRunner
 
             using (migrationLock)
             {
+                LogPhase(operation, "migration_lock_acquired", stopwatch);
                 cancellationToken.ThrowIfCancellationRequested();
                 MigrationState state = await ReadMigrationStateAsync(paths, existedBeforeOpen: true, readOnly: true, cancellationToken).ConfigureAwait(false);
                 SqliteConnectionFactory connectionFactory = new(_options, createDataRoot: false);
@@ -381,6 +383,11 @@ public sealed class DatabaseMigrationRunner
 
         string migrationPart = migrationId is null ? string.Empty : $" migration_id={migrationId}";
         _log($"operation={operation}{migrationPart} elapsed_ms={stopwatch.ElapsedMilliseconds} result={result}");
+    }
+
+    private void LogPhase(string operation, string phase, Stopwatch stopwatch)
+    {
+        _log?.Invoke($"operation={operation} elapsed_ms={stopwatch.ElapsedMilliseconds} phase={phase}");
     }
 
     private sealed record MigrationState(
