@@ -104,7 +104,7 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
 }
 
 function Logo() {
-  return <Link className="brand" to="/games" aria-label="CloudEmuera"><span className="brand-mark">C</span><span>CloudEmuera</span></Link>;
+  return <Link className="brand" to="/games" aria-label="CloudEmuera"><img className="brand-logo" src="/cloudemuera-icon.png" alt="" aria-hidden="true"/><span>CloudEmuera</span></Link>;
 }
 
 const localeNames: Record<UiLocale, string> = { "zh-CN": "简体中文", "en-US": "English", "ja-JP": "日本語" };

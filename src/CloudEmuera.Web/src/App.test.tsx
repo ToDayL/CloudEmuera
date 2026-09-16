@@ -149,6 +149,20 @@ describe("App", () => {
     return render(<MemoryRouter initialEntries={[path]}><AuthProvider initialUser={user}><App /></AuthProvider></MemoryRouter>);
   }
 
+  it("uses the shared product icon in browser branding", () => {
+    mockFetch(() => jsonResponse({ items: [] }));
+    try {
+      renderAt("/games");
+      const logoLinks = screen.getAllByRole("link", { name: "CloudEmuera" });
+      expect(logoLinks.length).toBeGreaterThan(0);
+      for (const logoLink of logoLinks) {
+        expect(logoLink.querySelector("img.brand-logo")).toHaveAttribute("src", "/cloudemuera-icon.png");
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("loads and saves Session startup defaults from the settings page", async () => {
     const savedDefaults = { fontFaceId: runtimeFontFaceId, fontSize: 24, lineHeight: 28, fontSizeLineHeightMode: "CONFIG", widthMode: "CUSTOM", customWidth: 1280, convertBackslashToYen: false };
     const fetchMock = mockFetch((url, init) => {

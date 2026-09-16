@@ -2,6 +2,8 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+<p align="center"><img src="src/CloudEmuera.Web/public/cloudemuera-icon.png" alt="CloudEmuera icon" width="180"></p>
+
 CloudEmuera is a self-hosted browser platform for managing and playing Era games. Deploy it once, access it from any device, and continue your game with the same saves wherever you play.
 
 ## What is CloudEmuera?
