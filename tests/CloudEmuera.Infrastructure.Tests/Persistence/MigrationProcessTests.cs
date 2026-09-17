@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using CloudEmuera.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 
@@ -84,14 +85,14 @@ public sealed class MigrationProcessTests
         {
             string databasePath = Path.Combine(dataRoot, SqliteStorageConventions.DatabaseFileName);
             await CreateProbeDatabaseAsync(databasePath);
-            SqliteDatabaseOptions options = new() { DataRoot = dataRoot };
-            SqliteDatabasePaths paths = options.ResolvePaths(createDataRoot: true);
 
             ProcessResult firstResult;
             await using (SqliteConnection blocker = await OpenExclusiveBlockerAsync(databasePath))
             {
                 first = Start(migratorPath, "migrate", dataRoot);
-                await WaitForLockBusyAsync(first, paths.MigrationLockPath);
+                // Let the lock holder announce ownership. A test-side TryAcquire probe can
+                // briefly win the non-blocking flock race and make the real migrator exit 11.
+                await WaitForLockAcquiredAsync(first);
 
                 second = Start(migratorPath, "migrate", dataRoot);
                 ProcessResult secondResult = await second.Completion.WaitAsync(TimeSpan.FromSeconds(5));
@@ -149,10 +150,29 @@ public sealed class MigrationProcessTests
         }
 
         Process process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start migrator.");
-        Task<string> standardOutput = process.StandardOutput.ReadToEndAsync();
+        TaskCompletionSource lockAcquired = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string> standardOutput = ReadOutputAsync(process.StandardOutput, line =>
+        {
+            if (line.Contains("phase=migration_lock_acquired", StringComparison.Ordinal))
+            {
+                lockAcquired.TrySetResult();
+            }
+        });
         Task<string> standardError = process.StandardError.ReadToEndAsync();
         Task<ProcessResult> completion = CompleteAsync(process, standardOutput, standardError);
-        return new RunningProcess(process, completion);
+        return new RunningProcess(process, completion, lockAcquired.Task);
+    }
+
+    private static async Task<string> ReadOutputAsync(StreamReader reader, Action<string> observeLine)
+    {
+        StringBuilder output = new();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            output.AppendLine(line);
+            observeLine(line);
+        }
+
+        return output.ToString();
     }
 
     private static async Task<ProcessResult> CompleteAsync(Process process, Task<string> standardOutput, Task<string> standardError)
@@ -161,28 +181,16 @@ public sealed class MigrationProcessTests
         return new ProcessResult(process.ExitCode, await standardOutput, await standardError);
     }
 
-    private static async Task WaitForLockBusyAsync(RunningProcess process, string lockPath)
+    private static async Task WaitForLockAcquiredAsync(RunningProcess process)
     {
-        Stopwatch stopwatch = Stopwatch.StartNew();
-        while (stopwatch.Elapsed < TimeSpan.FromSeconds(5))
+        Task completed = await Task.WhenAny(process.LockAcquired, process.Completion).WaitAsync(TimeSpan.FromSeconds(5));
+        if (completed == process.LockAcquired)
         {
-            if (process.Process.HasExited)
-            {
-                ProcessResult result = await process.Completion;
-                throw new Xunit.Sdk.XunitException($"The first migrator exited before acquiring the lock: {result.ExitCode} {result.StandardError}");
-            }
-
-            MigrationLockStatus status = MigrationLock.TryAcquire(lockPath, out MigrationLock? probe);
-            probe?.Dispose();
-            if (status == MigrationLockStatus.Busy)
-            {
-                return;
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(20));
+            return;
         }
 
-        throw new Xunit.Sdk.XunitException("The first migrator did not expose a busy cross-process migration lock.");
+        ProcessResult result = await process.Completion;
+        throw new Xunit.Sdk.XunitException($"The first migrator exited before acquiring the lock: {result.ExitCode} {result.StandardError}");
     }
 
     private static async Task<SqliteConnection> OpenExclusiveBlockerAsync(string path)
@@ -236,11 +244,13 @@ public sealed class MigrationProcessTests
 
     private sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
 
-    private sealed class RunningProcess(Process process, Task<ProcessResult> completion) : IAsyncDisposable
+    private sealed class RunningProcess(Process process, Task<ProcessResult> completion, Task lockAcquired) : IAsyncDisposable
     {
         public Process Process { get; } = process;
 
         public Task<ProcessResult> Completion { get; } = completion;
+
+        public Task LockAcquired { get; } = lockAcquired;
 
         public async ValueTask DisposeAsync()
         {
