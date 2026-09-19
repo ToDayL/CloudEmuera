@@ -139,7 +139,9 @@ public sealed record WorkerLaunchRequest
         SessionFontSizeLineHeightMode fontSizeLineHeightMode = SessionFontSizeLineHeightMode.Override,
         long? randomSeed = null,
         bool debugReplayMode = false,
-        DateTimeOffset? replayStartupWallClock = null)
+        DateTimeOffset? replayStartupWallClock = null,
+        TimeSpan? runtimeInitializationTimeout = null,
+        TimeSpan? runtimeExecutionTimeout = null)
     {
         Binding = binding ?? throw new ArgumentNullException(nameof(binding));
         SessionRoot = Path.GetFullPath(sessionRoot ?? throw new ArgumentNullException(nameof(sessionRoot)));
@@ -177,6 +179,13 @@ public sealed record WorkerLaunchRequest
             throw new ArgumentException("Replay mode and its startup wall clock must be supplied together.");
         DebugReplayMode = debugReplayMode;
         ReplayStartupWallClock = replayStartupWallClock;
+        RuntimeInitializationTimeout = runtimeInitializationTimeout ?? TimeSpan.FromSeconds(30);
+        RuntimeExecutionTimeout = runtimeExecutionTimeout ?? Timeout.InfiniteTimeSpan;
+        if (RuntimeInitializationTimeout < TimeSpan.FromMilliseconds(100) || RuntimeInitializationTimeout > TimeSpan.FromMinutes(5))
+            throw new ArgumentOutOfRangeException(nameof(runtimeInitializationTimeout));
+        if (RuntimeExecutionTimeout != Timeout.InfiniteTimeSpan &&
+            (RuntimeExecutionTimeout < TimeSpan.FromMilliseconds(1) || RuntimeExecutionTimeout > TimeSpan.FromDays(1)))
+            throw new ArgumentOutOfRangeException(nameof(runtimeExecutionTimeout));
     }
 
     public WorkerBinding Binding { get; }
@@ -203,4 +212,6 @@ public sealed record WorkerLaunchRequest
     public long? RandomSeed { get; }
     public bool DebugReplayMode { get; }
     public DateTimeOffset? ReplayStartupWallClock { get; }
+    public TimeSpan RuntimeInitializationTimeout { get; }
+    public TimeSpan RuntimeExecutionTimeout { get; }
 }

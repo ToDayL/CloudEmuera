@@ -136,9 +136,12 @@ export function NewSessionPage() {
     setPending(true); setError(null);
     try {
       const created = await createSession(selected.id, name.trim() || t("sessionExtra.defaultName", { name: selected.name }), fontSize, lineHeight, undefined, fontFaceId, widthMode, widthMode === "CUSTOM" ? customWidth : null, convertBackslashToYen, fontSizeLineHeightMode);
-      const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]));
+      // SessionRoot materialization copies the complete immutable game tree and
+      // can legitimately take several minutes for large games. The operation
+      // is durable and continues after the initial HTTP 202 response.
+      const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: 600 });
       const opened = await openSession(ready.id);
-      const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING"]));
+      const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING"]), { attempts: 330 });
       navigate(`/sessions/${running.id}`);
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setPending(false); }

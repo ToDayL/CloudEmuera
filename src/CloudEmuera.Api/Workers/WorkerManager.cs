@@ -323,7 +323,9 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
                 spec.Binding.InitialOutputSequence,
                 spec.BrowserWidth, spec.FontSize, spec.LineHeight,
                 spec.FontFaceId, spec.FontCatalogDigest,
-                spec.WidthMode, spec.CustomWidth, spec.ConvertBackslashToYen, spec.FontSizeLineHeightMode),
+                spec.WidthMode, spec.CustomWidth, spec.ConvertBackslashToYen, spec.FontSizeLineHeightMode,
+                runtimeInitializationTimeout: spec.RuntimeInitializationTimeout,
+                runtimeExecutionTimeout: spec.RuntimeExecutionTimeout),
             spec.Binding,
             waitForRegistration: false,
             cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -399,6 +401,10 @@ public sealed class WorkerManager : IAsyncDisposable, ISessionWorkerControl, ICu
             },
             CustomWidth = request.CustomWidth,
             ConvertBackslashToYen = request.ConvertBackslashToYen,
+            RuntimeInitializationTimeoutMilliseconds = checked((int)request.RuntimeInitializationTimeout.TotalMilliseconds),
+            RuntimeExecutionTimeoutMilliseconds = request.RuntimeExecutionTimeout == Timeout.InfiniteTimeSpan
+                ? -1
+                : checked((int)request.RuntimeExecutionTimeout.TotalMilliseconds),
             DebugInputTraceEnabled = debugCapture is not null,
             DebugInputTracePath = debugCapture?.TracePath ?? string.Empty,
             DebugTraceMaxBytes = options.DebugTraceMaxBytes,

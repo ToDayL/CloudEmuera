@@ -3,6 +3,8 @@ using CloudEmuera.Api.Realtime;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Infrastructure.Assets;
 using CloudEmuera.Infrastructure.Capacity;
+using CloudEmuera.Ipc;
+using CloudEmuera.RuntimeAdapter;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 
@@ -18,6 +20,22 @@ public sealed class DeploymentOptionsTests
         Assert.Equal(TimeSpan.FromSeconds(15), WorkerShutdownDefaults.HostShutdownTimeout);
         Assert.Equal(TimeSpan.FromSeconds(20), WorkerShutdownDefaults.ComposeStopGracePeriod);
         Assert.True(WorkerShutdownDefaults.ComposeStopGracePeriod > WorkerShutdownDefaults.HostShutdownTimeout);
+    }
+
+    [Fact]
+    [Trait("Category", "WorkerLifecycle")]
+    public void WorkerLaunchRequestRetainsConfiguredRuntimeTimeouts()
+    {
+        var request = new WorkerLaunchRequest(
+            new WorkerBinding("sess_timeout", "wrk_timeout", 1),
+            "/tmp/cloudemuera-timeout-session",
+            "v18-compatible",
+            RuntimeSaveLayout.Root,
+            runtimeInitializationTimeout: TimeSpan.FromSeconds(47),
+            runtimeExecutionTimeout: TimeSpan.FromSeconds(59));
+
+        Assert.Equal(TimeSpan.FromSeconds(47), request.RuntimeInitializationTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(59), request.RuntimeExecutionTimeout);
     }
 
     [Fact]
