@@ -20,6 +20,7 @@ public static class SessionErrorCodes
     public const string SessionNotFound = "SESSION_NOT_FOUND";
     public const string SessionNotReady = "SESSION_NOT_READY";
     public const string SessionTransitionInProgress = "SESSION_TRANSITION_IN_PROGRESS";
+    public const string SessionOpenInterrupted = "SESSION_OPEN_INTERRUPTED";
     public const string SessionRootInvalid = "SESSION_ROOT_INVALID";
     public const string ActiveWorkerLimitExceeded = "ACTIVE_WORKER_LIMIT_EXCEEDED";
     public const string ControlPlaneDraining = "CONTROL_PLANE_DRAINING";

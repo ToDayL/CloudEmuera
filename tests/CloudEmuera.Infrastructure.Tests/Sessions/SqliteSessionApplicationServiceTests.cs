@@ -100,6 +100,67 @@ public sealed class SqliteSessionApplicationServiceTests
     }
 
     [Fact]
+    public async Task RecoveryFailsInterruptedOpenWithoutRestartingWorker()
+    {
+        using TemporarySqliteDatabase database = new();
+        Assert.True((await database.MigrateAsync()).Succeeded);
+        await SeedGameAsync(database);
+        await using ServiceProvider provider = BuildProvider(database.Options);
+        ISessionApplicationService service = provider.GetRequiredService<ISessionApplicationService>();
+        CurrentActor actor = new("usr_fixture", "PLAYER", "auth_fixture");
+        SessionView created = (await service.CreateAsync(
+            actor,
+            new CreateSessionCommand("game_fixture", "重启中断", "create-interrupted-open"))).Value!;
+        const string openKey = "open-before-restart";
+        string digest = SessionIdempotency.Digest(
+            actor.UserId,
+            "SESSION_OPEN",
+            created.Id,
+            new { sessionId = created.Id, browserWidth = 0 });
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        await using (DbContextScope scope = database.OpenContext())
+        {
+            SessionRow session = await scope.Context.Sessions.SingleAsync(row => row.Id == created.Id);
+            session.State = SessionState.Crashed;
+            session.ClosedAt = now;
+            session.CloseReason = "control_plane_restarted";
+            session.LastActivityAt = now;
+            session.StateVersion++;
+            scope.Context.IdempotencyRecords.Add(new IdempotencyRecordRow
+            {
+                ActorUserId = actor.UserId,
+                Scope = "SESSION_OPEN",
+                IdempotencyKey = openKey,
+                RequestDigest = digest,
+                Status = IdempotencyRecordStatus.InProgress,
+                ResponseStatus = 202,
+                ResponseJson = "{}",
+                ResourceId = created.Id,
+                CreatedAt = now,
+                UpdatedAt = now,
+                ExpiresAt = now.AddHours(24),
+            });
+            await scope.Context.SaveChangesAsync();
+        }
+
+        await ((ISessionOperationRecovery)service).RecoverAsync();
+
+        await using (DbContextScope scope = database.OpenContext())
+        {
+            IdempotencyRecordRow operation = await scope.Context.IdempotencyRecords.SingleAsync(
+                row => row.Scope == "SESSION_OPEN" && row.IdempotencyKey == openKey);
+            Assert.Equal(IdempotencyRecordStatus.Failed, operation.Status);
+            Assert.Equal(SessionErrorCodes.SessionOpenInterrupted, operation.ErrorCode);
+            Assert.Equal(SessionState.Crashed, (await scope.Context.Sessions.SingleAsync(row => row.Id == created.Id)).State);
+        }
+        SessionCommandResult replay = await service.OpenAsync(actor, new SessionLifecycleCommand(created.Id, openKey));
+        Assert.True(replay.Replayed);
+        Assert.False(replay.Pending);
+        Assert.Equal(SessionErrorCodes.SessionOpenInterrupted, replay.Failure?.Code);
+    }
+
+    [Fact]
     public async Task ClosedAndCrashedSessionsCanBeDeletedButActiveSessionsCannot()
     {
         using TemporarySqliteDatabase database = new();

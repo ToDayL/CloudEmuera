@@ -432,6 +432,15 @@ public sealed partial class SqliteSessionApplicationService(
             return;
         }
 
+        Task<SessionCommandResult>? activeOperation = FindLifecycleTask(item.SessionId, open);
+        if (activeOperation is not null)
+        {
+            SessionCommandResult activeResult = await activeOperation.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (activeResult.Pending)
+                throw new InvalidOperationException("A live Session lifecycle operation remains pending after recovery.");
+            return;
+        }
+
         if ((open && current.State == SessionState.Running) || (!open && current.State.IsQuiescent()))
         {
             await TryCompleteSuccessAsync(
@@ -442,6 +451,33 @@ public sealed partial class SqliteSessionApplicationService(
                 200,
                 current,
                 item.SessionId).ConfigureAwait(false);
+            return;
+        }
+
+        if (open)
+        {
+            var interrupted = new SessionCommandFailure(
+                SessionErrorCodes.SessionOpenInterrupted,
+                "控制面重启中断了 Session 启动，请手动重新启动。",
+                409);
+            if (!await TryCompleteFailureAsync(
+                    item.ActorUserId,
+                    item.Scope,
+                    item.IdempotencyKey,
+                    item.RequestDigest,
+                    interrupted,
+                    item.SessionId).ConfigureAwait(false))
+                throw new InvalidOperationException("The interrupted Session open could not be completed as failed.");
+            await TryWriteLifecycleAuditAsync(
+                item.ActorUserId,
+                item.SessionId,
+                open: true,
+                requested: false,
+                succeeded: false,
+                current,
+                interrupted.Code,
+                current.State,
+                current.State).ConfigureAwait(false);
             return;
         }
 
