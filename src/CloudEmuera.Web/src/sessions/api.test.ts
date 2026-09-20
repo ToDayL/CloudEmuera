@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { browserLayoutWidth } from "./api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { browserLayoutWidth, waitForSession, type SessionState } from "./api";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("browser layout width", () => {
   it("uses the narrower document content box when a scrollbar reduces available width", () => {
@@ -14,5 +19,26 @@ describe("browser layout width", () => {
     Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: 0 });
 
     expect(browserLayoutWidth()).toBe(390);
+  });
+});
+
+describe("session state polling", () => {
+  it("can wait for a durable transition without a browser-side attempt deadline", async () => {
+    vi.useFakeTimers();
+    let requests = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      requests++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: "sess_poll", state: requests < 3 ? "STARTING" : "RUNNING" }),
+      } as Response;
+    }));
+
+    const pending = waitForSession("sess_poll", new Set<SessionState>(["RUNNING"]), { attempts: null });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(pending).resolves.toMatchObject({ id: "sess_poll", state: "RUNNING" });
+    expect(requests).toBe(3);
   });
 });

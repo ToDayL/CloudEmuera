@@ -146,15 +146,15 @@ async function lifecycleRequest(sessionId: string, operation: "open" | "close", 
 export async function waitForSession(
   sessionId: string,
   expected: ReadonlySet<SessionState>,
-  options: { signal?: AbortSignal; attempts?: number } = {},
+  options: { signal?: AbortSignal; attempts?: number | null } = {},
 ): Promise<SessionView> {
-  const attempts = options.attempts ?? 60;
+  const attempts = options.attempts === undefined ? 60 : options.attempts;
   let delayMilliseconds = 150;
-  for (let attempt = 0; attempt < attempts; attempt++) {
+  for (let attempt = 0; attempts === null || attempt < attempts; attempt++) {
     options.signal?.throwIfAborted();
     const session = await getSession(sessionId);
     if (expected.has(session.state)) return session;
-    if (attempt + 1 < attempts) {
+    if (attempts === null || attempt + 1 < attempts) {
       await wait(delayMilliseconds, options.signal);
       delayMilliseconds = Math.min(1_000, Math.round(delayMilliseconds * 1.35));
     }
