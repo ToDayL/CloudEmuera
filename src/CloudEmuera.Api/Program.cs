@@ -65,6 +65,8 @@ bool runtimeDebugTraceEnabled = string.Equals(runtimeDebugTraceSwitch, "1", Stri
     bool.TryParse(runtimeDebugTraceSwitch, out bool parsedRuntimeDebugTrace) && parsedRuntimeDebugTrace;
 RealtimeOutputOptions realtimeOutputOptions = DeploymentOptionsBinder.BindRealtimeOutput(builder.Configuration);
 RealtimeGatewayOptions realtimeGatewayOptions = DeploymentOptionsBinder.BindRealtimeGateway(builder.Configuration);
+double sessionRuntimeInitializationTimeoutSeconds = builder.Configuration.GetValue<double?>("CloudEmuera:Worker:RuntimeInitializationTimeoutSeconds") ?? 300;
+double sessionWorkerReadyTimeoutSeconds = builder.Configuration.GetValue<double?>("CloudEmuera:Worker:RuntimeReadyTimeoutSeconds") ?? 310;
 var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath, runtimeFontRoot)
 {
     RealtimeOutput = realtimeOutputOptions,
@@ -73,7 +75,14 @@ var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath, runti
     PendingInputMaxMessages = realtimeGatewayOptions.MaxPendingInputsPerWorker,
     DebugInputTraceEnabled = runtimeDebugTraceEnabled || builder.Configuration.GetValue<bool>("CloudEmuera:Debugger:TraceEnabled"),
     DebugTraceMaxBytes = DeploymentOptionsBinder.ReadInt(builder.Configuration, "CloudEmuera:Debugger:TraceMaxBytes") ?? 32 * 1024 * 1024,
+    RuntimeReadyTimeout = TimeSpan.FromSeconds(sessionWorkerReadyTimeoutSeconds > 0 ? sessionWorkerReadyTimeoutSeconds : 310),
 };
+var sessionRuntimeCoordinatorOptions = new SessionRuntimeCoordinatorOptions
+{
+    RuntimeInitializationTimeout = TimeSpan.FromSeconds(sessionRuntimeInitializationTimeoutSeconds > 0 ? sessionRuntimeInitializationTimeoutSeconds : 300),
+    WorkerReadyTimeout = workerOptions.RuntimeReadyTimeout,
+};
+sessionRuntimeCoordinatorOptions.Validate();
 InstanceCapacityOptions capacityOptions = DeploymentOptionsBinder.BindCapacity(
     builder.Configuration,
     out bool usedLegacyArchiveKey,
@@ -138,6 +147,7 @@ builder.Services.AddHostedService<WorkerManagerHostedService>();
 builder.Services.AddSingleton<ISessionRootRuntimeInspector, SessionRootRuntimeInspector>();
 builder.Services.AddSingleton<ISessionWorkerControl>(serviceProvider => serviceProvider.GetRequiredService<WorkerManager>());
 builder.Services.AddSingleton<SessionRuntimeCoordinator>();
+builder.Services.AddSingleton(sessionRuntimeCoordinatorOptions);
 builder.Services.AddSingleton<ICurrentWorkerRouter>(serviceProvider => serviceProvider.GetRequiredService<WorkerManager>());
 builder.Services.AddSingleton<IWorkerOpenOptionsFactory, ApiWorkerOpenOptionsFactory>();
 builder.Services.AddSingleton<SessionLifecycleExecutor>();
@@ -171,12 +181,14 @@ builder.Services.AddScoped<IGamePackageIngestionService, GamePackageIngestionSer
 builder.Services.AddScoped<IGameLibraryService, GameLibraryService>();
 string validatorAssembly = builder.Configuration["CloudEmuera:ValidatorAssembly"]
     ?? ValidatorAssemblyResolver.Resolve(builder.Environment.ContentRootPath, builder.Environment.IsDevelopment() ? "Debug" : "Release");
-double validatorTimeoutSeconds = builder.Configuration.GetValue<double?>("CloudEmuera:ValidatorTimeoutSeconds") ?? 120;
+double validatorTimeoutSeconds = builder.Configuration.GetValue<double?>("CloudEmuera:ValidatorTimeoutSeconds") ?? 600;
+double validatorInitializationTimeoutSeconds = builder.Configuration.GetValue<double?>("CloudEmuera:ValidatorInitializationTimeoutSeconds") ?? 480;
 builder.Services.AddSingleton(new GameValidatorProcessOptions
 {
     ExecutablePath = "dotnet",
     AssemblyPath = validatorAssembly,
-    Timeout = TimeSpan.FromSeconds(validatorTimeoutSeconds > 0 ? validatorTimeoutSeconds : 120),
+    Timeout = TimeSpan.FromSeconds(validatorTimeoutSeconds > 0 ? validatorTimeoutSeconds : 600),
+    InitializationTimeout = TimeSpan.FromSeconds(validatorInitializationTimeoutSeconds > 0 ? validatorInitializationTimeoutSeconds : 480),
 });
 builder.Services.AddSingleton<IGameContentValidator, GameValidatorProcessClient>();
 builder.Services.AddScoped<IGameContentCopyLeaseStore, GameContentCopyLeaseStore>();

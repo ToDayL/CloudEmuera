@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using CloudEmuera.Application.Games;
 
@@ -8,7 +9,8 @@ public sealed record GameValidatorProcessOptions
 {
     public required string ExecutablePath { get; init; }
     public string? AssemblyPath { get; init; }
-    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(120);
+    public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(10);
+    public TimeSpan InitializationTimeout { get; init; } = TimeSpan.FromMinutes(8);
     public int MaxOutputBytes { get; init; } = 64 * 1024;
 }
 
@@ -43,6 +45,13 @@ public sealed class GameValidatorProcessClient(GameValidatorProcessOptions optio
         start.ArgumentList.Add("--root");
         start.ArgumentList.Add(snapshotRoot);
         if (command is not null) start.ArgumentList.Add(command);
+        if (command is null)
+        {
+            if (options.InitializationTimeout <= TimeSpan.Zero)
+                throw new InvalidOperationException("The Validator initialization timeout must be positive.");
+            start.Environment["CLOUDEMUERA_VALIDATOR_INIT_TIMEOUT_SECONDS"] =
+                options.InitializationTimeout.TotalSeconds.ToString("R", CultureInfo.InvariantCulture);
+        }
 
         using var process = new Process { StartInfo = start };
         string failurePrefix = command is null ? "VALIDATOR" : "CONFIG_GENERATOR";

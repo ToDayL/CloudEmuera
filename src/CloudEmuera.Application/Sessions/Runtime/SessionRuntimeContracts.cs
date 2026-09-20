@@ -271,6 +271,24 @@ public sealed record SessionRuntimeOpenResult(SessionRuntimeLease Lease, WorkerR
 
 public sealed record SessionRuntimeCloseResult(SessionRuntimeCompletionResult Completion);
 
+public sealed record SessionRuntimeCoordinatorOptions
+{
+    public static SessionRuntimeCoordinatorOptions Default { get; } = new();
+
+    public TimeSpan RuntimeInitializationTimeout { get; init; } = TimeSpan.FromMinutes(5);
+
+    public TimeSpan WorkerReadyTimeout { get; init; } = TimeSpan.FromSeconds(310);
+
+    public void Validate()
+    {
+        if (RuntimeInitializationTimeout < TimeSpan.FromMilliseconds(100) ||
+            RuntimeInitializationTimeout > TimeSpan.FromMinutes(5))
+            throw new ArgumentOutOfRangeException(nameof(RuntimeInitializationTimeout));
+        if (WorkerReadyTimeout < RuntimeInitializationTimeout || WorkerReadyTimeout > TimeSpan.FromMinutes(10))
+            throw new ArgumentOutOfRangeException(nameof(WorkerReadyTimeout));
+    }
+}
+
 /// <summary>
 /// Application-level lifecycle orchestration. It owns transaction/external
 /// side-effect ordering, while persistence and process adapters remain
@@ -280,9 +298,11 @@ public sealed class SessionRuntimeCoordinator(
     ISessionRuntimeStore store,
     ISessionWorkerControl workerControl,
     ISessionRootRuntimeInspector rootInspector,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    SessionRuntimeCoordinatorOptions? coordinatorOptions = null)
 {
     private int draining;
+    private SessionRuntimeCoordinatorOptions Options { get; } = ValidateOptions(coordinatorOptions);
 
     public bool IsDraining => Volatile.Read(ref draining) != 0;
 
@@ -324,7 +344,7 @@ public sealed class SessionRuntimeCoordinator(
                     timeProvider.GetUtcNow().AddSeconds(10),
                     TimeSpan.FromMilliseconds(500),
                     TimeSpan.FromSeconds(5),
-                    TimeSpan.FromSeconds(30),
+                    Options.RuntimeInitializationTimeout,
                     Timeout.InfiniteTimeSpan,
                     Environment.ProcessId,
                     string.Empty,
@@ -348,7 +368,7 @@ public sealed class SessionRuntimeCoordinator(
             binding = identityResult.Binding;
             process.UpdateRuntimeBinding(binding);
 
-            WorkerReadyInfo ready = await process.WaitForReadyAsync(TimeSpan.FromSeconds(30), operationCancellationToken).ConfigureAwait(false);
+            WorkerReadyInfo ready = await process.WaitForReadyAsync(Options.WorkerReadyTimeout, operationCancellationToken).ConfigureAwait(false);
             SessionRuntimeWriteResult readyResult = await store.MarkReadyAsync(
                 binding,
                 ready,
@@ -402,6 +422,13 @@ public sealed class SessionRuntimeCoordinator(
             if (process is not null)
                 await process.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private static SessionRuntimeCoordinatorOptions ValidateOptions(SessionRuntimeCoordinatorOptions? options)
+    {
+        options ??= SessionRuntimeCoordinatorOptions.Default;
+        options.Validate();
+        return options;
     }
 
     public async Task<SessionRuntimeCloseResult> CloseAsync(

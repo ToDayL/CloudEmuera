@@ -56,7 +56,24 @@ public sealed class GameValidatorProcessClientTests : IDisposable
         Assert.Contains(result.Diagnostics, item => item.Code == "CONFIG_GENERATOR_CRASHED" && item.ActivationBlocking);
     }
 
-    private async Task<GameParserValidationResult> RunAsync(string command, TimeSpan? timeout = null, int maximum = 64 * 1024)
+    [Fact]
+    [Trait("Category", "GameLibrary")]
+    public async Task PassesConfiguredInitializationTimeoutToParserValidator()
+    {
+        GameParserValidationResult result = await RunAsync(
+            "test \"$CLOUDEMUERA_VALIDATOR_INIT_TIMEOUT_SECONDS\" = '17.5' && " +
+            "printf '%s' '{\"schemaVersion\":1,\"canActivate\":true,\"diagnostics\":[]}'",
+            initializationTimeout: TimeSpan.FromSeconds(17.5));
+
+        Assert.True(result.CanActivate);
+        Assert.Empty(result.Diagnostics);
+    }
+
+    private async Task<GameParserValidationResult> RunAsync(
+        string command,
+        TimeSpan? timeout = null,
+        int maximum = 64 * 1024,
+        TimeSpan? initializationTimeout = null)
     {
         Directory.CreateDirectory(root);
         string script = Path.Combine(root, $"validator-{Guid.NewGuid():N}.sh");
@@ -66,6 +83,7 @@ public sealed class GameValidatorProcessClientTests : IDisposable
             ExecutablePath = "/bin/sh",
             AssemblyPath = script,
             Timeout = timeout ?? TimeSpan.FromSeconds(2),
+            InitializationTimeout = initializationTimeout ?? TimeSpan.FromSeconds(60),
             MaxOutputBytes = maximum,
         });
         return await client.ValidateAsync(root);

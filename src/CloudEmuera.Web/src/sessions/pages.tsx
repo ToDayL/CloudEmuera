@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api";
 import { useAuth } from "../auth";
@@ -38,17 +38,28 @@ export function SessionsPage() {
   const activeCount = items.filter(item => isActive(item.state)).length;
   const waitingCount = items.filter(item => item.waitingForInput && item.state === "RUNNING").length;
   const [message, setMessage] = useState<string | null>(null);
+  const lifecycleController = useRef<AbortController | null>(null);
+  useEffect(() => () => lifecycleController.current?.abort(), []);
 
   const lifecycle = async (session: SessionView, operation: "open" | "close") => {
     if (operation === "close" && !window.confirm(t("sessionExtra.closeConfirm", { name: session.name }))) return;
+    lifecycleController.current?.abort();
+    const controller = new AbortController();
+    lifecycleController.current = controller;
     setActionId(session.id); setMessage(null);
     try {
       const result = operation === "open" ? await openSession(session.id) : await closeSession(session.id);
-      await waitForSession(session.id, operation === "open" ? new Set<SessionState>(["RUNNING"]) : new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === (operation === "open" ? "RUNNING" : "CLOSED") ? 1 : 60 });
+      const settled = await waitForSession(session.id, operation === "open" ? new Set<SessionState>(["RUNNING", "CRASHED"]) : new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === (operation === "open" ? "RUNNING" : "CLOSED") ? 1 : null, signal: controller.signal });
+      if (operation === "open" && settled.state === "CRASHED") throw new Error(`${t("sessions.operationFailed")}：${t("sessions.state.CRASHED")}`);
       await query.refetch();
       if (operation === "open") navigate(`/sessions/${session.id}`);
-    } catch (error) { setMessage(errorMessage(error)); }
-    finally { setActionId(null); }
+    } catch (error) { if (!controller.signal.aborted) setMessage(errorMessage(error)); }
+    finally {
+      if (lifecycleController.current === controller) {
+        lifecycleController.current = null;
+        setActionId(null);
+      }
+    }
   };
 
   const remove = async (session: SessionView) => {
@@ -111,6 +122,7 @@ export function NewSessionPage() {
   const [fontPreviewReady, setFontPreviewReady] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const waitController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!gameId && requestedGame && availableGames.some(game => game.id === requestedGame)) setGameId(requestedGame);
@@ -128,20 +140,30 @@ export function NewSessionPage() {
   useEffect(() => {
     if (fonts.data && !fonts.data.items.some(font => font.faceId === fontFaceId)) setFontFaceId(fonts.data.defaultFaceId);
   }, [fontFaceId, fonts.data]);
+  useEffect(() => () => waitController.current?.abort(), []);
 
   const selected = availableGames.find(game => game.id === gameId);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!selected) { setError(t("sessionExtra.selectRunnable")); return; }
     setPending(true); setError(null);
+    const controller = new AbortController();
+    waitController.current = controller;
     try {
       const created = await createSession(selected.id, name.trim() || t("sessionExtra.defaultName", { name: selected.name }), fontSize, lineHeight, undefined, fontFaceId, widthMode, widthMode === "CUSTOM" ? customWidth : null, convertBackslashToYen, fontSizeLineHeightMode);
-      const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]));
+      // SessionRoot materialization copies the complete immutable game tree and
+      // can legitimately take several minutes for large games. The operation
+      // is durable and continues after the initial HTTP 202 response.
+      const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: null, signal: controller.signal });
       const opened = await openSession(ready.id);
-      const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING"]));
+      const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING", "CRASHED"]), { attempts: null, signal: controller.signal });
+      if (running.state === "CRASHED") throw new Error(`${t("sessions.operationFailed")}：${t("sessions.state.CRASHED")}`);
       navigate(`/sessions/${running.id}`);
-    } catch (cause) { setError(errorMessage(cause)); }
-    finally { setPending(false); }
+    } catch (cause) { if (!controller.signal.aborted) setError(errorMessage(cause)); }
+    finally {
+      if (waitController.current === controller) waitController.current = null;
+      if (!controller.signal.aborted) setPending(false);
+    }
   };
 
   return <div className="narrow-page"><div className="backline"><Link to="/sessions">← {t("sessions.back")}</Link></div><header className="page-header"><div><p className="eyebrow">{t("chrome.newSession")}</p><h1>{t("sessions.newTitle")}</h1><p>{t("sessions.newDescription")}</p></div></header>

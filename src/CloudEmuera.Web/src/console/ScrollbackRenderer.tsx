@@ -49,7 +49,7 @@ const inactiveConsoleActivation: ConsoleActivationContext = {
 };
 
 const buttonPromptTypes = new Set<Prompt["inputType"]>([
-  "integer", "text", "anyValue", "integerButton", "textButton",
+  "integer", "text", "anyValue", "integerButton", "textButton", "primitivePointerKey",
 ]);
 
 export function canActivateConsoleAction(

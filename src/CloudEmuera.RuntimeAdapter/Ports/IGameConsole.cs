@@ -14,7 +14,9 @@ public sealed record GameConsoleInput
         string value,
         bool isDefaultValue = false,
         bool skipMessage = false,
-        ConsolePointerPayload? pointer = null)
+        ConsolePointerPayload? pointer = null,
+        ConsoleKeyPayload? key = null,
+        ConsoleInputSource source = ConsoleInputSource.Keyboard)
     {
         ConsoleContractValidation.ValidateIdentifier(
             promptId,
@@ -34,6 +36,8 @@ public sealed record GameConsoleInput
         IsDefaultValue = isDefaultValue;
         SkipMessage = skipMessage;
         Pointer = pointer;
+        Key = key;
+        Source = source;
     }
 
     public string PromptId { get; }
@@ -58,6 +62,19 @@ public sealed record GameConsoleInput
     /// left/middle/right mouse result semantics.
     /// </summary>
     public ConsolePointerPayload? Pointer { get; }
+
+    /// <summary>
+    /// The physical key event accepted for an INPUTMOUSEKEY prompt, when one
+    /// exists. Its key code and modifier state are projected into the pinned
+    /// upstream RESULT slots by the headless console.
+    /// </summary>
+    public ConsoleKeyPayload? Key { get; }
+
+    /// <summary>
+    /// The accepted input source. Primitive prompts use this to distinguish
+    /// an accessible game-button activation from an ordinary key event.
+    /// </summary>
+    public ConsoleInputSource Source { get; }
 }
 
 /// <summary>

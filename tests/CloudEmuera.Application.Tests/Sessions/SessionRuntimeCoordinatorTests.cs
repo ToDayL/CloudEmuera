@@ -44,6 +44,26 @@ public sealed class SessionRuntimeCoordinatorTests
     }
 
     [Fact]
+    public async Task OpenPassesConfiguredRuntimeAndReadyTimeoutsToWorker()
+    {
+        var trace = new List<string>();
+        RecordingStore store = new(trace);
+        RecordingRootInspector inspector = new(trace);
+        RecordingWorkerControl workerControl = new(trace);
+        var options = new SessionRuntimeCoordinatorOptions
+        {
+            RuntimeInitializationTimeout = TimeSpan.FromSeconds(47),
+            WorkerReadyTimeout = TimeSpan.FromSeconds(53),
+        };
+        SessionRuntimeCoordinator coordinator = new(store, workerControl, inspector, TimeProvider.System, options);
+
+        await coordinator.OpenAsync(CreateOpenOptions());
+
+        Assert.Equal(TimeSpan.FromSeconds(47), workerControl.LaunchSpec!.RuntimeInitializationTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(53), workerControl.Process.ReadyTimeout);
+    }
+
+    [Fact]
     public async Task OpenReadyFailureKillsWorkerAndCompletesCrashedLease()
     {
         var trace = new List<string>();
@@ -343,12 +363,14 @@ public sealed class SessionRuntimeCoordinatorTests
 
         public Exception? ReadyException { get; set; }
         public bool ExitConfirmed { get; set; } = true;
+        public TimeSpan? ReadyTimeout { get; private set; }
 
         public Task<WorkerReadyInfo> WaitForReadyAsync(
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
         {
             trace.Add("ready");
+            ReadyTimeout = timeout;
             if (ReadyException is not null)
                 return Task.FromException<WorkerReadyInfo>(ReadyException);
             return Task.FromResult(new WorkerReadyInfo(

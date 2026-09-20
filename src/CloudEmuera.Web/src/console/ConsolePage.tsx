@@ -46,6 +46,7 @@ export function ConsolePage() {
   const gameConsoleRef = useRef<HTMLElement>(null);
   const promptControllerRef = useRef<PromptControllerHandle>(null);
   const endedSessionRef = useRef<string | null>(null);
+  const closeControllerRef = useRef<AbortController | null>(null);
   useEffect(() => {
     const update = () => {
       setVisualViewport(currentVisualViewport());
@@ -118,6 +119,7 @@ export function ConsolePage() {
     media.current?.sync(stream.consoleState.mediaState.channels, assets);
   }, [assets, stream.consoleState]);
   useEffect(() => () => media.current?.dispose(), []);
+  useEffect(() => () => closeControllerRef.current?.abort(), []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const container = gameConsoleRef.current;
@@ -146,14 +148,21 @@ export function ConsolePage() {
   const close = async () => {
     if (!sessionId || !session.data || closing) return;
     if (!window.confirm(t("consoleExtra.closeConfirm", { name: session.data.name }))) return;
+    const controller = new AbortController();
+    closeControllerRef.current = controller;
     setClosing(true); setCloseError(null);
     try {
       const result = await closeSession(sessionId);
-      await waitForSession(sessionId, new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === "CLOSED" || result.state === "CRASHED" ? 1 : 60 });
+      await waitForSession(sessionId, new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === "CLOSED" || result.state === "CRASHED" ? 1 : null, signal: controller.signal });
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
       navigate("/sessions");
-    } catch (error) { setCloseError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : t("consoleExtra.closeFailed")); }
-    finally { setClosing(false); }
+    } catch (error) {
+      if (!controller.signal.aborted) setCloseError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : t("consoleExtra.closeFailed"));
+    }
+    finally {
+      if (closeControllerRef.current === controller) closeControllerRef.current = null;
+      if (!controller.signal.aborted) setClosing(false);
+    }
   };
 
   if (!sessionId) return <div className="console-error" role="alert">{t("consoleExtra.missingId")}</div>;
