@@ -31,14 +31,14 @@ describe("session state polling", () => {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ id: "sess_poll", state: requests < 3 ? "STARTING" : "RUNNING" }),
+        json: async () => ({ id: "sess_poll", state: requests < 65 ? "STARTING" : "RUNNING" }),
       } as Response;
     }));
 
     const pending = waitForSession("sess_poll", new Set<SessionState>(["RUNNING"]), { attempts: null });
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(70_000);
 
     await expect(pending).resolves.toMatchObject({ id: "sess_poll", state: "RUNNING" });
-    expect(requests).toBe(3);
+    expect(requests).toBe(65);
   });
 });

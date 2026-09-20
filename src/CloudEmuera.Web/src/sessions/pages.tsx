@@ -38,18 +38,28 @@ export function SessionsPage() {
   const activeCount = items.filter(item => isActive(item.state)).length;
   const waitingCount = items.filter(item => item.waitingForInput && item.state === "RUNNING").length;
   const [message, setMessage] = useState<string | null>(null);
+  const lifecycleController = useRef<AbortController | null>(null);
+  useEffect(() => () => lifecycleController.current?.abort(), []);
 
   const lifecycle = async (session: SessionView, operation: "open" | "close") => {
     if (operation === "close" && !window.confirm(t("sessionExtra.closeConfirm", { name: session.name }))) return;
+    lifecycleController.current?.abort();
+    const controller = new AbortController();
+    lifecycleController.current = controller;
     setActionId(session.id); setMessage(null);
     try {
       const result = operation === "open" ? await openSession(session.id) : await closeSession(session.id);
-      const settled = await waitForSession(session.id, operation === "open" ? new Set<SessionState>(["RUNNING", "CRASHED"]) : new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === (operation === "open" ? "RUNNING" : "CLOSED") ? 1 : 60 });
+      const settled = await waitForSession(session.id, operation === "open" ? new Set<SessionState>(["RUNNING", "CRASHED"]) : new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === (operation === "open" ? "RUNNING" : "CLOSED") ? 1 : null, signal: controller.signal });
       if (operation === "open" && settled.state === "CRASHED") throw new Error(`${t("sessions.operationFailed")}：${t("sessions.state.CRASHED")}`);
       await query.refetch();
       if (operation === "open") navigate(`/sessions/${session.id}`);
-    } catch (error) { setMessage(errorMessage(error)); }
-    finally { setActionId(null); }
+    } catch (error) { if (!controller.signal.aborted) setMessage(errorMessage(error)); }
+    finally {
+      if (lifecycleController.current === controller) {
+        lifecycleController.current = null;
+        setActionId(null);
+      }
+    }
   };
 
   const remove = async (session: SessionView) => {
