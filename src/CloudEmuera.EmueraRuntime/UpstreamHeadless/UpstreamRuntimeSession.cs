@@ -134,6 +134,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
             paths.SoundRoot ?? Path.Combine(paths.SessionRoot, "sound"),
             paths.FontRoot ?? Path.Combine(paths.SessionRoot, "font"));
         MinorShift.Emuera.GlobalStatic.Reset();
+        HeadlessKeyState.Reset();
         HeadlessDeterminism.ConfigureRandomSeed(randomSeed);
         FontFactory.ClearFont();
         HeadlessFontMetrics.Clear();

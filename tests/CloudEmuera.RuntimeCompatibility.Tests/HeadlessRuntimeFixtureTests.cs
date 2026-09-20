@@ -3237,6 +3237,36 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task BlockedGetKeyFunctionsReturnNeutralStateWithoutLoadingUser32()
+    {
+        // Desktop key polling cannot represent browser state without a
+        // protocol boundary. The headless compatibility result is therefore
+        // released/not-triggered, with only an internal trace instead of a
+        // player warning or Linux user32.dll load attempt.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML KEY={GETKEY(87)}\n" +
+            "PRINTFORML TRIGGERED={GETKEYTRIGGERED(65)}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            string.Join(" | ", result.Diagnostics.Select(item => $"{item.Code}:{item.Message}")));
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("KEY=0", transcript, StringComparison.Ordinal);
+        Assert.Contains("TRIGGERED=0", transcript, StringComparison.Ordinal);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic =>
+            diagnostic.Message.Contains("GETKEY", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("unavailable", transcript, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task LoadingReportMessageIsNonBlockingWhileParserFailureRemainsFatal()
     {
         using var validFixture = RuntimeHostFixture.Create(
