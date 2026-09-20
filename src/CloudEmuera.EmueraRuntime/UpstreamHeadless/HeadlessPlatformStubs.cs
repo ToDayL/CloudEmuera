@@ -112,6 +112,26 @@ namespace MinorShift.Emuera.Runtime.Utils.PluginSystem
 
 namespace MinorShift.Emuera.Runtime.Utils
 {
+    internal static class HeadlessKeyState
+    {
+        private static int traceRecorded;
+
+        public static void Reset() =>
+            System.Threading.Interlocked.Exchange(ref traceRecorded, 0);
+
+        public static short GetKeyState(int virtualKey)
+        {
+            if (System.Threading.Interlocked.Exchange(ref traceRecorded, 1) == 0)
+            {
+                CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordHostCompatibility(
+                    "getkey",
+                    "neutral_released_state",
+                    virtualKey);
+            }
+            return 0;
+        }
+    }
+
     internal sealed class Sound
     {
         private CloudEmuera.RuntimeAdapter.RuntimeFilePath? currentPath;

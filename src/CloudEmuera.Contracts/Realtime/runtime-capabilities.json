@@ -237,11 +237,11 @@
       "category": "host",
       "classification": "Blocked",
       "reasonCode": "HOST_SHIM",
-      "adapterTypes": ["HeadlessEmueraConsole", "MainWindow"],
+      "adapterTypes": ["HeadlessEmueraConsole", "HeadlessKeyState", "MainWindow"],
       "ipcTypes": ["RuntimeFailed", "WorkerStopped"],
       "fixtureScenarios": ["host-shim-diagnostics"],
-      "testNames": ["HeadlessRuntimeFixtureTests.HeadlessSystemLinesAndWarningsAreNotBlockingScriptDiagnostics"],
-      "securityNotes": ["These members are compile-time desktop shims or require a browser capability not yet in MVP; they do not claim success and are not used for game-visible output."]
+      "testNames": ["HeadlessRuntimeFixtureTests.HeadlessSystemLinesAndWarningsAreNotBlockingScriptDiagnostics", "HeadlessRuntimeFixtureTests.BlockedGetKeyFunctionsReturnNeutralStateWithoutLoadingUser32"],
+      "securityNotes": ["These members are compile-time desktop shims or require a browser capability not yet in MVP; they do not claim success and are not used for game-visible output.", "GETKEY and GETKEYTRIGGERED return the neutral released state with one bounded internal trace event; the Linux Worker never loads user32.dll, emits a player-facing warning, or fabricates browser keyboard state."]
     },
     {
       "capabilityId": "host.diagnostics",

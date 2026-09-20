@@ -50,6 +50,18 @@ This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
 
+## 2026-09-21 — Keep desktop key polling inside the headless boundary
+
+- `Runtime/Utils/WinInput.cs` retains the upstream `user32.dll` call for desktop
+  builds but routes `GETKEY` and `GETKEYTRIGGERED` through `HeadlessKeyState` in
+  the Linux headless build.
+- Because browser key state is not part of the current runtime protocol, the
+  shim returns the neutral released/not-triggered state and records one bounded
+  `host_compatibility` event per Session in the opt-in internal runtime debug
+  trace. It does not emit a player Console or public runtime warning, load
+  `user32.dll`, or fabricate browser input.
+- Verification: `BlockedGetKeyFunctionsReturnNeutralStateWithoutLoadingUser32`.
+
 ## 2026-09-20 — Preserve INPUTMOUSEKEY browser interaction
 
 - `UpstreamHeadless/HeadlessEmueraConsole.cs` now advertises the pointer source

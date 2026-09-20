@@ -3,6 +3,7 @@ using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
 using MinorShift.Emuera.GameProc;
 using MinorShift.Emuera.GameView;
+using MinorShift.Emuera.Runtime.Utils;
 using Xunit;
 
 namespace CloudEmuera.RuntimeCompatibility.Tests;
@@ -25,6 +26,9 @@ public sealed class RuntimeDebugTraceTests
             trace.Activate();
             RuntimeDebugTrace.RecordErbOutput(null, "PRINTFORMW", "waiting output", waitForInput: true);
             RuntimeDebugTrace.RecordErbWait(null, ConsoleInputType.EnterKey, stopMessageSkip: false);
+            HeadlessKeyState.Reset();
+            Assert.Equal(0, HeadlessKeyState.GetKeyState(87));
+            Assert.Equal(0, HeadlessKeyState.GetKeyState(65));
             trace.RecordTransaction(new SequencedConsoleTransaction(7, new ConsoleTransaction(
             [
                 ConsoleOperation.AppendLine(new ConsoleLine("line-1", [new TextNode("waiting output")])),
@@ -79,6 +83,11 @@ public sealed class RuntimeDebugTraceTests
                 entry.GetProperty("waitForInput").GetBoolean());
             Assert.Contains(entries, entry => entry.GetProperty("eventType").GetString() == "erb_wait" &&
                 entry.GetProperty("inputType").GetString() == "EnterKey");
+            JsonElement hostCompatibility = Assert.Single(entries, entry =>
+                entry.GetProperty("eventType").GetString() == "host_compatibility");
+            Assert.Equal("getkey", hostCompatibility.GetProperty("capability").GetString());
+            Assert.Equal("neutral_released_state", hostCompatibility.GetProperty("behavior").GetString());
+            Assert.Equal(87, hostCompatibility.GetProperty("value").GetInt32());
             Assert.Contains(entries, entry => entry.GetProperty("eventType").GetString() == "console_operation" &&
                 entry.GetProperty("sequence").GetInt64() == 7 &&
                 entry.GetProperty("operation").GetString() == "OpenPrompt" &&

@@ -86,6 +86,17 @@ internal sealed class RuntimeDebugTrace : IDisposable
         });
     }
 
+    internal static void RecordHostCompatibility(string capability, string behavior, int value)
+    {
+        Current?.Write(new
+        {
+            eventType = "host_compatibility",
+            capability,
+            behavior,
+            value
+        });
+    }
+
     internal void RecordTransaction(SequencedConsoleTransaction transaction)
     {
         ArgumentNullException.ThrowIfNull(transaction);
