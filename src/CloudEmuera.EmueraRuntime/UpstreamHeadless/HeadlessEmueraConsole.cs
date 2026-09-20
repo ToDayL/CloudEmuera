@@ -696,17 +696,18 @@ internal sealed class EmueraConsole
             timeoutMessage: request.TimeUpMes is null ? null : DisplaySingleLine(request.TimeUpMes),
             // Pointer presses outside a game button are an INPUT/INPUTS
             // capability only when the optional mouse argument is enabled.
-            // Button activation remains available for ordinary input, while
-            // the pointer bit lets the browser distinguish INPUTS,1 from a
-            // normal text prompt without adding a second protocol flag.
+            // INPUTMOUSEKEY intrinsically accepts pointer events and the
+            // pinned EM+EE extension also permits button notation there.
             allowedSources: ConsoleInputSource.Keyboard | ConsoleInputSource.Button |
-                (request.MouseInput ? ConsoleInputSource.Pointer : ConsoleInputSource.None),
+                (request.MouseInput || request.InputType == InputType.PrimitiveMouseKey
+                    ? ConsoleInputSource.Pointer
+                    : ConsoleInputSource.None),
             allowLongInputByButton: Config.AllowLongInputByMouse,
             buttonGeneration: activeButtonGeneration);
         if (request.DisplayTime && timeout is not null)
             EmitTimeoutCountdown(timeout.Value);
         GameConsoleInput input = adapter.Read(prompt, cancellationToken);
-        ApplyMouseInputResults(request, input);
+        ApplyInputResults(request, input);
         ApplyInputMessageSkip(input);
         // BINPUT validates its inventory before opening the prompt. Once that
         // prompt closes, retire the consumed button generation before the
@@ -840,8 +841,14 @@ internal sealed class EmueraConsole
     /// is exposed through RESULTS:1 before the normal textual input path
     /// stores the value in RESULTS.
     /// </summary>
-    private void ApplyMouseInputResults(InputRequest request, GameConsoleInput input)
+    private void ApplyInputResults(InputRequest request, GameConsoleInput input)
     {
+        if (request.InputType == InputType.PrimitiveMouseKey)
+        {
+            ApplyPrimitiveInputResults(input);
+            return;
+        }
+
         if (input.Pointer is not { } pointer)
             return;
 
@@ -873,6 +880,73 @@ internal sealed class EmueraConsole
         // values left by an earlier upstream input event.
         GlobalStatic.VEvaluator.RESULT_ARRAY[2] = 0;
         GlobalStatic.VEvaluator.RESULT_ARRAY[3] = 0;
+    }
+
+    /// <summary>
+    /// Mirrors the pinned INPUTMOUSEKEY extension. RESULT:0 identifies mouse,
+    /// key, or timeout input; mouse events retain the desktop MouseButtons
+    /// constants and lower-left Y coordinate. Integer button notation is
+    /// exposed through RESULT:5, while string notation uses RESULTS.
+    /// </summary>
+    private void ApplyPrimitiveInputResults(GameConsoleInput input)
+    {
+        long[] result = GlobalStatic.VEvaluator.RESULT_ARRAY;
+        Array.Clear(result, 0, Math.Min(result.Length, 6));
+
+        if (adapter is StructuredGameConsole structured && structured.IsTimeOut)
+        {
+            result[0] = 4;
+            return;
+        }
+
+        if (input.Key is { } key)
+        {
+            const int shiftModifier = 0x10000;
+            const int controlModifier = 0x20000;
+            const int altModifier = 0x40000;
+            int keyData = key.KeyCode |
+                (key.Shift ? shiftModifier : 0) |
+                (key.Control ? controlModifier : 0) |
+                (key.Alt ? altModifier : 0);
+            result[0] = 3;
+            result[1] = key.KeyCode;
+            result[2] = keyData;
+            return;
+        }
+
+        ConsolePointerPayload pointer = input.Pointer;
+        if (pointer is null && !input.Source.HasFlag(ConsoleInputSource.Button))
+            return;
+
+        const int mouseButtonsLeft = 0x100000;
+        const int mouseButtonsRight = 0x200000;
+        const int mouseButtonsMiddle = 0x400000;
+        int browserButton = pointer?.Button ?? 0;
+        int desktopButton = browserButton switch
+        {
+            0 => mouseButtonsLeft,
+            1 => mouseButtonsMiddle,
+            2 => mouseButtonsRight,
+            _ => 0,
+        };
+        if (desktopButton == 0)
+            return;
+
+        if (pointer is not null)
+        {
+            mousePosition = new Point(
+                pointer.Position.X,
+                checked(pointer.Position.Y - viewportHeight));
+        }
+
+        result[0] = 1;
+        result[1] = desktopButton;
+        result[2] = mousePosition.X;
+        result[3] = mousePosition.Y;
+        if (long.TryParse(input.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long buttonValue))
+            result[5] = buttonValue;
+        else if (input.Value.Length > 0)
+            GlobalStatic.VEvaluator.RESULTS = input.Value;
     }
 
     private void ClearInputMessageSkip()

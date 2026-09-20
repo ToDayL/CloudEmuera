@@ -525,6 +525,27 @@ describe("ScrollbackRenderer", () => {
     expect(onInput).toHaveBeenNthCalledWith(3, { value: "choice", source: "POINTER", pointer: { x: 0, y: 0, button: 2, pressed: true } });
   });
 
+  it("activates a current-generation game button during primitive pointer input", () => {
+    const onInput = vi.fn();
+    const choiceLine: RealtimeLine = {
+      lineId: "primitive-choice",
+      nodes: [{ type: "button", children: [{ type: "text", text: "open", style: { decorations: [], fontFamily: "default", fontSize: 16, lineHeight: 20, foreground: null, background: null } }], value: "42", tooltip: null, enabled: true, generation: 3 }],
+      alignment: "left",
+      temporary: false,
+    };
+    const primitivePrompt = prompt(3, {
+      inputType: "primitivePointerKey",
+      constraints: { type: "text", maxLength: null, minimum: null, maximum: null, allowSign: null, allowControlCharacters: false },
+      allowedSources: ["keyboard", "button", "pointer"],
+    });
+    render(<ScrollbackRenderer lines={[choiceLine]} assets={assets} onInput={onInput} activation={activation(3, { prompt: primitivePrompt })} />);
+
+    const button = screen.getByRole("button", { name: "open" });
+    expect(button).toHaveAttribute("aria-disabled", "false");
+    fireEvent.click(button, { detail: 1, clientX: 12, clientY: 18 });
+    expect(onInput).toHaveBeenCalledWith({ value: "42", source: "POINTER", pointer: { x: 0, y: 0, button: 0, pressed: true } });
+  });
+
   it("rebases a scrolled scrollback click to the desktop line origin", () => {
     const onInput = vi.fn();
     const choiceLine: RealtimeLine = {
@@ -617,6 +638,7 @@ describe("ScrollbackRenderer", () => {
     expect(canActivateConsoleAction(action, activation(7, { terminal: true }))).toBe(false);
     expect(canActivateConsoleAction(action, activation(7, { pendingInput: true }))).toBe(false);
     expect(canActivateConsoleAction(action, { ...activation(7), prompt: prompt(7, { inputType: "waitOnly" }) })).toBe(false);
+    expect(canActivateConsoleAction(action, { ...activation(7), prompt: prompt(7, { inputType: "primitivePointerKey", allowedSources: ["keyboard", "button", "pointer"] }) })).toBe(true);
     expect(canActivateConsoleAction(action, { ...activation(7), prompt: prompt(7, { allowedSources: ["keyboard"] }) })).toBe(false);
     expect(canActivateConsoleAction({ enabled: false, generation: 7 }, activation(7))).toBe(false);
   });

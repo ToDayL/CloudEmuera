@@ -197,7 +197,9 @@ public sealed class InputCoordinator
                 prompt.InputType,
                 value,
                 skipMessage: skipMessage,
-                pointer: attempt.Pointer);
+                pointer: attempt.Pointer,
+                key: attempt.Key,
+                source: attempt.Source);
             result = ConsoleInputResult.Accepted(attempt, input);
             currentPrompt = null;
             MarkPromptCompleted(prompt.PromptId);

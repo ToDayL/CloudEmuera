@@ -3799,6 +3799,100 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task InputMouseKeyAcceptsGameButtonPointerAndPublishesUpstreamResults()
+    {
+        // PLAY-002/PLAY-009/COMP-002: pinned EM+EE explicitly supports
+        // button notation during INPUTMOUSEKEY. A browser click must remain a
+        // pointer event and publish the selected integer through RESULT:5.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTBUTTON \"OPEN\", 42\n" +
+            "INPUTMOUSEKEY\n" +
+            "PRINTFORML PRIMITIVE={RESULT:0}:{RESULT:1}:{RESULT:5}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        ConsolePrompt prompt = Assert.IsType<ConsolePrompt>(fixture.Console.CurrentPrompt);
+        Assert.Equal(ConsoleInputType.PrimitivePointerKey, prompt.InputType);
+        Assert.True(prompt.AllowedSources.HasFlag(ConsoleInputSource.Button));
+        Assert.True(prompt.AllowedSources.HasFlag(ConsoleInputSource.Pointer));
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt(
+                "primitive-button",
+                "42",
+                ConsoleInputSource.Pointer,
+                pointer: new ConsolePointerPayload(12, 34, button: 0))).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.True(
+            result.Status == EmueraRuntimeStatus.Completed,
+            result.Status + ": " + string.Join(" | ", result.Diagnostics.Select(diagnostic => diagnostic.Code + ":" + diagnostic.Message)));
+        Assert.Contains(
+            "PRIMITIVE=1:1048576:42",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
+    public async Task InputMouseKeyPreservesKeyboardCodeAndModifiers()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "INPUTMOUSEKEY\n" +
+            "PRINTFORML PRIMITIVE_KEY={RESULT:0}:{RESULT:1}:{RESULT:2}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt(
+                "primitive-key",
+                "A",
+                ConsoleInputSource.Keyboard,
+                key: new ConsoleKeyPayload(65, shift: true))).Kind);
+
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Contains(
+            "PRIMITIVE_KEY=3:65:65601",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "TimedInput")]
+    public async Task InputMouseKeyTimeoutPublishesUpstreamTimeoutResult()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "INPUTMOUSEKEY 20\n" +
+            "PRINTFORML PRIMITIVE_TIMEOUT={RESULT:0}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        EmueraRuntimeResult result = await host.RunAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Contains(
+            "PRIMITIVE_TIMEOUT=4",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     [Trait("Category", "HtmlLayout")]
     public async Task MouseAwareHtmlPopupUsesTheLastPointerPosition()
     {

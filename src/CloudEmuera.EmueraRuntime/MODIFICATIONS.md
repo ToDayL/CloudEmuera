@@ -50,6 +50,20 @@ This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
 
+## 2026-09-20 — Preserve INPUTMOUSEKEY browser interaction
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now advertises the pointer source
+  for primitive mouse/key waits and projects accepted pointer, current-generation
+  button, keyboard, and timeout events into the pinned EM+EE `RESULT:0..5` and
+  `RESULTS` slots.
+- The browser generation guard recognizes `primitivePointerKey` as the pinned
+  extension's documented button-notation exception. Physical clicks retain
+  pointer coordinates and button identity; stale generations remain inert.
+- Scope: PLAY-002/PLAY-009/COMP-002 and the eraMGT message window. Verification:
+  `InputMouseKeyAcceptsGameButtonPointerAndPublishesUpstreamResults`,
+  `InputMouseKeyPreservesKeyboardCodeAndModifiers`, and the primitive action
+  `ScrollbackRenderer` regression.
+
 ## 2026-09-02 — Restore FontSize as the HTML geometry base
 
 - Reverted the unintended use of physical `LineHeight` as the vertical MixedNum
