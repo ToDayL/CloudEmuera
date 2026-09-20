@@ -2433,6 +2433,25 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void ReuseLastLineCanRequestRefreshAfterAutoCommittedTemporaryDisplay()
+    {
+        // The structured emit path may auto-commit before REUSELASTLINE's
+        // explicit refresh request. That second commit targets the exact same
+        // state and must remain an idempotent compatibility operation.
+        var clock = new SteppingRuntimeClock(TimeSpan.FromMilliseconds(20));
+        var console = new StructuredGameConsole(clock);
+        var headless = new EmueraConsole(console, clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+
+        headless.PrintTemporaryLine("same progress");
+        DisplayCommit commit = console.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected the temporary display commit.");
+
+        Assert.Equal(DisplayCommitReason.ExplicitRefresh, commit.Reason);
+        Assert.Equal("same progress", Assert.IsType<TextNode>(Assert.Single(Assert.Single(commit.Snapshot.Scrollback).Nodes)).Text);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HeadlessConsoleReusesLineIdentityForClearAndImmediateReprint()
     {
         var console = new StructuredGameConsole();
@@ -5154,6 +5173,17 @@ public sealed class HeadlessRuntimeFixtureTests
                 ? ValueTask.CompletedTask
                 : new ValueTask(Task.Delay(delay, cancellationToken));
         }
+    }
+
+    private sealed class SteppingRuntimeClock(TimeSpan step) : IRuntimeClock
+    {
+        private long timestamp;
+        public DateTimeOffset UtcNow => DateTimeOffset.UnixEpoch.AddTicks(timestamp);
+        public long GetTimestamp() => Interlocked.Add(ref timestamp, step.Ticks);
+        public TimeSpan GetElapsedTime(long startingTimestamp, long endingTimestamp) =>
+            TimeSpan.FromTicks(endingTimestamp - startingTimestamp);
+        public ValueTask DelayAsync(TimeSpan delay, CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
     }
 
     private sealed class RunDeadlineClock : IRuntimeClock

@@ -207,6 +207,37 @@ public sealed class StructuredConsoleContractTests
     }
 
     [Fact]
+    public void RepeatedExplicitRefreshWithoutChangesReusesTheCommittedFrame()
+    {
+        var console = new StructuredGameConsole();
+        console.EmitTransaction(new ConsoleTransaction([ConsoleOperation.AppendLine(new ConsoleLine(
+            "progress",
+            [new TextNode("50%")],
+            temporary: true))]));
+
+        console.RequestDisplayRefresh();
+        DisplayCommit first = console.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected the first explicit display commit.");
+        console.RequestDisplayRefresh();
+        DisplayCommit second = console.CurrentDisplayCommit ?? throw new InvalidOperationException("Expected the repeated explicit display commit.");
+
+        Assert.Same(first, second);
+        Assert.Equal(1, second.FrameId);
+        Assert.Equal(DisplayCommitReason.ExplicitRefresh, second.Reason);
+    }
+
+    [Fact]
+    public void RepeatedTerminalCommitWithoutChangesRemainsInvalid()
+    {
+        var store = new ConsoleStateStore();
+        store.CommitDisplayFrame(DisplayCommitReason.RuntimeCompleted);
+
+        ConsoleContractException failure = Assert.Throws<ConsoleContractException>(() =>
+            store.CommitDisplayFrame(DisplayCommitReason.RuntimeCompleted));
+
+        Assert.Equal(ConsoleContractViolationReason.InvalidCursor, failure.Reason);
+    }
+
+    [Fact]
     public void StructuredResumeCompactsToABaselineWithoutLosingCurrentState()
     {
         var store = new ConsoleStateStore(new ConsoleHistoryOptions { MaxDeltaCount = 2 });

@@ -588,6 +588,13 @@ public sealed class ConsoleStateStore
         if (committedFrame is not null && currentSequence == committedFrame.CommitSequence &&
             pendingCommitTransactions.Count == 0 && !requiresSnapshotAtCommit && reason == committedFrame.Reason)
         {
+            // Explicit refresh is a request to make the current upstream
+            // display visible. REUSELASTLINE and other progress paths may
+            // legitimately request it again after an identical temporary
+            // line was coalesced. Reuse the existing committed frame rather
+            // than inventing another frame or crashing the Runtime.
+            if (reason == DisplayCommitReason.ExplicitRefresh)
+                return committedFrame;
             throw new ConsoleContractException(
                 ConsoleContractViolationReason.InvalidCursor,
                 "The same display state cannot be committed twice.");
