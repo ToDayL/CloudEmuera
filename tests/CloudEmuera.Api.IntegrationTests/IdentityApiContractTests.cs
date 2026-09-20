@@ -404,12 +404,35 @@ public sealed class IdentityApiContractTests : IDisposable
     private static void MakeWritable(string path)
     {
         if (OperatingSystem.IsWindows()) return;
-        foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+        try
         {
-            if (Directory.Exists(entry)) MakeWritable(entry);
-            else File.SetUnixFileMode(entry, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+            {
+                try
+                {
+                    if (Directory.Exists(entry)) MakeWritable(entry);
+                    else File.SetUnixFileMode(entry, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+                catch (FileNotFoundException)
+                {
+                    // SQLite may remove a WAL/SHM sidecar after directory
+                    // enumeration while the test host finishes disposing.
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    // A concurrently removed directory likewise needs no chmod.
+                }
+            }
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
-        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        catch (FileNotFoundException)
+        {
+            // The path's disappearance is already the desired cleanup outcome.
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // A concurrently removed directory likewise needs no chmod.
+        }
     }
 
     private async Task CreateDatabaseAsync()
