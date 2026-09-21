@@ -192,6 +192,24 @@ describe("RealtimeConnectionManager", () => {
     vi.unstubAllGlobals();
   });
 
+  it("retries while a starting Session has not registered its Worker route", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    const manager = new RealtimeConnectionManager();
+    manager.subscribe("s1", () => undefined);
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.message({ protocolVersion: 6, type: "server.hello", messageId: "hello", payload: { protocolVersion: 6, payloadSchemaVersion: "p1-s10-button-generation", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    socket.message({ protocolVersion: 6, type: "session.resume.result", messageId: "resume-1", sessionId: "s1", payload: { status: "SESSION_NOT_RUNNING", workerEpoch: null, reasonCode: "SESSION_NOT_RUNNING" } });
+    expect(manager.getSessionState("s1")?.phase).toBe("resuming");
+    vi.advanceTimersByTime(200);
+    expect(socket.sent.filter(value => JSON.parse(value).type === "session.resume")).toHaveLength(2);
+    manager.dispose();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
   it("closes a heartbeat-stalled socket without changing the Session worker state", () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", FakeWebSocket);

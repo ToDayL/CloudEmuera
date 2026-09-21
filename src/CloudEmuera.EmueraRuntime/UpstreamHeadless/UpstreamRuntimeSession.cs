@@ -198,6 +198,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         console = new EmueraConsole(adapter, clock, cancellationToken, imageResolver, Config.WindowX, Config.WindowY,
             fontFaceId, fontCatalogDigest, webFontAssetDigest, convertBackslashToYen);
+        console.BeginInitializationOutput();
         process = new Process(console);
         process.SetHeadlessCancellationToken(cancellationToken);
         MinorShift.Emuera.GlobalStatic.Process = process;
@@ -222,9 +223,14 @@ public sealed class UpstreamRuntimeSession : IDisposable
         // error state are the authoritative initialization signals; runtime
         // fatality during execution is represented by HasFatalError.
         initializationMessageCount = console.RuntimeMessages.Count;
-        console.BeginExecutionOutput();
+        // Initialization lines use the same 16 ms display cadence as other
+        // transient output. Publish the final accumulated state before the
+        // Worker drains it and commits the successful Ready clear.
+        console.FlushInitializationOutput();
         return initialized;
     }
+
+    public void CompleteInitializationOutput() => console?.CompleteInitializationOutput();
 
     public void Run(CancellationToken runCancellationToken)
     {

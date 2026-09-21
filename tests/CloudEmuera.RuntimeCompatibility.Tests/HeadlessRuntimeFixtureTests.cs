@@ -721,6 +721,35 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task SpriteMetadataIsLoadedOncePerSourceImageDuringHostInitialization()
+    {
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "v18-core", "resources", "cloudemuera-v18.png");
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nQUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "sheet.png"));
+                File.WriteAllText(
+                    Path.Combine(resources, "sprites.csv"),
+                    "FIRST,sheet.png,0,0,1,1\n" +
+                    "SECOND,sheet.png,1,0,1,1\n" +
+                    "THIRD,sheet.png,0,1,1,1\n");
+            });
+        var imagePort = new CountingRuntimeImagePort(new RuntimeImageMetadataPort(fixture.FileSystem));
+        await using EmueraRuntimeHost host = fixture.CreateHost(imagePort: imagePort);
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+        Assert.Equal(1, imagePort.LoadCount);
+        Assert.Equal(["resources/sheet.png"], imagePort.LoadedPaths);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public async Task WebpSpriteLoadsThroughMetadataAndNativeSpritePaths()
     {
         byte[] webp = Convert.FromBase64String(ValidWebpBase64);
@@ -3453,6 +3482,72 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void InitializationOutputUsesThePlayerConsoleUntilReadyThenClearsAtomically()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+
+        headless.BeginInitializationOutput();
+        headless.PrintSystemLine("读取 ERB...");
+        headless.PrintWarning("启动阶段脚本警告", null, 2);
+        headless.PrintError("非コメント行数:42");
+        headless.FlushInitializationOutput();
+
+        string startupTranscript = RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes);
+        Assert.Contains("读取 ERB...", startupTranscript, StringComparison.Ordinal);
+        Assert.Contains("⚠ 启动阶段脚本警告", startupTranscript, StringComparison.Ordinal);
+        Assert.Contains("⚠ 非コメント行数:42", startupTranscript, StringComparison.Ordinal);
+
+        headless.CompleteInitializationOutput();
+
+        Assert.Empty(console.CommittedSnapshot!.VisibleNodes);
+        Assert.Equal(DisplayCommitReason.ExplicitRefresh, console.CurrentDisplayCommit!.Reason);
+        Assert.Contains(headless.RuntimeWarnings, warning => warning.Contains("启动阶段脚本警告", StringComparison.Ordinal));
+        Assert.Contains(headless.RuntimeMessages, message => message.Contains("非コメント行数:42", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void InitializationOutputUsesSixteenMillisecondRefreshCadenceAndFlushesTheTail()
+    {
+        var clock = new RecordingRuntimeClock();
+        var console = new StructuredGameConsole(clock);
+        var headless = new EmueraConsole(console, clock, CancellationToken.None);
+
+        headless.BeginInitializationOutput();
+        headless.PrintSystemLine("first");
+        long firstFrameId = console.CurrentDisplayCommit!.FrameId;
+        headless.PrintSystemLine("second");
+        headless.PrintWarning("third", null, 2);
+
+        Assert.Equal(firstFrameId, console.CurrentDisplayCommit!.FrameId);
+        Assert.DoesNotContain("second", RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes), StringComparison.Ordinal);
+
+        headless.FlushInitializationOutput();
+
+        Assert.Equal(firstFrameId + 1, console.CurrentDisplayCommit!.FrameId);
+        string flushed = RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes);
+        Assert.Contains("second", flushed, StringComparison.Ordinal);
+        Assert.Contains("⚠ third", flushed, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void FailedInitializationRetainsVisibleStartupOutput()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+
+        headless.BeginInitializationOutput();
+        headless.PrintWarning("不能继续的启动警告", null, 3);
+        console.CommitDisplayFrame(DisplayCommitReason.RuntimeFailed);
+
+        string transcript = RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes);
+        Assert.Contains("⚠ 不能继续的启动警告", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void PrintedErrorDoesNotBecomeFatalUntilInterpreterTransitionsToError()
     {
         var console = new StructuredGameConsole();
@@ -5029,7 +5124,8 @@ public sealed class HeadlessRuntimeFixtureTests
             string runtimeFontFamilyName = "",
             string webFontAssetDigest = "",
             bool convertBackslashToYen = true,
-            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
+            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override,
+            IRuntimeImagePort? imagePort = null)
             => CreateHost(
                 Console,
                 runtimeClock,
@@ -5047,7 +5143,8 @@ public sealed class HeadlessRuntimeFixtureTests
                 runtimeFontFamilyName,
                 webFontAssetDigest,
                 convertBackslashToYen,
-                fontSizeLineHeightMode);
+                fontSizeLineHeightMode,
+                imagePort);
 
         public EmueraRuntimeHost CreateHost(
             StructuredGameConsole console,
@@ -5066,7 +5163,8 @@ public sealed class HeadlessRuntimeFixtureTests
             string runtimeFontFamilyName = "",
             string webFontAssetDigest = "",
             bool convertBackslashToYen = true,
-            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
+            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override,
+            IRuntimeImagePort? imagePort = null)
         {
             var fileSystem = new LocalRuntimeFileSystem(Paths);
             var options = new EmueraRuntimeOptions(
@@ -5074,7 +5172,7 @@ public sealed class HeadlessRuntimeFixtureTests
                 console,
                 fileSystem,
                 runtimeClock ?? console.Clock,
-                new RuntimeImageMetadataPort(fileSystem),
+                imagePort ?? new RuntimeImageMetadataPort(fileSystem),
                 AudioPort,
                 EmueraCompatibilityProfiles.V18Compatible,
                 initializationDeadline ?? TimeSpan.FromSeconds(5),
@@ -5202,6 +5300,20 @@ public sealed class HeadlessRuntimeFixtureTests
             return delay == TimeSpan.FromMilliseconds(25)
                 ? ValueTask.CompletedTask
                 : new ValueTask(Task.Delay(delay, cancellationToken));
+        }
+    }
+
+    private sealed class CountingRuntimeImagePort(IRuntimeImagePort inner) : IRuntimeImagePort
+    {
+        private readonly List<string> loadedPaths = [];
+
+        public int LoadCount => loadedPaths.Count;
+        public IReadOnlyList<string> LoadedPaths => loadedPaths;
+
+        public RuntimeImageMetadata Load(RuntimeFilePath resourcePath, CancellationToken cancellationToken = default)
+        {
+            loadedPaths.Add(resourcePath.LogicalPath);
+            return inner.Load(resourcePath, cancellationToken);
         }
     }
 

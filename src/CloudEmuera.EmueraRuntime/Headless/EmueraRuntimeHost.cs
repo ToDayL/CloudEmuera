@@ -165,6 +165,8 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
             loaded = initializedRuntime.Session;
         }
 
+        loaded.CompleteInitializationOutput();
+
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetimeCancellation.Token);
         try
         {
@@ -227,6 +229,16 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
 
             AddDiagnostic("unsupported_runtime_capability", EmueraRuntimePhase.Media, exception.Message, true);
             return Result(EmueraRuntimeStatus.UnsupportedCapability);
+        }
+    }
+
+    public void CompleteInitializationOutput()
+    {
+        lock (sync)
+        {
+            if (state != HostState.Initialized || initializedRuntime is null)
+                throw new InvalidOperationException("The runtime must be initialized before startup output can be completed.");
+            initializedRuntime.Session.CompleteInitializationOutput();
         }
     }
 
@@ -327,6 +339,13 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         }
 
         var result = new Dictionary<string, SpriteDefinition>(StringComparer.OrdinalIgnoreCase);
+        // A resource CSV commonly declares many cropped Sprites backed by the
+        // same source image. Match the upstream AppContents resourceDic
+        // behavior within this host initialization: validate and read image
+        // metadata once per exact controlled logical path, then reuse it for
+        // every Sprite declaration. Keep the cache local so Session lifetimes
+        // and filesystem boundaries cannot leak across Workers.
+        var imageMetadata = new Dictionary<RuntimeFilePath, RuntimeImageMetadata>();
         foreach (RuntimeFilePath spriteCsv in EnumerateResourceCsvFiles(resources, cancellationToken))
         {
             string? currentAnimationName = null;
@@ -401,7 +420,15 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 RuntimeImageMetadata metadata;
                 try
                 {
-                    metadata = options.ImagePort.Load(imagePath, cancellationToken);
+                    if (imageMetadata.TryGetValue(imagePath, out RuntimeImageMetadata? cachedMetadata))
+                    {
+                        metadata = cachedMetadata ?? throw new InvalidDataException("The Sprite metadata cache contains an invalid entry.");
+                    }
+                    else
+                    {
+                        metadata = options.ImagePort.Load(imagePath, cancellationToken);
+                        imageMetadata.Add(imagePath, metadata);
+                    }
                 }
                 catch (OperationCanceledException)
                 {

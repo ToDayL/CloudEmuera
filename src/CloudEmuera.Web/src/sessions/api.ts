@@ -191,6 +191,7 @@ export function useSession(sessionId: string | undefined) {
     queryFn: () => getSession(sessionId!),
     enabled: Boolean(sessionId),
     staleTime: 1_000,
+    refetchInterval: query => query.state.data?.state === "STARTING" ? 500 : false,
     refetchOnWindowFocus: true,
   });
 }

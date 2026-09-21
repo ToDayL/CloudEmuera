@@ -39,6 +39,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     private Task? runtimeTask;
     private Task? outputTask;
     private Task? heartbeatTask;
+    private readonly SemaphoreSlim outputSendGate = new(1, 1);
     private long lastSentCommittedSequence;
     private long lastSentCommittedFrameId;
     private readonly TaskCompletionSource<bool> terminalAcknowledged =
@@ -143,6 +144,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             await host.DisposeAsync().ConfigureAwait(false);
         debugTrace?.Dispose();
         runtimeCancellation?.Dispose();
+        outputSendGate.Dispose();
     }
 
     private async Task HandleStartAsync(WorkerCommandEnvelope envelope, CancellationToken cancellationToken)
@@ -434,6 +436,7 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 randomSeed: bootstrap.RandomSeed));
             runtimeCancellation = new CancellationTokenSource();
             console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
+            outputTask = Task.Run(() => OutputPumpAsync(runtimeCancellation.Token), CancellationToken.None);
 
             EmueraRuntimeResult initialized = await host.InitializeAsync(runtimeCancellation.Token).ConfigureAwait(false);
             if (initialized.Status != EmueraRuntimeStatus.Completed)
@@ -444,6 +447,14 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 Complete(WorkerExitCodes.RuntimeInitializationFailed);
                 return;
             }
+
+            // Initialization output is transient but must be observable before
+            // the successful initialization clear overtakes it. Serialize both
+            // drains with the normal output pump, then publish Ready only after
+            // the browser-facing mirror has received the empty execution frame.
+            _ = await SendPendingOutputAsync(console, runtimeCancellation.Token).ConfigureAwait(false);
+            host.CompleteInitializationOutput();
+            _ = await SendPendingOutputAsync(console, runtimeCancellation.Token).ConfigureAwait(false);
 
             debugTrace?.RuntimeConfigured(console.Snapshot.WindowMetadata, saveLayout, bootstrap.CompatibilityProfile);
 
@@ -481,7 +492,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             }).ConfigureAwait(false);
             LogLifecycle("runtime_ready");
 
-            outputTask = Task.Run(() => OutputPumpAsync(runtimeCancellation.Token), CancellationToken.None);
             heartbeatTask = Task.Run(() => HeartbeatAsync(runtimeCancellation.Token), CancellationToken.None);
             EmueraRuntimeResult result = await host.RunAsync(runtimeCancellation.Token).ConfigureAwait(false);
             if (result.Status == EmueraRuntimeStatus.Completed)
@@ -710,44 +720,52 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task<bool> SendPendingOutputAsync(StructuredGameConsole gameConsole, CancellationToken cancellationToken)
     {
-        DisplayCommitReadResult result = gameConsole.StateStore.ReadCommittedSince(
-            Interlocked.Read(ref lastSentCommittedFrameId),
-            Interlocked.Read(ref lastSentCommittedSequence));
-        if (result.Kind == DisplayCommitReadKind.UpToDate || result.Commit is null)
-            return false;
+        await outputSendGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            DisplayCommitReadResult result = gameConsole.StateStore.ReadCommittedSince(
+                Interlocked.Read(ref lastSentCommittedFrameId),
+                Interlocked.Read(ref lastSentCommittedSequence));
+            if (result.Kind == DisplayCommitReadKind.UpToDate || result.Commit is null)
+                return false;
 
-        DisplayCommit commit = result.Commit;
-        var displayFrame = new DisplayFrame
-        {
-            FrameId = (ulong)commit.FrameId,
-            CommitSequence = commit.CommitSequence,
-            Reason = ToProto(commit.Reason),
-            RequiresSnapshot = result.Kind == DisplayCommitReadKind.Snapshot || commit.RequiresSnapshot
-        };
-        if (displayFrame.RequiresSnapshot)
-        {
-            displayFrame.Snapshot = StructuredConsoleWireMapper.ToProto(commit.Snapshot);
+            DisplayCommit commit = result.Commit;
+            var displayFrame = new DisplayFrame
+            {
+                FrameId = (ulong)commit.FrameId,
+                CommitSequence = commit.CommitSequence,
+                Reason = ToProto(commit.Reason),
+                RequiresSnapshot = result.Kind == DisplayCommitReadKind.Snapshot || commit.RequiresSnapshot
+            };
+            if (displayFrame.RequiresSnapshot)
+            {
+                displayFrame.Snapshot = StructuredConsoleWireMapper.ToProto(commit.Snapshot);
+            }
+            else
+            {
+                if (commit.Transactions.Count == 0 || commit.Transactions.Count > StructuredIpcLimits.MaxTransactions)
+                    throw new InvalidDataException("A committed display delta cannot be split across IPC messages.");
+                displayFrame.Transactions.AddRange(commit.Transactions.Select(StructuredConsoleWireMapper.ToProto));
+            }
+
+            WorkerEnvelope envelope = CreateDisplayEnvelope(displayFrame);
+            // A committed delta is already the atomic display representation. Do
+            // not silently replace a large table with a Snapshot merely because
+            // its protobuf envelope is large; if it cannot fit the hard IPC
+            // bound, fail closed instead of changing the display semantics.
+            if (envelope.CalculateSize() > StructuredIpcLimits.MaxEnvelopeBytes)
+                throw new InvalidDataException("The committed display frame exceeds the IPC size limit.");
+
+            await connection.SendDisplayAsync(envelope, cancellationToken).ConfigureAwait(false);
+            Interlocked.Exchange(ref lastSentCommittedFrameId, commit.FrameId);
+            Interlocked.Exchange(ref lastSentCommittedSequence, commit.CommitSequence);
+            connection.SetLastOutputSequence(commit.CommitSequence);
+            return true;
         }
-        else
+        finally
         {
-            if (commit.Transactions.Count == 0 || commit.Transactions.Count > StructuredIpcLimits.MaxTransactions)
-                throw new InvalidDataException("A committed display delta cannot be split across IPC messages.");
-            displayFrame.Transactions.AddRange(commit.Transactions.Select(StructuredConsoleWireMapper.ToProto));
+            outputSendGate.Release();
         }
-
-        WorkerEnvelope envelope = CreateDisplayEnvelope(displayFrame);
-        // A committed delta is already the atomic display representation. Do
-        // not silently replace a large table with a Snapshot merely because
-        // its protobuf envelope is large; if it cannot fit the hard IPC
-        // bound, fail closed instead of changing the display semantics.
-        if (envelope.CalculateSize() > StructuredIpcLimits.MaxEnvelopeBytes)
-            throw new InvalidDataException("The committed display frame exceeds the IPC size limit.");
-
-        await connection.SendDisplayAsync(envelope, cancellationToken).ConfigureAwait(false);
-        Interlocked.Exchange(ref lastSentCommittedFrameId, commit.FrameId);
-        Interlocked.Exchange(ref lastSentCommittedSequence, commit.CommitSequence);
-        connection.SetLastOutputSequence(commit.CommitSequence);
-        return true;
     }
 
     private WorkerEnvelope CreateDisplayEnvelope(DisplayFrame frame) => new()

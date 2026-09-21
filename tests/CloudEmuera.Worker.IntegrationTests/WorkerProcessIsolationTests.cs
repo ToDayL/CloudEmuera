@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using CloudEmuera.Api.Realtime;
 using CloudEmuera.Application.Sessions.Runtime;
 using CloudEmuera.Ipc;
@@ -192,6 +193,40 @@ public sealed class WorkerProcessIsolationTests
         // setting lifecycle as the headless Validator.
         Assert.True(File.Exists(Path.Combine(fixture.SessionRoot, "setting.json")));
         Assert.Equal(fixture.PublishedDigest, fixture.ComputePublishedDigest());
+    }
+
+    [Fact]
+    [Trait("Category", "WorkerLifecycle")]
+    [Trait("Category", "Realtime")]
+    public async Task RealWorkerPublishesStartupReportThenClearsItBeforeReady()
+    {
+        await using var fixture = FixtureWorkspace.Create("v18-core", RuntimeSaveLayout.Root);
+        string configurationPath = Path.Combine(fixture.SessionRoot, "emuera.config");
+        File.AppendAllText(configurationPath, $"{Environment.NewLine}Display loading report:YES{Environment.NewLine}");
+        await using WorkerManagerHost manager = await WorkerManagerHost.StartAsync(
+            new WorkerManagerOptions(fixture.ControlRuntimeRoot, typeof(ConsoleWireMapper).Assembly.Location));
+        ApiWorkerSession session = await manager.LaunchWorkerAsync(new WorkerLaunchRequest(
+            new WorkerBinding("sess_visible_startup", "wrk_visible_startup", 1),
+            fixture.SessionRoot,
+            "v18-compatible",
+            RuntimeSaveLayout.Root,
+            fixture.Manifest.ManifestDigest));
+        await using RealtimeSubscription output = session.OutputHub.Subscribe();
+
+        await session.SendStartRuntimeAsync(TimeSpan.FromSeconds(15));
+        await session.WaitForAsync(
+            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.CommandResult && value.CommandResult.Accepted,
+            TimeSpan.FromSeconds(5));
+        Task<RealtimeFrame> startupReport = WaitForRealtimeJsonStringAsync(output, "⚠", TimeSpan.FromSeconds(15));
+        WorkerEnvelope ready = await session.WaitForAsync(
+            value => value.PayloadCase == WorkerEnvelope.PayloadOneofCase.Ready,
+            TimeSpan.FromSeconds(15));
+
+        RealtimeFrame startupFrame = await startupReport;
+        Assert.True(ready.Ready.LastOutputSequence > startupFrame.LastSequence);
+        Assert.True(session.OutputHub.Statistics.SnapshotSequence >= ready.Ready.LastOutputSequence);
+        await session.StopAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
@@ -614,6 +649,32 @@ public sealed class WorkerProcessIsolationTests
         if (result.Length > 0 && result[^1] == '\n')
             result.Length--;
         return result.ToString();
+    }
+
+    private static bool ContainsJsonString(JsonElement element, string value)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+            return element.GetString()?.Contains(value, StringComparison.Ordinal) == true;
+        if (element.ValueKind == JsonValueKind.Array)
+            return element.EnumerateArray().Any(item => ContainsJsonString(item, value));
+        if (element.ValueKind == JsonValueKind.Object)
+            return element.EnumerateObject().Any(property => ContainsJsonString(property.Value, value));
+        return false;
+    }
+
+    private static async Task<RealtimeFrame> WaitForRealtimeJsonStringAsync(
+        RealtimeSubscription subscription,
+        string value,
+        TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        while (true)
+        {
+            RealtimeFrame frame = await subscription.ReadAsync(cancellation.Token);
+            using JsonDocument payload = JsonDocument.Parse(frame.Payload);
+            if (ContainsJsonString(payload.RootElement, value))
+                return frame;
+        }
     }
 
     private static string ProjectTranscriptNodes(IEnumerable<CloudEmuera.RuntimeAdapter.ConsoleNode> nodes)

@@ -196,7 +196,8 @@ export class RealtimeConnectionManager {
         }, resumeSnapshotTimeoutMilliseconds);
       } else if (message.payload.status === "SNAPSHOT_NOT_READY") this.scheduleResume(subscription);
       else if (message.payload.status === "CAPABILITY_MISMATCH") { const mismatch = i18n.t("protocolUi.sessionCapabilityMismatch"); this.setPhase("incompatible", mismatch); subscription.state = { ...subscription.state, phase: "error", fatalRenderError: mismatch }; notify(subscription); }
-      else if (message.payload.status === "SESSION_NOT_FOUND" || message.payload.status === "SESSION_NOT_RUNNING") { subscription.state = { ...subscription.state, phase: "ended" }; notify(subscription); }
+      else if (message.payload.status === "SESSION_NOT_RUNNING") this.scheduleResume(subscription);
+      else if (message.payload.status === "SESSION_NOT_FOUND") { subscription.state = { ...subscription.state, phase: "ended" }; notify(subscription); }
       return;
     }
     if (message.type === "resync.required") {
