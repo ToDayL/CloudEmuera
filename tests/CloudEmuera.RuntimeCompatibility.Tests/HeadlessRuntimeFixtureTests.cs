@@ -92,6 +92,38 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public async Task InitializationTimingSinkReportsHostPhasesWithoutPlayerOutput()
+    {
+        using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
+        var timings = new List<EmueraInitializationTiming>();
+        await using EmueraRuntimeHost host = fixture.CreateHost(initializationTimingSink: timings.Add);
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+        Assert.Collection(
+            timings,
+            item => AssertTiming(item, "configuration_inspection", "started"),
+            item => AssertTiming(item, "configuration_inspection", "completed"),
+            item => AssertTiming(item, "load_sprites", "started"),
+            item => AssertTiming(item, "load_sprites", "completed"),
+            item => AssertTiming(item, "upstream_session_initialize", "started"),
+            item => AssertTiming(item, "upstream_session_initialize", "completed"));
+        Assert.DoesNotContain(
+            "load_sprites",
+            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+    }
+
+    private static void AssertTiming(EmueraInitializationTiming timing, string phase, string state)
+    {
+        Assert.Equal(phase, timing.Phase);
+        Assert.Equal(state, timing.State);
+        Assert.True(timing.DurationMilliseconds >= 0);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void EtxDisplaySentinelIsRemovedBeforeStructuredTextValidation()
     {
         // PLAY-001/PLAY-014: GET_BETWEEN_STRING uses U+0003 as its
@@ -717,6 +749,35 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(new ConsoleRect(7, 8, 2, 2), drawable.Bounds);
         Assert.Equal(9, drawable.ZIndex);
         Assert.Equal([50, 75], drawable.AnimationFrames.Select(frame => frame.DurationMilliseconds));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task SpriteMetadataIsLoadedOncePerSourceImageDuringHostInitialization()
+    {
+        string sourceImage = Path.Combine(
+            RuntimeCompatibilityCli.FindRepositoryRoot(),
+            "tests", "fixtures", "runtime", "v18-core", "resources", "cloudemuera-v18.png");
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\nQUIT\n",
+            configureGame: game =>
+            {
+                string resources = Path.Combine(game, "resources");
+                File.Copy(sourceImage, Path.Combine(resources, "sheet.png"));
+                File.WriteAllText(
+                    Path.Combine(resources, "sprites.csv"),
+                    "FIRST,sheet.png,0,0,1,1\n" +
+                    "SECOND,sheet.png,1,0,1,1\n" +
+                    "THIRD,sheet.png,0,1,1,1\n");
+            });
+        var imagePort = new CountingRuntimeImagePort(new RuntimeImageMetadataPort(fixture.FileSystem));
+        await using EmueraRuntimeHost host = fixture.CreateHost(imagePort: imagePort);
+
+        EmueraRuntimeResult initialized = await host.InitializeAsync();
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
+        Assert.Equal(1, imagePort.LoadCount);
+        Assert.Equal(["resources/sheet.png"], imagePort.LoadedPaths);
     }
 
     [Fact]
@@ -3462,6 +3523,7 @@ public sealed class HeadlessRuntimeFixtureTests
         headless.PrintSystemLine("读取 ERB...");
         headless.PrintWarning("启动阶段脚本警告", null, 2);
         headless.PrintError("非コメント行数:42");
+        headless.FlushInitializationOutput();
 
         string startupTranscript = RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes);
         Assert.Contains("读取 ERB...", startupTranscript, StringComparison.Ordinal);
@@ -3478,6 +3540,31 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void InitializationOutputUsesSixteenMillisecondRefreshCadenceAndFlushesTheTail()
+    {
+        var clock = new RecordingRuntimeClock();
+        var console = new StructuredGameConsole(clock);
+        var headless = new EmueraConsole(console, clock, CancellationToken.None);
+
+        headless.BeginInitializationOutput();
+        headless.PrintSystemLine("first");
+        long firstFrameId = console.CurrentDisplayCommit!.FrameId;
+        headless.PrintSystemLine("second");
+        headless.PrintWarning("third", null, 2);
+
+        Assert.Equal(firstFrameId, console.CurrentDisplayCommit!.FrameId);
+        Assert.DoesNotContain("second", RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes), StringComparison.Ordinal);
+
+        headless.FlushInitializationOutput();
+
+        Assert.Equal(firstFrameId + 1, console.CurrentDisplayCommit!.FrameId);
+        string flushed = RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes);
+        Assert.Contains("second", flushed, StringComparison.Ordinal);
+        Assert.Contains("⚠ third", flushed, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void FailedInitializationRetainsVisibleStartupOutput()
     {
         var console = new StructuredGameConsole();
@@ -3485,6 +3572,7 @@ public sealed class HeadlessRuntimeFixtureTests
 
         headless.BeginInitializationOutput();
         headless.PrintWarning("不能继续的启动警告", null, 3);
+        console.CommitDisplayFrame(DisplayCommitReason.RuntimeFailed);
 
         string transcript = RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes);
         Assert.Contains("⚠ 不能继续的启动警告", transcript, StringComparison.Ordinal);
@@ -5068,7 +5156,9 @@ public sealed class HeadlessRuntimeFixtureTests
             string runtimeFontFamilyName = "",
             string webFontAssetDigest = "",
             bool convertBackslashToYen = true,
-            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
+            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override,
+            Action<EmueraInitializationTiming>? initializationTimingSink = null,
+            IRuntimeImagePort? imagePort = null)
             => CreateHost(
                 Console,
                 runtimeClock,
@@ -5086,7 +5176,9 @@ public sealed class HeadlessRuntimeFixtureTests
                 runtimeFontFamilyName,
                 webFontAssetDigest,
                 convertBackslashToYen,
-                fontSizeLineHeightMode);
+                fontSizeLineHeightMode,
+                initializationTimingSink,
+                imagePort);
 
         public EmueraRuntimeHost CreateHost(
             StructuredGameConsole console,
@@ -5105,7 +5197,9 @@ public sealed class HeadlessRuntimeFixtureTests
             string runtimeFontFamilyName = "",
             string webFontAssetDigest = "",
             bool convertBackslashToYen = true,
-            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override)
+            RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override,
+            Action<EmueraInitializationTiming>? initializationTimingSink = null,
+            IRuntimeImagePort? imagePort = null)
         {
             var fileSystem = new LocalRuntimeFileSystem(Paths);
             var options = new EmueraRuntimeOptions(
@@ -5113,11 +5207,12 @@ public sealed class HeadlessRuntimeFixtureTests
                 console,
                 fileSystem,
                 runtimeClock ?? console.Clock,
-                new RuntimeImageMetadataPort(fileSystem),
+                imagePort ?? new RuntimeImageMetadataPort(fileSystem),
                 AudioPort,
                 EmueraCompatibilityProfiles.V18Compatible,
                 initializationDeadline ?? TimeSpan.FromSeconds(5),
                 runDeadline ?? TimeSpan.FromSeconds(5),
+                initializationTimingSink: initializationTimingSink,
                 browserWidth: browserWidth,
                 fontSize: fontSize,
                 lineHeight: lineHeight,
@@ -5241,6 +5336,20 @@ public sealed class HeadlessRuntimeFixtureTests
             return delay == TimeSpan.FromMilliseconds(25)
                 ? ValueTask.CompletedTask
                 : new ValueTask(Task.Delay(delay, cancellationToken));
+        }
+    }
+
+    private sealed class CountingRuntimeImagePort(IRuntimeImagePort inner) : IRuntimeImagePort
+    {
+        private readonly List<string> loadedPaths = [];
+
+        public int LoadCount => loadedPaths.Count;
+        public IReadOnlyList<string> LoadedPaths => loadedPaths;
+
+        public RuntimeImageMetadata Load(RuntimeFilePath resourcePath, CancellationToken cancellationToken = default)
+        {
+            loadedPaths.Add(resourcePath.LogicalPath);
+            return inner.Load(resourcePath, cancellationToken);
         }
     }
 

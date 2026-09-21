@@ -89,6 +89,7 @@ internal sealed partial class Process(EmueraConsole view)
 		{
 			logWriter?.WriteLine($"Proc:Init:Start {stopWatch.ElapsedMilliseconds}ms");
 			logWriter?.WriteLine($"Proc:Init:Parser:Start {stopWatch.ElapsedMilliseconds}ms");
+			long phaseStarted = BeginInitializationPhase(stopWatch, "parser");
 			ParserMediator.Initialize(console);
 			//コンフィグファイルに関するエラーの処理（コンフィグファイルはこの関数に入る前に読込済み）
 			if (ParserMediator.HasWarning)
@@ -101,8 +102,10 @@ internal sealed partial class Process(EmueraConsole view)
 				}
 			}
 			logWriter?.WriteLine($"Proc:Init:Parser:End {stopWatch.ElapsedMilliseconds}ms");
+			CompleteInitializationPhase(stopWatch, "parser", phaseStarted);
 
 			logWriter?.WriteLine($"Proc:Init:Image:Start {stopWatch.ElapsedMilliseconds}ms");
+			phaseStarted = BeginInitializationPhase(stopWatch, "resources");
 			//リソースフォルダ読み込み
 			// CloudEmuera: ADR-0019 supplies the headless Linux Worker with the
 			// pinned libgdiplus compatibility layer. Load the upstream Sprite
@@ -117,6 +120,7 @@ internal sealed partial class Process(EmueraConsole view)
 			}
 			ParserMediator.FlushWarningList();
 			logWriter?.WriteLine($"Proc:Init:Image:End {stopWatch.ElapsedMilliseconds}ms");
+			CompleteInitializationPhase(stopWatch, "resources", phaseStarted);
 
 			logWriter?.WriteLine($"Proc:Init:KeyMacro:Start {stopWatch.ElapsedMilliseconds}ms");
 			//キーマクロ読み込み
@@ -182,6 +186,7 @@ internal sealed partial class Process(EmueraConsole view)
 				console.RefreshStrings(true);
 			}
 			//gamebase.csv読み込み
+			phaseStarted = BeginInitializationPhase(stopWatch, "gamebase_csv");
 			gamebase = new GameBase();
 			if (!await Task.Run(() => gamebase.LoadGameBaseCsv(Program.CsvDir + "GAMEBASE.CSV")))
 			{
@@ -195,14 +200,17 @@ internal sealed partial class Process(EmueraConsole view)
 			console.SetWindowTitle(gamebase.ScriptWindowTitle);
 			GlobalStatic.GameBaseData = gamebase;
 			logWriter?.WriteLine($"Proc:Init:MainCSV:End {stopWatch.ElapsedMilliseconds}ms");
+			CompleteInitializationPhase(stopWatch, "gamebase_csv", phaseStarted);
 
 			//前記以外のcsvを全て読み込み
+			phaseStarted = BeginInitializationPhase(stopWatch, "constant_csv");
 			ConstantData constant = new();
 			constant.LoadData(Program.CsvDir, console, Config.DisplayReport);
 #if CLOUDEMUERA_HEADLESS
 			ThrowIfHeadlessCancellationRequested();
 #endif
 			logWriter?.WriteLine($"Proc:Init:EtcCSV:End {stopWatch.ElapsedMilliseconds}ms");
+			CompleteInitializationPhase(stopWatch, "constant_csv", phaseStarted);
 
 			GlobalStatic.ConstantData = constant;
 			TrainName = constant.GetCsvNameList(VariableCode.TRAINNAME);
@@ -221,6 +229,7 @@ internal sealed partial class Process(EmueraConsole view)
 			GlobalStatic.EMediator = exm;
 
 			logWriter?.WriteLine($"Proc:Init:ERH:Start {stopWatch.ElapsedMilliseconds}ms");
+			phaseStarted = BeginInitializationPhase(stopWatch, "erh");
 
 			labelDic = new LabelDictionary();
 			GlobalStatic.LabelDictionary = labelDic;
@@ -247,11 +256,13 @@ internal sealed partial class Process(EmueraConsole view)
 #endif
 			LexicalAnalyzer.UseMacro = idDic.UseMacro();
 			logWriter?.WriteLine($"Proc:Init:ERH:End {stopWatch.ElapsedMilliseconds}ms");
+			CompleteInitializationPhase(stopWatch, "erh", phaseStarted);
 
 			//TODO:ユーザー定義変数用のcsvの適用
 
 			//ERB読込
 			logWriter?.WriteLine($"Proc:Init:ERB:Start {stopWatch.ElapsedMilliseconds}ms");
+			phaseStarted = BeginInitializationPhase(stopWatch, "erb");
 			var loader = new ErbLoader(console, exm, this);
 			if (Program.AnalysisMode)
 				noError = await loader.LoadErbList(Program.AnalysisFiles, labelDic);
@@ -261,11 +272,16 @@ internal sealed partial class Process(EmueraConsole view)
 			ThrowIfHeadlessCancellationRequested();
 #endif
 			logWriter?.WriteLine($"Proc:Init:ERB:End {stopWatch.ElapsedMilliseconds}ms");
+			CompleteInitializationPhase(stopWatch, "erb", phaseStarted);
 
+			phaseStarted = BeginInitializationPhase(stopWatch, "system_process");
 			initSystemProcess();
+			CompleteInitializationPhase(stopWatch, "system_process", phaseStarted);
 			initialiing = false;
 
 			logWriter?.WriteLine($"Proc:Init:End {stopWatch.ElapsedMilliseconds}ms");
+			CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordInitializationPhase(
+				"process_initialize", "total", "completed", stopWatch.ElapsedMilliseconds, stopWatch.ElapsedMilliseconds);
 		}
 #if CLOUDEMUERA_HEADLESS
 		catch (OperationCanceledException) when (headlessCancellationToken.IsCancellationRequested)
@@ -285,6 +301,21 @@ internal sealed partial class Process(EmueraConsole view)
 		}
 		state.Begin(BeginType.TITLE);
 		return true;
+	}
+
+	private static long BeginInitializationPhase(Stopwatch clock, string phase)
+	{
+		long elapsed = clock.ElapsedMilliseconds;
+		CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordInitializationPhase(
+			"process_initialize", phase, "started", elapsed);
+		return elapsed;
+	}
+
+	private static void CompleteInitializationPhase(Stopwatch clock, string phase, long started)
+	{
+		long elapsed = clock.ElapsedMilliseconds;
+		CloudEmuera.EmueraRuntime.UpstreamHeadless.RuntimeDebugTrace.RecordInitializationPhase(
+			"process_initialize", phase, "completed", elapsed, elapsed - started);
 	}
 
 	public async Task ReloadErb()

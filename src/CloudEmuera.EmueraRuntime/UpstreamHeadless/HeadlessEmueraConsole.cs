@@ -304,7 +304,7 @@ internal sealed class EmueraConsole
         // point, typically used for progress/status displays. Ordinary PRINT
         // and reprint operations remain working-only until a prompt boundary.
         if (adapter is StructuredGameConsole structured)
-            structured.RequestDisplayRefresh();
+            RequestDisplayRefreshIfDue(structured, force: !initializationOutputActive);
     }
     public void PrintPlain(string value) => Print(value, lineEnd: false);
     public void PrintPlainWithSingleLineFix(string value) => EmitLine(value);
@@ -2958,8 +2958,12 @@ internal sealed class EmueraConsole
             return;
 
         EmitLine(warning ? $"⚠ {value.Trim()}" : value.Trim());
-        if (adapter is StructuredGameConsole structured)
-            structured.RequestDisplayRefresh();
+    }
+
+    public void FlushInitializationOutput()
+    {
+        if (initializationOutputActive && adapter is StructuredGameConsole structured)
+            RequestDisplayRefreshIfDue(structured, force: true);
     }
 
     private void RecordSystemMessage(string value)

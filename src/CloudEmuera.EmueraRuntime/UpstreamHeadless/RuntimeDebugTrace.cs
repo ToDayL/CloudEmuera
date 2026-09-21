@@ -97,6 +97,25 @@ internal sealed class RuntimeDebugTrace : IDisposable
         });
     }
 
+    internal static void RecordInitializationPhase(
+        string scope,
+        string phase,
+        string state,
+        long elapsedMilliseconds,
+        long? durationMilliseconds = null)
+    {
+        Current?.Write(new
+        {
+            eventType = "initialization_phase",
+            timestampUtc = DateTimeOffset.UtcNow,
+            scope,
+            phase,
+            state,
+            elapsedMilliseconds,
+            durationMilliseconds
+        });
+    }
+
     internal void RecordTransaction(SequencedConsoleTransaction transaction)
     {
         ArgumentNullException.ThrowIfNull(transaction);

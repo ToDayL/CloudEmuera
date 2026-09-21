@@ -17,6 +17,7 @@ using MinorShift.Emuera.Runtime.Config.JSON;
 using MinorShift.Emuera.Runtime.Utils;
 using MinorShift.Emuera.UI;
 using MinorShift.Emuera.UI.Game.Image;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace CloudEmuera.EmueraRuntime.UpstreamHeadless;
 
@@ -113,6 +114,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
 
     public async Task<bool> InitializeAsync(RuntimePaths paths)
     {
+        var initializationClock = Stopwatch.StartNew();
         ArgumentNullException.ThrowIfNull(paths);
         paths.ValidateSessionRoot();
         if (paths.SaveLayout == RuntimeSaveLayout.SavDirectory && HasRootNativeSave(paths.SessionRoot))
@@ -120,10 +122,18 @@ public sealed class UpstreamRuntimeSession : IDisposable
             throw new UpstreamSaveLayoutConflictException();
         }
 
+        long phaseStarted = initializationClock.ElapsedMilliseconds;
         await RuntimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         ownsGate = true;
         runtimeGateAcquired?.Invoke();
         cancellationToken.ThrowIfCancellationRequested();
+        debugTrace = RuntimeDebugTrace.CreateWhenEnabled(paths.SessionRoot);
+        debugTrace?.Activate();
+        RecordInitializationPhase("runtime_gate", phaseStarted, initializationClock);
+
+        phaseStarted = initializationClock.ElapsedMilliseconds;
+        RuntimeDebugTrace.RecordInitializationPhase(
+            "runtime_initialize", "configuration", "started", phaseStarted);
         HeadlessPathResolver.Configure(paths.SessionRoot);
         MinorShift.Emuera.Program.ConfigureHeadless(
             paths.SessionRoot,
@@ -189,13 +199,26 @@ public sealed class UpstreamRuntimeSession : IDisposable
         JSONConfig.Load();
         FunctionIdentifier.ReloadJsonConfiguredInstructions();
         HeadlessAudioBridge.Configure(audioPort, cancellationToken);
-        debugTrace = RuntimeDebugTrace.CreateWhenEnabled(paths.SessionRoot);
-        debugTrace?.Activate();
         debugTrace?.RecordRuntimeWidth(configuredWidth, browserWidth, Config.WindowX, Config.DrawableWidth);
+        RecordInitializationPhase("configuration", phaseStarted, initializationClock);
+
+        phaseStarted = initializationClock.ElapsedMilliseconds;
+        RuntimeDebugTrace.RecordInitializationPhase(
+            "runtime_initialize", "preload_erb", "started", phaseStarted);
         Preload.Clear();
         await Preload.Load(MinorShift.Emuera.Program.ErbDir, cancellationToken).ConfigureAwait(false);
+        RecordInitializationPhase("preload_erb", phaseStarted, initializationClock);
+
+        phaseStarted = initializationClock.ElapsedMilliseconds;
+        RuntimeDebugTrace.RecordInitializationPhase(
+            "runtime_initialize", "preload_csv", "started", phaseStarted);
         await Preload.Load(MinorShift.Emuera.Program.CsvDir, cancellationToken).ConfigureAwait(false);
+        RecordInitializationPhase("preload_csv", phaseStarted, initializationClock);
         cancellationToken.ThrowIfCancellationRequested();
+
+        phaseStarted = initializationClock.ElapsedMilliseconds;
+        RuntimeDebugTrace.RecordInitializationPhase(
+            "runtime_initialize", "process_initialize", "started", phaseStarted);
         console = new EmueraConsole(adapter, clock, cancellationToken, imageResolver, Config.WindowX, Config.WindowY,
             fontFaceId, fontCatalogDigest, webFontAssetDigest, convertBackslashToYen);
         console.BeginInitializationOutput();
@@ -203,6 +226,7 @@ public sealed class UpstreamRuntimeSession : IDisposable
         process.SetHeadlessCancellationToken(cancellationToken);
         MinorShift.Emuera.GlobalStatic.Process = process;
         bool initialized = await process.Initialize(null).ConfigureAwait(false);
+        RecordInitializationPhase("process_initialize", phaseStarted, initializationClock);
         cancellationToken.ThrowIfCancellationRequested();
         if (!initialized || process.HasScriptInitializationError)
         {
@@ -223,7 +247,24 @@ public sealed class UpstreamRuntimeSession : IDisposable
         // error state are the authoritative initialization signals; runtime
         // fatality during execution is represented by HasFatalError.
         initializationMessageCount = console.RuntimeMessages.Count;
+        // Initialization lines use the same 16 ms display cadence as other
+        // transient output. Publish the final accumulated state before the
+        // Worker drains it and commits the successful Ready clear.
+        console.FlushInitializationOutput();
+        RuntimeDebugTrace.RecordInitializationPhase(
+            "runtime_initialize",
+            "total",
+            "completed",
+            initializationClock.ElapsedMilliseconds,
+            initializationClock.ElapsedMilliseconds);
         return initialized;
+    }
+
+    private static void RecordInitializationPhase(string phase, long started, Stopwatch clock)
+    {
+        long elapsed = clock.ElapsedMilliseconds;
+        RuntimeDebugTrace.RecordInitializationPhase(
+            "runtime_initialize", phase, "completed", elapsed, elapsed - started);
     }
 
     public void CompleteInitializationOutput() => console?.CompleteInitializationOutput();

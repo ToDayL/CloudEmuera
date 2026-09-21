@@ -227,6 +227,24 @@ public sealed class WorkerProcessIsolationTests
         Assert.True(session.OutputHub.Statistics.SnapshotSequence >= ready.Ready.LastOutputSequence);
         await session.StopAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, await session.WaitForExitAsync(TimeSpan.FromSeconds(5)));
+
+        string startupLogPath = Path.Combine(
+            Path.GetDirectoryName(fixture.SessionRoot)!,
+            "metadata",
+            WorkerStartupTimingLog.FileName);
+        JsonElement[] startupTimings = File.ReadLines(startupLogPath)
+            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+            .ToArray();
+        Assert.All(startupTimings, entry => Assert.Equal(1UL, entry.GetProperty("workerEpoch").GetUInt64()));
+        Assert.Contains(startupTimings, entry =>
+            entry.GetProperty("phase").GetString() == "host_load_sprites_started");
+        Assert.Contains(startupTimings, entry =>
+            entry.GetProperty("phase").GetString() == "host_load_sprites_completed" &&
+            entry.GetProperty("durationMilliseconds").GetInt64() >= 0);
+        JsonElement total = Assert.Single(startupTimings, entry =>
+            entry.GetProperty("phase").GetString() == "total_completed");
+        Assert.True(total.GetProperty("framesSent").GetInt64() >= 1);
+        Assert.True(total.GetProperty("snapshotsSent").GetInt64() >= 1);
     }
 
     [Fact]

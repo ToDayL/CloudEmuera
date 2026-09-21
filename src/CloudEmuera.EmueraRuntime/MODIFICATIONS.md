@@ -1130,6 +1130,28 @@ requirements/ADR references, and verification commands.
   fatal-only player projection.
 - The Worker output pump now runs during initialization and serializes its
   final startup drain and clear drain before `WorkerReady`.
+- The opt-in internal runtime trace records started/completed timings for the
+  runtime gate, configuration, ERB/CSV preload, resources, constant data,
+  ERH/ERB parsing, and system-process construction. Worker lifecycle logs
+  separately record configuration inspection, the pre-Session Sprite scan,
+  setup, initialization, startup drains, Ready publication, and the number of
+  display frames/snapshots sent before Ready. These records never enter the
+  player Console.
 - Verification covers visible startup output, successful clear, retained
   failure output, and a real Worker process ordering the startup frame before
   the Ready sequence.
+
+## 2026-09-21 — Bound startup image scans and display refreshes
+
+- `Headless/EmueraRuntimeHost.cs` now caches successful image metadata by the
+  exact controlled logical path for one host initialization. This mirrors the
+  pinned `AppContents.resourceDic` source-image reuse without sharing mutable
+  image state across Workers; many cropped Sprite declarations no longer
+  repeat filesystem containment checks and image-header reads.
+- Initialization system lines, warnings, and temporary progress lines now use
+  the existing 16 ms Runtime display-refresh cadence. The Runtime forces one
+  final startup commit after initialization so the Worker can drain the full
+  tail before the successful Ready clear; failed initialization still commits
+  its complete working state through the failure boundary.
+- Verification covers one metadata load for several Sprite declarations and
+  coalesced startup lines with an explicit final-tail flush.

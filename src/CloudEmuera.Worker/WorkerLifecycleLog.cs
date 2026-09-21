@@ -29,6 +29,12 @@ internal static class WorkerLifecycleLog
             new EventId(1004, "WorkerRuntimeWidth"),
             "worker_event=runtime_width_received sessionId={SessionId} workerId={WorkerId} workerEpoch={WorkerEpoch} browserWidth={BrowserWidth}");
 
+    private static readonly Action<ILogger, string, ulong, string, long, long, long, Exception?> StartupTiming =
+        LoggerMessage.Define<string, ulong, string, long, long, long>(
+            LogLevel.Information,
+            new EventId(1005, "WorkerStartupTiming"),
+            "worker_event=startup_timing sessionId={SessionId} workerEpoch={WorkerEpoch} phase={Phase} durationMs={DurationMs} framesSent={FramesSent} snapshotsSent={SnapshotsSent}");
+
     public static void Write(
         ILogger logger,
         WorkerBinding binding,
@@ -63,6 +69,33 @@ internal static class WorkerLifecycleLog
 
     public static void WriteRuntimeWidth(ILogger logger, WorkerBinding binding, int browserWidth) =>
         RuntimeWidth(logger, binding.SessionId, binding.WorkerId, binding.WorkerEpoch, browserWidth, null);
+
+    public static void WriteStartupTiming(
+        ILogger logger,
+        WorkerBinding binding,
+        WorkerBootstrapDocument bootstrap,
+        string phase,
+        long durationMilliseconds,
+        long framesSent,
+        long snapshotsSent)
+    {
+        StartupTiming(
+            logger,
+            binding.SessionId,
+            binding.WorkerEpoch,
+            phase,
+            durationMilliseconds,
+            framesSent,
+            snapshotsSent,
+            null);
+        WorkerStartupTimingLog.Append(
+            bootstrap,
+            binding,
+            phase,
+            durationMilliseconds,
+            framesSent,
+            snapshotsSent);
+    }
 
     private static string SafeReasonCode(string? value)
     {

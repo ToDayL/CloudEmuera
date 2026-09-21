@@ -4,6 +4,7 @@ using System.Text;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
 using MinorShift.Emuera.Runtime.Utils;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace CloudEmuera.EmueraRuntime.Headless;
 
@@ -270,6 +271,8 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
+        ReportInitializationTiming("configuration_inspection", "started", 0);
+        var phaseClock = Stopwatch.StartNew();
         RuntimeFilePath configuration = new(RuntimeFileArea.Configuration, "emuera.config");
         if (!options.FileSystem.FileExists(configuration, cancellationToken))
         {
@@ -284,8 +287,12 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 throw new UpstreamSaveLayoutMismatchException(options.Paths.SaveLayout, actualLayout);
             }
         }
+        ReportInitializationTiming("configuration_inspection", "completed", phaseClock.ElapsedMilliseconds);
 
+        ReportInitializationTiming("load_sprites", "started", 0);
+        phaseClock.Restart();
         sprites = LoadSprites(cancellationToken);
+        ReportInitializationTiming("load_sprites", "completed", phaseClock.ElapsedMilliseconds);
         UpstreamRuntimeSession? session = null;
         try
         {
@@ -313,7 +320,10 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 options.WidthMode, options.CustomWidth,
                 options.FontFaceId, options.FontCatalogDigest, options.RuntimeFontPath, options.RuntimeFontFamilyName, options.WebFontAssetDigest,
                 options.ConvertBackslashToYen, options.FontSizeLineHeightMode, options.RandomSeed);
+            ReportInitializationTiming("upstream_session_initialize", "started", 0);
+            phaseClock.Restart();
             bool initialized = session.InitializeAsync(options.Paths).GetAwaiter().GetResult();
+            ReportInitializationTiming("upstream_session_initialize", "completed", phaseClock.ElapsedMilliseconds);
             cancellationToken.ThrowIfCancellationRequested();
             if (!initialized)
             {
@@ -330,6 +340,18 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         }
     }
 
+    private void ReportInitializationTiming(string phase, string state, long durationMilliseconds)
+    {
+        try
+        {
+            options.InitializationTimingSink?.Invoke(new EmueraInitializationTiming(phase, state, durationMilliseconds));
+        }
+        catch
+        {
+            // Internal observability must never change runtime behavior.
+        }
+    }
+
     private ReadOnlyDictionary<string, SpriteDefinition> LoadSprites(CancellationToken cancellationToken)
     {
         RuntimeFilePath resources = new(RuntimeFileArea.GameContent, "resources");
@@ -339,6 +361,13 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         }
 
         var result = new Dictionary<string, SpriteDefinition>(StringComparer.OrdinalIgnoreCase);
+        // A resource CSV commonly declares many cropped Sprites backed by the
+        // same source image. Match the upstream AppContents resourceDic
+        // behavior within this host initialization: validate and read image
+        // metadata once per exact controlled logical path, then reuse it for
+        // every Sprite declaration. Keep the cache local so Session lifetimes
+        // and filesystem boundaries cannot leak across Workers.
+        var imageMetadata = new Dictionary<RuntimeFilePath, RuntimeImageMetadata>();
         foreach (RuntimeFilePath spriteCsv in EnumerateResourceCsvFiles(resources, cancellationToken))
         {
             string? currentAnimationName = null;
@@ -413,7 +442,15 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 RuntimeImageMetadata metadata;
                 try
                 {
-                    metadata = options.ImagePort.Load(imagePath, cancellationToken);
+                    if (imageMetadata.TryGetValue(imagePath, out RuntimeImageMetadata? cachedMetadata))
+                    {
+                        metadata = cachedMetadata ?? throw new InvalidDataException("The Sprite metadata cache contains an invalid entry.");
+                    }
+                    else
+                    {
+                        metadata = options.ImagePort.Load(imagePath, cancellationToken);
+                        imageMetadata.Add(imagePath, metadata);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
