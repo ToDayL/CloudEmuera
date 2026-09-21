@@ -1118,3 +1118,18 @@ requirements/ADR references, and verification commands.
   redraw operations remain working-only until their existing prompt commit.
 - Added RuntimeAdapter regressions for promptless explicit refresh and stable
   temporary-line replacement.
+
+## 2026-09-21 — Show transient upstream startup output
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now projects upstream loading
+  reports, system lines, and warnings into the same structured Console while
+  the Runtime is initializing.
+- Successful initialization atomically clears those temporary lines before
+  Worker Ready; failed initialization retains the last committed startup
+  frame for diagnosis. Runtime execution diagnostics keep their existing
+  fatal-only player projection.
+- The Worker output pump now runs during initialization and serializes its
+  final startup drain and clear drain before `WorkerReady`.
+- Verification covers visible startup output, successful clear, retained
+  failure output, and a real Worker process ordering the startup frame before
+  the Ready sequence.

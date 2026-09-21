@@ -106,6 +106,7 @@ internal sealed class EmueraConsole
     // an unrelated browser input.
     private bool inputMessageSkipActive;
     private bool outputEnabled;
+    private bool initializationOutputActive;
     private readonly Dictionary<int, long> dirtyTooltipGraphics = [];
     private readonly HashSet<string> tooltipProjectionWarnings = new(StringComparer.Ordinal);
     private bool tooltipProjectionActive;
@@ -172,6 +173,24 @@ internal sealed class EmueraConsole
     public bool IsRunning => isRunning;
     public bool HasFatalError => hasFatalError;
     public void SetCancellationToken(CancellationToken value) => cancellationToken = value;
+    public void BeginInitializationOutput()
+    {
+        initializationOutputActive = true;
+        BeginExecutionOutput();
+    }
+
+    public void CompleteInitializationOutput()
+    {
+        if (!initializationOutputActive)
+            return;
+
+        initializationOutputActive = false;
+        pendingDiagnosticLines.Clear();
+        ClearText();
+        if (adapter is StructuredGameConsole structured)
+            structured.RequestDisplayRefresh();
+    }
+
     public void BeginExecutionOutput()
     {
         outputEnabled = true;
@@ -244,19 +263,40 @@ internal sealed class EmueraConsole
     // reports) must not be treated as script diagnostics. Warnings are recorded
     // separately, while PrintError remains an output channel rather than a
     // fatality transition. Initialization's bool result and HasFatalError are
-    // the authoritative error signals. Neither warnings nor recoverable
-    // messages are written into the player's console transcript; fatal error
-    // reporting flushes its diagnostics.
-    public void PrintSystemLine(string value) => RecordSystemMessage(value);
+    // the authoritative error signals. During initialization the pinned
+    // upstream loading report and warnings are shown as transient committed
+    // output and cleared before Ready. During execution they remain outside
+    // the player's transcript unless fatal error reporting flushes them.
+    public void PrintSystemLine(string value)
+    {
+        RecordSystemMessage(value);
+        if (initializationOutputActive)
+            EmitInitializationLine(value, warning: false);
+    }
     public void PrintError(string value)
     {
         RecordMessage(value);
-        QueueDiagnosticLine(value);
+        if (initializationOutputActive)
+            EmitInitializationLine(value, warning: true);
+        else
+            QueueDiagnosticLine(value);
     }
-    public void PrintWarning(string value, ScriptPosition? position, int level) =>
-        RecordWarning(FormatDiagnostic(value, position));
-    public void PrintErrorButton(string value, ScriptPosition? position, int level = 0) =>
-        RecordMessageAndQueue(FormatDiagnostic(value, position));
+    public void PrintWarning(string value, ScriptPosition? position, int level)
+    {
+        string diagnostic = FormatDiagnostic(value, position);
+        RecordWarning(diagnostic);
+        if (initializationOutputActive)
+            EmitInitializationLine(diagnostic, warning: true);
+    }
+    public void PrintErrorButton(string value, ScriptPosition? position, int level = 0)
+    {
+        string diagnostic = FormatDiagnostic(value, position);
+        RecordMessage(diagnostic);
+        if (initializationOutputActive)
+            EmitInitializationLine(diagnostic, warning: true);
+        else
+            QueueDiagnosticLine(diagnostic);
+    }
     public void PrintTemporaryLine(string value)
     {
         EmitLine(value, temporary: true);
@@ -2878,12 +2918,6 @@ internal sealed class EmueraConsole
             runtimeMessages.Add(value.Trim());
     }
 
-    private void RecordMessageAndQueue(string value)
-    {
-        RecordMessage(value);
-        QueueDiagnosticLine(value);
-    }
-
     private void RecordWarning(string value)
     {
         if (!string.IsNullOrWhiteSpace(value))
@@ -2916,6 +2950,16 @@ internal sealed class EmueraConsole
     {
         if (outputEnabled)
             EmitLine($"⚠ {value}");
+    }
+
+    private void EmitInitializationLine(string value, bool warning)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        EmitLine(warning ? $"⚠ {value.Trim()}" : value.Trim());
+        if (adapter is StructuredGameConsole structured)
+            structured.RequestDisplayRefresh();
     }
 
     private void RecordSystemMessage(string value)

@@ -49,7 +49,7 @@ export function SessionsPage() {
     setActionId(session.id); setMessage(null);
     try {
       const result = operation === "open" ? await openSession(session.id) : await closeSession(session.id);
-      const settled = await waitForSession(session.id, operation === "open" ? new Set<SessionState>(["RUNNING", "CRASHED"]) : new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === (operation === "open" ? "RUNNING" : "CLOSED") ? 1 : null, signal: controller.signal });
+      const settled = await waitForSession(session.id, operation === "open" ? new Set<SessionState>(["STARTING", "RUNNING", "CRASHED"]) : new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: result.state === (operation === "open" ? "RUNNING" : "CLOSED") ? 1 : null, signal: controller.signal });
       if (operation === "open" && settled.state === "CRASHED") throw new Error(`${t("sessions.operationFailed")}：${t("sessions.state.CRASHED")}`);
       await query.refetch();
       if (operation === "open") navigate(`/sessions/${session.id}`);
@@ -91,12 +91,13 @@ function SessionRow({ session, busy, onLifecycle, onDelete }: { session: Session
   const { t } = useTranslation();
   const color = ["coral", "violet", "amber", "blue", "green"][session.id.charCodeAt(0) % 5];
   const canOpen = session.state === "CLOSED" || session.state === "CRASHED";
+  const canEnterConsole = session.state === "STARTING" || session.state === "RUNNING";
   return <article className="session-row">
     <span className={`session-art ${color}`}>{session.name.slice(0, 1)}</span>
     <div className="session-main"><div><h2>{session.name}</h2><p>{session.game.name} <span>·</span> {shortDigest(session.sourceContentDigest)}</p></div><div className="session-badges"><span className={`status-pill ${session.state.toLowerCase()}`}><i/>{stateLabel(session.state)}</span>{session.waitingForInput && session.state === "RUNNING" && <span className="status-pill waiting"><i/>{t("sessions.waitingInput")}</span>}</div></div>
     <div className="session-meta"><span>{t("sessions.lastActive")}</span><strong>{formatDateTime(session.lastActivityAt)}</strong></div>
     <div className="session-meta"><span>{t("sessions.createdAt")}</span><strong>{formatDateTime(session.createdAt)}</strong></div>
-    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? t("sessions.starting") : t("sessions.continue")}</button> : session.state === "RUNNING" ? <Link className="play-button" to={`/sessions/${session.id}`}>{t("sessions.continue")}</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>{t("sessions.close")}</button>}{canOpen && <button className="text-button danger" onClick={onDelete} disabled={busy}>{t("sessions.delete")}</button>}<Link className="text-button" to={`/sessions/${session.id}/configuration`}>{t("sessions.configure")}</Link><Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>{t("sessions.saves")}</Link></div>
+    <div className="session-row-actions">{canOpen ? <button className="play-button" onClick={() => onLifecycle("open")} disabled={busy}>{busy ? t("sessions.starting") : t("sessions.continue")}</button> : canEnterConsole ? <Link className="play-button" to={`/sessions/${session.id}`}>{t("sessions.continue")}</Link> : <button className="secondary-button" disabled>{stateLabel(session.state)}</button>}{session.state === "RUNNING" && <button className="text-button" onClick={() => onLifecycle("close")} disabled={busy}>{t("sessions.close")}</button>}{canOpen && <button className="text-button danger" onClick={onDelete} disabled={busy}>{t("sessions.delete")}</button>}<Link className="text-button" to={`/sessions/${session.id}/configuration`}>{t("sessions.configure")}</Link><Link className="text-button" to={`/saves?session=${encodeURIComponent(session.id)}`}>{t("sessions.saves")}</Link></div>
   </article>;
 }
 
@@ -156,9 +157,9 @@ export function NewSessionPage() {
       // is durable and continues after the initial HTTP 202 response.
       const ready = created.state === "CLOSED" || created.state === "CRASHED" ? created : await waitForSession(created.id, new Set<SessionState>(["CLOSED", "CRASHED"]), { attempts: null, signal: controller.signal });
       const opened = await openSession(ready.id);
-      const running = opened.state === "RUNNING" ? opened : await waitForSession(ready.id, new Set<SessionState>(["RUNNING", "CRASHED"]), { attempts: null, signal: controller.signal });
-      if (running.state === "CRASHED") throw new Error(`${t("sessions.operationFailed")}：${t("sessions.state.CRASHED")}`);
-      navigate(`/sessions/${running.id}`);
+      const started = opened.state === "STARTING" || opened.state === "RUNNING" || opened.state === "CRASHED" ? opened : await waitForSession(ready.id, new Set<SessionState>(["STARTING", "RUNNING", "CRASHED"]), { attempts: null, signal: controller.signal });
+      if (started.state === "CRASHED") throw new Error(`${t("sessions.operationFailed")}：${t("sessions.state.CRASHED")}`);
+      navigate(`/sessions/${started.id}`);
     } catch (cause) { if (!controller.signal.aborted) setError(errorMessage(cause)); }
     finally {
       if (waitController.current === controller) waitController.current = null;

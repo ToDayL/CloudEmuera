@@ -3453,6 +3453,45 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void InitializationOutputUsesThePlayerConsoleUntilReadyThenClearsAtomically()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+
+        headless.BeginInitializationOutput();
+        headless.PrintSystemLine("读取 ERB...");
+        headless.PrintWarning("启动阶段脚本警告", null, 2);
+        headless.PrintError("非コメント行数:42");
+
+        string startupTranscript = RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes);
+        Assert.Contains("读取 ERB...", startupTranscript, StringComparison.Ordinal);
+        Assert.Contains("⚠ 启动阶段脚本警告", startupTranscript, StringComparison.Ordinal);
+        Assert.Contains("⚠ 非コメント行数:42", startupTranscript, StringComparison.Ordinal);
+
+        headless.CompleteInitializationOutput();
+
+        Assert.Empty(console.CommittedSnapshot!.VisibleNodes);
+        Assert.Equal(DisplayCommitReason.ExplicitRefresh, console.CurrentDisplayCommit!.Reason);
+        Assert.Contains(headless.RuntimeWarnings, warning => warning.Contains("启动阶段脚本警告", StringComparison.Ordinal));
+        Assert.Contains(headless.RuntimeMessages, message => message.Contains("非コメント行数:42", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void FailedInitializationRetainsVisibleStartupOutput()
+    {
+        var console = new StructuredGameConsole();
+        var headless = new EmueraConsole(console, console.Clock, CancellationToken.None);
+
+        headless.BeginInitializationOutput();
+        headless.PrintWarning("不能继续的启动警告", null, 3);
+
+        string transcript = RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes);
+        Assert.Contains("⚠ 不能继续的启动警告", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void PrintedErrorDoesNotBecomeFatalUntilInterpreterTransitionsToError()
     {
         var console = new StructuredGameConsole();

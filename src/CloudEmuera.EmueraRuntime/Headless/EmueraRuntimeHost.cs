@@ -165,6 +165,8 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
             loaded = initializedRuntime.Session;
         }
 
+        loaded.CompleteInitializationOutput();
+
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetimeCancellation.Token);
         try
         {
@@ -227,6 +229,16 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
 
             AddDiagnostic("unsupported_runtime_capability", EmueraRuntimePhase.Media, exception.Message, true);
             return Result(EmueraRuntimeStatus.UnsupportedCapability);
+        }
+    }
+
+    public void CompleteInitializationOutput()
+    {
+        lock (sync)
+        {
+            if (state != HostState.Initialized || initializedRuntime is null)
+                throw new InvalidOperationException("The runtime must be initialized before startup output can be completed.");
+            initializedRuntime.Session.CompleteInitializationOutput();
         }
     }
 

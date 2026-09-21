@@ -80,6 +80,10 @@ export function ConsolePage() {
     if (!sessionId) return;
     endedSessionRef.current = null;
     setStream(createSessionStoreState(sessionId));
+  }, [sessionId]);
+  const realtimeEligible = session.data?.state === "STARTING" || session.data?.state === "RUNNING" || stream.workerEpoch !== null;
+  useEffect(() => {
+    if (!sessionId || !realtimeEligible) return;
     return manager.subscribe(sessionId, next => {
       setStream(next);
       if (next.phase === "ended" && endedSessionRef.current !== sessionId) {
@@ -89,7 +93,7 @@ export function ConsolePage() {
         void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
       }
     });
-  }, [manager, queryClient, sessionId]);
+  }, [manager, queryClient, realtimeEligible, sessionId]);
   useEffect(() => {
     if (stream.workerEpoch !== null) media.current?.reset();
   }, [stream.workerEpoch]);
