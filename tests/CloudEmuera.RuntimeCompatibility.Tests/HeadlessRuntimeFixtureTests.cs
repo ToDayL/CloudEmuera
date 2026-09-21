@@ -92,38 +92,6 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
-    public async Task InitializationTimingSinkReportsHostPhasesWithoutPlayerOutput()
-    {
-        using var fixture = RuntimeHostFixture.Create("@SYSTEM_TITLE\nQUIT\n");
-        var timings = new List<EmueraInitializationTiming>();
-        await using EmueraRuntimeHost host = fixture.CreateHost(initializationTimingSink: timings.Add);
-
-        EmueraRuntimeResult initialized = await host.InitializeAsync();
-
-        Assert.Equal(EmueraRuntimeStatus.Completed, initialized.Status);
-        Assert.Collection(
-            timings,
-            item => AssertTiming(item, "configuration_inspection", "started"),
-            item => AssertTiming(item, "configuration_inspection", "completed"),
-            item => AssertTiming(item, "load_sprites", "started"),
-            item => AssertTiming(item, "load_sprites", "completed"),
-            item => AssertTiming(item, "upstream_session_initialize", "started"),
-            item => AssertTiming(item, "upstream_session_initialize", "completed"));
-        Assert.DoesNotContain(
-            "load_sprites",
-            RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes),
-            StringComparison.Ordinal);
-    }
-
-    private static void AssertTiming(EmueraInitializationTiming timing, string phase, string state)
-    {
-        Assert.Equal(phase, timing.Phase);
-        Assert.Equal(state, timing.State);
-        Assert.True(timing.DurationMilliseconds >= 0);
-    }
-
-    [Fact]
-    [Trait("Category", "RuntimeBridge")]
     public void EtxDisplaySentinelIsRemovedBeforeStructuredTextValidation()
     {
         // PLAY-001/PLAY-014: GET_BETWEEN_STRING uses U+0003 as its
@@ -5157,7 +5125,6 @@ public sealed class HeadlessRuntimeFixtureTests
             string webFontAssetDigest = "",
             bool convertBackslashToYen = true,
             RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override,
-            Action<EmueraInitializationTiming>? initializationTimingSink = null,
             IRuntimeImagePort? imagePort = null)
             => CreateHost(
                 Console,
@@ -5177,7 +5144,6 @@ public sealed class HeadlessRuntimeFixtureTests
                 webFontAssetDigest,
                 convertBackslashToYen,
                 fontSizeLineHeightMode,
-                initializationTimingSink,
                 imagePort);
 
         public EmueraRuntimeHost CreateHost(
@@ -5198,7 +5164,6 @@ public sealed class HeadlessRuntimeFixtureTests
             string webFontAssetDigest = "",
             bool convertBackslashToYen = true,
             RuntimeFontSizeLineHeightMode fontSizeLineHeightMode = RuntimeFontSizeLineHeightMode.Override,
-            Action<EmueraInitializationTiming>? initializationTimingSink = null,
             IRuntimeImagePort? imagePort = null)
         {
             var fileSystem = new LocalRuntimeFileSystem(Paths);
@@ -5212,7 +5177,6 @@ public sealed class HeadlessRuntimeFixtureTests
                 EmueraCompatibilityProfiles.V18Compatible,
                 initializationDeadline ?? TimeSpan.FromSeconds(5),
                 runDeadline ?? TimeSpan.FromSeconds(5),
-                initializationTimingSink: initializationTimingSink,
                 browserWidth: browserWidth,
                 fontSize: fontSize,
                 lineHeight: lineHeight,

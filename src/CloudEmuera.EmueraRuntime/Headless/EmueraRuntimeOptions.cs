@@ -11,11 +11,6 @@ public static class EmueraCompatibilityProfiles
         value is V18Compatible or EmEeCurrent;
 }
 
-public sealed record EmueraInitializationTiming(
-    string Phase,
-    string State,
-    long DurationMilliseconds);
-
 public sealed record EmueraRuntimeOptions
 {
     public EmueraRuntimeOptions(
@@ -29,7 +24,6 @@ public sealed record EmueraRuntimeOptions
         TimeSpan initializationDeadline,
         TimeSpan runDeadline,
         Action<EmueraRuntimeDiagnostic>? diagnosticSink = null,
-        Action<EmueraInitializationTiming>? initializationTimingSink = null,
         int browserWidth = 0, int fontSize = 18, int lineHeight = 19,
         RuntimeWidthMode widthMode = RuntimeWidthMode.Adaptive, int? customWidth = null,
         string fontFaceId = "sarasa-fixed-sc-1.0.40-regular", string fontCatalogDigest = "",
@@ -55,7 +49,6 @@ public sealed record EmueraRuntimeOptions
         InitializationDeadline = initializationDeadline;
         RunDeadline = runDeadline;
         DiagnosticSink = diagnosticSink;
-        InitializationTimingSink = initializationTimingSink;
         if (browserWidth < 0 || browserWidth > 16_384)
             throw new ArgumentOutOfRangeException(nameof(browserWidth));
         BrowserWidth = browserWidth;
@@ -96,7 +89,6 @@ public sealed record EmueraRuntimeOptions
     public TimeSpan InitializationDeadline { get; }
     public TimeSpan RunDeadline { get; }
     public Action<EmueraRuntimeDiagnostic>? DiagnosticSink { get; }
-    public Action<EmueraInitializationTiming>? InitializationTimingSink { get; }
     public int BrowserWidth { get; }
     public int FontSize { get; }
     public int LineHeight { get; }

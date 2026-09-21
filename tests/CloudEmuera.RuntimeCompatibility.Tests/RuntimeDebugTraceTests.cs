@@ -24,8 +24,6 @@ public sealed class RuntimeDebugTraceTests
             Environment.SetEnvironmentVariable(RuntimeDebugTrace.EnvironmentVariable, "1");
             using RuntimeDebugTrace trace = Assert.IsType<RuntimeDebugTrace>(RuntimeDebugTrace.CreateWhenEnabled(sessionRoot));
             trace.Activate();
-            RuntimeDebugTrace.RecordInitializationPhase(
-                "runtime_initialize", "preload_erb", "completed", elapsedMilliseconds: 150, durationMilliseconds: 125);
             RuntimeDebugTrace.RecordErbOutput(null, "PRINTFORMW", "waiting output", waitForInput: true);
             RuntimeDebugTrace.RecordErbWait(null, ConsoleInputType.EnterKey, stopMessageSkip: false);
             HeadlessKeyState.Reset();
@@ -85,13 +83,6 @@ public sealed class RuntimeDebugTraceTests
                 entry.GetProperty("waitForInput").GetBoolean());
             Assert.Contains(entries, entry => entry.GetProperty("eventType").GetString() == "erb_wait" &&
                 entry.GetProperty("inputType").GetString() == "EnterKey");
-            JsonElement initializationPhase = Assert.Single(entries, entry =>
-                entry.GetProperty("eventType").GetString() == "initialization_phase");
-            Assert.Equal("runtime_initialize", initializationPhase.GetProperty("scope").GetString());
-            Assert.Equal("preload_erb", initializationPhase.GetProperty("phase").GetString());
-            Assert.Equal("completed", initializationPhase.GetProperty("state").GetString());
-            Assert.Equal(150, initializationPhase.GetProperty("elapsedMilliseconds").GetInt64());
-            Assert.Equal(125, initializationPhase.GetProperty("durationMilliseconds").GetInt64());
             JsonElement hostCompatibility = Assert.Single(entries, entry =>
                 entry.GetProperty("eventType").GetString() == "host_compatibility");
             Assert.Equal("getkey", hostCompatibility.GetProperty("capability").GetString());

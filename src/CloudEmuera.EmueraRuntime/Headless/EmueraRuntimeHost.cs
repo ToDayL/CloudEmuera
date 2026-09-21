@@ -4,7 +4,6 @@ using System.Text;
 using CloudEmuera.EmueraRuntime.UpstreamHeadless;
 using CloudEmuera.RuntimeAdapter;
 using MinorShift.Emuera.Runtime.Utils;
-using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace CloudEmuera.EmueraRuntime.Headless;
 
@@ -271,8 +270,6 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-        ReportInitializationTiming("configuration_inspection", "started", 0);
-        var phaseClock = Stopwatch.StartNew();
         RuntimeFilePath configuration = new(RuntimeFileArea.Configuration, "emuera.config");
         if (!options.FileSystem.FileExists(configuration, cancellationToken))
         {
@@ -287,12 +284,8 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 throw new UpstreamSaveLayoutMismatchException(options.Paths.SaveLayout, actualLayout);
             }
         }
-        ReportInitializationTiming("configuration_inspection", "completed", phaseClock.ElapsedMilliseconds);
 
-        ReportInitializationTiming("load_sprites", "started", 0);
-        phaseClock.Restart();
         sprites = LoadSprites(cancellationToken);
-        ReportInitializationTiming("load_sprites", "completed", phaseClock.ElapsedMilliseconds);
         UpstreamRuntimeSession? session = null;
         try
         {
@@ -320,10 +313,7 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
                 options.WidthMode, options.CustomWidth,
                 options.FontFaceId, options.FontCatalogDigest, options.RuntimeFontPath, options.RuntimeFontFamilyName, options.WebFontAssetDigest,
                 options.ConvertBackslashToYen, options.FontSizeLineHeightMode, options.RandomSeed);
-            ReportInitializationTiming("upstream_session_initialize", "started", 0);
-            phaseClock.Restart();
             bool initialized = session.InitializeAsync(options.Paths).GetAwaiter().GetResult();
-            ReportInitializationTiming("upstream_session_initialize", "completed", phaseClock.ElapsedMilliseconds);
             cancellationToken.ThrowIfCancellationRequested();
             if (!initialized)
             {
@@ -337,18 +327,6 @@ public sealed class EmueraRuntimeHost : IDisposable, IAsyncDisposable
         {
             session?.Dispose();
             throw;
-        }
-    }
-
-    private void ReportInitializationTiming(string phase, string state, long durationMilliseconds)
-    {
-        try
-        {
-            options.InitializationTimingSink?.Invoke(new EmueraInitializationTiming(phase, state, durationMilliseconds));
-        }
-        catch
-        {
-            // Internal observability must never change runtime behavior.
         }
     }
 

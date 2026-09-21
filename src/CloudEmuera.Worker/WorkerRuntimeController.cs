@@ -42,8 +42,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
     private readonly SemaphoreSlim outputSendGate = new(1, 1);
     private long lastSentCommittedSequence;
     private long lastSentCommittedFrameId;
-    private long startupDisplayFramesSent;
-    private long startupSnapshotsSent;
     private readonly TaskCompletionSource<bool> terminalAcknowledged =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool stoppedMessageSent;
@@ -393,10 +391,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
 
     private async Task InitializeAndRunAsync()
     {
-        var startupClock = Stopwatch.StartNew();
         try
         {
-            long phaseStarted = startupClock.ElapsedMilliseconds;
             RuntimeSaveLayout saveLayout = await ValidateSessionRootAsync().ConfigureAwait(false);
             RuntimePaths paths = RuntimePaths.ForExistingSessionRoot(bootstrap.SessionRoot, saveLayout);
             paths.ValidateSessionRoot();
@@ -425,14 +421,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 bootstrap.RuntimeExecutionTimeoutMilliseconds < 0
                     ? Timeout.InfiniteTimeSpan
                     : TimeSpan.FromMilliseconds(bootstrap.RuntimeExecutionTimeoutMilliseconds),
-                initializationTimingSink: timing => WorkerLifecycleLog.WriteStartupTiming(
-                    logger,
-                    binding,
-                    bootstrap,
-                    $"host_{timing.Phase}_{timing.State}",
-                    timing.DurationMilliseconds,
-                    Interlocked.Read(ref startupDisplayFramesSent),
-                    Interlocked.Read(ref startupSnapshotsSent)),
                 browserWidth: bootstrap.BrowserWidth,
                 fontSize: bootstrap.FontSize,
                 lineHeight: bootstrap.LineHeight,
@@ -449,15 +437,8 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             runtimeCancellation = new CancellationTokenSource();
             console.StateStore.InitializeSequence(bootstrap.InitialOutputSequence);
             outputTask = Task.Run(() => OutputPumpAsync(runtimeCancellation.Token), CancellationToken.None);
-            LogStartupTiming("worker_setup", "completed", phaseStarted, startupClock);
 
-            phaseStarted = startupClock.ElapsedMilliseconds;
             EmueraRuntimeResult initialized = await host.InitializeAsync(runtimeCancellation.Token).ConfigureAwait(false);
-            LogStartupTiming(
-                "runtime_initialize",
-                initialized.Status == EmueraRuntimeStatus.Completed ? "completed" : initialized.Status.ToString().ToLowerInvariant(),
-                phaseStarted,
-                startupClock);
             if (initialized.Status != EmueraRuntimeStatus.Completed)
             {
                 await CommitFailureFrameAndDrainAsync().ConfigureAwait(false);
@@ -471,14 +452,9 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
             // the successful initialization clear overtakes it. Serialize both
             // drains with the normal output pump, then publish Ready only after
             // the browser-facing mirror has received the empty execution frame.
-            phaseStarted = startupClock.ElapsedMilliseconds;
             _ = await SendPendingOutputAsync(console, runtimeCancellation.Token).ConfigureAwait(false);
-            LogStartupTiming("startup_output_drain", "completed", phaseStarted, startupClock);
-
-            phaseStarted = startupClock.ElapsedMilliseconds;
             host.CompleteInitializationOutput();
             _ = await SendPendingOutputAsync(console, runtimeCancellation.Token).ConfigureAwait(false);
-            LogStartupTiming("startup_clear_drain", "completed", phaseStarted, startupClock);
 
             debugTrace?.RuntimeConfigured(console.Snapshot.WindowMetadata, saveLayout, bootstrap.CompatibilityProfile);
 
@@ -494,7 +470,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 }
             }
 
-            phaseStarted = startupClock.ElapsedMilliseconds;
             await connection.SendControlAsync(new WorkerEnvelope
             {
                 ProtocolVersion = StructuredIpcProtocol.CurrentVersion,
@@ -515,15 +490,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                     CapabilitySetDigest = bootstrap.CapabilitySetDigest
                 }
             }).ConfigureAwait(false);
-            LogStartupTiming("ready_publish", "completed", phaseStarted, startupClock);
-            WorkerLifecycleLog.WriteStartupTiming(
-                logger,
-                binding,
-                bootstrap,
-                "total_completed",
-                startupClock.ElapsedMilliseconds,
-                Interlocked.Read(ref startupDisplayFramesSent),
-                Interlocked.Read(ref startupSnapshotsSent));
             LogLifecycle("runtime_ready");
 
             heartbeatTask = Task.Run(() => HeartbeatAsync(runtimeCancellation.Token), CancellationToken.None);
@@ -791,9 +757,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
                 throw new InvalidDataException("The committed display frame exceeds the IPC size limit.");
 
             await connection.SendDisplayAsync(envelope, cancellationToken).ConfigureAwait(false);
-            Interlocked.Increment(ref startupDisplayFramesSent);
-            if (displayFrame.RequiresSnapshot)
-                Interlocked.Increment(ref startupSnapshotsSent);
             Interlocked.Exchange(ref lastSentCommittedFrameId, commit.FrameId);
             Interlocked.Exchange(ref lastSentCommittedSequence, commit.CommitSequence);
             connection.SetLastOutputSequence(commit.CommitSequence);
@@ -1116,19 +1079,6 @@ internal sealed class WorkerRuntimeController : IAsyncDisposable
         string reason = "",
         LogLevel level = LogLevel.Information) =>
         WorkerLifecycleLog.Write(logger, binding, eventName, reason, level, bootstrap);
-
-    private void LogStartupTiming(string phase, string status, long started, Stopwatch clock)
-    {
-        long elapsed = clock.ElapsedMilliseconds;
-        WorkerLifecycleLog.WriteStartupTiming(
-            logger,
-            binding,
-            bootstrap,
-            $"{phase}_{status}",
-            elapsed - started,
-            Interlocked.Read(ref startupDisplayFramesSent),
-            Interlocked.Read(ref startupSnapshotsSent));
-    }
 
     private string SafeMessage(string message)
     {
