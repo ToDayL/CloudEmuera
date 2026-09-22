@@ -75,6 +75,7 @@ internal sealed class EmueraConsole
     private long lastDisplayRefreshTimestamp;
     private bool hasDisplayRefreshTimestamp;
     private const int DisplayRefreshIntervalMilliseconds = 16;
+    private ConsoleRedraw redraw = ConsoleRedraw.Normal;
     private string? htmlIslandDrawableId;
     private int redrawIntervalMilliseconds;
     private long canvasDrawableId;
@@ -209,7 +210,7 @@ internal sealed class EmueraConsole
     public bool bitmapCacheEnabledForNextLine;
     public bool RunERBFromMemory { get; set; }
     public Color bgColor;
-    public ConsoleRedraw Redraw => ConsoleRedraw.None;
+    public ConsoleRedraw Redraw => redraw;
     public DisplayLineAlignment Alignment { get; set; }
     public StringStyle StringStyle => stringStyle;
     public MainWindow Window { get; } = new();
@@ -300,11 +301,11 @@ internal sealed class EmueraConsole
     public void PrintTemporaryLine(string value)
     {
         EmitLine(value, temporary: true);
-        // The upstream temporary-line API is an intentional visible refresh
-        // point, typically used for progress/status displays. Ordinary PRINT
-        // and reprint operations remain working-only until a prompt boundary.
+        // The upstream temporary-line API is an intentional ordinary refresh
+        // point for progress/status displays. It follows the cadence and
+        // REDRAW gate; timed-input display updates use their explicit boundary.
         if (adapter is StructuredGameConsole structured)
-            RequestDisplayRefreshIfDue(structured, force: !initializationOutputActive);
+            RequestDisplayRefreshIfDue(structured, force: false);
     }
     public void PrintPlain(string value) => Print(value, lineEnd: false);
     public void PrintPlainWithSingleLineFix(string value) => EmitLine(value);
@@ -352,6 +353,8 @@ internal sealed class EmueraConsole
             FlushPendingLine();
         FlushDeferredReplacementDelete();
         ProjectTooltipResources();
+        if (adapter is StructuredGameConsole structured)
+            RequestDisplayRefreshIfDue(structured, force: forcePaint);
     }
     public void ClearText()
     {
@@ -1525,7 +1528,13 @@ internal sealed class EmueraConsole
             tooltip: tooltip is null ? null : DisplayTooltip(tooltip))));
         return true;
     }
-    public void SetRedraw(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
+    public void SetRedraw(params object[] args)
+    {
+        long value = args.Length == 0 ? 0 : Convert.ToInt64(args[0], CultureInfo.InvariantCulture);
+        redraw = (value & 1) == 0 ? ConsoleRedraw.None : ConsoleRedraw.Normal;
+        if ((value & 2) != 0)
+            RefreshStrings(forcePaint: true);
+    }
     public void setRedrawTimer(params object[] args) => redrawIntervalMilliseconds = args.Length == 0 ? 0 : Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
     public void ReloadErbFinished() { }
     // CloudEmuera ADR-0036: TOOLTIP_* is browser presentation state, not a
@@ -2623,6 +2632,8 @@ internal sealed class EmueraConsole
 
     private void RequestDisplayRefreshIfDue(StructuredGameConsole structured, bool force)
     {
+        if (!force && redraw == ConsoleRedraw.None)
+            return;
         long now = clock.GetTimestamp();
         bool due = !hasDisplayRefreshTimestamp ||
             clock.GetElapsedTime(lastDisplayRefreshTimestamp, now).TotalMilliseconds >= DisplayRefreshIntervalMilliseconds;

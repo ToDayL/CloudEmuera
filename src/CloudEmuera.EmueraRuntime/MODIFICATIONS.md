@@ -1148,3 +1148,21 @@ requirements/ADR references, and verification commands.
   its complete working state through the failure boundary.
 - Verification covers one metadata load for several Sprite declarations and
   coalesced startup lines with an explicit final-tail flush.
+
+## 2026-09-22 — Honor upstream REDRAW display gating
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` now keeps the pinned upstream
+  `ConsoleRedraw` state instead of reporting `None` permanently. `REDRAW 0/1`
+  disable/enable ordinary display promotion, while `REDRAW 2/3` preserve the
+  upstream bit semantics and force one refresh after updating that state.
+- Ordinary 16 ms Runtime-owned refreshes, including temporary-line refreshes,
+  now stop while redraw is disabled. Working structured operations and their
+  sequence numbers continue unchanged; forced refreshes, waiting prompts,
+  terminal commits, and the existing timed-input display boundary remain
+  observable.
+- `RefreshStrings(forcePaint)` now maps the upstream refresh request to the
+  structured display-commit boundary. `SETREDRAWTIMER` remains independent
+  and no longer aliases `REDRAW` state.
+- Verification covers direct `0/1/2/3` state and commit behavior, real ERB
+  `REDRAW` plus `CURRENTREDRAW()`, required prompt commits under `REDRAW 0`,
+  and the complete RuntimeCompatibility suite (194 passed).
