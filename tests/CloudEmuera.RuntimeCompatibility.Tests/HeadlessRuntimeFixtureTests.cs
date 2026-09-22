@@ -2481,6 +2481,80 @@ public sealed class HeadlessRuntimeFixtureTests
 
     [Fact]
     [Trait("Category", "RuntimeBridge")]
+    public void RedrawZeroSuppressesOrdinaryCommitsAndRedrawOneRestoresCadence()
+    {
+        // PLAY-002/ADR-0026: REDRAW controls browser-visible promotion, not
+        // working Console mutation. Normal mode must resume progressive output
+        // without waiting for the next input boundary.
+        var clock = new SteppingRuntimeClock(TimeSpan.FromMilliseconds(20));
+        var console = new StructuredGameConsole(clock);
+        var headless = new EmueraConsole(console, clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        headless.Print("old");
+        headless.NewLine();
+        DisplayCommit beforeRedraw = Assert.IsType<DisplayCommit>(console.CurrentDisplayCommit);
+
+        headless.SetRedraw(0L);
+        Assert.Equal(ConsoleRedraw.None, headless.Redraw);
+        headless.deleteLine(1);
+        headless.RefreshStrings(forcePaint: false);
+        headless.Print("new-1");
+        headless.NewLine();
+        headless.Print("new-2");
+        headless.NewLine();
+        headless.PrintTemporaryLine("temporary");
+
+        Assert.Equal(beforeRedraw.FrameId, console.CurrentDisplayCommit!.FrameId);
+        Assert.Equal("old", RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes));
+        Assert.Equal("new-1\nnew-2\ntemporary", RuntimeTranscriptProjector.Project(console.Snapshot.VisibleNodes));
+
+        headless.SetRedraw(1L);
+        Assert.Equal(ConsoleRedraw.Normal, headless.Redraw);
+        Assert.Equal(beforeRedraw.FrameId, console.CurrentDisplayCommit.FrameId);
+        headless.Print("progress");
+        headless.NewLine();
+
+        Assert.Equal(beforeRedraw.FrameId + 1, console.CurrentDisplayCommit.FrameId);
+        Assert.Equal("new-1\nnew-2\ntemporary\nprogress", RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes));
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public void RedrawTwoAndThreeForceCurrentWorkingStateWithUpstreamBitSemantics()
+    {
+        // REDRAW 2 keeps ordinary redraw disabled and paints once; REDRAW 3
+        // enables ordinary redraw and paints once. SETREDRAWTIMER is separate.
+        var clock = new SteppingRuntimeClock(TimeSpan.FromMilliseconds(20));
+        var console = new StructuredGameConsole(clock);
+        var headless = new EmueraConsole(console, clock, CancellationToken.None);
+        headless.BeginExecutionOutput();
+        long initialFrameId = console.CurrentDisplayCommit!.FrameId;
+
+        headless.SetRedraw(0L);
+        headless.Print("forced-while-disabled");
+        headless.NewLine();
+        headless.SetRedraw(2L);
+
+        Assert.Equal(ConsoleRedraw.None, headless.Redraw);
+        Assert.Equal(initialFrameId + 1, console.CurrentDisplayCommit.FrameId);
+        Assert.Equal("forced-while-disabled", RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes));
+
+        headless.Print("forced-while-enabled");
+        headless.NewLine();
+        headless.SetRedraw(3L);
+
+        Assert.Equal(ConsoleRedraw.Normal, headless.Redraw);
+        Assert.Equal(initialFrameId + 2, console.CurrentDisplayCommit.FrameId);
+        Assert.Equal(
+            "forced-while-disabled\nforced-while-enabled",
+            RuntimeTranscriptProjector.Project(console.CommittedSnapshot!.VisibleNodes));
+
+        headless.setRedrawTimer(250);
+        Assert.Equal(ConsoleRedraw.Normal, headless.Redraw);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
     public void HeadlessConsoleReusesLineIdentityForClearAndImmediateReprint()
     {
         var console = new StructuredGameConsole();
@@ -4655,6 +4729,57 @@ public sealed class HeadlessRuntimeFixtureTests
         Assert.Equal(["1000", "1001", "1002", "1003", "1004"], buttons.Select(button => button.Value));
         Assert.All(buttons, button => Assert.NotEmpty(button.Children));
         Assert.Contains("[1000] - YES", string.Concat(buttons.SelectMany(button => button.Children).Cast<TextNode>().Select(node => node.Text)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task RedrawInstructionUpdatesCurrentRedrawWithPinnedUpstreamSemantics()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTFORML INITIAL={CURRENTREDRAW()}\n" +
+            "REDRAW 0\n" +
+            "PRINTFORML DISABLED={CURRENTREDRAW()}\n" +
+            "REDRAW 1\n" +
+            "PRINTFORML ENABLED={CURRENTREDRAW()}\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.RunAsync()).Status);
+
+        string transcript = RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes);
+        Assert.Contains("INITIAL=1", transcript, StringComparison.Ordinal);
+        Assert.Contains("DISABLED=0", transcript, StringComparison.Ordinal);
+        Assert.Contains("ENABLED=1", transcript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    public async Task WaitingForInputCommitsTheFinalStateWhileRedrawIsDisabled()
+    {
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "REDRAW 0\n" +
+            "PRINTL FINAL-BEFORE-PROMPT\n" +
+            "INPUT\n" +
+            "QUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost();
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(() => fixture.Console.CurrentPrompt is not null, TimeSpan.FromSeconds(2)));
+
+        DisplayCommit commit = Assert.IsType<DisplayCommit>(fixture.Console.CurrentDisplayCommit);
+        Assert.Equal(DisplayCommitReason.WaitingForInput, commit.Reason);
+        Assert.Contains(
+            "FINAL-BEFORE-PROMPT",
+            RuntimeTranscriptProjector.Project(commit.Snapshot.VisibleNodes),
+            StringComparison.Ordinal);
+        Assert.Equal(
+            ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("redraw-disabled-input", "0")).Kind);
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await run).Status);
     }
 
     [Fact]
