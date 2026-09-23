@@ -58,6 +58,7 @@ listed here use application or Compose defaults; the repository template is
 | `CLOUDEMUERA_HTTP_PORT` | `28647` | Host port exposed by Docker. Change this if the host port is already in use. |
 | `CLOUDEMUERA_CONTAINER_PORT` | `28647` | Port used by the application inside the container; normally leave it unchanged. |
 | `CLOUDEMUERA_SECURITY_SECURE_COOKIES` | `false` | Set to `true` when an HTTPS reverse proxy is the public entrypoint. |
+| `CLOUDEMUERA_REALTIME_ALLOWED_ORIGINS` | unset | Optional comma-separated exact browser page origins allowed to open realtime WebSockets. When set, missing or nonmatching `Origin` headers are rejected. |
 | `CLOUDEMUERA_PRODUCTION_IMAGE` | `cloudemuera:local` | Optional image name when using a pre-built image instead of the local build. |
 | `CLOUDEMUERA_MEMORY_LIMIT` | `2g` | Optional whole-container memory limit. |
 | `CLOUDEMUERA_PIDS_LIMIT` | `512` | Optional whole-container process limit. |
@@ -130,10 +131,46 @@ CLOUDEMUERA_HTTP_BIND_ADDRESS=127.0.0.1
 CLOUDEMUERA_SECURITY_SECURE_COOKIES=true
 ```
 
-The reverse proxy must forward both HTTP requests and WebSocket upgrades. The application does not
-perform HTTPS redirects; the proxy owns TLS termination and public protocol policy. Change only
-`CLOUDEMUERA_HTTP_PORT` when the host port is occupied. Change `CLOUDEMUERA_CONTAINER_PORT` only
-when intentionally changing the application port inside the container.
+The reverse proxy must forward normal HTTP requests and WebSocket upgrades to the same application
+route. For WebSockets, it must use HTTP/1.1 upstream and pass the `Upgrade` and `Connection: upgrade`
+headers; otherwise the realtime connection at `/api/v1/realtime` will fail. For Nginx, put the
+`map` in the `http` block and the `location` in the HTTPS `server` block:
+
+```nginx
+# Inside the global http {} block:
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# Inside the HTTPS server {} block:
+location / {
+    proxy_pass http://127.0.0.1:28647;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 3600s;
+}
+```
+
+Keep the proxy's WebSocket idle timeout longer than the application's realtime heartbeat interval.
+For another proxy, enable its WebSocket support and preserve the HTTP/1.1 upgrade headers on this
+route. The application does not perform HTTPS redirects; the proxy owns TLS termination and public
+protocol policy.
+
+For an externally reachable deployment, we recommend setting the realtime Origin allowlist to the
+exact origins of the pages users actually visit. Add a comma-separated list to `docker/.env`,
+including each page's scheme, host, and any non-default port, for example
+`CLOUDEMUERA_REALTIME_ALLOWED_ORIGINS=https://play.example`. Do not use the upstream address or a
+URL path. When configured, requests with a missing or nonmatching `Origin` are rejected; leaving it
+unset preserves the unrestricted-Origin behavior. Origin is not authentication, so the existing
+login and resource authorization checks still apply. Recreate the service with
+`docker compose up -d` after changing `.env`.
+
+Change only `CLOUDEMUERA_HTTP_PORT` when the host port is occupied. Change
+`CLOUDEMUERA_CONTAINER_PORT` only when intentionally changing the application port inside the
+container.
 
 ## Start, stop, and update
 

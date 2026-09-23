@@ -39,19 +39,24 @@ public sealed class RealtimeEndpoint(
             return;
         }
 
-        RealtimeConnectionIdentity? identity = authorization.ReadIdentity(context.User);
-        if (identity is null)
-        {
-            await RejectAsync(context, StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "A live authentication session is required.").ConfigureAwait(false);
-            return;
-        }
-
         // Keep the existing P1-08 upgrade validator as the first scoped gate;
         // the connection-specific gate below also checks current user status
         // and password-change state without retaining its scoped services.
+        RealtimeConnectionIdentity? identity;
         await using (AsyncServiceScope scope = scopeFactory.CreateAsyncScope())
         {
             RealtimeUpgradeValidator validator = scope.ServiceProvider.GetRequiredService<RealtimeUpgradeValidator>();
+            if (!validator.IsOriginAllowed(context))
+            {
+                await RejectAsync(context, StatusCodes.Status403Forbidden, "ORIGIN_NOT_ALLOWED", "The request origin is not allowed.").ConfigureAwait(false);
+                return;
+            }
+            identity = authorization.ReadIdentity(context.User);
+            if (identity is null)
+            {
+                await RejectAsync(context, StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "A live authentication session is required.").ConfigureAwait(false);
+                return;
+            }
             if (!await validator.IsUpgradeAllowedAsync(context, context.RequestAborted).ConfigureAwait(false))
             {
                 await RejectAsync(context, StatusCodes.Status403Forbidden, "REALTIME_SESSION_REJECTED", "The realtime session is not allowed.").ConfigureAwait(false);

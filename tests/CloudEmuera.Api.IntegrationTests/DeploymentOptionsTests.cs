@@ -1,10 +1,12 @@
 using CloudEmuera.Api.Configuration;
 using CloudEmuera.Api.Realtime;
+using CloudEmuera.Api.Security;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Infrastructure.Assets;
 using CloudEmuera.Infrastructure.Capacity;
 using CloudEmuera.Ipc;
 using CloudEmuera.RuntimeAdapter;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 
@@ -56,6 +58,24 @@ public sealed class DeploymentOptionsTests
         Assert.Equal(7, options.MinDataRootFreeBytes);
         Assert.False(legacyArchive);
         Assert.True(legacyFreeSpace);
+    }
+
+    [Fact]
+    [Trait("Category", "Realtime")]
+    public void BinderLoadsRealtimeOriginAllowlistFromDeploymentConfiguration()
+    {
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CloudEmuera:Realtime:AllowedOrigins"] = "https://game.example,http://localhost:5173",
+            })
+            .Build();
+        RealtimeOriginPolicy policy = DeploymentOptionsBinder.BindRealtimeOriginPolicy(configuration);
+        DefaultHttpContext context = new();
+        context.Request.Headers.Origin = "http://localhost:5173";
+
+        Assert.True(policy.IsConfigured);
+        Assert.True(policy.IsAllowed(context));
     }
 
     [Fact]

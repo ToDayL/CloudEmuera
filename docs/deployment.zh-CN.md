@@ -47,6 +47,7 @@ CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 | `CLOUDEMUERA_HTTP_PORT` | `28647` | Docker 暴露到宿主机的端口。如果该端口已被占用，可以修改。 |
 | `CLOUDEMUERA_CONTAINER_PORT` | `28647` | 容器内应用使用的端口，通常保持不变。 |
 | `CLOUDEMUERA_SECURITY_SECURE_COOKIES` | `false` | 使用 HTTPS 反向代理作为公网入口时设置为 `true`。 |
+| `CLOUDEMUERA_REALTIME_ALLOWED_ORIGINS` | 未设置 | 可选的逗号分隔精确页面来源列表，控制哪些页面可以建立实时 WebSocket。设置后，缺失或不匹配的 `Origin` 会被拒绝。 |
 | `CLOUDEMUERA_PRODUCTION_IMAGE` | `cloudemuera:local` | 可选的镜像名称，用于使用预构建镜像代替本地构建。 |
 | `CLOUDEMUERA_MEMORY_LIMIT` | `2g` | 可选的整个容器内存限制。 |
 | `CLOUDEMUERA_PIDS_LIMIT` | `512` | 可选的整个容器进程数限制。 |
@@ -106,7 +107,37 @@ CLOUDEMUERA_HTTP_BIND_ADDRESS=127.0.0.1
 CLOUDEMUERA_SECURITY_SECURE_COOKIES=true
 ```
 
-反向代理必须同时转发 HTTP 请求和 WebSocket 升级请求。应用不会执行 HTTPS 重定向；TLS 终止和公网协议策略由反向代理负责。宿主机端口被占用时只需修改 `CLOUDEMUERA_HTTP_PORT`。只有在明确要修改容器内应用端口时，才修改 `CLOUDEMUERA_CONTAINER_PORT`。
+反向代理必须同时转发普通 HTTP 请求和 WebSocket 升级请求，并将它们转发到同一个应用路由。WebSocket 上游必须使用 HTTP/1.1，并保留 `Upgrade` 和 `Connection: upgrade` 请求头；否则 `/api/v1/realtime` 实时连接会失败。Nginx 配置示例中，`map` 放在 `http` 块中，`location` 放在 HTTPS `server` 块中：
+
+```nginx
+# 放在全局 http {} 块中：
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# 放在 HTTPS server {} 块中：
+location / {
+    proxy_pass http://127.0.0.1:28647;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 3600s;
+}
+```
+
+反向代理的 WebSocket 空闲超时应长于应用的实时心跳间隔。使用其他反代时，也要为此路由启用 WebSocket，并保留 HTTP/1.1 upgrade 请求头。应用不会执行 HTTPS 重定向；TLS 终止和公网协议策略由反向代理负责。
+
+对外可访问的部署建议配置实时连接 Origin 白名单，将其设为用户实际访问页面的精确来源。可在 `docker/.env` 中配置多个逗号分隔的来源，并填写页面的 scheme、域名和非默认端口，例如：
+
+```dotenv
+CLOUDEMUERA_REALTIME_ALLOWED_ORIGINS=https://play.example,https://admin.example
+```
+
+不要填写反代到应用的上游地址或 URL 路径。配置后，缺少或不匹配的 `Origin` 会被拒绝；留空则保持不限制 Origin 的行为。Origin 检查不能替代登录认证和资源授权。修改 `.env` 后运行 `docker compose up -d` 使配置生效。
+
+宿主机端口被占用时只需修改 `CLOUDEMUERA_HTTP_PORT`。只有在明确要修改容器内应用端口时，才修改 `CLOUDEMUERA_CONTAINER_PORT`。
 
 ## 启动、停止和更新
 

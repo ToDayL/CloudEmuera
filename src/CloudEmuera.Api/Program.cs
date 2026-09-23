@@ -65,6 +65,7 @@ bool runtimeDebugTraceEnabled = string.Equals(runtimeDebugTraceSwitch, "1", Stri
     bool.TryParse(runtimeDebugTraceSwitch, out bool parsedRuntimeDebugTrace) && parsedRuntimeDebugTrace;
 RealtimeOutputOptions realtimeOutputOptions = DeploymentOptionsBinder.BindRealtimeOutput(builder.Configuration);
 RealtimeGatewayOptions realtimeGatewayOptions = DeploymentOptionsBinder.BindRealtimeGateway(builder.Configuration);
+RealtimeOriginPolicy realtimeOriginPolicy = DeploymentOptionsBinder.BindRealtimeOriginPolicy(builder.Configuration);
 double sessionRuntimeInitializationTimeoutSeconds = builder.Configuration.GetValue<double?>("CloudEmuera:Worker:RuntimeInitializationTimeoutSeconds") ?? 300;
 double sessionWorkerReadyTimeoutSeconds = builder.Configuration.GetValue<double?>("CloudEmuera:Worker:RuntimeReadyTimeoutSeconds") ?? 310;
 var workerOptions = new WorkerManagerOptions(dataRoot, workerAssemblyPath, runtimeFontRoot)
@@ -134,6 +135,7 @@ builder.Services.AddSingleton(realtimeGatewayOptions);
 builder.Services.AddSingleton<RealtimeEnvelopeCodec>();
 builder.Services.AddSingleton<RealtimeConnectionRegistry>();
 builder.Services.AddSingleton<RealtimeAuthorizationGate>();
+builder.Services.AddSingleton(realtimeOriginPolicy);
 builder.Services.AddSingleton(workerSocketLifecycle);
 builder.Services.AddSingleton(new ApiControlPlaneIdentity(workerOptions.ControlPlaneInstanceId));
 builder.Services.AddSingleton<ISessionRuntimeStore, SqliteSessionRuntimeStore>();

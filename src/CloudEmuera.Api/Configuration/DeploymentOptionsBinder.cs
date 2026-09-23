@@ -1,5 +1,6 @@
 using System.Globalization;
 using CloudEmuera.Api.Realtime;
+using CloudEmuera.Api.Security;
 using CloudEmuera.Api.Workers;
 using CloudEmuera.Contracts.Realtime;
 using CloudEmuera.Infrastructure.Assets;
@@ -96,6 +97,9 @@ internal static class DeploymentOptionsBinder
             ConnectionShutdownTimeout = TimeSpan.FromSeconds(ReadInt(configuration, $"{prefix}ConnectionShutdownTimeoutSeconds") ?? 5),
         };
     }
+
+    public static RealtimeOriginPolicy BindRealtimeOriginPolicy(IConfiguration configuration) =>
+        RealtimeOriginPolicy.Parse(configuration["CloudEmuera:Realtime:AllowedOrigins"]);
 
     public static int? ReadInt(IConfiguration configuration, string key) =>
         ReadInt(configuration[key], key);
