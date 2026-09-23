@@ -64,6 +64,7 @@ services:
       CloudEmuera__Capacity__MaxSaveListedFiles: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_LISTED_FILES-}"
       CloudEmuera__Capacity__MaxSaveListBytes: "${CLOUDEMUERA_CAPACITY_MAX_SAVE_LIST_BYTES-}"
       CloudEmuera__Capacity__MinDataRootFreeBytes: "${CLOUDEMUERA_CAPACITY_MIN_DATA_ROOT_FREE_BYTES-}"
+      CloudEmuera__Realtime__AllowedOrigins: "${CLOUDEMUERA_REALTIME_ALLOWED_ORIGINS-}"
       CloudEmuera__Realtime__SnapshotMaxBytes: "${CLOUDEMUERA_REALTIME_SNAPSHOT_MAX_BYTES-}"
       CloudEmuera__Realtime__BatchTargetBytes: "${CLOUDEMUERA_REALTIME_BATCH_TARGET_BYTES-}"
       CloudEmuera__Realtime__BatchMaxTransactions: "${CLOUDEMUERA_REALTIME_BATCH_MAX_TRANSACTIONS-}"

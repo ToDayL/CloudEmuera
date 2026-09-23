@@ -4,11 +4,16 @@ using CloudEmuera.Application.Authorization;
 namespace CloudEmuera.Api.Security;
 
 /// <summary>Reusable authenticated WebSocket upgrade gate; it owns no WebSocket protocol state.</summary>
-public sealed class RealtimeUpgradeValidator(ILocalIdentityService identities, IResourceAuthorizer authorizer)
+public sealed class RealtimeUpgradeValidator(
+    ILocalIdentityService identities,
+    IResourceAuthorizer authorizer,
+    RealtimeOriginPolicy originPolicy)
 {
+    public bool IsOriginAllowed(HttpContext context) => originPolicy.IsAllowed(context);
+
     public async Task<bool> IsUpgradeAllowedAsync(HttpContext context, CancellationToken cancellationToken = default)
     {
-        if (!context.WebSockets.IsWebSocketRequest) return false;
+        if (!context.WebSockets.IsWebSocketRequest || !originPolicy.IsAllowed(context)) return false;
 
         string? userId = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         string? sessionId = context.User.FindFirst("auth_session_id")?.Value;

@@ -67,7 +67,7 @@ CLOUDEMUERA_BOOTSTRAP_ADMIN_EMAIL=you@example.com
 CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 ```
 
-有关 bind mount、网络暴露、HTTPS、备份、更新和生产环境 `.env` 配置说明，请参阅[生产部署指南](docs/deployment.zh-CN.md)。
+有关 bind mount、网络暴露、HTTPS、备份、更新和生产环境 `.env` 配置说明，请参阅[生产部署指南](docs/deployment.zh-CN.md)。对外可访问的部署建议将实时连接 Origin 白名单设为用户实际访问的页面来源。
 
 启动 CloudEmuera：
 

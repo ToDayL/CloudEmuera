@@ -22,10 +22,25 @@ public sealed class RealtimeUpgradeValidatorTests
     public async Task UpgradeRequiresWebSocketPrincipalAndLiveSessionButDoesNotRestrictOrigin(string? origin, bool webSocket, bool liveSession, bool authenticated, bool expected)
     {
         SessionIdentity identities = new(liveSession);
-        RealtimeUpgradeValidator validator = new(identities, new RecordingAuthorizer());
+        RealtimeUpgradeValidator validator = new(identities, new RecordingAuthorizer(), RealtimeOriginPolicy.Parse(null));
         DefaultHttpContext context = Context(origin, webSocket, authenticated);
 
         Assert.Equal(expected, await validator.IsUpgradeAllowedAsync(context));
+    }
+
+    [Theory]
+    [InlineData("https://game.example", true)]
+    [InlineData("https://evil.example", false)]
+    [InlineData(null, false)]
+    [Trait("Category", "Authorization")]
+    public async Task ConfiguredOriginAllowlistIsEnforcedOnUpgrade(string? origin, bool expected)
+    {
+        RealtimeUpgradeValidator validator = new(
+            new SessionIdentity(true),
+            new RecordingAuthorizer(),
+            RealtimeOriginPolicy.Parse("https://game.example"));
+
+        Assert.Equal(expected, await validator.IsUpgradeAllowedAsync(Context(origin, webSocket: true, authenticated: true)));
     }
 
     [Fact]
@@ -33,7 +48,7 @@ public sealed class RealtimeUpgradeValidatorTests
     public async Task EveryResumeAttemptCallsTheCentralAuthorizer()
     {
         RecordingAuthorizer authorizer = new();
-        RealtimeUpgradeValidator validator = new(new SessionIdentity(true), authorizer);
+        RealtimeUpgradeValidator validator = new(new SessionIdentity(true), authorizer, RealtimeOriginPolicy.Parse(null));
         CurrentActor actor = new("usr_player", "PLAYER", "auths_live");
 
         Assert.Equal(ResourceAccessDecision.Allowed, await validator.AuthorizeResumeAsync(actor, "sess_one", false));

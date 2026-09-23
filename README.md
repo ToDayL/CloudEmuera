@@ -68,7 +68,8 @@ CLOUDEMUERA_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 ```
 
 For bind mounts, network exposure, HTTPS, backups, updates, and the production `.env` reference, see
-the [production deployment guide](docs/deployment.md).
+the [production deployment guide](docs/deployment.md). For an externally reachable deployment, we
+recommend setting the realtime Origin allowlist to the actual public page origin.
 
 Start CloudEmuera:
 
