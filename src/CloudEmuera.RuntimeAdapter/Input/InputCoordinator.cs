@@ -188,7 +188,47 @@ public sealed class InputCoordinator
             string value = currentPrompt.OneInput && !preserveLongButtonValue && attempt.Value.Length > 1
                 ? attempt.Value[..1]
                 : attempt.Value;
-            if (!currentPrompt.Constraints.TryValidate(value, limits, out ConsoleInputFailureReason valueFailure))
+
+            // Desktop BINPUT applies its default to an empty submission before
+            // checking whether that value belongs to a current button.
+            if (currentAllowedValues is not null && value.Length == 0 && currentPrompt.DefaultValue is not null)
+                value = currentPrompt.DefaultValue;
+
+            string buttonValue = value;
+            if (currentAllowedValues is not null && currentPrompt.InputType == ConsoleInputType.IntegerButton)
+            {
+                // long.TryParse in the pinned interpreter accepts ordinary
+                // surrounding spaces and leading zeroes. Normalize only for
+                // the button lookup; preserve typed input for the runtime.
+                if (value.Any(char.IsControl) ||
+                    !long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long integerValue))
+                {
+                    result = ConsoleInputResult.InvalidFormat(
+                        attempt, currentPrompt.PromptId, ConsoleInputFailureReason.InvalidInteger);
+                    AddReceipt(attempt, result);
+                    return result;
+                }
+
+                buttonValue = integerValue.ToString(CultureInfo.InvariantCulture);
+            }
+
+            string constrainedValue = currentAllowedValues is not null &&
+                currentPrompt.InputType == ConsoleInputType.IntegerButton &&
+                currentPrompt.Constraints is IntegerInputConstraints
+                ? buttonValue
+                : value;
+            if (currentPrompt.Constraints is IntegerInputConstraints { AllowSign: false } &&
+                currentAllowedValues is not null &&
+                currentPrompt.InputType == ConsoleInputType.IntegerButton &&
+                value.AsSpan().TrimStart()[0] is '+' or '-')
+            {
+                result = ConsoleInputResult.InvalidFormat(
+                    attempt, currentPrompt.PromptId, ConsoleInputFailureReason.InvalidInteger);
+                AddReceipt(attempt, result);
+                return result;
+            }
+
+            if (!currentPrompt.Constraints.TryValidate(constrainedValue, limits, out ConsoleInputFailureReason valueFailure))
             {
                 result = ConsoleInputResult.InvalidFormat(attempt, currentPrompt.PromptId, valueFailure);
                 AddReceipt(attempt, result);
@@ -201,20 +241,6 @@ public sealed class InputCoordinator
             // next prompt with a button that is no longer available.
             if (currentAllowedValues is not null)
             {
-                string buttonValue = value;
-                if (currentPrompt.InputType == ConsoleInputType.IntegerButton)
-                {
-                    if (!long.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long integerValue))
-                    {
-                        result = ConsoleInputResult.InvalidFormat(
-                            attempt, currentPrompt.PromptId, ConsoleInputFailureReason.InvalidInteger);
-                        AddReceipt(attempt, result);
-                        return result;
-                    }
-
-                    buttonValue = integerValue.ToString(CultureInfo.InvariantCulture);
-                }
-
                 if (!currentAllowedValues.Contains(buttonValue))
                 {
                     result = ConsoleInputResult.InvalidFormat(
@@ -230,7 +256,10 @@ public sealed class InputCoordinator
             var input = new GameConsoleInput(
                 prompt.PromptId,
                 prompt.InputType,
-                value,
+                currentAllowedValues is not null && prompt.InputType == ConsoleInputType.IntegerButton &&
+                    attempt.Source is ConsoleInputSource.Button or ConsoleInputSource.Pointer
+                    ? buttonValue
+                    : value,
                 skipMessage: skipMessage,
                 pointer: attempt.Pointer,
                 key: attempt.Key,

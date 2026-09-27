@@ -1214,7 +1214,7 @@ internal sealed class EmueraConsole
         else if (integerButtonNodes.Contains(button) &&
             long.TryParse(button.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long input))
         {
-            legacy = new ConsoleButtonString(this, parts, input);
+            legacy = new ConsoleButtonString(this, parts, input, button.Value);
         }
         else
         {
@@ -2410,7 +2410,7 @@ internal sealed class EmueraConsole
             if (integerButtonNodes.Contains(button))
             {
                 if (long.TryParse(button.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long input))
-                    buttons.Add(new ConsoleButtonString(this, [], input));
+                    buttons.Add(new ConsoleButtonString(this, [], input, button.Value));
                 continue;
             }
 

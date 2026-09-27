@@ -61,9 +61,18 @@ inside modified upstream files and does not replace Git history or review.
   `GETBIT(..., 499)`. The Web connection also suppresses repeat sends from
   the same displayed prompt; the input wire format and upstream version are
   unchanged (PLAY-008/COMP-007).
+- The headless button inventory retains both the parsed integer and original
+  string of numeric HTML buttons. `BINPUT` compares parsed integers, accepts
+  ordinary surrounding spaces and leading zeroes, and canonicalizes clicked
+  integer buttons; `BINPUTS` accepts either the original string or the
+  canonical integer string. An empty submission applies the instruction's
+  default before the current-button check. These match the pinned desktop
+  `doInputToEmueraProgram` path within the structured input contract.
 - Verification: `BinputRejectsRepeatedPreviousMenuValueAndKeepsCurrentPrompt`,
-  the RuntimeCompatibility and RuntimeAdapter suites, and the Web connection
-  double-click regression.
+  `BinputParsesTheUpstreamIntegerValueAndCanonicalizesButtonClicks`,
+  `BinputsAcceptsBothRawAndCanonicalHtmlIntegerButtonValues`,
+  `BinputAppliesDefaultBeforeCheckingTheCurrentButtons`, the RuntimeCompatibility
+  and RuntimeAdapter suites, and the Web connection double-click regression.
 
 ## 2026-09-21 — Keep desktop key polling inside the headless boundary
 
