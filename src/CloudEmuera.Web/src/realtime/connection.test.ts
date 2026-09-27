@@ -95,6 +95,43 @@ describe("RealtimeConnectionManager", () => {
     vi.unstubAllGlobals();
   });
 
+  it("sends a double click only once until the next prompt is displayed", () => {
+    // PLAY-008/COMP-007: the second [500] click must not answer a BINPUT
+    // prompt that the Worker has opened before this tab receives its frame.
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    FakeWebSocket.instances = [];
+    const manager = new RealtimeConnectionManager();
+    manager.subscribe("s1", () => undefined);
+    const socket = FakeWebSocket.instances[0]; socket.open();
+    socket.message({ protocolVersion: 6, type: "server.hello", messageId: "hello", payload: { protocolVersion: 6, payloadSchemaVersion: "p1-s10-button-generation", connectionId: "c1", serverNowUnixMilliseconds: Date.now(), heartbeatIntervalMilliseconds: 20_000, heartbeatTimeoutMilliseconds: 10_000, maxSubscriptionsPerConnection: 4, maxPendingInputsPerConnection: 32, serverMessageMaxBytes: 1_000_000, capabilityDigest: CAPABILITY_DIGEST } });
+    const prompt = {
+      promptId: "p1", inputType: "integer", promptText: null, defaultValue: null,
+      constraints: { type: "integer", maxLength: null, minimum: null, maximum: null, allowSign: true, allowControlCharacters: null },
+      timeoutBehavior: "wait", timeoutAction: "close", allowedSources: ["keyboard", "button"],
+      oneInput: false, systemInput: false, stopMessageSkip: false, displayTime: false, timeoutMessage: null,
+      openedAtUnixMilliseconds: Date.now(), deadlineUnixMilliseconds: 0, timeoutMilliseconds: null, buttonGeneration: 1,
+    };
+    socket.message({ protocolVersion: 6, type: "session.snapshot", messageId: "snapshot-1", sessionId: "s1", workerEpoch: 3, sequence: 0, payload: { workerEpoch: 3, snapshotSequence: 0, committedFrameId: 0, consoleState: { ...state, currentPrompt: prompt } } });
+
+    const sentInputs = () => socket.sent.map(value => JSON.parse(value)).filter(value => value.type === "session.input");
+    const firstId = manager.sendInput("s1", { source: "BUTTON", value: "500", pointer: null, key: null });
+    expect(firstId).toBeTruthy();
+    expect(manager.sendInput("s1", { source: "BUTTON", value: "500", pointer: null, key: null })).toBe(firstId);
+    expect(sentInputs()).toHaveLength(1);
+
+    socket.message({ protocolVersion: 6, type: "session.input.result", messageId: "receipt", sessionId: "s1", workerEpoch: 3, payload: { clientMessageId: firstId, status: "ACCEPTED", reasonCode: "accepted", resolvedPromptId: "p1", normalizedValue: "500" } });
+    expect(manager.sendInput("s1", { source: "BUTTON", value: "500", pointer: null, key: null })).toBe(firstId);
+    expect(sentInputs()).toHaveLength(1);
+
+    socket.message({ protocolVersion: 6, type: "session.snapshot", messageId: "snapshot-2", sessionId: "s1", workerEpoch: 3, sequence: 1, payload: { workerEpoch: 3, snapshotSequence: 1, committedFrameId: 1, consoleState: { ...state, currentPrompt: { ...prompt, promptId: "p2", inputType: "integerButton", buttonGeneration: 2 } } } });
+    const secondId = manager.sendInput("s1", { source: "BUTTON", value: "1", pointer: null, key: null });
+    expect(secondId).toBeTruthy();
+    expect(secondId).not.toBe(firstId);
+    expect(sentInputs()).toHaveLength(2);
+    manager.dispose();
+    vi.unstubAllGlobals();
+  });
+
   it("does not burn reconnect attempts while offline and reconnects immediately when online returns", () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     FakeWebSocket.instances = [];

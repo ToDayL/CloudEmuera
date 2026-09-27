@@ -4242,6 +4242,48 @@ public sealed class HeadlessRuntimeFixtureTests
     [Fact]
     [Trait("Category", "RuntimeBridge")]
     [Trait("Category", "Input")]
+    public async Task BinputRejectsRepeatedPreviousMenuValueAndKeepsCurrentPrompt()
+    {
+        // PLAY-008/COMP-007: two distinct clicks on a previous [500] menu
+        // must not let the second value escape BINPUT's current button set.
+        using var fixture = RuntimeHostFixture.Create(
+            "@SYSTEM_TITLE\n" +
+            "PRINTBUTTON \"[500] OPEN\", 500\nPRINTL\nINPUT\n" +
+            "PRINTBUTTON \"[1] BIND\", 1\nPRINTL\nBINPUT\n" +
+            "PRINTFORML BIND_RESULT={RESULT}\nQUIT\n");
+        await using EmueraRuntimeHost host = fixture.CreateHost(runDeadline: TimeSpan.FromSeconds(3));
+        Assert.Equal(EmueraRuntimeStatus.Completed, (await host.InitializeAsync()).Status);
+
+        Task<EmueraRuntimeResult> run = host.RunAsync();
+        Assert.True(SpinWait.SpinUntil(
+            () => fixture.Console.CurrentPrompt?.InputType == ConsoleInputType.Integer,
+            TimeSpan.FromSeconds(2)));
+        string firstPromptId = fixture.Console.CurrentPrompt!.PromptId;
+        Assert.Equal(ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("first-500", "500", ConsoleInputSource.Button)).Kind);
+
+        Assert.True(SpinWait.SpinUntil(
+            () => fixture.Console.CurrentPrompt is { InputType: ConsoleInputType.IntegerButton } prompt &&
+                prompt.PromptId != firstPromptId,
+            TimeSpan.FromSeconds(2)));
+        string secondPromptId = fixture.Console.CurrentPrompt!.PromptId;
+        var repeatedClick = new ConsoleInputAttempt("second-500", "500", ConsoleInputSource.Button);
+        ConsoleInputResult rejected = fixture.Console.SubmitCurrentInput(repeatedClick);
+        Assert.Equal(ConsoleInputResultKind.InvalidFormat, rejected.Kind);
+        Assert.Equal(ConsoleInputFailureReason.ValueNotInCurrentButtons, rejected.FailureReason);
+        Assert.Equal(secondPromptId, fixture.Console.CurrentPrompt?.PromptId);
+        Assert.Equal(ConsoleInputResultKind.Duplicate, fixture.Console.SubmitCurrentInput(repeatedClick).Kind);
+
+        Assert.Equal(ConsoleInputResultKind.Accepted,
+            fixture.Console.SubmitCurrentInput(new ConsoleInputAttempt("choose-bind", "1", ConsoleInputSource.Button)).Kind);
+        EmueraRuntimeResult result = await run;
+        Assert.Equal(EmueraRuntimeStatus.Completed, result.Status);
+        Assert.Contains("BIND_RESULT=1", RuntimeTranscriptProjector.Project(fixture.Console.Snapshot.VisibleNodes), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "RuntimeBridge")]
+    [Trait("Category", "Input")]
     public async Task BinputSeesIntegerButtonFromHtmlPrint()
     {
         // PLAY-002/COMP-007: HTML_PRINT must preserve the upstream numeric

@@ -85,6 +85,17 @@ export class RealtimeConnectionManager {
       subscription.state.phase === "resuming" || subscription.state.phase === "resyncing" ||
       subscription.state.phase === "ended" || subscription.state.phase === "error" ||
       subscription.state.phase === "forbidden") return null;
+    const pending = subscription.state.pendingInput;
+    const currentPromptId = subscription.state.consoleState?.currentPrompt?.promptId;
+    if (pending?.workerEpoch === epoch && (
+      pending.status === "pending" || pending.status === "unknown" ||
+      ((pending.status === "accepted" || pending.status === "duplicate") &&
+        (!currentPromptId || currentPromptId === pending.receipt?.resolvedPromptId))
+    )) {
+      // A second click on the same rendered prompt must not become an input
+      // for a prompt the Worker opened before this tab received its frame.
+      return pending.clientMessageId;
+    }
     const clientMessageId = input.clientMessageId ?? newClientMessageId();
     const payload: InputPayload = { ...input, clientMessageId };
     subscription.state = createPendingInput(subscription.state, { workerEpoch: epoch, clientMessageId, value: payload.value, source: payload.source, pointer: payload.pointer ?? null, key: payload.key ?? null });

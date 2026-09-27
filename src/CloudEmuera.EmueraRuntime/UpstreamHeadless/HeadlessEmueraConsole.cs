@@ -749,7 +749,10 @@ internal sealed class EmueraConsole
             buttonGeneration: activeButtonGeneration);
         if (request.DisplayTime && timeout is not null)
             EmitTimeoutCountdown(timeout.Value);
-        GameConsoleInput input = adapter.Read(prompt, cancellationToken);
+        IReadOnlySet<string> allowedValues = request.InputType is InputType.IntButton or InputType.StrButton
+            ? CaptureCurrentButtonValues(request.InputType)
+            : null;
+        GameConsoleInput input = adapter.Read(prompt, allowedValues, cancellationToken);
         ApplyInputResults(request, input);
         ApplyInputMessageSkip(input);
         // BINPUT validates its inventory before opening the prompt. Once that
@@ -2415,6 +2418,62 @@ internal sealed class EmueraConsole
         }
 
         return [.. buttons];
+    }
+
+    private IReadOnlySet<string> CaptureCurrentButtonValues(InputType inputType)
+    {
+        // The pinned desktop console checks the current DisplayLineList
+        // generation when it receives a BINPUT value. Capture that same
+        // inventory before waiting so an old menu click cannot answer a new
+        // BINPUT prompt after it crosses the API/Worker boundary.
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        bool reachedOlderGeneration = false;
+        foreach (ConsoleDisplayLine line in Enumerable.Reverse(DisplayLineList))
+        {
+            foreach (ConsoleButtonString button in line.Buttons)
+            {
+                if (button.Generation != 0 && button.Generation != activeButtonGeneration)
+                {
+                    reachedOlderGeneration = true;
+                    break;
+                }
+
+                if (button.Generation == activeButtonGeneration)
+                    AddCurrentButtonValue(values, button, inputType);
+            }
+
+            if (reachedOlderGeneration)
+                break;
+        }
+
+        // Fixed upstream BINPUT also searches buttons in escaped div parts.
+        foreach (List<AConsoleDisplayNode> parts in EscapedParts.Values)
+        {
+            foreach (AConsoleDisplayNode part in parts)
+            {
+                if (part is not ConsoleDivPart div)
+                    continue;
+
+                foreach (ConsoleDisplayLine line in Enumerable.Reverse(div.Children))
+                {
+                    foreach (ConsoleButtonString button in line.Buttons)
+                        AddCurrentButtonValue(values, button, inputType);
+                }
+            }
+        }
+
+        return values;
+    }
+
+    private static void AddCurrentButtonValue(HashSet<string> values, ConsoleButtonString button, InputType inputType)
+    {
+        if (!button.IsButton)
+            return;
+
+        if (button.IsInteger)
+            values.Add(button.Input.ToString(CultureInfo.InvariantCulture));
+        if (inputType == InputType.StrButton && button.Inputs is not null)
+            values.Add(button.Inputs);
     }
 
     private void CommitLegacyDisplayLine(

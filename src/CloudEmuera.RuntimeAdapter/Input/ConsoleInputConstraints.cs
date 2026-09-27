@@ -212,5 +212,6 @@ public enum ConsoleInputFailureReason
     InvalidIdentifier,
     InvalidInteger,
     IntegerOutOfRange,
-    SourceNotAllowed
+    SourceNotAllowed,
+    ValueNotInCurrentButtons
 }
