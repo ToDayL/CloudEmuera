@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace CloudEmuera.RuntimeAdapter;
 
 /// <summary>
@@ -16,6 +18,7 @@ public sealed class InputCoordinator
     private readonly Dictionary<string, PromptWaitState> waiters = new(StringComparer.Ordinal);
     private readonly Queue<string> completedWaiterOrder = new();
     private ConsolePrompt? currentPrompt;
+    private HashSet<string>? currentAllowedValues;
 
     public InputCoordinator()
         : this(ConsoleHistoryOptions.Default)
@@ -86,7 +89,7 @@ public sealed class InputCoordinator
     /// Opens a prompt and, when a clock is supplied, captures its monotonic
     /// start timestamp and wall-clock display metadata at publication time.
     /// </summary>
-    public void OpenPrompt(ConsolePrompt prompt, IRuntimeClock? clock)
+    public void OpenPrompt(ConsolePrompt prompt, IRuntimeClock? clock, IReadOnlySet<string>? allowedValues = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         prompt.Validate(limits);
@@ -121,6 +124,9 @@ public sealed class InputCoordinator
             }
 
             currentPrompt = effectivePrompt;
+            currentAllowedValues = allowedValues is null
+                ? null
+                : new HashSet<string>(allowedValues, StringComparer.Ordinal);
             waiters.Add(effectivePrompt.PromptId, new PromptWaitState(effectivePrompt, startTimestamp));
         }
     }
@@ -182,11 +188,66 @@ public sealed class InputCoordinator
             string value = currentPrompt.OneInput && !preserveLongButtonValue && attempt.Value.Length > 1
                 ? attempt.Value[..1]
                 : attempt.Value;
-            if (!currentPrompt.Constraints.TryValidate(value, limits, out ConsoleInputFailureReason valueFailure))
+
+            // Desktop BINPUT applies its default to an empty submission before
+            // checking whether that value belongs to a current button.
+            if (currentAllowedValues is not null && value.Length == 0 && currentPrompt.DefaultValue is not null)
+                value = currentPrompt.DefaultValue;
+
+            string buttonValue = value;
+            if (currentAllowedValues is not null && currentPrompt.InputType == ConsoleInputType.IntegerButton)
+            {
+                // long.TryParse in the pinned interpreter accepts ordinary
+                // surrounding spaces and leading zeroes. Normalize only for
+                // the button lookup; preserve typed input for the runtime.
+                if (value.Any(char.IsControl) ||
+                    !long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long integerValue))
+                {
+                    result = ConsoleInputResult.InvalidFormat(
+                        attempt, currentPrompt.PromptId, ConsoleInputFailureReason.InvalidInteger);
+                    AddReceipt(attempt, result);
+                    return result;
+                }
+
+                buttonValue = integerValue.ToString(CultureInfo.InvariantCulture);
+            }
+
+            string constrainedValue = currentAllowedValues is not null &&
+                currentPrompt.InputType == ConsoleInputType.IntegerButton &&
+                currentPrompt.Constraints is IntegerInputConstraints
+                ? buttonValue
+                : value;
+            if (currentPrompt.Constraints is IntegerInputConstraints { AllowSign: false } &&
+                currentAllowedValues is not null &&
+                currentPrompt.InputType == ConsoleInputType.IntegerButton &&
+                value.AsSpan().TrimStart()[0] is '+' or '-')
+            {
+                result = ConsoleInputResult.InvalidFormat(
+                    attempt, currentPrompt.PromptId, ConsoleInputFailureReason.InvalidInteger);
+                AddReceipt(attempt, result);
+                return result;
+            }
+
+            if (!currentPrompt.Constraints.TryValidate(constrainedValue, limits, out ConsoleInputFailureReason valueFailure))
             {
                 result = ConsoleInputResult.InvalidFormat(attempt, currentPrompt.PromptId, valueFailure);
                 AddReceipt(attempt, result);
                 return result;
+            }
+
+            // BINPUT/BINPUTS accept only values from the buttons visible to
+            // the pinned interpreter at this prompt. Generic numeric/text
+            // constraints alone would let a repeated menu click answer the
+            // next prompt with a button that is no longer available.
+            if (currentAllowedValues is not null)
+            {
+                if (!currentAllowedValues.Contains(buttonValue))
+                {
+                    result = ConsoleInputResult.InvalidFormat(
+                        attempt, currentPrompt.PromptId, ConsoleInputFailureReason.ValueNotInCurrentButtons);
+                    AddReceipt(attempt, result);
+                    return result;
+                }
             }
 
             ConsolePrompt prompt = currentPrompt;
@@ -195,13 +256,17 @@ public sealed class InputCoordinator
             var input = new GameConsoleInput(
                 prompt.PromptId,
                 prompt.InputType,
-                value,
+                currentAllowedValues is not null && prompt.InputType == ConsoleInputType.IntegerButton &&
+                    attempt.Source is ConsoleInputSource.Button or ConsoleInputSource.Pointer
+                    ? buttonValue
+                    : value,
                 skipMessage: skipMessage,
                 pointer: attempt.Pointer,
                 key: attempt.Key,
                 source: attempt.Source);
             result = ConsoleInputResult.Accepted(attempt, input);
             currentPrompt = null;
+            currentAllowedValues = null;
             MarkPromptCompleted(prompt.PromptId);
             AddReceipt(attempt, result);
             CompleteWaiter(prompt.PromptId, result);
@@ -298,6 +363,7 @@ public sealed class InputCoordinator
                 _ => ConsoleInputResult.Cancelled(currentPrompt)
             };
             currentPrompt = null;
+            currentAllowedValues = null;
             MarkPromptCompleted(promptId);
             CompleteWaiter(promptId, result);
             return result;
@@ -311,6 +377,7 @@ public sealed class InputCoordinator
             if (currentPrompt is not null && string.Equals(currentPrompt.PromptId, promptId, StringComparison.Ordinal))
             {
                 currentPrompt = null;
+                currentAllowedValues = null;
             }
 
             waiters.Remove(promptId);
@@ -332,6 +399,7 @@ public sealed class InputCoordinator
             }
 
             currentPrompt = null;
+            currentAllowedValues = null;
             MarkPromptCompleted(waiter.Prompt.PromptId);
             ConsoleInputResult result = ConsoleInputResult.Cancelled(waiter.Prompt);
             CompleteWaiter(promptId, result);
@@ -354,6 +422,7 @@ public sealed class InputCoordinator
             }
 
             currentPrompt = null;
+            currentAllowedValues = null;
             MarkPromptCompleted(prompt.PromptId);
             GameConsoleInput? defaultInput = prompt.TimeoutAction == ConsolePromptTimeoutAction.ReturnDefaultValue &&
                 prompt.DefaultValue is not null

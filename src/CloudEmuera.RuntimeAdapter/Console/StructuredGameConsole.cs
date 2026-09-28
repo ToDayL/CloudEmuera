@@ -228,7 +228,13 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
         }
     }
 
-    public GameConsoleInput Read(ConsolePrompt prompt, CancellationToken cancellationToken = default)
+    public GameConsoleInput Read(ConsolePrompt prompt, CancellationToken cancellationToken = default) =>
+        Read(prompt, allowedValues: null, cancellationToken);
+
+    public GameConsoleInput Read(
+        ConsolePrompt prompt,
+        IReadOnlySet<string>? allowedValues,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         cancellationToken.ThrowIfCancellationRequested();
@@ -237,7 +243,7 @@ public sealed class StructuredGameConsole : IGameConsole, ITooltipStateSink
         lock (sync)
         {
             assignedPrompt = AssignPromptId(prompt);
-            InputCoordinator.OpenPrompt(assignedPrompt, clock);
+            InputCoordinator.OpenPrompt(assignedPrompt, clock, allowedValues);
             assignedPrompt = InputCoordinator.CurrentPrompt!;
             isTimeOut = false;
             try

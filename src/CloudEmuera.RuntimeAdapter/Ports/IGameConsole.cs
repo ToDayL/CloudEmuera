@@ -92,4 +92,9 @@ public interface IGameConsole
     void RequestDisplayRefresh();
 
     GameConsoleInput Read(ConsolePrompt prompt, CancellationToken cancellationToken = default);
+
+    GameConsoleInput Read(
+        ConsolePrompt prompt,
+        IReadOnlySet<string>? allowedValues,
+        CancellationToken cancellationToken = default);
 }

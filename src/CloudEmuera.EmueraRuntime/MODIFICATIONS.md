@@ -50,6 +50,30 @@ This ledger records modifications made after importing upstream commit
 `2175f8a629257efb08214e093704b3a3d3d06d05`. It complements prominent notices
 inside modified upstream files and does not replace Git history or review.
 
+## 2026-09-27 — Check current buttons for headless BINPUT
+
+- `UpstreamHeadless/HeadlessEmueraConsole.cs` captures the pinned console's
+  current button values before a `BINPUT` or `BINPUTS` wait. The structured
+  input coordinator rejects values absent from that inventory while keeping
+  the prompt open, matching the desktop interpreter's button check.
+- This prevents a second click on a previous menu's `[500]` button from
+  becoming `ARG=500` in era魔界牧場's restraint submenu and reaching
+  `GETBIT(..., 499)`. The Web connection also suppresses repeat sends from
+  the same displayed prompt; the input wire format and upstream version are
+  unchanged (PLAY-008/COMP-007).
+- The headless button inventory retains both the parsed integer and original
+  string of numeric HTML buttons. `BINPUT` compares parsed integers, accepts
+  ordinary surrounding spaces and leading zeroes, and canonicalizes clicked
+  integer buttons; `BINPUTS` accepts either the original string or the
+  canonical integer string. An empty submission applies the instruction's
+  default before the current-button check. These match the pinned desktop
+  `doInputToEmueraProgram` path within the structured input contract.
+- Verification: `BinputRejectsRepeatedPreviousMenuValueAndKeepsCurrentPrompt`,
+  `BinputParsesTheUpstreamIntegerValueAndCanonicalizesButtonClicks`,
+  `BinputsAcceptsBothRawAndCanonicalHtmlIntegerButtonValues`,
+  `BinputAppliesDefaultBeforeCheckingTheCurrentButtons`, the RuntimeCompatibility
+  and RuntimeAdapter suites, and the Web connection double-click regression.
+
 ## 2026-09-21 — Keep desktop key polling inside the headless boundary
 
 - `Runtime/Utils/WinInput.cs` retains the upstream `user32.dll` call for desktop
