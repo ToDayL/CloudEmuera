@@ -68,4 +68,10 @@ grep -Fq "## libwebp" "$repo_root/THIRD_PARTY_NOTICES.md"
 grep -Fq "apt-get install -y --no-install-recommends libgdiplus libwebp7" "$repo_root/docker/Dockerfile"
 grep -Fq "apt-get install -y --no-install-recommends libgdiplus libwebp7" "$repo_root/docker/Dockerfile.dev"
 
+grep -Fq '"hash-wasm": "4.12.0"' "$repo_root/src/CloudEmuera.Web/package.json"
+grep -Fq 'hash-wasm@4.12.0' "$repo_root/pnpm-lock.yaml"
+grep -Fq 'Copyright (c) 2020 Dani Biró' "$repo_root/src/CloudEmuera.Web/public/licenses/hash-wasm.txt"
+grep -Fq 'Copyright (c) 2010, Aleksey Kravchenko' "$repo_root/src/CloudEmuera.Web/public/licenses/hash-wasm.txt"
+grep -Fq '## hash-wasm' "$repo_root/THIRD_PARTY_NOTICES.md"
+
 echo "Integrated Emuera.EM+EE source provenance verified at $expected_commit ($expected_integration_version)"

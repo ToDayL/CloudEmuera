@@ -13,7 +13,8 @@ import { getRealtimeConnectionManager, type ConnectionPhase } from "../realtime/
 import type { RealtimeColor } from "../realtime/protocol";
 import { EMPTY_TOOLTIP_PRESENTATION } from "../realtime/reducer";
 import { createSessionStoreState, type SessionStoreState } from "../realtime/sessionStore";
-import { loadRuntimeFont, runtimeFontCssFamily } from "./RuntimeFontLoader";
+import { RuntimeFontProgress } from "./RuntimeFontProgress";
+import { loadRuntimeFont, runtimeFontCssFamily, type RuntimeFontProgress as FontProgress } from "./RuntimeFontLoader";
 import { ConsoleTooltipProvider, ConsoleTooltipToggle } from "./TooltipLayer";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
@@ -62,6 +63,9 @@ export function ConsolePage() {
   }, []);
   const runtimeFont = useMemo(() => session.data && runtimeFonts.data?.items.find(font => font.faceId === session.data!.fontFaceId), [runtimeFonts.data, session.data]);
   const runtimeCssFamily = useMemo(() => runtimeFont ? runtimeFontCssFamily(runtimeFont) : undefined, [runtimeFont]);
+  const [fontProgress, setFontProgress] = useState<FontProgress | null>(null);
+  const [fontRetry, setFontRetry] = useState(0);
+  const hasSession = Boolean(session.data);
   const [runtimeFontReady, setRuntimeFontReady] = useState(false);
   const [runtimeFontFailed, setRuntimeFontFailed] = useState(false);
   const assets = useMemo(() => new AssetResolver(sessionId ?? "missing", runtimeCssFamily), [runtimeCssFamily, sessionId]);
@@ -98,26 +102,27 @@ export function ConsolePage() {
     if (stream.workerEpoch !== null) media.current?.reset();
   }, [stream.workerEpoch]);
   useEffect(() => {
-    if (!session.data) return;
+    if (!hasSession) return;
     if (typeof FontFace === "undefined" || !document.fonts) {
       setRuntimeFontReady(false);
       setRuntimeFontFailed(true);
       return;
     }
     if (!runtimeFont || !runtimeCssFamily) {
-      setRuntimeFontReady(runtimeFonts.isError);
-      setRuntimeFontFailed(runtimeFonts.isError);
+      setRuntimeFontReady(false);
+      setRuntimeFontFailed(runtimeFonts.isError || Boolean(runtimeFonts.data));
       return;
     }
     let cancelled = false;
     setRuntimeFontReady(false);
     setRuntimeFontFailed(false);
-    void loadRuntimeFont(runtimeFont, runtimeCssFamily).then(() => {
+    setFontProgress(null);
+    void loadRuntimeFont(runtimeFont, runtimeCssFamily, progress => { if (!cancelled) setFontProgress(progress); }).then(() => {
       if (cancelled) return;
       setRuntimeFontReady(true);
     }).catch(() => { if (!cancelled) { setRuntimeFontFailed(true); setRuntimeFontReady(false); } });
     return () => { cancelled = true; };
-  }, [runtimeFont, runtimeFonts.isError, runtimeCssFamily, session.data]);
+  }, [runtimeFont, runtimeFonts.isError, runtimeFonts.data, runtimeCssFamily, hasSession, fontRetry]);
   useEffect(() => {
     if (!stream.consoleState) return;
     media.current?.sync(stream.consoleState.mediaState.channels, assets);
@@ -172,8 +177,8 @@ export function ConsolePage() {
   if (!sessionId) return <div className="console-error" role="alert">{t("consoleExtra.missingId")}</div>;
   if (session.isPending) return <div className="console-loading" aria-busy="true">{t("sessions.loading")}</div>;
   if (session.isError || !session.data) return <div className="console-error" role="alert"><h1>{t("consoleExtra.unavailable")}</h1><p>{session.error instanceof Error ? session.error.message : t("consoleExtra.inaccessible")}</p><Link className="secondary-button" to="/sessions">{t("sessions.back")}</Link></div>;
-  if (runtimeFontFailed) return <div className="console-error" role="alert"><h1>{t("consoleExtra.fontUnavailable")}</h1><p>{t("consoleExtra.fontFailed")}</p><Link className="secondary-button" to="/sessions">{t("sessions.back")}</Link></div>;
-  if (!runtimeFontReady) return <div className="console-loading" aria-busy="true">{t("consoleExtra.fontLoading")}</div>;
+  if (runtimeFontFailed) return <div className="console-error" role="alert"><h1>{t("consoleExtra.fontUnavailable")}</h1><p>{t("consoleExtra.fontFailed")}</p><button className="primary-button" onClick={() => { void runtimeFonts.refetch(); setFontRetry(value => value + 1); }}>{t("common.retry")}</button><Link className="secondary-button" to="/sessions">{t("sessions.back")}</Link></div>;
+  if (!runtimeFontReady) return <div className="console-loading" aria-busy="true"><RuntimeFontProgress progress={fontProgress}/><Link className="secondary-button" to="/sessions">{t("sessions.back")}</Link></div>;
 
   const state = stream.consoleState;
   const runtimeMetrics = effectiveConsoleFontMetrics(

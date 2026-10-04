@@ -16,6 +16,38 @@ namespace CloudEmuera.Api.IntegrationTests;
 
 public sealed class HealthContractTests
 {
+    // PLAY-013: allow WASM compilation only on the fingerprinted font Worker.
+    [Fact]
+    public async Task FontWorkerCspAllowsWasmWithoutEnablingJavascriptEvalOnPages()
+    {
+        string dataRoot = Path.Combine(Path.GetTempPath(), $"ce-{Guid.NewGuid():N}");
+        using TestConfigurationOverride configuration = new(dataRoot);
+        using WebApplicationFactory<Program> factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Development");
+            builder.ConfigureAppConfiguration(config => config.AddInMemoryCollection(new Dictionary<string, string?> { ["CloudEmuera:DataPath"] = dataRoot }));
+        });
+        using HttpClient client = factory.CreateClient();
+        (string Path, bool Wasm)[] cases =
+        [
+            ("/api/v1/version", false),
+            ("/assets/RuntimeFontDigest.worker-Ab12_cd-.js", true),
+            ("/assets/RuntimeFontDigest.worker-.js", false),
+            ("/assets/Other.worker-Ab12.js", false),
+            ("/assets/RuntimeFontDigest.worker-Ab12.js/extra.js", false),
+            ("/assets/RuntimeFontDigest.worker-Ab12.css", false),
+        ];
+        foreach ((string path, bool wasm) in cases)
+        {
+            using HttpResponseMessage response = await client.GetAsync(path);
+            string csp = response.Headers.GetValues("Content-Security-Policy").Single();
+            Assert.Equal(wasm, csp.Contains("'wasm-unsafe-eval'", StringComparison.Ordinal));
+            Assert.DoesNotContain("'unsafe-eval'", csp, StringComparison.Ordinal);
+            Assert.Contains("worker-src 'self'", csp, StringComparison.Ordinal);
+        }
+        Directory.Delete(dataRoot, recursive: true);
+    }
+
     [Fact]
     [Trait("Category", "Bootstrap")]
     public async Task LiveEndpointRemainsAvailableWhenBootstrapIsNotReady()
