@@ -12,6 +12,16 @@ not replace or relicense the third-party works listed below.
 These packages provide CloudEmuera interface localization and React bindings. They are not used to translate,
 rewrite, or interpret game/runtime content.
 
+## hash-wasm
+
+- Package: `hash-wasm` 4.12.0
+- Source: <https://github.com/Daninet/hash-wasm/tree/v4.12.0>
+- License: MIT (Dani Biró); bundled SHA-256 C implementation: permissive license (Aleksey Kravchenko)
+- Complete notices distributed with the SPA: `src/CloudEmuera.Web/public/licenses/hash-wasm.txt`
+
+Only SHA-256 is bundled into the same-origin font verification Worker for HTTP origins without Web Crypto.
+The package version and integrity are pinned in `pnpm-lock.yaml`.
+
 ## Emuera.EM+EE
 
 - Upstream: <https://gitlab.com/EvilMask/emuera.em>

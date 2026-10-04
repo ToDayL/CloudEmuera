@@ -1,148 +1,138 @@
+import { hashRuntimeFont } from "./RuntimeFontDigest";
 import type { RuntimeFontFace } from "../sessions/api";
+import { readRuntimeFontBytes, writeRuntimeFontBytes, deleteRuntimeFontBytes } from "./RuntimeFontCache";
 import i18n from "../i18n";
 
-const loadedByDigest = new Map<string, Promise<FontFace>>();
+export interface RuntimeFontProgress {
+  phase: "downloading" | "verifying" | "decoding" | "ready";
+  receivedBytes: number;
+  totalBytes: number;
+}
+
+type ProgressListener = (progress: RuntimeFontProgress) => void;
+interface FontLoad {
+  promise: Promise<FontFace>;
+  progress: RuntimeFontProgress;
+  listeners: Set<ProgressListener>;
+}
+const loadedByDigest = new Map<string, FontLoad>();
+const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 export function runtimeFontCssFamily(face: RuntimeFontFace): string {
   return `cloudemuera-runtime-${face.webAssetDigest.slice(0, 16)}`;
 }
 
-/**
- * Loads exactly one catalogued WOFF2 and makes the verified face available to
- * the document. The promise is keyed by content digest so a reconnect or a
- * second Session does not create another network request or FontFace object.
- */
-export function loadRuntimeFont(face: RuntimeFontFace, cssFamily: string): Promise<FontFace> {
-  const cached = loadedByDigest.get(face.webAssetDigest);
-  if (cached) return cached;
-
-  const loading = loadAndVerify(face, cssFamily).catch(error => {
-    loadedByDigest.delete(face.webAssetDigest);
-    throw error;
-  });
-  loadedByDigest.set(face.webAssetDigest, loading);
-  return loading;
+/** Shared downloads and verified FontFaces survive navigation within this document.
+ * Reloads register a new FontFace using verified IndexedDB bytes or HTTP cache. */
+export function loadRuntimeFont(face: RuntimeFontFace, cssFamily: string, onProgress?: ProgressListener): Promise<FontFace> {
+  let entry = loadedByDigest.get(face.webAssetDigest);
+  if (!entry) {
+    const loading: FontLoad = {
+      promise: undefined!,
+      progress: { phase: "downloading", receivedBytes: 0, totalBytes: face.webAssetByteLength },
+      listeners: new Set(),
+    };
+    loading.promise = Promise.resolve().then(() => loadAndVerify(face, cssFamily, progress => {
+      loading.progress = progress;
+      for (const listener of loading.listeners) listener(progress);
+    })).catch(error => {
+      loadedByDigest.delete(face.webAssetDigest);
+      throw error;
+    });
+    loadedByDigest.set(face.webAssetDigest, loading);
+    entry = loading;
+  }
+  if (!onProgress) return entry.promise;
+  const listeners = entry.listeners;
+  listeners.add(onProgress);
+  onProgress(entry.progress);
+  return entry.promise.finally(() => listeners.delete(onProgress));
 }
 
-async function loadAndVerify(face: RuntimeFontFace, cssFamily: string): Promise<FontFace> {
+async function loadAndVerify(face: RuntimeFontFace, cssFamily: string, report: ProgressListener): Promise<FontFace> {
   if (typeof FontFace === "undefined" || typeof document === "undefined" || !document.fonts)
     throw new Error(i18n.t("runtimeUi.fontUnsupported"));
   if (!/^[0-9a-f]{64}$/.test(face.webAssetDigest) || !Number.isSafeInteger(face.webAssetByteLength) || face.webAssetByteLength <= 0)
     throw new Error(i18n.t("runtimeUi.fontCatalog"));
 
-  const response = await fetch(face.webAssetUrl, { credentials: "same-origin", cache: "force-cache" });
-  if (!response.ok) throw new Error(i18n.t("runtimeUi.fontHttp", { status: response.status }));
-  const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
-  if (contentType !== "font/woff2") throw new Error(i18n.t("runtimeUi.fontMime"));
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null && declaredLength !== String(face.webAssetByteLength))
-    throw new Error(i18n.t("runtimeUi.fontCatalogLength"));
-
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength !== face.webAssetByteLength) throw new Error(i18n.t("runtimeUi.fontLength"));
-  const digest = await sha256(bytes);
-  if (digest !== face.webAssetDigest) throw new Error(i18n.t("runtimeUi.fontDigest"));
-
+  let bytes = await readRuntimeFontBytes(face.webAssetDigest);
+  if (bytes) {
+    report({ phase: "verifying", receivedBytes: bytes.byteLength, totalBytes: face.webAssetByteLength });
+    const validLength = bytes.byteLength === face.webAssetByteLength;
+    const verified = validLength ? await hashRuntimeFont(bytes) : null;
+    bytes = verified?.bytes ?? bytes;
+    if (!verified || verified.digest !== face.webAssetDigest) {
+      await deleteRuntimeFontBytes(face.webAssetDigest);
+      bytes = null;
+    }
+  }
+  const fromCache = bytes !== null;
+  if (!bytes) {
+    report({ phase: "downloading", receivedBytes: 0, totalBytes: face.webAssetByteLength });
+    bytes = await downloadFont(face, report);
+    report({ phase: "verifying", receivedBytes: bytes.byteLength, totalBytes: face.webAssetByteLength });
+    const verified = await hashRuntimeFont(bytes);
+    bytes = verified.bytes;
+    if (verified.digest !== face.webAssetDigest) throw new Error(i18n.t("runtimeUi.fontDigest"));
+  }
+  const progress = { receivedBytes: bytes.byteLength, totalBytes: face.webAssetByteLength };
+  report({ ...progress, phase: "decoding" });
   const loaded = await new FontFace(cssFamily, bytes, {
     display: "block",
     style: "normal",
     weight: String(face.weight),
   }).load();
   document.fonts.add(loaded);
-  await document.fonts.load(`${face.weight} 16px "${cssFamily}"`, "ABC 123　中文 日本語");
-  await document.fonts.ready;
+  // FontFace.load() has decoded this exact face. Waiting for fonts.ready would
+  // also wait for unrelated application fonts and layout in the document.
+  if (!fromCache) await writeRuntimeFontBytes(face.webAssetDigest, bytes);
+  report({ ...progress, phase: "ready" });
   return loaded;
 }
 
-async function sha256(bytes: ArrayBuffer): Promise<string> {
-  if (globalThis.crypto?.subtle) {
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+async function downloadFont(face: RuntimeFontFace, report: ProgressListener): Promise<ArrayBuffer> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+  let bytes: ArrayBuffer;
+  try {
+    const response = await fetch(face.webAssetUrl, { credentials: "same-origin", cache: "force-cache", signal: controller.signal });
+    if (!response.ok) throw new Error(i18n.t("runtimeUi.fontHttp", { status: response.status }));
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+    if (contentType !== "font/woff2") throw new Error(i18n.t("runtimeUi.fontMime"));
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null && declaredLength !== String(face.webAssetByteLength))
+      throw new Error(i18n.t("runtimeUi.fontCatalogLength"));
+
+    if (response.body) {
+      const reader = response.body.getReader();
+      const buffer = new Uint8Array(face.webAssetByteLength);
+      let received = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+          if (received > buffer.byteLength) throw new Error(i18n.t("runtimeUi.fontLength"));
+          buffer.set(value, received - value.byteLength);
+          report({ phase: "downloading", receivedBytes: received, totalBytes: buffer.byteLength });
+        }
+        if (received !== buffer.byteLength) throw new Error(i18n.t("runtimeUi.fontLength"));
+      } catch (error) {
+        await reader.cancel().catch(() => undefined);
+        throw error;
+      } finally {
+        reader.releaseLock();
+      }
+      bytes = buffer.buffer;
+    } else {
+      bytes = await response.arrayBuffer();
+      if (bytes.byteLength !== face.webAssetByteLength) throw new Error(i18n.t("runtimeUi.fontLength"));
+    }
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
   }
-
-  // SubtleCrypto is restricted to secure contexts. The E2E/dev origin can be
-  // http://web, so keep the content-addressed verification requirement there
-  // instead of silently accepting an unverified font or disabling the UI.
-  return sha256Fallback(new Uint8Array(bytes));
-}
-
-const SHA256_K = new Uint32Array([
-  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-]);
-
-async function sha256Fallback(bytes: Uint8Array): Promise<string> {
-  const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;
-  const message = new Uint8Array(paddedLength);
-  message.set(bytes);
-  message[bytes.length] = 0x80;
-
-  const bitLength = bytes.length * 8;
-  const lengthOffset = paddedLength - 8;
-  const view = new DataView(message.buffer);
-  view.setUint32(lengthOffset, Math.floor(bitLength / 0x1_0000_0000), false);
-  view.setUint32(lengthOffset + 4, bitLength >>> 0, false);
-
-  const state = new Uint32Array([
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
-  ]);
-  const schedule = new Uint32Array(64);
-
-  for (let offset = 0; offset < message.length; offset += 64) {
-    for (let index = 0; index < 16; index++) {
-      schedule[index] = view.getUint32(offset + index * 4, false);
-    }
-    for (let index = 16; index < 64; index++) {
-      const valueA = schedule[index - 15];
-      const valueB = schedule[index - 2];
-      const sigma0 = rotateRight(valueA, 7) ^ rotateRight(valueA, 18) ^ (valueA >>> 3);
-      const sigma1 = rotateRight(valueB, 17) ^ rotateRight(valueB, 19) ^ (valueB >>> 10);
-      schedule[index] = (schedule[index - 16] + sigma0 + schedule[index - 7] + sigma1) >>> 0;
-    }
-
-    let [a, b, c, d, e, f, g, h] = state;
-    for (let index = 0; index < 64; index++) {
-      const sigma1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
-      const choose = (e & f) ^ (~e & g);
-      const first = (h + sigma1 + choose + SHA256_K[index] + schedule[index]) >>> 0;
-      const sigma0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
-      const majority = (a & b) ^ (a & c) ^ (b & c);
-      const second = (sigma0 + majority) >>> 0;
-      h = g;
-      g = f;
-      f = e;
-      e = (d + first) >>> 0;
-      d = c;
-      c = b;
-      b = a;
-      a = (first + second) >>> 0;
-    }
-    state[0] = (state[0] + a) >>> 0;
-    state[1] = (state[1] + b) >>> 0;
-    state[2] = (state[2] + c) >>> 0;
-    state[3] = (state[3] + d) >>> 0;
-    state[4] = (state[4] + e) >>> 0;
-    state[5] = (state[5] + f) >>> 0;
-    state[6] = (state[6] + g) >>> 0;
-    state[7] = (state[7] + h) >>> 0;
-
-    // Yield periodically when hashing a complete CJK face on an insecure
-    // origin, so the fallback does not monopolize the rendering task.
-    if ((offset / 64) % 2048 === 2047) await new Promise<void>(resolve => setTimeout(resolve, 0));
-  }
-
-  return Array.from(state, value => value.toString(16).padStart(8, "0")).join("");
-}
-
-function rotateRight(value: number, bits: number): number {
-  return (value >>> bits) | (value << (32 - bits));
+  return bytes;
 }
 
 export function clearRuntimeFontCacheForTests(): void {

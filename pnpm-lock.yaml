@@ -22,6 +22,9 @@ importers:
       '@tanstack/react-virtual':
         specifier: 3.14.10
         version: 3.14.10(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      hash-wasm:
+        specifier: 4.12.0
+        version: 4.12.0
       i18next:
         specifier: 25.8.18
         version: 25.8.18(typescript@7.0.2)
@@ -631,6 +634,9 @@ packages:
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
+
+  hash-wasm@4.12.0:
+    resolution: {integrity: sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ==}
 
   html-encoding-sniffer@6.0.0:
     resolution: {integrity: sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==}
@@ -1495,6 +1501,8 @@ snapshots:
     optional: true
 
   has-flag@4.0.0: {}
+
+  hash-wasm@4.12.0: {}
 
   html-encoding-sniffer@6.0.0:
     dependencies:

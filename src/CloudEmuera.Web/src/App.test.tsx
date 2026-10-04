@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TestFontDigestWorker } from "./test/FontDigestWorker";
 import { App } from "./App";
 import { AuthProvider, CurrentUser } from "./auth";
+import { clearRuntimeFontCacheForTests } from "./console/RuntimeFontLoader";
 import { SessionsPage } from "./sessions/pages";
 
 const digest = "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
@@ -144,6 +146,7 @@ class TestUploadXmlHttpRequest {
 }
 
 describe("App", () => {
+  beforeEach(() => vi.stubGlobal("Worker", TestFontDigestWorker));
   function renderAt(path: string) {
     const user: CurrentUser = { id: "usr_test", username: "tester", email: "tester@example.com", role: "PLAYER", status: "ACTIVE", mustChangePassword: false, stateVersion: 0 };
     return render(<MemoryRouter initialEntries={[path]}><AuthProvider initialUser={user}><App /></AuthProvider></MemoryRouter>);
@@ -160,6 +163,41 @@ describe("App", () => {
       }
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["slow", "failed"])("SESS-013: creates and opens a Session with a %s font preview", async (mode) => {
+    clearRuntimeFontCacheForTests();
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: { add: vi.fn() } });
+    vi.stubGlobal("FontFace", class {});
+    let finishFont: ((response: Response) => void) | undefined;
+    const fetchMock = mockFetch((url, init) => {
+      if (url === "/api/v1/games?limit=50" || url === "/api/v1/games") return jsonResponse({ items: [game()], nextCursor: null });
+      if (url === "/api/v1/preferences/session-startup-defaults") return jsonResponse({ fontFaceId: runtimeFontFaceId, fontSize: 18, lineHeight: 19, fontSizeLineHeightMode: "OVERRIDE", widthMode: "ADAPTIVE", customWidth: null, convertBackslashToYen: true });
+      if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
+      if (url.endsWith(".woff2")) return mode === "slow" ? new Promise<Response>(resolve => { finishFont = resolve; }) : new Response(null, { status: 503 });
+      if (url === "/api/v1/auth/csrf") return jsonResponse({ token: "csrf-token" });
+      if (url === "/api/v1/sessions" && init?.method === "POST") return jsonResponse(session({ state: "CLOSED" }));
+      if (url === "/api/v1/sessions/sess-world:open") return new Promise<Response>(() => {});
+      return jsonResponse({ code: "NOT_FOUND" }, 404);
+    });
+    try {
+      const view = renderAt("/sessions/new?game=g1");
+      fireEvent.change(await screen.findByLabelText("Session 名称"), { target: { value: "Slow network" } });
+      const create = screen.getByRole("button", { name: "创建并开始" });
+      await waitFor(() => expect(create).toBeEnabled());
+      await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(".woff2"))).toBe(true));
+      fireEvent.click(create);
+      await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/api/v1/sessions/sess-world:open")).toBe(true));
+      view.unmount();
+    } finally {
+      finishFont?.(new Response(null, { status: 503 }));
+      await Promise.resolve();
+      vi.unstubAllGlobals();
+      clearRuntimeFontCacheForTests();
+      if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+      else Reflect.deleteProperty(document, "fonts");
     }
   });
 
@@ -500,6 +538,43 @@ describe("App", () => {
     expect(dialog.querySelector(".upload-task.failed .upload-task-mark")).toHaveTextContent("×");
     expect(within(dialog).getByRole("button", { name: "返回修改" })).toBeInTheDocument();
     vi.unstubAllGlobals();
+  });
+
+  it("PLAY-013: shows font download progress and retries a failed Console font", async () => {
+    clearRuntimeFontCacheForTests();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    let requests = 0;
+    mockFetch(url => {
+      if (url === "/api/v1/sessions/sess-world") return jsonResponse(session());
+      if (url === "/api/v1/runtime-fonts") return jsonResponse(runtimeFontCatalog());
+      if (url.endsWith(".woff2")) {
+        requests++;
+        return requests === 1 ? new Response(null, { status: 503 }) : new Response(new ReadableStream<Uint8Array>({ start(stream) { controller = stream; } }), { headers: { "Content-Type": "font/woff2" } });
+      }
+      return jsonResponse({ code: "NOT_FOUND" }, 404);
+    });
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: { add: vi.fn(), ready: new Promise(() => {}) } });
+    vi.stubGlobal("FontFace", class { load() { return Promise.resolve(this); } });
+    vi.stubGlobal("WebSocket", SilentWebSocket);
+    try {
+      const view = renderAt("/sessions/sess-world");
+      fireEvent.click(await screen.findByRole("button", { name: "重试" }));
+      await waitFor(() => expect(requests).toBe(2));
+      controller.enqueue(new TextEncoder().encode("font"));
+      await waitFor(() => expect(screen.getByRole("progressbar")).toHaveAttribute("value", "4"));
+      expect(screen.getByRole("progressbar")).toHaveAttribute("max", "9");
+      expect(screen.queryByRole("heading", { name: "港口旅程" })).not.toBeInTheDocument();
+      controller.enqueue(new TextEncoder().encode("-test"));
+      controller.close();
+      expect(await screen.findByRole("heading", { name: "港口旅程" })).toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+      clearRuntimeFontCacheForTests();
+      if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+      else Reflect.deleteProperty(document, "fonts");
+    }
   });
 
   it("loads a real Session while the browser connection is pending", async () => {

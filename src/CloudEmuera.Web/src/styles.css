@@ -984,3 +984,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .realtime-console .prompt-heading p { max-width: 70vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .realtime-console .prompt-enter-button { width: 32px; min-width: 32px; height: 32px; min-height: 32px; flex-basis: 32px; }
 }
+
+.runtime-font-progress { display: grid; gap: 12px; width: min(320px, 80vw); }
+.runtime-font-progress progress { width: 100%; accent-color: var(--accent); }
